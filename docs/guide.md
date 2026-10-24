@@ -20,10 +20,15 @@ It needs:
   `http://` is refused, by name.
 - **WebCodecs** for the pictures a remote sends as video: `VideoDecoder` for
   wlshare's VP9, a High Performance Mac's HEVC or H.264 and an RDP host's
-  H.264. A browser without it, or whose decoder refuses a codec, still starts:
-  the picker greys what needs it, with the reason, and the gateway's tiles, a
+  H.264. The client still starts without it, and the gateway's tiles, a
   Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
-  anywhere. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
+  anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
+  the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
+  the reason, where the decoder refuses them, and a `wlshare` target, whose VP9
+  is its picture in every session, cannot be started. The Mac's H.264 is not
+  asked about: it is offered to every browser with `VideoDecoder` and greyed
+  without one, and a decoder that refuses it says so in the session, by its
+  error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
   without it (Safari 16.4 to 18) plays no sound, and a later Safari, whose
   `AudioDecoder` fails FLAC, plays Opus and the Mac's sound.
 
@@ -355,7 +360,7 @@ connection with the same error as wrong credentials. See
     on a virtual Mac alone.
 - Every Apple subtype carries the Mac's native pasteboard.
 - **`subtype = "ard-high-performance"`** is High Performance mode as Apple's
-  viewer has it, and is **experimental**. The Mac disables its physical displays
+  viewer has it. The Mac disables its physical displays
   and puts every window on one virtual display, sized by the session, up to
   3840×2160 backing pixels. Picture and sound come over the Mac's media stream,
   HEVC and AAC-ELD over SRTP:
@@ -389,7 +394,9 @@ connection with the same error as wrong credentials. See
     which more browsers have for H.264 than for HEVC. So a default build serves
     the target, with no software decoder, to any browser that has
     `VideoDecoder`, Firefox included, and the picker offers the H.264 only in
-    those browsers; without `VideoDecoder` it is greyed.
+    those browsers; without `VideoDecoder` it is greyed. The picker does not
+    ask the decoder itself: a browser whose decoder does not take the Mac's
+    H.264 says so in the session, by the decoder's error.
   - The HEVC passthrough sends the HEVC only when the page's startup probe finds a
     decoder path. Support depends on the browser, platform and GPU, so the
     picker is authoritative. The gateway can also serve the optional software

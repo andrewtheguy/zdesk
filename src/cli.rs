@@ -29,7 +29,7 @@ pub fn features_line() -> String {
 #[command(
     name = "zdesk",
     version,
-    about = "Browser-based RDP client",
+    about = "Single-user browser remote desktop gateway",
     after_help = format!("Features: {}", features_line())
 )]
 pub struct Cli {

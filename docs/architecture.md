@@ -110,7 +110,7 @@ camera and microphone, and how its picture reaches the browser.
 | Server | Target | Displays | Sound | Camera and microphone | Picture |
 |---|---|---|---|---|---|
 | Windows 10 and 11's Remote Desktop | `rdp` | one desktop spanning the host's screens, following the window at its density; or up to two virtual displays, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (alpha) | Opus or FLAC | yes, experimental | the graphics pipeline passed through, high quality or adaptive H.264; lossless when the host's policy requests it; tiles from the gateway on the bitmap path |
-| macOS Screen Sharing, High Performance | `vnc`, `subtype = "ard-high-performance"` | one virtual display, following the window at its density; or two, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (alpha) | AAC-ELD, always | no | the Mac's HEVC or its H.264, passed through |
+| macOS Screen Sharing, High Performance | `vnc`, `subtype = "ard-high-performance"` | one virtual display, following the window at its density; or two, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (alpha) | AAC-ELD, always | no | the Mac's HEVC or its H.264 (beta), passed through |
 | macOS Screen Sharing, Standard | `vnc`, `subtype = "ard"`, the unofficial `virtual_display = true` included | the Mac's physical displays, one or all, at their own size and density; the unofficial virtual display follows the window | none | no | tiles from the gateway of the Mac's lossless Full quality, which settle to lossless; or the Mac's Adaptive picture, passed through (beta) |
 | wlshare on Linux | `vnc`, `subtype = "wlshare"` | the compositor's outputs, switched from the picker or, on *All Displays* over two of them, the second shown in a browser tab of its own (alpha); a headless one follows the window at its density | Opus or FLAC | yes, experimental | its own VP9, passed through, adapting to the browser's link |
 | any other VNC server, not prioritized | `vnc` | one framebuffer at the size the server says, at 1x, never resized from the browser | none | no | tiles from the gateway |
@@ -148,14 +148,16 @@ The host's own stream, passed through to the browser:
   [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
 - **macOS Screen Sharing's High Performance mode** (`ard-high-performance`), in
   every session: the Mac's HEVC picture, to a browser that decodes it (Chrome
-  and Safari natively, or the page's software decoder), or the H.264 the Mac
-  sends where it is asked for that instead, to any browser, Firefox included.
+  and Safari natively, or the page's software decoder), or the H.264 (beta) the
+  Mac sends where it is asked for that instead, to any browser with a
+  `VideoDecoder`, Firefox included.
   Its AAC-ELD sound is passed in every session. It is tested against a physical
   Mac, from a desktop browser and from a mobile browser on iOS. See
   [Apple's media stream, passed through](#apples-media-stream-passed-through).
 
 Which of the Mac's streams is passed is a choice made at the picker, of two:
-its HEVC, greyed for a browser that cannot take the stream, and its H.264.
+its HEVC, greyed for a browser that cannot take the stream, and its H.264
+(beta), greyed without `VideoDecoder`.
 A Windows host's pipeline is not a choice: it is passed
 in every session of a target with the pipeline on, and a browser that cannot
 compose it cannot start that target. The passed pipeline follows the browser's
@@ -450,8 +452,8 @@ the newest pixels whenever a round goes.
 
 #### The browser's four answers
 
-The browser is asked four questions, each once at page load and stated on the
-session socket: whether it decodes a High Performance Mac's HEVC, whether it
+The browser is asked four questions that it states on the session socket, each
+once at page load: whether it decodes a High Performance Mac's HEVC, whether it
 composes an RDP host's graphics pipeline, whether it decodes the H.264 such
 a pipeline may carry, and whether its own decoder takes 4:4:4 VP9. The last
 two refuse nobody. The H.264 answer decides only whether a passed pipeline's host is
@@ -461,17 +463,22 @@ the same is drawn without it. The VP9 answer decides only whether a
 `wlshare` target's stream is 4:4:4 or 4:2:0 for it ([the codec](#the-codec)).
 The other two say which passthrough the browser
 can take. The Mac's greys its HEVC at the picker, where a browser that says
-no starts the target passed as H.264; the pipeline's, which is no choice, disables
-Start for an RDP target with the pipeline on. No question is asked about a
+no can instead choose H.264 if it has `VideoDecoder`; without either path it
+cannot start the target. The pipeline's, which is no choice, disables Start for
+an RDP target with the pipeline on. No question is asked about a
 Mac's H.264: it is offered to every browser with a `VideoDecoder`, and one
 whose decoder does not take it finds out from that decoder, in the session. Nor about a Standard Mac's Adaptive
 picture, which every page decodes in WebAssembly. Both refuse a `connect` whose
 session would pass what the browser cannot take, and end the session of an
 owner that comes back answering no, which lands on the picker
 ([Session lifecycle](#session-lifecycle)). No other browser's answers meet a
-running session: a takeover ends it first. The one target they can leave
-unstartable is an RDP target with the pipeline on, for a browser that cannot
-compose it. Do not grow them into
+running session: a takeover ends it first. Of the four stated answers, only the
+pipeline answer can leave a target unstartable on its own: an RDP target with
+the pipeline on, for a browser that cannot compose it. The page's own decoder
+checks, which the socket does not state, leave two more unstartable: a High
+Performance Mac for a browser with neither an HEVC path nor `VideoDecoder`, and
+a `wlshare` target for one whose decoder takes no 4:2:0 VP9, `VideoDecoder`'s
+absence included. Do not grow the answers into
 a wider capability negotiation, and do not let either rebuild a session with
 choices nobody made.
 Preserve the announced configuration and color-space behavior in
@@ -600,17 +607,19 @@ selects the picture, or a key or a choice that selects its chroma. See
   unofficial wherever it is named, and tested with macOS 26 only; do not present
   it as a mode of Apple's viewer or grow it into a third subtype.
 - The picker offers an `ard-high-performance` target's picture two ways, in
-  this order: the Mac's HEVC passed, and the Mac's H.264 passed. The first that
-  this browser can take is taken until another is chosen. Do not add a third,
-  reorder them, or let the gateway choose between them for a browser.
+  this order: the Mac's HEVC passed, and the Mac's H.264 passed (beta). The
+  first that this browser can take is taken until another is chosen. Do not add
+  a third, reorder them, or let the gateway choose between them for a browser.
 - The HEVC passthrough passes the Mac's picture
   unaltered: HEVC access units on the display socket. It is offered
   at the picker to a browser that said it decodes the HEVC, or whose page
   can decode it ([Decoded in the page](#decoded-in-the-page)), and greyed for
-  any other, which is offered the H.264.
+  any other, which is offered the H.264 when it has `VideoDecoder`.
 - The H.264 passthrough asks the Mac for H.264 instead, by an offer that names
   no HEVC, and passes that: High profile, 4:2:0. It is offered to every
-  browser. Do not ask a browser whether it decodes it at the picker, grey it, or fall back from it to another picture.
+  browser with `VideoDecoder` and greyed for one without it. Do not ask whether
+  that decoder accepts the codec at the picker, or fall back from it to another
+  picture.
   Its pictures pass unaltered; its sequence parameter set, which the Mac sends
   inside a sample description and the gateway writes out, is written saying the
   pictures come in decoding order. The sound is not part of the choice: AAC-ELD units go
@@ -1224,7 +1233,8 @@ Three controls with similar names therefore remain separate:
   the socket states. It offers the HEVC, and so does the page's software
   decoder below where the session is started decoded in the page; where the
   native question says no, gives no verdict or throws, and that decoder is not
-  to be had, the picture is the Mac's H.264. The sound
+  to be had, the picture is the Mac's H.264 when `VideoDecoder` exists;
+  without it no picture is offered. The sound
   probe starts at load but is not part of that choice. If neither form produces
   sound, the picture still plays and the Audio row names the failure. Measured,
   Chrome and Safari's native decoders, desktop and mobile, decode the stream
@@ -1392,8 +1402,10 @@ Three controls with similar names therefore remain separate:
   decodes neither form of the configuration plays the session without sound
   and says so under Audio; Chrome and Safari decode it, and Firefox 153 on
   Linux accepted the configuration and produced no sound.
-- **Any browser starts it.** A browser that cannot take the HEVC is left the
-  H.264, which is taken for it, so the target always starts.
+- **Every browser with `VideoDecoder` is offered H.264.** A browser that cannot
+  take the HEVC is left the H.264 if it has `VideoDecoder`. Without
+  `VideoDecoder`, the target starts only when the browser has an HEVC path;
+  otherwise the picker disables Start.
 
 ##### The Mac's H.264
 
@@ -1824,7 +1836,8 @@ The page has one software video decoder of its own, in WebAssembly:
 [hevc-wasm](https://github.com/andrewtheguy/hevc-wasm), for a High Performance
 Mac's passed HEVC wherever the browser's `VideoDecoder` does not take it. The
 gateway serves it at `/hevc/` when it has loaded the release archive. Without
-either HEVC decoder, the picker offers the Mac's H.264
+either HEVC decoder, the picker offers the Mac's H.264 when the browser has
+`VideoDecoder`; without it the target has no usable picture
 ([Apple's media stream, passed through](#apples-media-stream-passed-through)).
 It is written for the one shape of stream it decodes and compiled with SIMD128
 and threads. The VP9 has none: it is sent at a chroma the browser's own decoder
@@ -1986,7 +1999,7 @@ five:
 | wlshare's VP9 (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: quality, then frame rate | Each fence echo is held for the queue ahead of the frame on the browser's link (`VideoSink::fence_hold`) | `video_quality` as its ceiling (`WLQ`); `render_adaptive = false` holds it at the dial (`WLSD`) |
 | wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at the dial | Each fence echo is held as the VP9's is, and nothing adapts to it | `video_quality` as what the regions are held at (`WLQ`); `render_adaptive` reaches nothing of it |
 | An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; with Adaptive, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; with Adaptive, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more | None: always on, and `video_quality` and `render_adaptive` reach nothing of it |
-| A High Performance Mac's HEVC or H.264 (always passed) | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway | None: the video keys are refused on the target |
+| A High Performance Mac's HEVC or H.264 (beta), always passed | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway | None: the video keys are refused on the target |
 | A Standard Mac's Adaptive picture (passed where chosen) | The Mac: how many updates it sends, and whether it refines them while the screen moves | Its connection, read as the page paints, through a small receive buffer | None: `render_adaptive` is refused on the target, and `video_quality` reaches its tiles alone |
 
 - **wlshare** walks its encoder: quality goes down to the floor, then the frame
@@ -2105,18 +2118,23 @@ on the same browser twice to build a refusal on, and a refusal phrased as "this
 browser accepted none" turns any fault near the path into an accusation against
 the browser.
 
-What the browser is asked is four questions. One decides what a host is told and
+What the browser states is four answers. One decides what a host is told and
 nothing else: whether this browser decodes the H.264 a passed RDP pipeline may
 carry, which greys the picker's Adaptive for a "no". The other two say which
 passthrough the browser can take: a High Performance Mac's HEVC, and an RDP
 host's graphics pipeline. They decide what the picker offers before a session
-starts, where a "no" starts a Mac passed as H.264 and leaves an RDP target with the
-pipeline on unstartable, and they keep a session that passes a stream from
+starts, where a "no" greys the Mac's HEVC, leaving its H.264 to a page with
+`VideoDecoder`, and leaves an RDP target with the pipeline on unstartable, and
+they keep a session that passes a stream from
 being sent to a browser that cannot show it
 ([What a session is started with](#what-a-session-is-started-with)). The fourth,
 whether the browser's own decoder takes 4:4:4 VP9, decides the chroma of a
 `wlshare` target's stream, and a page that comes back answering otherwise than
-the session was started for is given it from its start.
+the session was started for is given it from its start. The page settles two
+more things for itself and states neither: whether it has `VideoDecoder`, which
+is taken to decode the Mac's H.264, and whether that decoder takes 4:2:0 VP9,
+without which a `wlshare` target cannot start. The gateway is sent no choice
+the picker greys.
 
 The refusal itself stays where it always was: one honest failure at the client's own
 decoder. The gateway announces the configuration in `ServerMsg::VideoFormat` before
@@ -2224,7 +2242,7 @@ and `GET /api/targets` carries it:
 | `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's VP9, passed, or its tiles with motion, passed | hidden | shown |
 | `vnc`, `ard` | no | hidden | shown, as Picture: the Mac's Adaptive picture, passed (beta), greyed under Combined Display, or the gateway's tiles of its Full quality; and as Displays: one at a time (beta) or Combined (alpha) | hidden | hidden |
 | `vnc`, `ard` with `virtual_display` | yes | hidden | shown, as for `ard` | hidden | hidden |
-| `vnc`, `ard-high-performance` | yes | hidden: always carried | shown, as Picture: the Mac's HEVC or its H.264, always passed | hidden | hidden |
+| `vnc`, `ard-high-performance` | yes | hidden: always carried | shown, as Picture: the Mac's HEVC or its H.264 (beta), always passed | hidden | hidden |
 
 - **The size is shown before Start.** A desktop is sized one of three ways
   (`Sizing` in `src/config.rs`): kept at the target's size, which is its
@@ -2281,9 +2299,10 @@ and `GET /api/targets` carries it:
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
   needs it. The Mac's H.264 is greyed where the browser has no `VideoDecoder`,
   which is taken to decode it unasked, and a High Performance Mac neither of whose pictures it takes cannot
-  start, with the reason. A Standard Mac's own pictures are never greyed, nor
-  are a `wlshare` target's, both VP9: the target cannot start in a browser
-  whose decoder refuses it. `/api/targets` says which streams a target can pass, as
+  start, with the reason. A Standard Mac's pictures are never greyed: its
+  Adaptive picture is decoded by every page in WebAssembly, and the gateway's
+  tiles are images every page decodes. Nor are a `wlshare` target's, both VP9:
+  the target cannot start in a browser whose decoder refuses it. `/api/targets` says which streams a target can pass, as
   `passthroughs`; a target with any has no picture coded here. For the pipeline the picker says the stream is always
   passed, as a note
   with nothing to choose, and where the
@@ -3702,13 +3721,17 @@ control, not another remote-desktop implementation.
 
 ## Configuration and testing
 
-Configuration is one TOML file with `[server]` and `[[targets]]` sections.
-Protocol-specific fields are validated at startup, including mutually exclusive
-credential fields and unsupported feature combinations.
+A served gateway's configuration is one TOML file with a `[server]` section and
+at least one `[[targets]]` section. A managed instance omits `[server]` because
+its manager supplies the private endpoint and login secret, and it may have no
+targets while it is being edited. Protocol-specific fields are validated at
+startup, including mutually exclusive credential fields and unsupported feature
+combinations.
 
-A gateway needs a target to offer and a credential to guard it, and is told where
-to listen. `zdesk check-config` applies those rules to a file — or to text on
-stdin, which is what an unsaved edit is — without starting anything.
+A served gateway needs a target to offer and a credential to guard it, and is
+told where to listen. `zdesk check-config` applies those rules to a file — or to
+text on stdin, which is what an unsaved edit is — without starting anything; a
+native build's `--embedded` applies the managed-instance rules instead.
 
 Where it listens is one key, `[server].listen`, and the one setting a deployment
 can give from outside the file: `--listen`, or `ZDESK_LISTEN` for a container
