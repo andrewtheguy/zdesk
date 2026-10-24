@@ -398,8 +398,8 @@ impl PaintAhead {
 pub enum Oversize {
     /// The session ends: the gateway sized the remote, and a remote that answers
     /// past the ceiling has refused what it was asked. A High Performance Mac, an
-    /// RDP host with its graphics pipeline, and a `wlshare` target started with
-    /// resize.
+    /// RDP host with its graphics pipeline, and a `wlshare` target or an `ard`
+    /// virtual display started with resize.
     Refuse,
     /// The picture stops until a `Resize` brings the desktop within the ceiling,
     /// which only the remote can do: [`VideoSink::damage`] drops what it is handed

@@ -23,7 +23,8 @@ target below, has what RFB defines and nothing more, whatever server it reaches.
 It lists none of wlshare's extensions, so it never asks for a density and is
 never told one, and that holds when the server it reaches is wlshare itself. The
 engine reports `UNSCALED` (`src/vnc.rs`), the browser shows every pixel
-one-to-one, and the Info card reads `1728×883 at 1x` under a browser at 2x.
+one-to-one, and the Info card reads `1728×883 at 1x (96 dpi)` under a browser at
+2x.
 
 Every other kind of target has a wire that carries density, and zDesk reads it
 from there:
@@ -31,7 +32,8 @@ from there:
 - **RDP** — the client *declares* it. zDesk puts the browser screen's density,
   quantized to 100% or 200%, in the monitor layout's `DesktopScaleFactor`
   (`src/rdp.rs`), asks for the desktop in pixels at that density, and the host is
-  bound to honour it. This is why xrdp shows 2x with nothing to configure.
+  bound to honour it. This is why a Windows host shows 2x with nothing to
+  configure.
 - **Apple Screen Sharing** — the server *reports* it. Apple's display layout
   message carries each screen's logical size, backing size and scale factor as a
   double (`src/vnc_apple.rs`), and zDesk reads it off every layout.
@@ -43,11 +45,13 @@ from there:
 
 The density a framebuffer is *labelled* with — `Resize.scale` — is the wire's
 word alone. The browser does report its own screen's density (`hostDisplay`),
-and on RDP, Apple High Performance and wlshare that report is what the remote is
-*asked* to render at; the label still waits on the wire's answer — Apple's
-display layout and wlshare's report give the scale the server granted, and RDP,
-which reports none back, is labelled with the declared density only once the
-resize that carried it comes back from the server. A plain target has neither
+and on RDP, Apple Screen Sharing (its physical displays through
+`SetServerScaling`, a virtual display through its configuration) and wlshare
+that report is what the remote is *asked* to render at; the label still waits on
+the wire's answer — Apple's display layout and wlshare's report give the scale
+the server granted, and RDP, which reports none back, is labelled with the
+declared density only once the resize that carried it comes back from the
+server. A plain target has neither
 answer, so it accepts no client-declared density: a label nothing on the wire
 can confirm is one the server may not have honoured, and a desktop presented at
 it is shown at the wrong size. For a wlroots desktop that should be shown at its

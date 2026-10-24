@@ -173,8 +173,9 @@ group opens on High quality and, under Adaptive, on H.264 full screen. Its sound
 checks are lossless sound played by the browser's own decoder, a browser whose
 decoder fails a FLAC frame, as Safari's does, which is offered Opus alone and
 FLAC greyed with the reason, and a browser with no audio decoder, which starts
-with no sound to tick. It needs an `rdp` target that configures a `size`, the one type that
-offers all three choices, and the tone harness is one.
+with no sound to tick. It needs an `rdp` target that configures a `size`, whose
+picker shows the size, sound and Graphics groups the spec checks, and the tone
+harness is one.
 
 `clipboard.spec.ts` is the live-Mac regression for the web clipboard panel. It
 proves that unsolicited remote copies still auto-sync, while opening and
@@ -320,6 +321,23 @@ with two virtual displays. Name it with `ZDESK_PLAYWRIGHT_DRAG_TARGET`:
 ```sh
 ZDESK_PLAYWRIGHT_DRAG_TARGET='win2' \
 bunx playwright test '/display-drag\.spec\.ts$'
+```
+
+On a Mac target, `ZDESK_PLAYWRIGHT_DRAG_MAC_SSH` (`user@mac`, optional) also has
+the spec ask the Mac over SSH where its pointer is while a drag is held past the
+edge: on the display beyond it.
+
+The target-switch spec needs a live RDP host named twice, once with the pipeline
+on and once with `egfx = false`, and a live Mac as an `ard` and an
+`ard-high-performance` target, with the HEVC decoder's release archive. It skips
+unless all four are named:
+
+```sh
+ZDESK_PLAYWRIGHT_SWITCH_RDP_TARGET='windows' \
+ZDESK_PLAYWRIGHT_SWITCH_RDP_BITMAP_TARGET='windows-bitmap' \
+ZDESK_PLAYWRIGHT_SWITCH_MAC_TARGET='mac' \
+ZDESK_PLAYWRIGHT_SWITCH_HEVC_TARGET='mac-hp' \
+bunx playwright test '/target-switch\.spec\.ts$'
 ```
 
 The software HEVC specs need Google Chrome installed, Playwright's Firefox

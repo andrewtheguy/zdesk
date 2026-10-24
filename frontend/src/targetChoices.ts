@@ -339,10 +339,11 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
     "This browser cannot compose the host's graphics pipeline, which this target always passes: that needs WebGL 2 and a cross-origin isolated page. Use a browser that can, or a target with egfx disabled.",
 };
 
-// Why a `wlshare` target cannot start in a browser that does not decode VP9,
-// which both of its pictures are coded in.
+// Why a `wlshare` target cannot start in a browser that does not decode VP9:
+// its Video is VP9, and its Tiles with motion code their moving regions in VP9
+// wherever wlshare's H.264 is not to be had.
 const NO_VP9 =
-  "This browser does not decode VP9, which both of this wlshare target's pictures are coded in. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser does not decode VP9, which this wlshare target's video is coded in and its tiles with motion fall back to. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -414,7 +415,7 @@ function pictureOptions(
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",
       label: "Tiles with motion, passed through",
-      note: "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's GPU where it has one, VP9 otherwise), exact again once it stops. Several times the bytes. For a LAN.",
+      note: "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise, VP9 where neither works), exact again once it stops. Several times the bytes. For a LAN.",
       disabled: false,
     },
   };

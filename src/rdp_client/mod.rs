@@ -20,7 +20,7 @@
 //! # The two threads
 //!
 //! ```text
-//!   caller  ──  Session, Input                  UnboundedReceiver<Event>  ──  caller
+//!   caller  ──  Session, Input                  Receiver<Event> (EVENT_QUEUE)  ──  caller
 //!      │  command queue                                    ▲
 //!      ▼                                                   │
 //!   the "rdp" thread: a current-thread runtime, select! over the socket and the queue

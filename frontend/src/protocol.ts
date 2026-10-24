@@ -21,11 +21,6 @@ export type MouseButton = "left" | "middle" | "right" | "back" | "forward";
 // distance as a distance scrolls a notch's ~100 pixels several steps too far.
 export type WheelUnit = "pixel" | "line" | "page" | "notch";
 
-// What a touch contact did: MS-RDPEI's four contact transitions, which are
-// also exactly the DOM's four touch events. `cancel` is lost rather than
-// lifted — the guest forgets the gesture where an `up` would have been a tap.
-export type TouchPhase = "down" | "move" | "up" | "cancel";
-
 // Browser -> server: input events captured over the remote canvas, plus
 // viewport reports (the desired remote desktop size, in points: the room the
 // browser has, in CSS pixels — the engine renders them at its own density, so
@@ -89,13 +84,6 @@ export type ClientMsg =
   | { type: "clipboardRequest" }
   // Select an opaque id from the latest `displays` message.
   | { type: "selectDisplay"; id: number }
-  // One touch contact's transition in framebuffer pixels: the touchscreen
-  // mode, where fingers reach the remote as the contacts they are and the
-  // guest recognises the gestures. `id` names the finger from its down to its
-  // up or cancel — a small slot assigned by touchPassthrough.ts, not the DOM's
-  // identifier. Acted on by the RDP engine once the host has opened the touch
-  // channel (`touchReady`); dropped everywhere else.
-  | { type: "touch"; id: number; phase: TouchPhase; x: number; y: number }
   // Re-announce the desktop size and repaint everything. A recovery command for
   // a canvas that has gone wrong; the
   // browser has no button for it, since there is a reload right there.
@@ -354,12 +342,6 @@ export type ControlMsg =
   // else in the protocol says so. Sent whenever the host draws with something it
   // had not, and again on a repaint; a pipeline's `graphicsStart` starts it over.
   | { type: "hostPicture"; exact: boolean; codecs: string[] }
-  // The host opened its touch channel (MS-RDPEI), so `touch` messages reach it
-  // as real contacts from now on. Sent by the RDP engine shortly after connect
-  // and again on every reattach; never for a host without the channel, which
-  // is what hides the Touchscreen toggle there. Not part of `connected`: the
-  // capability is the host's answer, not the target's profile.
-  | { type: "touchReady" }
   // A High Performance Mac is being resized and the picture is not the
   // window's yet: true from the window's new size until the Mac's answering
   // layout has held still. The page covers the desktop meanwhile, as Apple's

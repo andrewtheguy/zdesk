@@ -132,8 +132,10 @@ pub fn raised_to_minimum(points: (u16, u16)) -> (u16, u16) {
 /// preferred codec, which is the first of zlib, ZRLE and Apple's own codecs listed.
 /// Measured on macOS 26.6 and read from the daemon — see
 /// docs/apple-vnc-889.md, "Which encodings make the Mac report its displays". ZRLE is
-/// therefore the one codec listed, in both subtypes, and not zlib: its per-tile runs
-/// and palettes take the redundancy out before deflate sees the bytes.
+/// therefore the one codec this list names, and not zlib: its per-tile runs and
+/// palettes take the redundancy out before deflate sees the bytes. It is High
+/// Performance's opening list; a Standard session opens with its quality's codec
+/// ahead of ZRLE instead ([`ADAPTIVE_ENCODINGS`], [`FULL_ENCODINGS`]).
 ///
 /// Every entry is decoded or deliberately stepped over, which is a requirement and
 /// not a courtesy: a server takes the list as a promise and will send what it finds

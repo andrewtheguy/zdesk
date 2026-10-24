@@ -209,20 +209,6 @@ pub enum WheelUnit {
     Notch,
 }
 
-/// What a touch contact did: the four transitions MS-RDPEI's contact state
-/// machine has (3.1.1.1), which are also exactly the DOM's four touch events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TouchPhase {
-    Down,
-    Move,
-    Up,
-    /// Lost rather than lifted — the browser took the touch for a system
-    /// gesture, the window blurred mid-gesture. The guest forgets the gesture
-    /// where an `up` in the same place would have been a tap.
-    Cancel,
-}
-
 /// Browser -> server: input events captured over the remote canvas.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -373,25 +359,6 @@ pub enum ClientMsg {
     /// pixels. Input from the first display's socket arrives bare.
     #[serde(skip)]
     OnDisplay { display: u32, input: Box<ClientMsg> },
-    /// One touch contact's transition, in framebuffer coordinates: the
-    /// touchscreen mode, where fingers are forwarded as the contacts they are
-    /// instead of being interpreted into a mouse. `id` names the finger from its
-    /// `down` to its `up` or `cancel`, and the client assigns small ids itself —
-    /// a DOM `Touch.identifier` is any 32-bit number, and the engine's contact
-    /// table is ten slots.
-    ///
-    /// Acted on by the RDP engine alone, and only once the host has opened
-    /// MS-RDPEI, announced as [`ServerMsg::TouchReady`]; VNC has no touch and
-    /// drops them, as does an RDP host that never opened the channel. The guest
-    /// recognises every gesture itself — edge swipes, pinch, press-and-hold,
-    /// multi-finger — which is the point: nothing on this side decides what two
-    /// fingers mean.
-    Touch {
-        id: i32,
-        phase: TouchPhase,
-        x: i32,
-        y: i32,
-    },
     /// What the browser's camera will send, and the camera socket's opening
     /// move: `/ws/camera`'s first message must be this, and it is what plugs
     /// the virtual device into the remote. Never sent on the session socket —
@@ -1368,14 +1335,6 @@ pub enum ServerMsg {
     /// part of the session page's, handed across the browser by that page, so a
     /// pipeline is composed once however many tabs show it (`displayRelay.ts`).
     GraphicsView { x: u16, y: u16, w: u16, h: u16 },
-    /// The host opened the touch channel (MS-RDPEI), so [`ClientMsg::Touch`]
-    /// reaches it as real touch contacts from here on. Sent by the RDP engine
-    /// when a Windows host creates the channel — shortly after connect — and
-    /// again on every reattach, next to [`ServerMsg::Resize`]. Never sent for a
-    /// host without the channel, which is how a client knows not to offer the
-    /// mode: the capability is the host's, not the target's, so it is not in
-    /// [`ServerMsg::Connected`].
-    TouchReady,
     /// A High Performance Mac is being resized, and the picture is not the
     /// window's yet: `active` goes true when the window reports a new size and
     /// false once the Mac's answering layout has held still. The browser covers
@@ -1587,7 +1546,6 @@ enum ControlMsg<'a> {
     },
     RemoteOs { macos: bool },
     HostPicture { exact: bool, codecs: &'a [&'static str] },
-    TouchReady,
     Resizing { active: bool },
     ScreenUnavailable { active: bool },
     PictureWithheld { active: bool, hevc: bool },
@@ -1701,7 +1659,6 @@ impl ServerMsg {
                 | ServerMsg::PictureWithheld { .. }
                 | ServerMsg::RemoteOs { .. }
                 | ServerMsg::HostPicture { .. }
-                | ServerMsg::TouchReady
         )
     }
 
@@ -1802,7 +1759,6 @@ impl ServerMsg {
             ServerMsg::HostPicture { exact, codecs } => {
                 control(&ControlMsg::HostPicture { exact: *exact, codecs })
             }
-            ServerMsg::TouchReady => control(&ControlMsg::TouchReady),
             ServerMsg::Resizing { active } => control(&ControlMsg::Resizing { active: *active }),
             ServerMsg::ScreenUnavailable { active } => control(&ControlMsg::ScreenUnavailable { active: *active }),
             ServerMsg::PictureWithheld { active, hevc } => {
@@ -2050,15 +2006,14 @@ mod tests {
             ClientMsg::SelectDisplay { id: u32::MAX }
         ));
         assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"selectDisplay","id":-1}"#).is_err());
-        // A touch contact: `phase` rides as the lowercase name. Asserted on a
-        // mid-contact one, since `down` is the variant every example reaches for.
-        assert!(matches!(
+        // There is no touch message: no engine carries touch, so a contact is
+        // refused rather than dropped somewhere below.
+        assert!(
             serde_json::from_str::<ClientMsg>(
                 r#"{"type":"touch","id":3,"phase":"move","x":640,"y":400}"#
             )
-            .unwrap(),
-            ClientMsg::Touch { id: 3, phase: TouchPhase::Move, x: 640, y: 400 }
-        ));
+            .is_err()
+        );
         // There is no audio message. Subscribing is opening the audio socket, and the
         // one thing that could be said here is refused rather than ignored, so a client
         // still sending the deleted message learns it on the first attempt instead of
@@ -2338,10 +2293,6 @@ mod tests {
                 ),
                 None => panic!("remoteOs must be a text frame"),
             }
-        }
-        match ServerMsg::TouchReady.text_frame() {
-            Some(json) => assert_eq!(json, r#"{"type":"touchReady"}"#),
-            None => panic!("touchReady must be a text frame"),
         }
         for active in [false, true] {
             match (ServerMsg::Resizing { active }).text_frame() {

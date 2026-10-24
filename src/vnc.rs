@@ -6105,9 +6105,9 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 WLSHARE_TILE_START | WLSHARE_TILE_FRAME | WLSHARE_TILE_END => Some(reader.read_u8().await?),
                 other => anyhow::bail!("server sent a tiles rectangle of kind {other}, which is none of wlshare's"),
             };
-            // A START says its stream's codec: VP9, or the H.264 this session asked
-            // for beside the tiles. One it did not ask for is a server that lost its
-            // framing, or is not wlshare.
+            // A START says its stream's codec: VP9 or H.264, whichever wlshare
+            // chose. Any other is a server that lost its framing, or is not
+            // wlshare.
             let start = if kind == WLSHARE_TILE_START {
                 let codec = reader.read_u8().await?;
                 anyhow::ensure!(
@@ -7729,11 +7729,6 @@ fn translate_input(
         // extension supplies it on a `wlshare` target; a plain target is never
         // sent a list, so no id ever names anything.
         ClientMsg::SelectDisplay { .. } => Vec::new(),
-        // RFB has no touch: a contact is a thing only MS-RDPEI carries, and the
-        // client offers the mode only after the RDP engine's `touchReady`,
-        // which this engine never sends. Anything arriving here is dropped
-        // rather than faked into a mouse — the trackpad gestures are that.
-        ClientMsg::Touch { .. } => Vec::new(),
         // Intercepted by the input loop where it means something — a High
         // Performance virtual display follows the client's screen, by density
         // or by full resolution depending on `resize`. Everywhere else there is

@@ -2496,10 +2496,6 @@ fn translate_input(
                 .map(|(delta, horizontal)| RemoteInput::Wheel { delta, horizontal, x, y })
                 .collect()
         }
-        // Passthrough contacts are offered only once an engine reports
-        // `TouchReady`, and this one opens no touch channel to report — so one
-        // arriving here is a client that invented it.
-        ClientMsg::Touch { .. } => Vec::new(),
         // `caps` is VNC-only: the RDP host tracks its own CapsLock from the
         // forwarded scancode.
         ClientMsg::Key { code, pressed, .. } => match keymap::scancode(&code) {
@@ -3272,19 +3268,6 @@ mod tests {
         let events = translate(ClientMsg::MouseMove { x: -5, y: 70000 }, &mut last);
         assert_eq!(events, vec![RemoteInput::Move { x: 0, y: 799 }]);
         assert_eq!(last, (0, 799));
-    }
-
-    /// No touch channel, so a contact is nothing — and, not being the pointer,
-    /// it leaves the pointer's position alone.
-    #[test]
-    fn a_touch_contact_is_dropped_and_leaves_the_pointer_alone() {
-        let mut last = (7, 9);
-        let events = translate(
-            ClientMsg::Touch { id: 3, phase: crate::protocol::TouchPhase::Down, x: 100, y: 200 },
-            &mut last,
-        );
-        assert!(events.is_empty());
-        assert_eq!(last, (7, 9), "a finger is not the mouse");
     }
 
     #[test]

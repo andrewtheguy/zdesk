@@ -247,7 +247,7 @@ rather than a pixel colour or the five-second timing from one run.
 
 The choice outlives the client. wlshare keeps the output the last client asked
 for — a reconnect opens on that one, not on the configured default — until the
-daemon restarts.
+configured output next appears or the daemon restarts.
 
 One thing worth knowing when testing an idle host: with the monitors asleep
 (`swaymsg output * power off`, which swayidle does on a timer), wlr-screencopy

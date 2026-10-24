@@ -163,9 +163,11 @@ Both modes connect the same way until the record layer is up.
    records.
 6. **The mode.** High Performance sends `SetDisplayConfiguration`, both modes send
    `SetPixelFormat` and `SetEncodings`, Standard's naming its quality's codec, and
-   High Performance then arms `AutoFrameBufferUpdate`. Standard arms it when the
-   first layout names the screen being sent: at 0, as Apple's viewer does, where
-   High Performance arms one push a second (see [Other messages](#other-messages)).
+   High Performance then arms `AutoFrameBufferUpdate`. The unofficial virtual
+   display under `ard` does the same, arming at 0. Standard on the physical
+   displays arms it when the first layout names the screen being sent: at 0, as
+   Apple's viewer does, where High Performance arms one push a second (see
+   [Other messages](#other-messages)).
 
 ### Other login types
 
@@ -287,8 +289,10 @@ The Mac reports its screens according to which of two encodings the client's
 | `DisplayInfo` without `AppleDisplayLayout` | the older `DisplayInfo` |
 | neither | nothing about its displays |
 
-`vnc_apple::ENCODINGS` asks for ZRLE from the start, and for no zlib, along with
-the layout.
+Every list zDesk opens with names the layout. High Performance's
+(`vnc_apple::ENCODINGS`) names ZRLE as its one codec, and no zlib; a Standard
+session's names its quality's codec ahead of ZRLE, `0x3f3` for Adaptive and zlib
+for Full (`vnc_apple::encodings`).
 
 Advertising is a promise: every advertised encoding must be decodable, or at least
 steppable. `CursorPos` (`0x44c`) has no payload. `DisplayInfo` is 10 bytes of
@@ -924,8 +928,8 @@ observed, assisted or controlled. zDesk sends 1.
 byte 2: 1 starts the agent watching the Mac's pasteboard, 2 stops it, and any
 other value is ignored. Change notifications need `ViewerInfo`, `SetMode(control)`
 and `AutoPasteboard(start)`, in that order. Both modes send them in the cleartext
-prelude, and High Performance repeats `AutoPasteboard(start)` after the virtual
-display's layout. The Mac then signals with `MiscStatus`:
+prelude, and a session on a virtual display, High Performance or `ard` with
+`virtual_display = true`, repeats `AutoPasteboard(start)` after each layout. The Mac then signals with `MiscStatus`:
 - command 2: its pasteboard changed;
 - command 3: it needs data for a promised flavor.
 
@@ -1253,8 +1257,11 @@ sound, and one that stops (see [Liveness](#the-stream)).
 zDesk passes the picture to the browser in every session, as the Mac's HEVC,
 which the picker offers a browser that decodes it, in its own decoder or the
 page's software one where the gateway serves it, or as its H.264, offered to
-any browser with a `VideoDecoder`: each access unit goes to the browser as it came, described by the stream's
-own sequence parameter set, and a PLI is its repaint.
+any browser with a `VideoDecoder`: each access unit goes to the browser as it
+came, and a PLI is its repaint. The HEVC is described by the stream's own
+parameter sets; the H.264's sequence parameter set is written out saying its
+pictures come in decoding order (`h264_in_decoding_order`, below), and every
+picture is the Mac's.
 The sound is never decoded here either: in every session each sound unit goes on
 `/ws/audio` as it came, described by the AudioSpecificConfig below. Either
 way the stream's gaps show nothing: ZRLE's rectangles are stepped over, the
@@ -1427,7 +1434,9 @@ the strip's number, a frame's strips sharing its timestamp.
   set has a VUI (full range, Display P3 primaries, sRGB transfer, BT.709
   matrix) and no bitstream restriction, allows 12 reference frames, and each
   picture's order count is its place in the decoding order, one more than the
-  last.
+  last. zDesk writes the sequence parameter set out with a bitstream restriction
+  saying no picture waits to be reordered (`h264_in_decoding_order`), so a
+  decoder hands each picture on as it decodes it.
 - **A loss is not recovered from by itself.** A run that lost packets in its
   third frame and asked for nothing decoded two frames and no picture after
   them.
@@ -2026,7 +2035,8 @@ link to a physical Mac has not been observed.
 The Mac keeps answering `FramebufferUpdateRequest`s with RFB pixels for the region
 asked for, and pushes them unrequested inside the armed `AutoFrameBufferUpdate`
 region.
-Once a picture of the current size has arrived, zDesk polls and arms one pixel.
+From the `SetEncodings` that names the media stream on, zDesk polls and arms
+one pixel (below).
 That still brings every cursor shape and layout: 11 cursor shapes in 20 s of
 moving over a TextEdit window, with 123 bytes of zlib. A login once pushed a whole
 screen unasked, which is stepped over like every rectangle of such a session.
@@ -2130,7 +2140,8 @@ The Mac sends from its own address to the viewer's address on the TCP connection
 from each port it named to the same port number at the viewer, so a NAT between
 them has to pass it. The viewer's reports go out from the same
 ports every second, which opens a port-preserving NAT's mapping. Every Mac uses the
-same port numbers, so zDesk binds them with address and port reuse and connects
+same port numbers, so zDesk binds them with address reuse, and port reuse on
+Unix, and connects
 each socket to its Mac. Several gateways on one host can then share the numbers,
 unless one of them bound without reuse, as v0.0.249 did. Nothing arriving within
 5 s of message 1 is logged, and the session ends when the offer's first picture

@@ -68,8 +68,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
 - [Sessions](docs/architecture.md#sessions): one active session per gateway,
   with takeover, and a fresh engine for every `connect`; what a session is
   started with, chosen at the picker and held for the session's life.
-- [Input and display](docs/architecture.md#input-and-display): the two touch
-  layers, the display picker as the remote's, presentation at 100%, density as
+- [Input and display](docs/architecture.md#input-and-display): touch as a
+  trackpad, the display picker as the remote's, presentation at 100%, density as
   the wire's word, and rescaling.
 - [Media paths](docs/architecture.md#media-paths): passed untouched or the
   gateway's own tiles, a desktop past the ceiling, audio, camera and microphone.
@@ -96,7 +96,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
   deterministic system decisions, not pixels, paint timing, frame rate, latency,
   cursor rendering, or layout-dependent synthetic input. Run headless with one
   worker, use accessible locators and web-first assertions, give wire-format
-  specs an independent parser, and call `returnToPicker` from every spec.
+  specs an independent parser, and leave every spec through `leaveSession`,
+  which returns to the picker.
 - Use `tests/ws_probe.py` to inspect the control messages a browser sees.
 - Do not use AppleScript, synthetic clicks, or screenshot loops to inspect a
   browser. Ask the client through deterministic interfaces, and ask the user for
