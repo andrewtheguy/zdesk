@@ -1,6 +1,6 @@
 # 使用 zDesk
 
-[English](guide.md) | 简体中文
+[English](guide.md) | 简体中文 | [繁體中文](guide.zh-TW.md)
 
 网关[安装](install.md)好之后，运维者和用户需要了解的内容：如何访问页面、会话以哪些选项启动、各类目标如何设置，以及本地多实例控制面。所有配置项都在带注释的 [`zdesk.example.toml`](../zdesk.example.toml) 中，其背后的设计见 [Architecture](architecture.md)。本页链接的其他文档都只有英文版。
 
@@ -120,7 +120,7 @@ RDP 客户端是网关自己实现的，针对 Windows 10 和 11 的远程桌面
 
 默认情况下，Windows 主机以有损方式绘制大部分桌面，使用 RemoteFX Progressive 和 ClearCodec 的 NSCodec，会让文字和颜色略微模糊。这由主机自己的策略决定，zDesk 中没有任何设置能覆盖它。要让它精确绘制每个像素：
 
-1. 在主机上打开本地组策略编辑器（`gpedit.msc`），进入“计算机配置 > 管理模板 > Windows 组件 > 远程桌面服务 > 远程桌面会话主机 > 远程会话环境”（Computer Configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Remote Session Environment）。启用 *为 RemoteFX 自适应图形配置图像质量*（*Configure image quality for RemoteFX Adaptive Graphics*），并设为 **无损**（**Lossless**）。没有组策略编辑器的 Windows 版本可以在提升权限的命令提示符中通过注册表进行同样的设置：
+1. 在主机上打开本地组策略编辑器（`gpedit.msc`），进入“计算机配置 > 管理模板 > Windows 组件 > 远程桌面服务 > 远程桌面会话主机 > 远程会话环境”（Computer Configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Remote Session Environment）。启用 *配置 RemoteFX 自适应图形的图像质量*（*Configure image quality for RemoteFX Adaptive Graphics*），并设为 **无损**（**Lossless**）。没有组策略编辑器的 Windows 版本可以在提升权限的命令提示符中通过注册表进行同样的设置：
 
    ```text
    reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v ImageQuality /t REG_DWORD /d 1 /f
@@ -157,7 +157,7 @@ Mac 不需要安装额外的软件。为目标提供 Mac *账户*的用户名和
   - Mac 向网关的 UDP 端口 5900 和 5901 发送数据，有第二个显示器时还有 5902，因此两者之间的防火墙或 NAT 必须放行。
   - Linux 网关的 `net.core.rmem_max` 至少要 4194304，供画面的套接字使用，低于该值时日志会发出警告：默认的 212992 在 Retina 尺寸下会丢失关键帧。
   - 网关不解码 Mac 的任何一路流：画面以选择器中选择的 HEVC 或 H.264 直通。
-  - H.264 直通不需要在页面中添加任何东西：网关请求 Mac 用 H.264 代替 HEVC，浏览器用自己的解码器解码，而能解码 H.264 的浏览器比能解码 HEVC 的多。因此默认构建无需软件解码器就能为任何浏览器（包括 Firefox）提供该目标，选择器也向所有浏览器提供 H.264。
+  - H.264 直通不需要在页面中添加任何东西：网关请求 Mac 用 H.264 代替 HEVC，浏览器用自己的解码器解码，而能解码 H.264 的浏览器比能解码 HEVC 的多。因此默认构建无需软件解码器，就能为任何具备 `VideoDecoder` 的浏览器（包括 Firefox）提供该目标；选择器也只在这些浏览器中提供 H.264，没有 `VideoDecoder` 时会置灰。
   - HEVC 直通只有在页面的启动探测找到解码路径时才发送 HEVC。支持情况取决于浏览器、平台和 GPU，因此以选择器为准。网关还可以提供 [`zdesk.example.toml`](../zdesk.example.toml) 中描述的可选软件画面解码器。
   - Mac 推流时会把自己的扬声器静音，因此会话始终传输 AAC-ELD 声音。页面会单独探测它；如果无法解码声音，会话会在没有音频的情况下继续，并在菜单中说明原因。
 - **非官方：** 在 `ard` 目标上设置 `virtual_display = true`，会在这样的虚拟显示器上以标准模式打开，支持调整尺寸，但没有媒体流和声音，期间物理显示器被停用。这是访问连接了多个显示器的 Mac 的推荐方式，因为超过两个小屏幕时，Combined Display 在浏览器中并不实用。Apple 的查看器从不提供这种组合；只在 macOS 26 上测试过。

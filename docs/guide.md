@@ -1,6 +1,6 @@
 # Using zDesk
 
-English | [简体中文](guide.zh-CN.md)
+English | [简体中文](guide.zh-CN.md) | [繁體中文](guide.zh-TW.md)
 
 What an operator and a user need to know once the gateway is
 [installed](install.md): how the page is reached, what a session is started
@@ -387,8 +387,9 @@ connection with the same error as wrong credentials. See
   - The H.264 passthrough needs nothing added in the page: the Mac is asked for
     H.264 in place of its HEVC, and the browser decodes it with its own decoder,
     which more browsers have for H.264 than for HEVC. So a default build serves
-    the target to any browser, Firefox included, with no software decoder, and
-    the picker offers the H.264 to every browser.
+    the target, with no software decoder, to any browser that has
+    `VideoDecoder`, Firefox included, and the picker offers the H.264 only in
+    those browsers; without `VideoDecoder` it is greyed.
   - The HEVC passthrough sends the HEVC only when the page's startup probe finds a
     decoder path. Support depends on the browser, platform and GPU, so the
     picker is authoritative. The gateway can also serve the optional software
