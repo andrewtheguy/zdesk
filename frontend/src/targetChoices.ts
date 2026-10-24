@@ -393,7 +393,7 @@ function pictureOptions(
     },
     "apple-h264": {
       value: "apple-h264",
-      label: "H.264 (alpha), passed through",
+      label: "H.264 (beta), passed through",
       note: abilities.appleH264
         ? "The Mac's own picture in 4:2:0, in the browser's own decoder. For compatibility."
         : "This browser has no video decoder for the Mac's H.264.",
