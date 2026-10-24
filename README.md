@@ -42,34 +42,23 @@ side.
 
 https://github.com/user-attachments/assets/982bf2d0-3fac-4a3c-8213-27412d10977d
 
-
-
 ### Windows -> Mac with Two Remote Virtual Displays
 
 - Windows -> Mac with Two Remote Virtual Displays shown in separate browser tabs with a window being able to be dragged across displays right between the two tabs.
 
 https://github.com/user-attachments/assets/a31030c8-dab9-467c-9231-20329e138e7d
 
-
-
-
 ### iOS -> Windows
-iOS Safari connecting to windows with horizontal scroll support with two fingers swiping left and right
+
+- Safari on iOS connected to Windows' own Remote Desktop, scrolling horizontally with a two-finger swipe left or right.
 
 https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
 
-
-
 ### iOS -> Mac
 
-iOS Safari connecting to mac screenshare high performance with horizontal scroll support and network throughput meter
-
+- Safari on iOS connected to a Mac's High Performance Screen Sharing, scrolling horizontally, with the network throughput meter shown.
 
 https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
-
-
-
-
 
 ### Mac -> Windows at Retina/HiDPI Density with Audio
 
@@ -77,19 +66,11 @@ https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
 
 https://github.com/user-attachments/assets/3dfd0dc2-dc7d-4d41-b99e-1340f685390c
 
-
-
-
-
 ### Mac -> Linux (wlshare on Sway) at Retina/HiDPI Density with Audio
 
 - wlshare on Sway shown at the Mac's Retina/HiDPI density, with the remote's sound, and the remote desktop resizing to follow the browser into and out of immersive full screen.
 
 https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
-
-
-
-
 
 ## Features
 
