@@ -35,6 +35,8 @@ side.
 > that reads the old form. Check [`zdesk.example.toml`](zdesk.example.toml) against your config
 > when you upgrade. The page and the gateway are one release too: a tab left
 > open across an upgrade names both versions and asks to be reloaded.
+> This is about compatibility, not stability: I have been actively using the
+> features not marked experimental, and they have been stable.
 
 ## Demo
 

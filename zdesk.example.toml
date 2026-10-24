@@ -559,7 +559,7 @@ password_ref = "example"
 # that cannot decode the AAC-ELD still runs the session without sound and says why
 # under Audio. No encoder touches it, so it has no Opus walk.
 #
-# EXPERIMENTAL. The picture is always passed to the browser as the Mac sent it,
+# The picture is always passed to the browser as the Mac sent it,
 # in the codec chosen at the picker: its HEVC, or its H.264. The gateway decodes
 # neither, and codes nothing of the Mac's. Every picture the Mac sends goes, up
 # to 30 a second, at the Mac's own quality. Its ZRLE rectangles are never read or

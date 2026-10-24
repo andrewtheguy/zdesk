@@ -18,7 +18,7 @@ Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的�
 `zdesk serve` 是单用户的：一个登录、一份目标列表、一个活动会话。原生安装包还包含 [`zdesk tui`](docs/guide.zh-CN.md#本地实例)，这是一个本地控制面，可以并排运行多个相互独立的网关实例。
 
 > [!WARNING]
-> **不保证向后兼容。** zDesk 的[方向](docs/architecture.md#direction)仍在调整中，任何版本都可能更改或移除某个配置项、WebSocket 协议或某项功能，且不再读取旧的写法。升级时请对照 [`zdesk.example.toml`](zdesk.example.toml) 检查你的配置。页面和网关属于同一个版本：升级时仍打开着的标签页会显示两者的版本号，并提示重新加载。
+> **不保证向后兼容。** zDesk 的[方向](docs/architecture.md#direction)仍在调整中，任何版本都可能更改或移除某个配置项、WebSocket 协议或某项功能，且不再读取旧的写法。升级时请对照 [`zdesk.example.toml`](zdesk.example.toml) 检查你的配置。页面和网关属于同一个版本：升级时仍打开着的标签页会显示两者的版本号，并提示重新加载。这里说的是兼容性，而不是稳定性：我一直在实际使用未标注为实验性的功能，它们一直很稳定。
 
 ## 演示
 
