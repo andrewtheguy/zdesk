@@ -120,7 +120,7 @@ RDP 客户端是网关自己实现的，针对 Windows 10 和 11 的远程桌面
 
 默认情况下，Windows 主机以有损方式绘制大部分桌面，使用 RemoteFX Progressive 和 ClearCodec 的 NSCodec，会让文字和颜色略微模糊。这由主机自己的策略决定，zDesk 中没有任何设置能覆盖它。要让它精确绘制每个像素：
 
-1. 在主机上打开本地组策略编辑器（`gpedit.msc`），进入“计算机配置 > 管理模板 > Windows 组件 > 远程桌面服务 > 远程桌面会话主机 > 远程会话环境”（Computer Configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Remote Session Environment）。启用 *为 RemoteFX 自适应图形配置图像质量*（*Configure image quality for RemoteFX Adaptive Graphics*），并设为 **无损**（**Lossless**）。没有组策略编辑器的 Windows 版本可以在提升权限的命令提示符中通过注册表进行同样的设置：
+1. 在主机上打开本地组策略编辑器（`gpedit.msc`），进入“计算机配置 > 管理模板 > Windows 组件 > 远程桌面服务 > 远程桌面会话主机 > 远程会话环境”（Computer Configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Remote Session Environment）。启用 *配置 RemoteFX 自适应图形的图像质量*（*Configure image quality for RemoteFX Adaptive Graphics*），并设为 **无损**（**Lossless**）。没有组策略编辑器的 Windows 版本可以在提升权限的命令提示符中通过注册表进行同样的设置：
 
    ```text
    reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v ImageQuality /t REG_DWORD /d 1 /f
