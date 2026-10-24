@@ -1,6 +1,6 @@
 # zDesk
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [繁體中文](README.zh-TW.md)
 
 在浏览器中使用远程桌面，连接的是各平台自带的远程桌面服务器。zDesk 是一个小型网关，运行在你的机器旁边。它可以连接：
 

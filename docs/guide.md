@@ -1,6 +1,6 @@
 # Using zDesk
 
-English | [简体中文](guide.zh-CN.md)
+English | [简体中文](guide.zh-CN.md) | [繁體中文](guide.zh-TW.md)
 
 What an operator and a user need to know once the gateway is
 [installed](install.md): how the page is reached, what a session is started

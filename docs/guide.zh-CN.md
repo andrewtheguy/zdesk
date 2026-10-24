@@ -1,6 +1,6 @@
 # 使用 zDesk
 
-[English](guide.md) | 简体中文
+[English](guide.md) | 简体中文 | [繁體中文](guide.zh-TW.md)
 
 网关[安装](install.md)好之后，运维者和用户需要了解的内容：如何访问页面、会话以哪些选项启动、各类目标如何设置，以及本地多实例控制面。所有配置项都在带注释的 [`zdesk.example.toml`](../zdesk.example.toml) 中，其背后的设计见 [Architecture](architecture.md)。本页链接的其他文档都只有英文版。
 
