@@ -20,10 +20,13 @@ It needs:
   `http://` is refused, by name.
 - **WebCodecs** for the pictures a remote sends as video: `VideoDecoder` for
   wlshare's VP9, a High Performance Mac's HEVC or H.264 and an RDP host's
-  H.264. The client still starts without it, or when a decoder refuses a codec:
-  the picker greys what needs it, with the reason, and the gateway's tiles, a
-  Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
-  anywhere. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
+  H.264. The client still starts without it: the picker greys what needs it,
+  with the reason, and the gateway's tiles, a Standard Mac's Adaptive picture
+  and an RDP pipeline without H.264 work anywhere. The page asks the browser's
+  decoder beforehand only about the Mac's HEVC and the RDP host's H.264, and
+  greys either where the decoder refuses it. The Mac's H.264 is offered to every
+  browser with `VideoDecoder`, and one whose decoder refuses it says so in the
+  session, by the decoder's error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
   without it (Safari 16.4 to 18) plays no sound, and a later Safari, whose
   `AudioDecoder` fails FLAC, plays Opus and the Mac's sound.
 
@@ -389,7 +392,9 @@ connection with the same error as wrong credentials. See
     which more browsers have for H.264 than for HEVC. So a default build serves
     the target, with no software decoder, to any browser that has
     `VideoDecoder`, Firefox included, and the picker offers the H.264 only in
-    those browsers; without `VideoDecoder` it is greyed.
+    those browsers; without `VideoDecoder` it is greyed. The picker does not
+    ask the decoder itself: a browser whose decoder does not take the Mac's
+    H.264 says so in the session, by the decoder's error.
   - The HEVC passthrough sends the HEVC only when the page's startup probe finds a
     decoder path. Support depends on the browser, platform and GPU, so the
     picker is authoritative. The gateway can also serve the optional software
