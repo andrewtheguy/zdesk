@@ -20,13 +20,15 @@ It needs:
   `http://` is refused, by name.
 - **WebCodecs** for the pictures a remote sends as video: `VideoDecoder` for
   wlshare's VP9, a High Performance Mac's HEVC or H.264 and an RDP host's
-  H.264. The client still starts without it: the picker greys what needs it,
-  with the reason, and the gateway's tiles, a Standard Mac's Adaptive picture
-  and an RDP pipeline without H.264 work anywhere. The page asks the browser's
-  decoder beforehand only about the Mac's HEVC and the RDP host's H.264, and
-  greys either where the decoder refuses it. The Mac's H.264 is offered to every
-  browser with `VideoDecoder`, and one whose decoder refuses it says so in the
-  session, by the decoder's error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
+  H.264. The client still starts without it, and the gateway's tiles, a
+  Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
+  anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
+  the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
+  the reason, where the decoder refuses them, and a `wlshare` target, whose VP9
+  is its picture in every session, cannot be started. The Mac's H.264 is not
+  asked about: it is offered to every browser with `VideoDecoder` and greyed
+  without one, and a decoder that refuses it says so in the session, by its
+  error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
   without it (Safari 16.4 to 18) plays no sound, and a later Safari, whose
   `AudioDecoder` fails FLAC, plays Opus and the Mac's sound.
 

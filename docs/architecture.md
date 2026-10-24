@@ -452,8 +452,8 @@ the newest pixels whenever a round goes.
 
 #### The browser's four answers
 
-The browser is asked four questions, each once at page load and stated on the
-session socket: whether it decodes a High Performance Mac's HEVC, whether it
+The browser is asked four questions that it states on the session socket, each
+once at page load: whether it decodes a High Performance Mac's HEVC, whether it
 composes an RDP host's graphics pipeline, whether it decodes the H.264 such
 a pipeline may carry, and whether its own decoder takes 4:4:4 VP9. The last
 two refuse nobody. The H.264 answer decides only whether a passed pipeline's host is
@@ -473,10 +473,12 @@ session would pass what the browser cannot take, and end the session of an
 owner that comes back answering no, which lands on the picker
 ([Session lifecycle](#session-lifecycle)). No other browser's answers meet a
 running session: a takeover ends it first. Of the four stated answers, only the
-pipeline answer can leave a target unstartable: an RDP target with the pipeline
-on, for a browser that cannot compose it. The page's separate lack of
-`VideoDecoder` can leave a High Performance Mac target unstartable when it also
-cannot take the HEVC. Do not grow the answers into
+pipeline answer can leave a target unstartable on its own: an RDP target with
+the pipeline on, for a browser that cannot compose it. The page's own decoder
+checks, which the socket does not state, leave two more unstartable: a High
+Performance Mac for a browser with neither an HEVC path nor `VideoDecoder`, and
+a `wlshare` target for one whose decoder takes no 4:2:0 VP9, `VideoDecoder`'s
+absence included. Do not grow the answers into
 a wider capability negotiation, and do not let either rebuild a session with
 choices nobody made.
 Preserve the announced configuration and color-space behavior in
@@ -2116,19 +2118,23 @@ on the same browser twice to build a refusal on, and a refusal phrased as "this
 browser accepted none" turns any fault near the path into an accusation against
 the browser.
 
-What the browser is asked is four questions. One decides what a host is told and
+What the browser states is four answers. One decides what a host is told and
 nothing else: whether this browser decodes the H.264 a passed RDP pipeline may
 carry, which greys the picker's Adaptive for a "no". The other two say which
 passthrough the browser can take: a High Performance Mac's HEVC, and an RDP
 host's graphics pipeline. They decide what the picker offers before a session
-starts, where a "no" leaves the Mac's H.264 available only to a page with
-`VideoDecoder` and leaves an RDP target with the pipeline on unstartable, and
+starts, where a "no" greys the Mac's HEVC, leaving its H.264 to a page with
+`VideoDecoder`, and leaves an RDP target with the pipeline on unstartable, and
 they keep a session that passes a stream from
 being sent to a browser that cannot show it
 ([What a session is started with](#what-a-session-is-started-with)). The fourth,
 whether the browser's own decoder takes 4:4:4 VP9, decides the chroma of a
 `wlshare` target's stream, and a page that comes back answering otherwise than
-the session was started for is given it from its start.
+the session was started for is given it from its start. The page settles two
+more things for itself and states neither: whether it has `VideoDecoder`, which
+is taken to decode the Mac's H.264, and whether that decoder takes 4:2:0 VP9,
+without which a `wlshare` target cannot start. The gateway is sent no choice
+the picker greys.
 
 The refusal itself stays where it always was: one honest failure at the client's own
 decoder. The gateway announces the configuration in `ServerMsg::VideoFormat` before
@@ -2293,9 +2299,10 @@ and `GET /api/targets` carries it:
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
   needs it. The Mac's H.264 is greyed where the browser has no `VideoDecoder`,
   which is taken to decode it unasked, and a High Performance Mac neither of whose pictures it takes cannot
-  start, with the reason. A Standard Mac's own pictures are never greyed, nor
-  are a `wlshare` target's, both VP9: the target cannot start in a browser
-  whose decoder refuses it. `/api/targets` says which streams a target can pass, as
+  start, with the reason. A Standard Mac's pictures are never greyed: its
+  Adaptive picture is decoded by every page in WebAssembly, and the gateway's
+  tiles are images every page decodes. Nor are a `wlshare` target's, both VP9:
+  the target cannot start in a browser whose decoder refuses it. `/api/targets` says which streams a target can pass, as
   `passthroughs`; a target with any has no picture coded here. For the pipeline the picker says the stream is always
   passed, as a note
   with nothing to choose, and where the
