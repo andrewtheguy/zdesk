@@ -18,7 +18,7 @@ use crate::config::{
     TargetConfig,
 };
 use crate::feedback::LinkFeedback;
-use crate::protocol::{ClientMsg, HostDisplay, MouseButton, ServerMsg, TouchPhase};
+use crate::protocol::{ClientMsg, HostDisplay, MouseButton, ServerMsg};
 use crate::{rdp, vnc};
 
 /// Capacity of the engine→client frame channels. Bounded so a slow browser
@@ -404,15 +404,13 @@ impl EngineSlot {
     }
 }
 
-/// Keys, buttons and touch contacts an engine has been told are down, as the
+/// Keys and buttons an engine has been told are down, as the
 /// inputs that would release them. Followed from the input as it is forwarded,
 /// so it is exactly what the remote was told, whichever browser told it.
 #[derive(Default)]
 struct HeldInput {
     keys: std::collections::BTreeSet<String>,
     buttons: Vec<MouseButton>,
-    /// Each contact's last position, since a cancel is a transition in a place.
-    touches: std::collections::BTreeMap<i32, (i32, i32)>,
 }
 
 impl HeldInput {
@@ -432,12 +430,6 @@ impl HeldInput {
             ClientMsg::MouseButton { button, pressed: false, .. } => {
                 self.buttons.retain(|held| held != button);
             }
-            ClientMsg::Touch { id, phase: TouchPhase::Down | TouchPhase::Move, x, y } => {
-                self.touches.insert(*id, (*x, *y));
-            }
-            ClientMsg::Touch { id, phase: TouchPhase::Up | TouchPhase::Cancel, .. } => {
-                self.touches.remove(id);
-            }
             _ => {}
         }
     }
@@ -453,10 +445,7 @@ impl HeldInput {
         let buttons = std::mem::take(&mut self.buttons).into_iter().map(|button| {
             ClientMsg::MouseButton { button, pressed: false, clicks: 1 }
         });
-        let touches = std::mem::take(&mut self.touches).into_iter().map(|(id, (x, y))| {
-            ClientMsg::Touch { id, phase: TouchPhase::Cancel, x, y }
-        });
-        keys.chain(buttons).chain(touches).collect()
+        keys.chain(buttons).collect()
     }
 }
 
@@ -3549,7 +3538,6 @@ mod tests {
             seen.push(match msg {
                 ClientMsg::Key { code, pressed, .. } => format!("{code} {pressed}"),
                 ClientMsg::MouseButton { button, pressed, .. } => format!("{button:?} {pressed}"),
-                ClientMsg::Touch { id, phase, x, y } => format!("touch {id} {phase:?} {x},{y}"),
                 other => format!("{other:?}"),
             });
         }
@@ -3570,17 +3558,12 @@ mod tests {
         mgr.forward_input(att.id, key("KeyC", true));
         mgr.forward_input(att.id, key("KeyC", false));
         mgr.forward_input(att.id, ClientMsg::MouseButton { button: MouseButton::Left, pressed: true, clicks: 1 });
-        mgr.forward_input(att.id, ClientMsg::Touch { id: 0, phase: TouchPhase::Down, x: 1, y: 1 });
-        mgr.forward_input(att.id, ClientMsg::Touch { id: 0, phase: TouchPhase::Move, x: 5, y: 6 });
         drain(&mut input_rx);
 
-        // The socket drops with Control, the button and a finger still down: the
-        // browser can no longer let go of them, so the gateway does.
+        // The socket drops with Control and the button still down: the browser
+        // can no longer let go of them, so the gateway does.
         mgr.detach(att.id);
-        assert_eq!(
-            drain(&mut input_rx),
-            ["ControlLeft false", "Left false", "touch 0 Cancel 5,6"],
-        );
+        assert_eq!(drain(&mut input_rx), ["ControlLeft false", "Left false"]);
 
         // The reattach resumes the engine with nothing left to release, and its
         // repaint waits for the page's display socket.

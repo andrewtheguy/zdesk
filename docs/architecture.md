@@ -352,10 +352,10 @@ whose bitmap updates are sent as tiles by the gateway.
 
 ### Input and display
 
-- Touch has two mutually exclusive layers: `touchGestures.ts` treats fingers as
-  a trackpad and interprets gestures in the page; `touchPassthrough.ts` forwards
-  uninterpreted MS-RDPEI contacts when an RDP host reports `touchReady`. Never add
-  gesture recognition to touch passthrough. See
+- Touch is a trackpad: `touchGestures.ts` interprets fingers in the page as
+  the pointer, the wheel and the view. No engine carries touch contacts, so
+  there is no touchscreen layer and no wire message for one; bringing one back
+  is [a roadmap entry](roadmap.md#touch-on-an-rdp-target-ms-rdpei). See
   [Browser SPA](#browser-spa).
 - The display picker is the remote's list and the remote's checkmark: engines
   fill it, and the browser holds no display state of its own. Never move the
@@ -3219,9 +3219,9 @@ is mapped from DOM codes to scancodes and queued to the client's thread as
 fast-path events.
 
 The client carries the desktop, the pointer, keyboard, mouse, resize, the
-clipboard, sound, and the browser's camera and microphone, and no touch: touch is
-announced only by a host that opens MS-RDPEI, which this client never asks for. What it would take is in
-[`roadmap.md`](roadmap.md).
+clipboard, sound, and the browser's camera and microphone, and no touch: it does
+not ask for MS-RDPEI. What it would take is in
+[`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
 Static virtual channels are asked for by what the session needs: `drdynvc` for a
 session started with resize, the pipeline on (`egfx` left on), the camera, or
@@ -3516,8 +3516,8 @@ ends with the window; the client intentionally does not show a leave-site dialog
 
 A key held on the remote is let go by the page while the page is there to do it. A
 page that goes away cannot: its keyups die with its socket, and the page that comes
-back holds nothing of its own. So the session layer follows every key, button and
-touch contact it forwards to the engine, and releases whatever is still down when the
+back holds nothing of its own. So the session layer follows every key and button
+it forwards to the engine, and releases whatever is still down when the
 attached browser leaves — a detach, an attachment superseded by a reload, a claim
 evicting the socket — and before any engine ends. Otherwise a reattach resumed an
 engine still holding a Control nobody was pressing. While it is there, the page
@@ -3563,15 +3563,11 @@ which wlshare injects as a wheel's discrete axis, and only `pixel` deltas as the
 distance. RDP counts a `notch` as one notch of rotation and an Apple target as
 the 100 pixels it stood for.
 
-That touch layer is a trackpad, and there is a second one that is a touchscreen.
-When an engine's host opens a touch channel (MS-RDPEI on RDP), the gateway says
-`touchReady`; a touch-capable client then shows a **Touchscreen** switch
-(remembered, off by default) that forwards fingers as `touch` contacts — down,
-move, up, cancel, in framebuffer pixels, named by small slot ids — instead of
-interpreting them, and the guest recognises the gestures itself. A reattach
-re-announces it. No engine opens one today — the RDP client does not offer
-MS-RDPEI and VNC has no touch — so no session sends `touchReady` and the switch
-stays hidden. See `frontend/src/touchPassthrough.ts`.
+That touch layer is a trackpad, and the only one: no engine carries touch
+contacts — the RDP client does not ask for MS-RDPEI and VNC has no touch — so
+fingers are never forwarded as a touchscreen's, and the wire has no message for
+them. What a touchscreen would take is in
+[`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
 On a Mac host connected to a non-Mac remote, selected Command shortcuts are
 translated to Control. A Mac-keyboard toggle disables translation, and the

@@ -1542,7 +1542,7 @@ async fn display(
                     paint.lock().unwrap().acknowledge(sequence, queued_ms, draw_ms);
                     room.notify_one();
                 }
-                // What is made over a display — the pointer, the keys, touches —
+                // What is made over a display — the pointer, the keys —
                 // its repaint, the window it is shown in and the screen that
                 // window is on. What concerns the session goes on its socket.
                 Ok(
@@ -1550,7 +1550,6 @@ async fn display(
                     | ClientMsg::MouseButton { .. }
                     | ClientMsg::Wheel { .. }
                     | ClientMsg::Key { .. }
-                    | ClientMsg::Touch { .. }
                     | ClientMsg::Refresh
                     | ClientMsg::Viewport { .. }
                     | ClientMsg::HostDisplay(_)),

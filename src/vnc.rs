@@ -7729,11 +7729,6 @@ fn translate_input(
         // extension supplies it on a `wlshare` target; a plain target is never
         // sent a list, so no id ever names anything.
         ClientMsg::SelectDisplay { .. } => Vec::new(),
-        // RFB has no touch: a contact is a thing only MS-RDPEI carries, and the
-        // client offers the mode only after the RDP engine's `touchReady`,
-        // which this engine never sends. Anything arriving here is dropped
-        // rather than faked into a mouse — the trackpad gestures are that.
-        ClientMsg::Touch { .. } => Vec::new(),
         // Intercepted by the input loop where it means something — a High
         // Performance virtual display follows the client's screen, by density
         // or by full resolution depending on `resize`. Everywhere else there is

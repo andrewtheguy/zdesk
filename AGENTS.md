@@ -68,8 +68,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
 - [Sessions](docs/architecture.md#sessions): one active session per gateway,
   with takeover, and a fresh engine for every `connect`; what a session is
   started with, chosen at the picker and held for the session's life.
-- [Input and display](docs/architecture.md#input-and-display): the two touch
-  layers, the display picker as the remote's, presentation at 100%, density as
+- [Input and display](docs/architecture.md#input-and-display): touch as a
+  trackpad, the display picker as the remote's, presentation at 100%, density as
   the wire's word, and rescaling.
 - [Media paths](docs/architecture.md#media-paths): passed untouched or the
   gateway's own tiles, a desktop past the ceiling, audio, camera and microphone.

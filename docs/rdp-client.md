@@ -48,9 +48,9 @@ read, in [andrewtheguy/ms-rdp-specs](https://github.com/andrewtheguy/ms-rdp-spec
 
 The desktop, the pointer, keyboard, mouse, resize, the clipboard, sound, and the
 browser's camera and microphone going the other way, over one monitor or a row
-of two ([Virtual displays](#virtual-displays-alpha)). No touch: it is announced
-only by a host that opens MS-RDPEI, which this client never asks for. What it
-would take is in [`roadmap.md`](roadmap.md).
+of two ([Virtual displays](#virtual-displays-alpha)). No touch: it does not ask
+for MS-RDPEI. What it would take is in
+[`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
 ## The connection sequence
 

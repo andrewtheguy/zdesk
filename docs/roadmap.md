@@ -127,27 +127,28 @@ acknowledgement would stay as they are: one stream per pipeline, started at
 
 ### Touch on an RDP target (MS-RDPEI)
 
-Taken up if the need for it shows. The RDP client does not carry touch: it is a
-channel to write, and it has no config key, since whether touch exists is the
-host's answer and this client never asks.
-
-Everything on either side of the channel is already written and shipped: the
-browser's touch passthrough layer (`touchPassthrough.ts`), `ServerMsg::TouchReady`
-and `ClientMsg::Touch` are protocol-agnostic. Nothing below the wire needs
-designing for it.
+Taken up if the need for it shows. Nothing carries touch today: the RDP client
+does not ask for MS-RDPEI, and the page treats fingers as a trackpad alone. The
+touchscreen path an earlier engine had — a browser layer forwarding contacts, a
+wire message for them and one announcing the channel — was removed with it, so
+it would be written again on both sides. It would have no config key, since
+whether touch exists is the host's answer.
 
 MS-RDPEI is a *dynamic* channel and that transport is already here:
 `proto/dvc.rs` carries Display Control over `drdynvc`, and the session answers
-every Create Request it does not want with `NO_LISTENER` (`session.rs`). Accepting a second name, the RDPEI PDUs — client ready, and a
-touch event's contact frames — and the contact state machine are the work.
+every Create Request it does not want with `NO_LISTENER` (`session.rs`).
+Accepting a second name, the RDPEI PDUs — client ready, and a touch event's
+contact frames — and the contact state machine are the client's part.
 
-The rest is waiting for it. A host that opens the channel is to be forwarded as
-`ServerMsg::TouchReady` and re-sent to each client that attaches; the browser offers the passthrough toggle
-only after that, and `rdp.rs` drops a `ClientMsg::Touch` today because no engine
-can report one. Held contacts must be released when a client goes away, or the
-remote keeps fingers down that no longer exist. A Windows host opens MS-RDPEI and
-xrdp never does, which is the reason this stays an always-offered capability
-rather than a key.
+Above the channel: a message telling the page the host opened it, re-sent to
+each client that attaches; a contact message — down, move, up, cancel, in
+framebuffer pixels, named by small slot ids — that the session follows like a
+held key, so contacts still down are cancelled when a client goes away, or the
+remote keeps fingers down that no longer exist; and a page layer, offered only
+after the announcement, that forwards fingers uninterpreted in place of the
+trackpad gestures and adds no gesture recognition of its own: the guest
+recognises them. A Windows host opens MS-RDPEI and xrdp never does, which is
+the reason this would be an always-offered capability rather than a key.
 
 ## Not planned
 

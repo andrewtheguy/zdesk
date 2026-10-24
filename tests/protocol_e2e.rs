@@ -2183,7 +2183,7 @@ async fn a_fetch_before_the_remote_has_copied_anything_is_still_answered() {
 /// reading for one kind reads that socket alone, so what it skips past is never
 /// a message of the other socket that a later helper is waiting for.
 fn socket_for<'a>(ws: &'a mut Ws, kind: &str) -> &'a mut common::Socket {
-    const DISPLAY: [&str; 12] = [
+    const DISPLAY: [&str; 11] = [
         "resize",
         "cursor",
         "mosaic",
@@ -2191,7 +2191,6 @@ fn socket_for<'a>(ws: &'a mut Ws, kind: &str) -> &'a mut common::Socket {
         "resizing",
         "screenUnavailable",
         "remoteOs",
-        "touchReady",
         "videoFormat",
         "graphicsStart",
         "standardStart",
