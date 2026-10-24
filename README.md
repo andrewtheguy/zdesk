@@ -93,7 +93,7 @@ https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
 - **The remote's own picture, decoded in the browser, or the gateway's tiles.**
   A Windows host's graphics pipeline is passed for the browser to compose, drawn
   in high quality for a LAN or, in alpha, as H.264 the host fits to the browser
-  link. A High Performance Mac's HEVC or its H.264 is passed unchanged. A
+  link. A High Performance Mac's HEVC or its H.264 (beta) is passed unchanged. A
   Standard Mac's own Adaptive picture is passed (beta) and paced by the browser
   link: a slower link gets fewer updates and later refinement at the same
   precision. wlshare's passed VP9 follows the browser link too. Where the
@@ -132,10 +132,10 @@ seamlessly of the three, since what RFB lacks is added to it.
 - **A Mac's High Performance Screen Sharing** (`vnc`,
   `subtype = "ard-high-performance"`). Follows the window at its density, on
   one virtual display or two, and always carries AAC-ELD sound. Its picture is
-  its HEVC or its H.264 passed through, which the Mac sends at its own rate
-  rather than the browser link's: little on a still screen, much with motion.
-  The H.264 needs nothing added, and the HEVC a browser that decodes it or the
-  page's software decoder.
+  its HEVC or its H.264 (beta) passed through, which the Mac sends at its own
+  rate rather than the browser link's: little on a still screen, much with motion.
+  The H.264 needs a browser with `VideoDecoder` but nothing added to the page;
+  the HEVC needs a browser that decodes it or the page's software decoder.
 - **A Mac's Standard Screen Sharing** (`vnc`, `subtype = "ard"`). The Mac's
   physical displays, one or all, at their own size and density, as the
   gateway's tiles of the Mac's lossless Full quality or as the Mac's own Adaptive
@@ -180,7 +180,7 @@ What each server and browser does not do, in one place.
 hevc-wasm is the page's software HEVC decoder, served by a gateway that finds
 its release archive in its install's `share/zdesk`, or where `[hevc_wasm]`
 names one kept elsewhere. Where neither it nor the browser decodes the HEVC, the
-picker offers the Mac's H.264 if the browser has `VideoDecoder`; without it,
+picker offers the Mac's H.264 (beta) if the browser has `VideoDecoder`; without it,
 neither picture is offered and the target cannot start.
 
 An app window is the page installed from the browser's menu: in Chrome, ⋮ →

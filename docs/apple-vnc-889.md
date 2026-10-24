@@ -26,12 +26,12 @@ layer.
 | Subtype | Mode | Picture | Sound |
 |---|---|---|---|
 | `ard` | Standard, the physical displays | the gateway's tiles of the Mac's Full quality, its zlib inflated here; or, started with Adaptive, the Mac's own 8×8 tiles passed (beta) | none; the Mac's own output is left alone |
-| `ard-high-performance` | High Performance, one virtual display, or two with `virtual_displays = 2` (alpha) | HEVC, or H.264, over the media stream alone, a leg per display; until it is up the page says the screen is not available | AAC-ELD over the media stream |
+| `ard-high-performance` | High Performance, one virtual display, or two with `virtual_displays = 2` (alpha) | HEVC, or H.264 (beta), over the media stream alone, a leg per display; until it is up the page says the screen is not available | AAC-ELD over the media stream |
 | `ard` with `virtual_display = true` | Unofficial: Standard's picture on High Performance's one virtual display, resizes included | as `ard` | none; the Mac's own output is left alone |
 
 `ard-high-performance` is High Performance as Apple's viewer has it. Its picture
 and its sound are always passed, for the browser to decode: the picture as the
-Mac's HEVC, or as the H.264 it sends where it is asked for that.
+Mac's HEVC, or as the H.264 (beta) it sends where it is asked for that.
 
 **Unofficial:** `virtual_display = true` on an `ard` target keeps that row's
 picture and sound — the Mac's own, none — and takes the display from the other: the same

@@ -25,7 +25,7 @@
 # with two spellings is one of them going stale.
 #
 # text is the login screen, the interstitials, and the browser tab title;
-# defaults to "zdesk". logo is the page's tab icon; without it the page keeps
+# defaults to "zDesk". logo is the page's tab icon; without it the page keeps
 # no icon.
 #
 #[branding]
@@ -267,7 +267,8 @@ site_passwd = ""
 #
 # Passthrough sends the remote's own stream to the browser as it came: an
 # "ard-high-performance" Mac's HEVC, for a LAN, where it is a choice greyed for a
-# browser that cannot take it, or its H.264; a "wlshare" target's VP9, or its
+# browser that cannot take it, or its H.264 (beta), greyed for a browser without
+# `VideoDecoder`; a "wlshare" target's VP9, or its
 # tiles with motion; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
 # pipeline for the page to compose, which is no choice: with `egfx` on every
 # session passes it, and a browser that cannot compose it cannot start the
@@ -560,11 +561,11 @@ password_ref = "example"
 # under Audio. No encoder touches it, so it has no Opus walk.
 #
 # The picture is always passed to the browser as the Mac sent it,
-# in the codec chosen at the picker: its HEVC, or its H.264. The gateway decodes
-# neither, and codes nothing of the Mac's. Every picture the Mac sends goes, up
-# to 30 a second, at the Mac's own quality. Its ZRLE rectangles are never read or
-# shown, so a session codes no tile here, and the picture keys below are refused
-# on this target. See docs/apple-vnc-889.md, "The media stream".
+# in the codec chosen at the picker: its HEVC, or its H.264 (beta). The gateway
+# decodes neither, and codes nothing of the Mac's. Every picture the Mac sends
+# goes, up to 30 a second, at the Mac's own quality. Its ZRLE rectangles are
+# never read or shown, so a session codes no tile here, and the picture keys
+# below are refused on this target. See docs/apple-vnc-889.md, "The media stream".
 #
 # The Mac's own rate controller walks the stream's target between 20 and 60
 # Mbit/s, from the delay this gateway reports as Apple's viewer does, which ends at
@@ -578,12 +579,13 @@ password_ref = "example"
 # decoders, desktop and mobile, were measured taking it where the GPU decodes
 # HEVC 4:4:4; Firefox's native decoder does not. Where the native decoder refuses
 # it, the software decoder above supplies the picture, which the page then uses by
-# itself. Without either, that choice is greyed and the H.264 is taken.
+# itself. Without either, that choice is greyed and the H.264 is available when
+# the browser has `VideoDecoder`; without that too, the target cannot start.
 #
-# The H.264 passthrough has the Mac send H.264 in place of its HEVC, and passes
-# that. It needs no HEVC decoder in the page, and more browsers decode H.264
-# than HEVC, so a default build serves this target to every browser, Firefox
-# included: the H.264 is never greyed.
+# The H.264 passthrough (beta) has the Mac send H.264 in place of its HEVC, and
+# passes that. It needs no HEVC decoder in the page, and more browsers decode
+# H.264 than HEVC, so a default build serves this target to every browser with
+# `VideoDecoder`, Firefox included. Without `VideoDecoder`, H.264 is greyed.
 # [[targets]]
 # name = "mac-high-performance"
 # protocol = "vnc"

@@ -1,4 +1,4 @@
-//! zdesk — a browser-based RDP client.
+//! zDesk — a single-user browser remote desktop gateway.
 //!
 //! The library exposes the pieces the binary wires together and that the
 //! integration tests exercise at the protocol level. See docs/architecture.md.

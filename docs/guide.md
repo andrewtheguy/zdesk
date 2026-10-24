@@ -20,7 +20,7 @@ It needs:
   `http://` is refused, by name.
 - **WebCodecs** for the pictures a remote sends as video: `VideoDecoder` for
   wlshare's VP9, a High Performance Mac's HEVC or H.264 and an RDP host's
-  H.264. A browser without it, or whose decoder refuses a codec, still starts:
+  H.264. The client still starts without it, or when a decoder refuses a codec:
   the picker greys what needs it, with the reason, and the gateway's tiles, a
   Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
   anywhere. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
@@ -355,7 +355,7 @@ connection with the same error as wrong credentials. See
     on a virtual Mac alone.
 - Every Apple subtype carries the Mac's native pasteboard.
 - **`subtype = "ard-high-performance"`** is High Performance mode as Apple's
-  viewer has it, and is **experimental**. The Mac disables its physical displays
+  viewer has it. The Mac disables its physical displays
   and puts every window on one virtual display, sized by the session, up to
   3840×2160 backing pixels. Picture and sound come over the Mac's media stream,
   HEVC and AAC-ELD over SRTP:

@@ -162,17 +162,8 @@ kind of target is set up and how the page is reached from another machine.
 
 ## Container
 
-```sh
-docker run -d --name zdesk -p 52380:52380 \
-  -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  ghcr.io/andrewtheguy/zdesk:latest
-```
-
-Set `[server].listen = "0.0.0.0:52380"` in the mounted config, or pass the same
-address as `-e ZDESK_LISTEN=0.0.0.0:52380`. With `[meter].enabled` set, mount
-a volume at `/opt/zdesk/var` too, or the records go with the container. Images
-are published for Linux amd64 and arm64 with `latest` and `v<version>` tags. The
-image has no `zdesk tui`.
+Images are published for Linux amd64 and arm64 with `latest` and `v<version>`
+tags. The image has no `zdesk tui`.
 
 Generate the required web-login credential with:
 
@@ -200,7 +191,18 @@ docker run --rm -it -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
   ghcr.io/andrewtheguy/zdesk:latest password encrypt
 ```
 
-Mount the same file read-only into the running gateway, as above or as a Docker,
+Start the gateway with the same file mounted read-only:
+
+```sh
+docker run -d --name zdesk -p 52380:52380 \
+  -e ZDESK_LISTEN=0.0.0.0:52380 \
+  -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
+  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  ghcr.io/andrewtheguy/zdesk:latest
+```
+
+With `[meter].enabled` set, mount a volume at `/opt/zdesk/var` too, or the
+records go with the container. The master-password file can instead be a Docker,
 Podman or Kubernetes secret. Under Helm the printed `[master]` block and values
 belong in the values the chart renders the config from; they are ciphertext, so
 only the master password needs to be a secret.

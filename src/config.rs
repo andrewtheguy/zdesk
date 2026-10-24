@@ -1710,8 +1710,8 @@ fn resolve_logo(value: &str) -> anyhow::Result<Logo> {
 ///
 /// - a [`Self::Served`] gateway is useless without a target to offer and a
 ///   credential to guard it, and it is told where to listen;
-/// - an [`Self::Embedded`] one is started by a manager with the port, secret and
-///   web root decided outside the config, so a `[server]` block could only
+/// - an [`Self::Embedded`] one is started by a manager with the private endpoint
+///   and secret decided outside the config, so a `[server]` block could only
 ///   contradict them — and it may come up with **no targets at all**, because that
 ///   is a valid new instance and the picker's job is to say so.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

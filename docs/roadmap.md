@@ -117,10 +117,10 @@ host's compression on every one: by 21% on a still desktop's opening paint, 25%
 on a desktop busy about half the time, 19% with a video in a window, and 66% on
 scrolling, where a scrolled page is mostly rows the host sent a frame or two
 earlier, megabytes back. Compressing ran at 280 to 580 MB/s on one core,
-against at most 25 MB/s from the host. The cost is a C library in the gateway,
-which the packaging rules and the fallback build have to take, a zstd decoder in
-the page's WebAssembly module, and 32 MB of window in the page per pipeline; a
-64 MB window gained only on scrolling, from 6.15 to 7.36 times smaller than
+against at most 25 MB/s from the host. The cost is another C library in every
+gateway build and in its packaging, a zstd decoder in the page's WebAssembly
+module, and 32 MB of window in the page per pipeline. A 64 MB window gained only
+on scrolling, from 6.15 to 7.36 times smaller than
 unwrapped. The record and its
 acknowledgement would stay as they are: one stream per pipeline, started at
 `graphicsStart` and flushed at each record, in place of the host's.
