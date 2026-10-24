@@ -29,10 +29,11 @@
 //! and its size, pointer and stream announcements as text, paced by the paint
 //! acknowledgments that come back on it, with the input made over it. It carries no
 //! token. The page holding the session opens display 1's beside its session socket,
-//! and a page of the same browser opens display 2's in a tab of its own while an RDP
-//! target's *All Displays* shows it there; both are let in by the login cookie the
-//! claim was made with ([`SessionManager::attach_display`]), which another browser
-//! does not have, and a tab is given no token to present.
+//! and a page of the same browser opens display 2's in a tab of its own while *All
+//! Displays* shows it there, on an RDP target, a High Performance Mac or wlshare;
+//! both are let in by the login cookie the claim was made with
+//! ([`SessionManager::attach_display`]), which another browser does not have, and a
+//! tab is given no token to present.
 //!
 //! `/ws/audio?session=<token>` is sound, and **opening it is the subscription** —
 //! there is no message that turns audio on. It carries exactly two things, the format

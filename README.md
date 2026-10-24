@@ -163,7 +163,7 @@ What each server and browser does not do, in one place.
 |---|---|---|---|---|---|
 | Resizes to the browser window | ✅ with the graphics pipeline (default) | ✅ | ❌ physical displays at their own size | ✅ headless outputs only | ❌ the server's size |
 | Sharp at HiDPI/Retina density | ✅ | ✅ | ✅ at the density the Mac reports | ✅ | ❌ 1x only |
-| Second display in its own tab | ⚠️ alpha, with the graphics pipeline | ⚠️ alpha | ❌ all displays combined in one tab | ⚠️ alpha, with two outputs | ❌ |
+| Second display in its own tab | ⚠️ alpha, with the graphics pipeline | ⚠️ alpha | ❌ one screen at a time, switched from the display menu, or every screen combined in one tab (alpha) | ⚠️ alpha, with two outputs | ❌ |
 | Sound | ✅ Opus or FLAC | ✅ AAC-ELD, always | ❌ | ✅ Opus or FLAC | ❌ |
 | Camera and microphone | ⚠️ experimental | ❌ | ❌ | ⚠️ experimental | ❌ |
 | Unicode clipboard | ✅ | ✅ | ✅ | ✅ | ⚠️ with Extended Clipboard, else Latin-1 |

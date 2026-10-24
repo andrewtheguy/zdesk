@@ -35,8 +35,8 @@ to the same rate control:
 
 ### Two virtual displays past alpha
 
-`virtual_displays = 2` on an `rdp` target is alpha
-([Windows](guide.md#windows-rdp)). What it lacks:
+`virtual_displays = 2` is alpha on `rdp`, `ard-high-performance` and `wlshare`
+targets ([Windows](guide.md#windows-rdp)). What it lacks:
 
 - **A tab left behind.** When the session's page goes — closed, reloading, or
   its socket dropped — the tab showing the second display carries on with no
@@ -184,9 +184,11 @@ end-to-end tests against a real server never exercise.
 
 ### More than two virtual displays on a target
 
-`virtual_displays` is held to two. A browser tab shows one display, and the
-gateway encodes only the displays shown: the one on the session's page, and on
-*All Displays* (alpha) the second in a tab of its own at `/display/2`. Each
+`virtual_displays` is held to two. A browser tab shows one display: the one on
+the session's page, and on *All Displays* (alpha) the second in a tab of its own
+at `/display/2`. Nothing of either is encoded here: a Mac's streams are passed
+only while their display is shown, and an RDP host's span is passed whole and
+composed once in the page. Each
 further display is a desktop the host renders for nobody but a further tab, and
 two is the most the picker, the input offset, the tab's feed and the span the host
 builds have been checked with. RDP would allow sixteen in a row (MS-RDPBCGR 2.2.1.3.6). A Mac's High

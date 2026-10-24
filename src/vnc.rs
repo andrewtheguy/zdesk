@@ -6105,9 +6105,9 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 WLSHARE_TILE_START | WLSHARE_TILE_FRAME | WLSHARE_TILE_END => Some(reader.read_u8().await?),
                 other => anyhow::bail!("server sent a tiles rectangle of kind {other}, which is none of wlshare's"),
             };
-            // A START says its stream's codec: VP9, or the H.264 this session asked
-            // for beside the tiles. One it did not ask for is a server that lost its
-            // framing, or is not wlshare.
+            // A START says its stream's codec: VP9 or H.264, whichever wlshare
+            // chose. Any other is a server that lost its framing, or is not
+            // wlshare.
             let start = if kind == WLSHARE_TILE_START {
                 let codec = reader.read_u8().await?;
                 anyhow::ensure!(

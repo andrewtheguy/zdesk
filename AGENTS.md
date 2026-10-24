@@ -96,7 +96,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
   deterministic system decisions, not pixels, paint timing, frame rate, latency,
   cursor rendering, or layout-dependent synthetic input. Run headless with one
   worker, use accessible locators and web-first assertions, give wire-format
-  specs an independent parser, and call `returnToPicker` from every spec.
+  specs an independent parser, and leave every spec through `leaveSession`,
+  which returns to the picker.
 - Use `tests/ws_probe.py` to inspect the control messages a browser sees.
 - Do not use AppleScript, synthetic clicks, or screenshot loops to inspect a
   browser. Ask the client through deterministic interfaces, and ask the user for

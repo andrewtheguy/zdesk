@@ -9,9 +9,9 @@
 // target with its pipeline on passes it in every session, so such a browser
 // cannot start it. Nothing here looks at the canvas.
 //
-// It needs a gateway with an `rdp` target that configures a size, the one type that
-// offers all three choices. The tone harness in `examples/test_tone.rs` is one, with a
-// scripted engine and no remote:
+// It needs a gateway with an `rdp` target that configures a size, whose picker
+// shows the size, sound and Graphics groups checked here. The tone harness in
+// `examples/test_tone.rs` is one, with a scripted engine and no remote:
 //
 //     cargo run --example test_tone
 //
@@ -157,7 +157,8 @@ test.describe("the picker's options", () => {
       page.getByRole("button", { name: "Start", exact: true }),
     ).toHaveCount(0);
 
-    // An rdp target offers all three, and what was chosen is how it comes back.
+    // An rdp target offers a size, sound and its Graphics, and what was chosen is
+    // how it comes back.
     // The size it will have is shown before Start: the one its config sets, which
     // is the size until somebody chooses the window.
     const item = await openTarget(page);

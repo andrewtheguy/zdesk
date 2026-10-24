@@ -153,7 +153,8 @@ Do not restore
 libopus build in `build-tarball.sh`.
 
 The C libraries built from source are SQLite, for `[meter]`, through `rusqlite`'s
-`bundled` feature, and jemalloc, through `tikv-jemallocator`.
+`bundled` feature; jemalloc, through `tikv-jemallocator`; and `ring`, rustls's
+crypto provider, whose C and assembly its own build compiles.
 jemalloc is the global allocator on Linux and is linked with unprefixed `malloc` symbols,
 so allocations in libopus use it as well as Rust allocations. The build
 environment must provide a C compiler and `make`. macOS and Windows, which have no

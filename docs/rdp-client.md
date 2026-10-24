@@ -13,13 +13,13 @@ graphics pipeline's PDUs and bulk compression, the codecs, the compositor and th
 framebuffer. It is this client's all the same — `rdp_client` names the framebuffer
 and that part of the wire as its own — and is apart because the page runs it too,
 built to WebAssembly, for a session started with the pipeline passed. It holds no
-connection or clock, so it builds for `wasm32-unknown-unknown`, and the one thing
-it does on threads is decode a Progressive region's tiles, side by side on rayon's
-pool: the gateway's is the process's, and the page's is workers it starts. The files
+connection or clock, so it builds for `wasm32-unknown-unknown`, and what it does
+on threads is decode a Progressive region's tiles and convert a large H.264
+rectangle's rows to RGB (`avc.rs`, `PARALLEL_FROM`), side by side on rayon's pool: the gateway's is the process's, and the page's is workers it starts. The files
 [Graphics](#graphics) names are that crate's, under its `src/`.
 
-The only thing under that boundary not written here is the CredSSP exchange
-itself (`sspi`), because NLA is not optional on a current Windows host and NTLM is
+The only protocol pieces under that boundary not written here are TLS
+(`rustls`) and the CredSSP exchange itself (`sspi`), the latter because NLA is not optional on a current Windows host and NTLM is
 the one mechanism a user name and a password can drive.
 
 The target is the Remote Desktop server built into a current Windows and only
@@ -47,8 +47,8 @@ read, in [andrewtheguy/ms-rdp-specs](https://github.com/andrewtheguy/ms-rdp-spec
 ## What it carries
 
 The desktop, the pointer, keyboard, mouse, resize, the clipboard, sound, and the
-browser's camera and microphone going the other way, over one monitor or a row
-of two ([Virtual displays](#virtual-displays-alpha)). No touch: it does not ask
+browser's camera and microphone going the other way, over one monitor or two,
+side by side or stacked ([Virtual displays](#virtual-displays-alpha)). No touch: it does not ask
 for MS-RDPEI. What it would take is in
 [`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
@@ -57,10 +57,10 @@ for MS-RDPEI. What it would take is in
 One long sequence, every step of it a question the host answers before the next
 may be asked: the security negotiation, TLS, the credentials, the channels, the
 logon, the licence, the capability exchange, and the four PDUs that make the share
-live. `rdp_client/connect.rs` is that order, written as two functions on purpose,
-`connect` up to the host's Demand Active and `activate` for the capability
-exchange and the four PDUs after it — the steps share nothing but the socket and
-what the last one said.
+live. `rdp_client/connect.rs` is that order, written as two functions on purpose:
+`connect` takes it up to the first desktop and returns a live share, calling
+`activate` for the capability exchange and the four PDUs after the host's Demand
+Active — the steps share nothing but the socket and what the last one said.
 
 The security negotiation offers `HYBRID` and nothing else, so a server that cannot
 do NLA is refused rather than logged on to some other way. The TLS certificate
@@ -279,7 +279,7 @@ passed on](#the-pipeline-passed-on)).
 ## The two threads
 
 ```text
-  caller  ──  Session, Input                  UnboundedReceiver<Event>  ──  caller
+  caller  ──  Session, Input                  Receiver<Event> (EVENT_QUEUE)  ──  caller
      │  command queue                                    ▲
      ▼                                                   │
   the "rdp" thread: a current-thread runtime, select! over the socket and the queue
@@ -289,13 +289,16 @@ Every session gets an OS thread of its own and keeps it until the session ends.
 Decoding a desktop is real CPU work, and on its own thread it runs beside the
 engine's encoding rather than in turns with it. Input goes onto a queue the thread
 drains between PDUs, so nothing outside that thread ever touches the connection.
+Events come back on a bounded queue (`EVENT_QUEUE`): while a caller that falls
+behind has it full, painted rectangles fold together on the thread and anything
+else waits for room, leaving the socket unread.
 Dropping the `Session` asks the thread to disconnect and waits for it, bounded, so
 a session that has gone out of scope has really stopped.
 
 ## Static virtual channels
 
-Each is asked for by what the session needs: `drdynvc` for a session started with
-resize, the pipeline on (`egfx` left on), the camera, or the microphone, which is the transport Display Control,
+Each is asked for by what the session needs: `drdynvc` with the pipeline on
+(`egfx` left on), the camera, or the microphone, which is the transport Display Control,
 the graphics pipeline, the camera's two channels, and the microphone's channel
 ride on; `cliprdr` always, and `rdpsnd` with `rdpdr` for a session started with sound — see
 [Sound](#sound-ms-rdpea).
@@ -348,7 +351,7 @@ it.
 The client sets `RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL` in the GCC core data, and a
 Windows host answers by opening `Microsoft::Windows::RDS::Graphics` over `drdynvc`
 — the same dynamic channel transport Display Control rides, so `drdynvc` is asked
-for when either key is on. The client accepts the channel and at once advertises
+for whenever `egfx` is on. The client accepts the channel and at once advertises
 its capability sets (`proto/gfx.rs::caps_advertise`). A session started
 High quality advertises two: version 8 with the small cache, and version 10 with the
 small cache and `AVC_DISABLED`, so the host never sends H.264 and draws with the
@@ -434,8 +437,9 @@ reveals the desktop.
 
 Surface-to-surface copy reads the complete source before writing, which preserves
 overlapping scrolls. Cache commands retain rectangles by slot, and solid fills are
-clipped to their surface. When the graphics channel ends, an `info` log records the
-codecs and commands actually received during that session.
+clipped to their surface. When a compositor's graphics channel ends, an `info` log
+records the codecs and commands it composed; a session that passes the pipeline
+logs the commands at its end, and each codec as the host first draws with it.
 
 ### Lossless, by the host's policy
 
@@ -488,7 +492,8 @@ frame's acknowledgement, which the host stops drawing without. Each message is
 still unwrapped here, out of the bulk compression, and `Graphics::passing` reads
 the commands by their headers alone (`proto/gfx.rs::commands`) and decodes three:
 the confirmation, the reset, whose size the session announces, and each
-EndFrame. What goes out as `Event::Graphics` is the message as the host sent it,
+EndFrame. It also reads each WireToSurface's codec, and a ClearCodec rectangle's
+subcodecs, for the menu's *Host's picture* row (`Event::Drawn`). What goes out as `Event::Graphics` is the message as the host sent it,
 still compressed, every one of them in order: each is compressed against the
 ones before it, so the caller unwraps them with a history of its own, started
 where the pipeline is (`Compositor::unwrap`). What the session says of a
@@ -497,7 +502,7 @@ message goes ahead of it — `Event::FramesMarked` for a confirmation and
 with an `Event::Frame` after it. A message is not cut: compressed, it has no
 boundary between its commands. A Windows host ends one at a frame's end, so in
 practice each names the frame it ends, and one that ended two would have both
-acknowledged once it is composed. Nothing is decoded, no surface is kept, and
+acknowledged once it is composed. No pixels are decoded, no surface is kept, and
 the session's framebuffer holds nothing of what the pipeline draws.
 
 What the session no longer knows is when a frame is finished, so the caller
@@ -539,7 +544,7 @@ reaches, has nothing to do. Everything else on the connection waits with the
 frames while it is unread — the pointer, the sound, the clipboard — as it does
 behind a slow link to any client.
 
-Only frames of 32 KB or more are waited on that way (`PASSED_HELD_BYTES`). The
+Only frames averaging 32 KB or more are waited on that way (`PASSED_HELD_BYTES`). The
 host stops at eleven unacknowledged frames whatever their size, so small ones
 never fill its socket, and leaving it unread shows the host nothing and takes
 `PASSED_AHEAD` away: with H.264 frames of 9 KB and a caller composing twenty a
@@ -602,6 +607,8 @@ that has any in three steps (`avc.rs`): `avc::scan` finds the units and the
 surfaces whose streams have ended, the caller decodes each unit through its
 surface's decoder and supplies the picture (`Compositor::supply`), and the run is
 composed, painting the masked rectangles from those samples as full-range BT.709.
+A hardware picture the browser labels full-range BT.709 is not supplied: the page
+draws its masked rectangles from the GPU (`Compositor::show_on_gpu`).
 A unit whose picture was not supplied leaves its rectangles as they were.
 `a_real_host_draws_video_with_h264` in `examples/rdp_client_probe.rs` checks what is
 passed against a host playing a video.
@@ -649,8 +656,7 @@ channels stay served, and resizes the framebuffer once the share is live again.
 Measured on 2026-10-13 against a physical Windows 11 Enterprise host, with a
 sound playing on it, through a probe build of this client that took Display
 Control without the pipeline and answered each Deactivate All with a Confirm
-Active and the finalization PDUs (the patch is kept in `tmp/` beside the test
-configs). The host answered every layout with a Deactivate All and a Demand
+Active and the finalization PDUs (a local patch, not kept). The host answered every layout with a Deactivate All and a Demand
 Active naming the new size, 0.1 to 0.9 s after the layout, and repainted the
 whole desktop at it; sizes went 1280×800 through 1600×900 and 1920×1080 and
 back, six times a run. The sound did not keep up: the host's audio redirection,
@@ -671,7 +677,7 @@ same four finalization PDUs, waits for the server's four, and leaves every
 channel as it was — its sound, dynamic channel and Display Control plugins have
 no hook for the sequence at all. Nothing in it differs from what the probe sent.
 
-The host's own records, read over SSH (`tmp/rdp-host-events.ps1`, and the
+The host's own records, read over SSH (by a local script, not kept, with the
 `RdpCoreTS/Debug`, `RdpSoundDriver/Playback` and `Audio/Informational` logs
 enabled for one run and disabled again), say the same from its side. Its core
 logged every reactivation as a clean run of its state machine — Demand Active,
@@ -799,8 +805,8 @@ to the monitors' union; it is an extended block, so it is sent only to a server 
 X.224 Connection Confirm carried `EXTENDED_CLIENT_DATA_SUPPORTED`, and a server
 without the flag is asked for one monitor and the one desktop it always gave. And
 in every monitor layout a resizing session sends ([MS-RDPEDISP] 2.2.2.2), one
-`DISPLAYCONTROL_MONITOR_LAYOUT` per monitor, the first flagged primary, all at one
-scale factor and each at the size `Input::resize` names for it: the same for every
+`DISPLAYCONTROL_MONITOR_LAYOUT` per monitor, the first flagged primary, each at
+the size and scale factor `Input::resize` names for it: the same for every
 monitor unless a display shown in a tab of its own follows that tab's window, the
 second placed against the first's edge as at connect. The server's `MaxNumMonitors` and area ceiling arrive in
 its capabilities as before, and every layout is held to both: no more monitors

@@ -453,7 +453,10 @@ the newest pixels whenever a round goes.
 #### The browser's four answers
 
 The browser is asked four questions that it states on the session socket, each
-once at page load: whether it decodes a High Performance Mac's HEVC, whether it
+once at page load, in five flags: whether it decodes a High Performance Mac's
+HEVC, which is two flags, `apple_media` for its own decoder and `page_hevc` for
+the page's software one, counted only where the gateway serves that decoder
+(`Decoders::stated`); whether it
 composes an RDP host's graphics pipeline, whether it decodes the H.264 such
 a pipeline may carry, and whether its own decoder takes 4:4:4 VP9. The last
 two refuse nobody. The H.264 answer decides only whether a passed pipeline's host is
@@ -500,7 +503,8 @@ ceiling: the tiles coded here, of a plain `vnc` server's desktop, an RDP
 host's bitmap path (`egfx = false`) or a Standard Mac's Full quality, and a
 Standard Mac's Adaptive rectangles, passed one by one, are shown at whatever size
 the remote has, a screen past 4K or a Combined Display of several screens
-included. Do not hold or shrink one of these
+included — save a Standard Mac's unofficial virtual display in a session started
+with resize, which is refused past it as every desktop the gateway sizes is. Do not hold or shrink one of these
 for its size, and do not hold a layout the bitmap path asks for under the
 ceiling.
 
@@ -526,7 +530,7 @@ frames untouched. Its VP9, *Video*, is the picture of a session that names
 none, listed with the plan's dial, walk and chroma as pseudo-encodings beside
 it. Its tiles with motion, exact PNG tiles where the desktop is still and a
 4:2:0 video stream of its own for each region that moves, VP9 or H.264, the
-host's hardware encoder's where it has one, for a browser that takes it, are wlshare's picture
+host's hardware encoder's where it has one, as wlshare chooses, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
 alone, which its regions are held at: they select no chroma, 4:2:0 for every
@@ -698,8 +702,10 @@ switched to or from mid-session.
   off different moments. Do not add a request per update or an interval above
   zero.
 - **No ceiling.** The Mac's rectangles are no stream of the whole desktop, so a
-  screen of any size is shown as the Mac sends it, a 5K one at 2x included, in
-  tiles or passed. Do not hold or shrink one for its size. See
+  physical screen of any size is shown as the Mac sends it, a 5K one at 2x
+  included, in tiles or passed. Do not hold or shrink one for its size. The
+  unofficial virtual display in a session started with resize is sized by the
+  gateway and refused past the ceiling, as any desktop it sizes is. See
   [A Standard Mac's own picture, passed through](#a-standard-macs-own-picture-passed-through).
 
 #### A Standard Mac's Combined Display
@@ -996,7 +1002,9 @@ only a remote it cannot size gets there: a wlshare server on a physical output
 whose desktop is simply that large. A picture that is no stream has no ceiling:
 the tiles coded here, of a plain VNC server's desktop or an RDP host's bitmap
 path, and a Standard Mac's own rectangles, passed one by one, are shown at
-whatever size the remote has, Combined Display included.
+whatever size the remote has, Combined Display included. The one exception is
+a Standard Mac's virtual display in a session started with resize, which the
+gateway sizes and so refuses past the ceiling, as the table says.
 
 A stream's desktop past it has no picture. `Oversize` in `src/encode.rs` is the
 source's side of it, fixed when the engine starts:
@@ -1011,7 +1019,7 @@ Resize refuses because it is the gateway sizing the remote: every size it asks
 for is under the ceiling, and a remote that answers past it has refused what it
 was asked. High Performance's virtual display is held under the ceiling, and so
 is every layout an RDP session with the pipeline asks for; one on the bitmap
-path asks for the window whole.
+path opens at the size it keeps, whole.
 
 A `Hold` source is decided at each `Resize`. Held, the sink drops every rectangle
 and passed frame and builds no mirror, and past the ceiling wlshare's VP9 comes off
@@ -1125,7 +1133,7 @@ motion* against its VP9, lists in place of `WLSV`: the desktop as exact PNG
 tiles where it is still, and a video stream of its own, 4:2:0, for each region
 that moves, at most four at once — VP9 profile 0 at libvpx's least search, or
 H.264, from the wlshare host's hardware encoder where it has one, as wlshare
-chooses, and this browser takes it — and every tile a stream carried sent again as PNG once it is still,
+chooses — and every tile a stream carried sent again as PNG once it is still,
 so the picture ends exact. It is Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
@@ -1163,7 +1171,7 @@ Nothing is coded here.
   H.264 region an Annex B access unit, started at an IDR with its parameter
   sets, of a picture the region's size, and keyframed again only where the
   dial moved, which the `REGION` record's flag then says; a stream started once
-  while live, in a codec the session asked for; and the ceiling every passed
+  while live, in VP9 or H.264; and the ceiling every passed
   stream is held to — and refused by name otherwise. Each record takes its share of
   `QUEUE_BUDGET` and goes out in order with the messages around it, so a `TILE`
   over a region's rectangle reaches the page after the region's `regionEnd`, as
@@ -1593,8 +1601,10 @@ the pipeline.
   channel: it answers the capability exchange, unwraps the bulk compression to
   read the commands' headers, and writes every frame's acknowledgement
   (`Graphics::passing` in `crates/zdesk-rdp-graphics/src/gfx.rs`). It decodes
-  nothing. What goes to the engine as `Event::Graphics` is each message as the
-  host sent it, still compressed, in order, naming the last frame it ends; the
+  no pixels: of what the host draws it reads only each WireToSurface's codec,
+  and a ClearCodec rectangle's subcodecs, for the *Host's picture* row.
+  What goes to the engine as `Event::Graphics` is each message as the host sent
+  it, still compressed, in order, naming the last frame it ends; the
   page unwraps it with a history of its own, started at `graphicsStart`
   (`Compositor::unwrap`), since each message is compressed against the ones
   before it. The engine queues each as a `GRAPHICS` record, which takes its
@@ -1991,8 +2001,8 @@ would not take.
 
 The tiles follow the browser's link by its painting, as above. A passed stream is
 coded by the remote, so it can follow that link only if the remote is told how the
-link is doing. Today three of the five passthroughs are; the table lists all
-five:
+link is doing. Today three of the six passthroughs are; the table lists all
+six, the Mac's HEVC and H.264 in one row:
 
 | Passed stream | Who adapts it | What it hears of the browser's link | Target keys that reach it |
 |---|---|---|---|
@@ -2062,8 +2072,9 @@ five:
 
 The gateway **codes no video**. What it codes is tiles, a JPEG or a PNG each
 ([The tiles](#the-tiles)), and every stream the browser decodes is the remote's
-own, passed as it came: wlshare's VP9, a High Performance Mac's HEVC or H.264, and
-an RDP host's pipeline, whose H.264 the page decodes. There is no codec key.
+own, passed as it came: wlshare's VP9 and its moving regions' VP9 or H.264, a
+High Performance Mac's HEVC or H.264, and an RDP host's pipeline, whose H.264 the
+page decodes. There is no codec key.
 
 **Tiles rather than a video encoder.** A tile holds no state: it is drawn on its
 own and predicts from nothing, so a slow link is sent the newest pixels whenever a
@@ -2107,9 +2118,11 @@ given the session from its start ([Session lifecycle](#session-lifecycle)). The
 page has no VP9 decoder of its own: a stream at a chroma the browser does not take
 is never sent.
 
-Nothing downstream of `TargetConfig::render_plan` names a codec but `vp9.rs`, which
-reads a passed wlshare frame's header and names its configuration string: the wire
-carries tiles, access units, a keyframe bit and a configuration string.
+Nothing downstream of `TargetConfig::render_plan` names a codec but the modules
+that read a passed stream's own headers to name its configuration string:
+`vp9.rs` for a wlshare frame, `h264.rs` for a wlshare region's H.264, and
+`vnc_apple_media.rs` for a High Performance Mac's HEVC or H.264. The wire carries
+tiles, access units, a keyframe bit and a configuration string.
 
 **The browser is not asked for a codec, and never asked to justify itself.**
 There is no codec probe ahead of a session: it would put a round trip and a
@@ -2118,8 +2131,8 @@ on the same browser twice to build a refusal on, and a refusal phrased as "this
 browser accepted none" turns any fault near the path into an accusation against
 the browser.
 
-What the browser states is four answers. One decides what a host is told and
-nothing else: whether this browser decodes the H.264 a passed RDP pipeline may
+What the browser states is four answers, in five flags, the HEVC answer being
+two. One decides what a host is told and nothing else: whether this browser decodes the H.264 a passed RDP pipeline may
 carry, which greys the picker's Adaptive for a "no". The other two say which
 passthrough the browser can take: a High Performance Mac's HEVC, and an RDP
 host's graphics pipeline. They decide what the picker offers before a session
@@ -2191,7 +2204,7 @@ Authentication and desktop ownership are separate:
    releases the claim.
 
 Every `connect` first ends any running engine, including one already connected
-to the same target, and the next engine is not spawned until that process exits;
+to the same target, and the next engine is not spawned until that engine has ended;
 `ENGINE_EXIT_GRACE` bounds the wait. Switching targets and logging out likewise
 end the engine outright. The sole resume is the owning browser reattaching to
 the same target after its session socket drops. An RDP engine with the host's
@@ -2221,11 +2234,13 @@ These things about a session are chosen by whoever starts it, before it starts:
 how the desktop is sized, whether the remote's sound is taken and as what,
 which of a Mac's or wlshare's own streams is passed through if any, whether a Standard Mac's
 screens are shown one at a time or as Combined Display, where a second virtual display
-sits, how an RDP host draws its graphics pipeline, whether the remote is offered
-this browser's camera and its microphone, and whether a Mac's
-passed HEVC is decoded by the page's
-own software decoder ([Decoded in the page](#decoded-in-the-page)), which is the
-gateway's to offer as well as the target's. Picking a target at the picker opens it,
+sits, how an RDP host draws its graphics pipeline, and whether the remote is
+offered this browser's camera and its microphone.
+Whether a Mac's passed HEVC is decoded by the page's own software decoder
+([Decoded in the page](#decoded-in-the-page)) is not among them: the page
+decides it from what it can run and states it on the session socket as
+`page_hevc`, and `/api/targets` says per target whether the gateway serves that
+decoder, as `software`. Picking a target at the picker opens it,
 its options show under it with a Start button, and Start sends `connect` with the
 choices (`Choices` in `src/config.rs`). None of them is a config key. An RDP
 host's pipeline is not among them: a target with it on passes it in every
@@ -2241,7 +2256,7 @@ and `GET /api/targets` carries it:
 | `vnc` | no | hidden | hidden | hidden | hidden |
 | `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's VP9, passed, or its tiles with motion, passed | hidden | shown |
 | `vnc`, `ard` | no | hidden | shown, as Picture: the Mac's Adaptive picture, passed (beta), greyed under Combined Display, or the gateway's tiles of its Full quality; and as Displays: one at a time (beta) or Combined (alpha) | hidden | hidden |
-| `vnc`, `ard` with `virtual_display` | yes | hidden | shown, as for `ard` | hidden | hidden |
+| `vnc`, `ard` with `virtual_display` | yes | hidden | shown, as Picture only, as for `ard`: a virtual display is one screen, so there is no Displays row | hidden | hidden |
 | `vnc`, `ard-high-performance` | yes | hidden: always carried | shown, as Picture: the Mac's HEVC or its H.264 (beta), always passed | hidden | hidden |
 
 - **The size is shown before Start.** A desktop is sized one of three ways
@@ -2299,11 +2314,15 @@ and `GET /api/targets` carries it:
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
   needs it. The Mac's H.264 is greyed where the browser has no `VideoDecoder`,
   which is taken to decode it unasked, and a High Performance Mac neither of whose pictures it takes cannot
-  start, with the reason. A Standard Mac's pictures are never greyed: its
-  Adaptive picture is decoded by every page in WebAssembly, and the gateway's
-  tiles are images every page decodes. Nor are a `wlshare` target's, both VP9:
-  the target cannot start in a browser whose decoder refuses it. `/api/targets` says which streams a target can pass, as
-  `passthroughs`; a target with any has no picture coded here. For the pipeline the picker says the stream is always
+  start, with the reason. A Standard Mac's pictures are never greyed for the
+  browser's sake: its Adaptive picture is decoded by every page in WebAssembly,
+  and the gateway's tiles are images every page decodes; Adaptive is greyed only
+  under Combined Display, which is the gateway's tiles. Nor are a `wlshare`
+  target's: VP9 is its video and the tiles' fallback for a moving region, so the
+  target cannot start in a browser whose decoder refuses VP9. `/api/targets`
+  says which streams a target can pass, as `passthroughs`; on `rdp`, `wlshare`
+  and `ard-high-performance` the picture is always one of them, while a
+  Standard Mac's Full quality, which names none, is tiles coded here. For the pipeline the picker says the stream is always
   passed, as a note
   with nothing to choose, and where the
   browser cannot take it Start is disabled and says why, before the host is
@@ -2370,8 +2389,8 @@ and `GET /api/targets` carries it:
   client is not sent.
 - **A session is held to its choices, and to the browser that made them.** The
   slot keeps them beside the selected target (`Selected` in `src/session.rs`).
-  `connected` reports them: `resize`, `audio` and `passthrough`. A reattach
-  resumes the session, or starts it over, with them. No other browser is given
+  `connected` reports them: `resize`, `audio`, `passthrough`, `camera` and
+  `microphone`. A reattach resumes the session, or starts it over, with them. No other browser is given
   them: a takeover ends the session and lands on the picker, where that browser
   is offered what it can take and remembers what it chose. The owner coming back
   unable to take the session's passthrough lands there too, behind an `error`
@@ -2446,8 +2465,8 @@ any other bit is rejected the same way, as is a number or a frame bit without
 other rejected, as are an empty rectangle and one with no image. Each replaces what
 the canvas held there and depends on no other
 ([The tiles](#the-tiles)). A session of wlshare's tiles with motion sends `TILE` records too, all
-PNG, and among them `REGION` records: an access unit of one moving region's VP9
-stream, its flags `0x01` for a keyframe and any other bit rejected, as are an empty
+PNG, and among them `REGION` records: an access unit of one moving region's
+stream, VP9 or H.264 as its `regionFormat` says, its flags `0x01` for a keyframe and any other bit rejected, as are an empty
 rectangle and one with no payload. A `regionFormat` (`stream`, `decode`, `engine`)
 comes ahead of a stream's first unit and builds its decoder, the unit's decoded
 picture is drawn at its rectangle, cut to it, in its turn among the tiles, and a
@@ -2945,8 +2964,8 @@ parsing; a physical or non-resizable remote may still answer past it because the
 gateway cannot ask it for a smaller desktop: a `wlshare` one
 [holds the session](#past-the-ceiling) without a picture, and any other stream's
 source reaches the ceiling's refusal. An RDP session with `egfx = false` has no
-ceiling: its tiles are coded here at any size, it asks for the window whole, and
-its configured `size` may be any the host opens, up to 8192 a side.
+ceiling: its tiles are coded here at any size, it opens at the size it keeps,
+whole, and its configured `size` may be any the host opens, up to 8192 a side.
 
 High Performance paces what the window asks for. A second
 `SetDisplayConfiguration` overlapping the first, or a region of the old size
@@ -3088,8 +3107,8 @@ shown the same way, from another source. Its `SetDisplayConfiguration` names two
 virtual displays, Apple's viewer's "2 Virtual Displays", and the Mac creates the
 second to the right of the first and sends each as a video leg of its own in the
 one media stream. So the engine cuts no column out of anything: the display on
-the canvas is one leg's pictures and the display in the tab the other's, decoded
-here or passed, each through a sink of its own, and the leg of a display nobody
+the canvas is one leg's pictures and the display in the tab the other's, each
+passed through a sink of its own, and the leg of a display nobody
 is shown is authenticated and dropped at the receiver, neither decoded nor
 passed. A `selectDisplay` is answered in the gateway and asks the Mac for nothing
 but the keyframe a display coming into view starts at. The
@@ -3118,8 +3137,9 @@ outputs; see [Switching outputs over VNC with wlshare](wlshare-outputs.md).
 
 A `wlshare` target whose compositor has exactly two outputs is listed with *All
 Displays* (alpha) too, and shown the same way from a third source: a second
-connection. No key asks for it, since the outputs are the compositor's and the
-gateway creates none — `virtual_displays` is refused on the target. wlshare
+connection. `virtual_displays = 2` asks wlshare for the second, which wlshare
+on sway makes as a headless output; on another compositor the outputs are the
+compositor's and the key asks nothing. wlshare
 shows a connection one output, so the engine keeps the session's connection on
 the first output the list names, asking wlshare for it if the canvas was on the
 other, and when the tab's socket arrives connects to wlshare again, with the
@@ -3223,9 +3243,9 @@ clipboard, sound, and the browser's camera and microphone, and no touch: it does
 not ask for MS-RDPEI. What it would take is in
 [`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
-Static virtual channels are asked for by what the session needs: `drdynvc` for a
-session started with resize, the pipeline on (`egfx` left on), the camera, or
-the microphone; `cliprdr` always; and `rdpsnd` with `rdpdr`
+Static virtual channels are asked for by what the session needs: `drdynvc`
+with the pipeline on (`egfx` left on), which also carries Display Control, or
+for the camera or the microphone; `cliprdr` always; and `rdpsnd` with `rdpdr`
 for a session started with sound.
 
 `virtual_displays = 2` (alpha) asks the host for two monitors, each the
@@ -3235,8 +3255,10 @@ session sends; the host spans one framebuffer over both and the engine shows one
 column of it, switched from the display picker without asking the host, or —
 on *All Displays* — the second column in a browser tab of its own
 ([Display geometry](#display-geometry)). The key is shared by every target type
-that can create virtual displays: `rdp`, and `ard-high-performance`, whose two are
-a media stream each rather than columns of one framebuffer. It is refused
+that can create virtual displays: `rdp`; `ard-high-performance`, whose two are a
+media stream each rather than columns of one framebuffer; and `wlshare`, which
+asks wlshare on sway for that many headless outputs, where on another compositor
+the outputs are the compositor's. It is refused
 elsewhere, and held to two ([Roadmap](roadmap.md#more-than-two-virtual-displays-on-a-target)).
 Under the Graphics Pipeline (MS-RDPEGFX) the server draws through surfaces on a
 dynamic channel, marks every frame's end — which is the engine's flush signal, with

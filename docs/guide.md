@@ -24,8 +24,9 @@ It needs:
   Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
   anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
   the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
-  the reason, where the decoder refuses them, and a `wlshare` target, whose VP9
-  is its picture in every session, cannot be started. The Mac's H.264 is not
+  the reason, where the decoder refuses them, and where it refuses the VP9 a
+  `wlshare` target cannot be started, since its Video picture is VP9 and Tiles
+  with motion falls back to VP9 for its moving regions. The Mac's H.264 is not
   asked about: it is offered to every browser with `VideoDecoder` and greyed
   without one, and a decoder that refuses it says so in the session, by its
   error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
@@ -101,9 +102,9 @@ config key.
   pipeline on it is no choice: the picker says it is always passed, with no box
   to tick, and a browser that
   cannot compose the pipeline cannot start the target. A passed RDP pipeline
-  follows the browser's link: the Windows host draws fewer and smaller frames
-  for a browser that falls behind. A Mac's passed stream does not: the Mac sends
-  at its own rate, little on a still screen and much with motion. On an `ard`
+  follows the browser's link: the Windows host draws fewer frames for a browser
+  that falls behind, and under Adaptive coarser ones too. A Mac's passed stream
+  does not: the Mac sends at its own rate, little on a still screen and much with motion. On an `ard`
   target the Picture group is *Apple's Adaptive (beta), passed through*, the
   default, or *Gateway adaptive, settles to lossless*. Apple's Adaptive is the
   Mac's own 8×8 tiles, which this page decodes: each changed area a coarse pass
