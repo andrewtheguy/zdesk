@@ -54,6 +54,7 @@ https://github.com/user-attachments/assets/a31030c8-dab9-467c-9231-20329e138e7d
 
 
 ### iOS -> Windows
+iOS Safari connecting to windows with horizontal scroll support with two fingers swiping left and right
 
 https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
 
@@ -61,8 +62,12 @@ https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
 
 ### iOS -> Mac
 
+iOS Safari connecting to mac screenshare high performance with horizontal scroll support and network throughput meter
 
-https://github.com/user-attachments/assets/cde4e192-340f-47dd-86db-3d2d89049007
+
+https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
+
+
 
 
 
