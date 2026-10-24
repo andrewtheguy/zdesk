@@ -180,7 +180,8 @@ What each server and browser does not do, in one place.
 hevc-wasm is the page's software HEVC decoder, served by a gateway that finds
 its release archive in its install's `share/zdesk`, or where `[hevc_wasm]`
 names one kept elsewhere. Where neither it nor the browser decodes the HEVC, the
-picker offers the Mac's H.264.
+picker offers the Mac's H.264 if the browser has `VideoDecoder`; without it,
+neither picture is offered and the target cannot start.
 
 An app window is the page installed from the browser's menu: in Chrome, ⋮ →
 *Cast, save and share* → *Install page as app*; in Edge, ⋯ → *Apps* → *Install
