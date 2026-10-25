@@ -495,10 +495,10 @@ export interface TileMsg {
   data: Uint8Array;
 }
 
-// One VP9 access unit of moving region `stream` in wlshare's tiles: a link in
+// One H.264 access unit of moving region `stream` in wlshare's tiles: a link in
 // that stream's chain, as a VIDEO record is in the desktop's, decoded by the
 // decoder its `regionFormat` built. The decoded picture's top-left `w`×`h` is
-// drawn at `(x, y)` — a VP9 picture of an odd side is a pixel larger — in its
+// drawn at `(x, y)` — an H.264 picture of an odd side is a pixel larger — in its
 // place among the batch's TILE records; a stream's rectangle is fixed for its
 // life. See `RegionUnit` in src/protocol.rs.
 export interface RegionMsg {

@@ -303,7 +303,7 @@ test("wlshare's tiles and their regions hold their place among the frames", asyn
   h.host.handle({
     type: "regionFormat",
     stream: 2,
-    format: { decode: "vp09.00.21.08.01.06.06.06.00" },
+    format: { decode: "avc1.64001F" },
   });
   h.unstall();
   h.host.handle({
@@ -320,7 +320,7 @@ test("wlshare's tiles and their regions hold their place among the frames", asyn
   assert.deepEqual(h.calls, [
     "draw",
     "tiles",
-    "region:2 vp09.00.21.08.01.06.06.06.00",
+    "region:2 avc1.64001F",
     "draw",
     "end:2",
   ]);

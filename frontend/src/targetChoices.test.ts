@@ -525,7 +525,7 @@ test("a Mac neither of whose pictures this browser takes cannot start", () => {
 
 test("a wlshare target's picture is its VP9 passed or its tiles with motion passed", () => {
   // The VP9 until the tiles are chosen, and the choice is remembered; neither is
-  // greyed, since both are VP9 and the target cannot start without it.
+  // greyed in a browser that decodes both.
   const options = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(options), [
     ["wlshare-vp9", false],
@@ -581,10 +581,33 @@ test("the camera and the microphone are offered where the remote can take them, 
   }
 });
 
-test("a wlshare target needs a browser that decodes its VP9", () => {
+test("a wlshare target needs a browser that decodes one of its pictures", () => {
   assert.equal(targetOptions(WLSHARE, undefined, ABLE).blocked, null);
-  const unable = targetOptions(WLSHARE, undefined, { ...ABLE, vp9: false });
-  assert.match(unable.blocked ?? "", /does not decode VP9/);
+  // Without the VP9, its tiles with motion, whose regions are H.264, are the
+  // picture, whatever was remembered.
+  const tiles = targetOptions(
+    WLSHARE,
+    { passthrough: "wlshare-vp9" },
+    { ...ABLE, vp9: false },
+  );
+  assert.deepEqual(pictures(tiles), [
+    ["wlshare-vp9", true],
+    ["wlshare-tiles-motion", false],
+  ]);
+  assert.match(tiles.pictures?.[0].note ?? "", /does not decode VP9/);
+  assert.equal(tiles.choices.passthrough, "wlshare-tiles-motion");
+  assert.equal(tiles.blocked, null);
+  // With no `VideoDecoder`, neither.
+  const unable = targetOptions(WLSHARE, undefined, {
+    ...ABLE,
+    vp9: false,
+    appleH264: false,
+  });
+  assert.deepEqual(pictures(unable), [
+    ["wlshare-vp9", true],
+    ["wlshare-tiles-motion", true],
+  ]);
+  assert.match(unable.blocked ?? "", /neither of wlshare's pictures/);
   // A plain target, read through the RFB baseline, is sent the tiles.
   assert.equal(targetOptions(target({}), undefined, UNABLE).blocked, null);
 });

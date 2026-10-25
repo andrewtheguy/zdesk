@@ -1,7 +1,7 @@
 //! H.264 as this gateway meets it on a `wlshare` target: the moving regions of
-//! its tiles with motion, the host's hardware encoder's where it has one, and
-//! passed to the browser as wlshare coded them ([`pass`]), which codec being wlshare's
-//! choice. The gateway encodes no H.264 and decodes none.
+//! its tiles with motion, every one H.264, by the host's hardware encoder where
+//! it has one and libx264 otherwise, passed to the browser as wlshare coded them
+//! ([`pass`]). The gateway encodes no H.264 and decodes none.
 //!
 //! What a passed region's frame needs here is what the browser cannot read out
 //! of it in time: whether a decoder can start at it, and the WebCodecs string

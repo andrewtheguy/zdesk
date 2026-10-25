@@ -9,7 +9,7 @@
 用戶端就是閘道提供的頁面，編譯在閘道的二進位檔中。它需要：
 
 - **安全環境（secure context）。** 閘道只使用純 HTTP，沒有 TLS 監聽器，因此需要透過回送位址（`localhost`、`127.0.0.1`、`[::1]`、任何 `.localhost` 名稱）或終止 TLS 的反向代理伺服器存取。透過純 `http://` 存取區域網路位址會被拒絕，頁面會說明原因。
-- **WebCodecs**，用於遠端以視訊形式傳送的畫面：`VideoDecoder` 用於 wlshare 的 VP9、高效能模式 Mac 的 HEVC 或 H.264，以及 RDP 主機的 H.264。沒有它時，用戶端本身仍然可以啟動，閘道的圖塊、標準模式 Mac 的 Adaptive 畫面以及不含 H.264 的 RDP 管線在任何瀏覽器中都能運作。頁面會事先詢問瀏覽器的解碼器能否解碼 Mac 的 HEVC、RDP 主機的 H.264 和 wlshare 的 VP9：解碼器拒絕前兩者時，選擇器將其變灰並說明原因；解碼器拒絕 VP9 時，`wlshare` 目標無法啟動，因為它的 Video 畫面是 VP9，而 Tiles with motion 的移動區域會退回到 VP9。Mac 的 H.264 不事先詢問：它提供給所有具備 `VideoDecoder` 的瀏覽器，沒有時變灰，解碼器不接受它時會在工作階段中透過解碼器的錯誤說明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；沒有它的瀏覽器（Safari 16.4 到 18）不播放聲音，較新的 Safari 的 `AudioDecoder` 無法解碼 FLAC，但可以播放 Opus 和 Mac 的聲音。
+- **WebCodecs**，用於遠端以視訊形式傳送的畫面：`VideoDecoder` 用於 wlshare 的 VP9、高效能模式 Mac 的 HEVC 或 H.264，以及 RDP 主機的 H.264。沒有它時，用戶端本身仍然可以啟動，閘道的圖塊、標準模式 Mac 的 Adaptive 畫面以及不含 H.264 的 RDP 管線在任何瀏覽器中都能運作。頁面會事先詢問瀏覽器的解碼器能否解碼 Mac 的 HEVC、RDP 主機的 H.264 和 wlshare 的 VP9：解碼器拒絕前兩者時，選擇器將其變灰並說明原因；解碼器拒絕 VP9 時，選擇器將 `wlshare` 目標的 Video 變灰，仍可使用 Tiles with motion，其移動區域是 H.264，具備 `VideoDecoder` 的瀏覽器即被視為能夠解碼。Mac 的 H.264 不事先詢問：它提供給所有具備 `VideoDecoder` 的瀏覽器，沒有時變灰，解碼器不接受它時會在工作階段中透過解碼器的錯誤說明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；沒有它的瀏覽器（Safari 16.4 到 18）不播放聲音，較新的 Safari 的 `AudioDecoder` 無法解碼 FLAC，但可以播放 Opus 和 Mac 的聲音。
 
 在桌面上使用時，請在 Chrome 或 Edge 中把頁面安裝為應用程式。應用程式視窗會把一般分頁自己保留的快速鍵（⌘W、⌘T、⌘N 等）交給頁面。在分頁中，**Menu → Immersive full screen** 也能做到這一點，而且還能收到視窗通常收不到的按鍵，例如 Super 鍵和 Alt+Tab。
 
@@ -178,7 +178,7 @@ password_ref = "wayland"
 
 [wlshare](https://github.com/andrewtheguy/wlshare) 是本專案自己的 VNC 伺服器，針對以 wlroots 為基礎的 Wayland 桌面。這個子類型讓閘道列出 wlshare 的私有 RFB 擴充：它的 VP9 串流，原封不動地直通並隨瀏覽器連線自適應；像素密度；輸出清單；聲音；以及在勾選後啟動的工作階段中，作為桌面上 PipeWire 裝置的瀏覽器攝影機和麥克風。不設定子類型時，同一個伺服器會以任何 VNC 伺服器的方式讀取。
 
-- **畫面（Picture）。** 選擇器的 Picture 群組為 *Video, passed through*（預設）：wlshare 針對整個桌面編碼的 VP9，依瀏覽器的連線調整。或 *Tiles with motion, passed through*：靜止的部分為精確的 PNG，每個移動區域有自己的一路視訊串流，使用主機硬體編碼器或 libx264 編碼的 H.264，必要時退回 VP9，停下後再精確地重送。圖塊適用於頻寬充裕的連線：wlshare 花在圖塊上的時間只是 VP9 的一小部分，最終畫面是精確的，代價是數倍的位元組數，大面積移動時達每秒數十 Mbit。其移動區域依 `video_quality` 編碼，`render_adaptive` 對它們沒有作用。
+- **畫面（Picture）。** 選擇器的 Picture 群組為 *Video, passed through*（預設）：wlshare 針對整個桌面編碼的 VP9，依瀏覽器的連線調整。或 *Tiles with motion, passed through*：靜止的部分為精確的 PNG，每個移動區域有自己的一路視訊串流，使用主機硬體編碼器或 libx264 編碼的 H.264，停下後再精確地重送。圖塊適用於頻寬充裕的連線：wlshare 花在圖塊上的時間只是 VP9 的一小部分，最終畫面是精確的，代價是數倍的位元組數，大面積移動時達每秒數十 Mbit。其移動區域依 `video_quality` 編碼，`render_adaptive` 對它們沒有作用。
 
 - **Alpha：** 剛好有兩個輸出（顯示器或無頭輸出）的桌面會列出 *All Displays* 並從它開始：第一個留在此處，第二個在同一個瀏覽器的新分頁中開啟 `/display/2`，有自己的指標和鍵盤，與有兩個虛擬顯示器的 `rdp` 目標一樣。`virtual_displays = 2` 要求 wlshare 提供兩個，就像要求 Windows 主機或 Mac 那樣：在 sway 上，wlshare 會讓合成器建立第二個無頭輸出，以兩個啟動的工作階段在要求一個（預設）時維持一個；在其他合成器上，輸出就是合成器既有的那些。
 

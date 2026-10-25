@@ -24,9 +24,10 @@ It needs:
   Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
   anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
   the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
-  the reason, where the decoder refuses them, and where it refuses the VP9 a
-  `wlshare` target cannot be started, since its Video picture is VP9 and Tiles
-  with motion falls back to VP9 for its moving regions. The Mac's H.264 is not
+  the reason, where the decoder refuses them, and where it refuses the VP9 it
+  greys a `wlshare` target's Video, leaving its Tiles with motion, whose
+  moving regions are H.264, which a browser with `VideoDecoder` is taken to
+  decode. The Mac's H.264 is not
   asked about: it is offered to every browser with `VideoDecoder` and greyed
   without one, and a decoder that refuses it says so in the session, by its
   error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
@@ -442,8 +443,8 @@ server is read as any VNC server is.
   default: wlshare's VP9 of the whole desktop, which it fits to the browser's
   link. Or *Tiles with motion, passed through*: what is still as exact PNG, and a
   video stream of its own for each region that moves, sent exact again once it
-  stops. wlshare uses H.264 from the host's hardware encoder or libx264, with
-  VP9 as the fallback. The tiles are for a link with room to spare: wlshare
+  stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
+  tiles are for a link with room to spare: wlshare
   spends a fraction of the VP9's time on them and the picture ends exact, for several times the
   bytes — tens of Mbit/s while something large moves. Their regions are held at
   `video_quality`, which `render_adaptive` does not reach.
