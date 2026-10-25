@@ -1093,16 +1093,37 @@ impl Sound {
     }
 }
 
+/// How long a streaming host may go without asking for a camera sample, owed none,
+/// before nothing on it is taken to be consuming: a Windows host stops asking when its
+/// application lets the camera go, and sends no Stop Streams. Many frame intervals at
+/// any rate a host asks for, and short enough that the camera on this end closes soon
+/// after the application on the host does.
+const CAMERA_IDLE: Duration = Duration::from_secs(3);
+
 /// The camera, and where the host's decisions about it go.
 struct Capture {
     proto: rdpecam::Rdpecam,
     sink: Box<dyn CameraSink>,
+    /// [`rdpecam::Rdpecam::sample_requests`] as last seen, to tell a new request from
+    /// none.
+    requests_seen: u64,
+    /// Since when the host has asked for nothing while owed nothing, while it has.
+    quiet_since: Option<Instant>,
 }
 
 impl Capture {
+    fn new(proto: rdpecam::Rdpecam, sink: Box<dyn CameraSink>) -> Self {
+        Self { proto, sink, requests_seen: 0, quiet_since: None }
+    }
+
+    /// When the stream goes idle if the host asks for nothing before then.
+    fn idle_due(&self) -> Option<Instant> {
+        self.quiet_since.map(|since| since + CAMERA_IDLE)
+    }
+
     /// What a turn meant goes to the sink at once, and what it put on the wire comes back
     /// as the dynamic channel PDUs that carry it — a sample is far longer than one.
-    fn settle(&self, turn: rdpecam::Turn) -> Result<Vec<Vec<u8>>> {
+    fn settle(&mut self, turn: rdpecam::Turn) -> Result<Vec<Vec<u8>>> {
         for output in turn.outputs {
             match output {
                 rdpecam::Output::Negotiated { version } => {
@@ -1128,14 +1149,49 @@ impl Capture {
                     info!("rdp: the host stopped the camera");
                     self.sink.stopped();
                 }
+                // The host's own stop and start as the caller sees them: the camera on
+                // this end closes and opens with them.
+                rdpecam::Output::Idle => {
+                    info!(
+                        "rdp: the host has asked for no camera sample in {}s; the camera is idle until it asks again",
+                        CAMERA_IDLE.as_secs()
+                    );
+                    self.sink.stopped();
+                }
+                rdpecam::Output::Resumed(format) => {
+                    info!("rdp: the host asks for camera samples again");
+                    self.sink.started(format);
+                }
                 rdpecam::Output::KeyframeNeeded => self.sink.keyframe_needed(),
             }
         }
+        self.watch(Instant::now());
         let mut pdus = Vec::new();
         for (channel, message) in turn.replies {
             pdus.extend(dvc::pieces(channel, &message)?);
         }
         Ok(pdus)
+    }
+
+    /// Follow the host's asking after a turn: quiet from the first moment it is owed
+    /// nothing and has asked for nothing since, and not quiet otherwise.
+    fn watch(&mut self, now: Instant) {
+        let requests = self.proto.sample_requests();
+        let asked = std::mem::replace(&mut self.requests_seen, requests) != requests;
+        self.quiet_since = match (self.proto.awaits_request(), self.quiet_since) {
+            (false, _) => None,
+            (true, Some(since)) if !asked => Some(since),
+            (true, _) => Some(now),
+        };
+    }
+
+    /// The host went [`CAMERA_IDLE`] without asking: the stream is idle. Nothing goes
+    /// on the wire for it.
+    fn idle(&mut self) -> Result<()> {
+        let turn = self.proto.idle();
+        let pdus = self.settle(turn)?;
+        debug_assert!(pdus.is_empty(), "going idle sends the host nothing");
+        Ok(())
     }
 }
 
@@ -1218,7 +1274,7 @@ impl<'a> Active<'a> {
             clipboard,
             audio,
             sound: sink.map(|sink| Sound { proto: rdpsnd::Rdpsnd::new(), sink }),
-            capture: camera.map(|camera| Capture { proto: rdpecam::Rdpecam::new(&camera.name), sink: camera.sink }),
+            capture: camera.map(|camera| Capture::new(rdpecam::Rdpecam::new(&camera.name), camera.sink)),
             recorder: microphone.map(|sink| Recorder { proto: rdpeai::Rdpeai::new(), sink }),
             devices,
             rdpdr: rdpdr::Rdpdr::new(),
@@ -1317,6 +1373,14 @@ impl<'a> Active<'a> {
                         }
                         // The caller stopped listening; nothing will read these.
                         Err(_) => self.damage.clear(),
+                    }
+                }
+                // A streaming host that has stopped asking for camera samples.
+                () = tokio::time::sleep_until(
+                    self.capture.as_ref().and_then(Capture::idle_due).unwrap_or_else(Instant::now)
+                ), if self.capture.as_ref().is_some_and(|capture| capture.idle_due().is_some()) => {
+                    if let Some(capture) = &mut self.capture {
+                        capture.idle()?;
                     }
                 }
                 // The caller's camera: a device plugged or unplugged, or a sample.
@@ -2298,6 +2362,69 @@ fn narrow(v: u32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoSink;
+
+    impl CameraSink for NoSink {
+        fn negotiated(&self, _: u8) {}
+        fn attached(&self) {}
+        fn started(&self, _: rdpecam::Format) {}
+        fn stopped(&self) {}
+        fn keyframe_needed(&self) {}
+    }
+
+    const DEVICE: u32 = 6;
+
+    /// A camera whose host has started a 640x480, 30 fps stream on channel `DEVICE`, in
+    /// the wire's own bytes.
+    fn streaming_camera() -> Capture {
+        let mut proto = rdpecam::Rdpecam::new("zDesk Camera");
+        proto.opened(rdpecam::ENUMERATOR, 5);
+        proto.push(5, &[2, 0x04]);
+        proto.plug(rdpecam::Format { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 });
+        proto.opened(rdpecam::DEVICE_CHANNEL, DEVICE);
+        proto.push(DEVICE, &[2, 0x07]);
+        let start = [
+            2, 0x0f, 0, 0x01, 0x80, 0x02, 0, 0, 0xe0, 0x01, 0, 0, 0x1e, 0, 0, 0, 0x01, 0, 0, 0, 0x01, 0, 0, 0, 0x01,
+            0, 0, 0, 0x01,
+        ];
+        assert_eq!(proto.push(DEVICE, &start).replies, vec![(DEVICE, vec![2, 0x01])]);
+        Capture::new(proto, Box::new(NoSink))
+    }
+
+    /// The host is timed from its last request while it is owed nothing, and not at all
+    /// while it is owed a sample, which is this end keeping it waiting.
+    #[test]
+    fn a_quiet_camera_host_is_timed_from_its_last_request() {
+        let mut capture = streaming_camera();
+        let start = Instant::now();
+        capture.watch(start);
+        assert_eq!(capture.idle_due(), Some(start + CAMERA_IDLE), "a started stream waits on the host");
+        capture.watch(start + Duration::from_secs(1));
+        assert_eq!(capture.idle_due(), Some(start + CAMERA_IDLE), "a turn with no request changes nothing");
+
+        // A request answered at once, from a sample that waited: still owed nothing, but
+        // the host asked, so it is timed afresh.
+        capture.proto.sample(vec![1], true);
+        capture.proto.push(DEVICE, &[2, 0x11, 0]);
+        capture.watch(start + Duration::from_secs(2));
+        assert_eq!(capture.idle_due(), Some(start + Duration::from_secs(2) + CAMERA_IDLE));
+
+        // A request owed: the host waits on this end, so it is not timed.
+        capture.proto.push(DEVICE, &[2, 0x11, 0]);
+        capture.watch(start + Duration::from_secs(3));
+        assert_eq!(capture.idle_due(), None);
+        capture.proto.sample(vec![2], false);
+        capture.watch(start + Duration::from_secs(4));
+        assert_eq!(capture.idle_due(), Some(start + Duration::from_secs(4) + CAMERA_IDLE));
+
+        // Idle, the stream is not timed again until the host asks.
+        capture.idle().unwrap();
+        assert_eq!(capture.idle_due(), None);
+        capture.proto.push(DEVICE, &[2, 0x11, 0]);
+        capture.watch(start + Duration::from_secs(9));
+        assert_eq!(capture.idle_due(), None, "the request that resumed it is owed");
+    }
 
     /// What a paced bandwidth result says it took, out of its encoded response:
     /// past the security header, headerLength, type, sequence and responseType.
