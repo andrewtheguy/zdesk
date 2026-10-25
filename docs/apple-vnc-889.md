@@ -575,7 +575,10 @@ for 60 Hz unless its preference or display capability says otherwise; zDesk's
   Mac creates no display: macOS refuses the configuration as an invalid size, and
   the session stays on the Mac's own display, answering no resize. Apple's viewer
   fills both from its largest mode.
-- **The window's size waits for the media stream.** Apple's viewer switches to
+- **The window's size waits for the media stream.** Apple's viewer opens at the
+  canonical displays with dynamic resolution off unless the session was started
+  with it, and then sends no window size until the user turns it on; zDesk
+  always follows the window. A viewer started with it switches to
   dynamic resolution only once its media stream is set up, so the stream is
   offered first for the canonical displays, and the size goes out when the Mac
   answers that offer. Its change then stops the stream, which is offered again
@@ -2063,7 +2066,10 @@ moving over a TextEdit window, with 123 bytes of zlib. A login once pushed a who
 screen unasked, which is stepped over like every rectangle of such a session.
 
 The first `SetEncodings` lists the media stream first and is held for the whole
-session, as Apple's viewer lists it. The Mac's
+session, as Apple's viewer lists it. Apple's viewer sends that same list again
+once the session is ready and after every answer, each time with a
+`SetPixelFormat`, and the Mac sends the layout again for each; zDesk sends the
+list once. The Mac's
 preferred codec is the first it knows in the list, and its framebuffer sender
 sends no pixels to a viewer whose preferred codec is the media stream: cursor
 shapes, layouts and message 1 still come. That keeps the Mac's two framing
