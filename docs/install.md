@@ -1,5 +1,7 @@
 # Installing zDesk
 
+English | [简体中文](install.zh-CN.md) | [繁體中文](install.zh-TW.md)
+
 ## Native packages
 
 Install a native package from the

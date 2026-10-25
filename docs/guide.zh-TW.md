@@ -2,7 +2,7 @@
 
 [English](guide.md) | [简体中文](guide.zh-CN.md) | 繁體中文
 
-閘道[安裝](install.md)好之後，維運人員和使用者需要了解的內容：如何存取頁面、工作階段以哪些選項啟動、各類目標如何設定，以及本機多執行個體控制平面。所有設定項都在附註解的 [`zdesk.example.toml`](../zdesk.example.toml) 中，背後的設計請見 [Architecture](architecture.md)。本頁連結的其他文件都只有英文版。
+閘道[安裝](install.zh-TW.md)好之後，維運人員和使用者需要了解的內容：如何存取頁面、工作階段以哪些選項啟動、各類目標如何設定，以及本機多執行個體控制平面。所有設定項都在附註解的 [`zdesk.example.toml`](../zdesk.example.toml) 中，背後的設計請見 [Architecture](architecture.md)。本頁連結的其他文件除安裝文件外都只有英文版。
 
 ## 用戶端
 

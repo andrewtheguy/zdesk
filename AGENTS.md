@@ -39,6 +39,10 @@ belong in the linked documentation.
   bundle is compiled into the binary, and the gateway is the only thing that
   serves it. Do not put a dev server in front of it.
 - After Playwright changes, run `bun run typecheck` in `tests/playwright/`.
+- Translate Simplified (`zh-CN`) and Traditional (`zh-TW`) Chinese each from the
+  English, never one by converting the other's characters: their technical terms
+  differ (网关/閘道, 配置/設定, 软件包/套件, 会话/工作階段, 文件/檔案), so each
+  keeps its own vocabulary.
 - Put temporary files and test configuration under `tmp/`. Always run local
   Python through `uv` (GitHub Actions excluded).
 - Errors are `anyhow` by default, and `thiserror` wherever a caller branches on
