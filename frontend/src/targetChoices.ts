@@ -44,10 +44,9 @@
 //   two and tells it where each is: see `PLACEMENTS`.
 // - This browser's camera and microphone are offered to the remote or not, each
 //   ticked where the target has somewhere to put it, an RDP host or wlshare:
-//   see `deviceRow`. Both experimental, and neither until somebody ticks it. The
-//   camera's tick is the whole of its choice: the session plugs it, and this
-//   browser's camera opens while the remote uses it. The microphone's is the
-//   offer alone: it is turned on from the session's menu.
+//   see `deviceRow`. Both experimental, and neither until somebody ticks it.
+//   Each tick is the whole of its device's choice: the session plugs it, and
+//   this browser's device opens while the remote uses it.
 // - How the host draws an RDP pipeline, high quality or adaptive H.264 (alpha), is a
 //   choice on a target with the pipeline on, and under adaptive the whole desktop
 //   or by region: see `pipelineRow`. A browser that cannot decode the H.264 is
@@ -553,10 +552,9 @@ function soundRow(
 }
 
 // This browser's devices, offered to the remote where the target has somewhere to
-// put them: an RDP host over its channels, wlshare over its extensions. The
-// camera's tick plugs it for the session, and this browser's camera opens while
-// an application on the remote uses it; the microphone's is the offer, and the
-// session's menu turns it on, and off.
+// put them: an RDP host over its channels, wlshare over its extensions. Each
+// tick plugs its device in for the session, and this browser's camera or
+// microphone opens while an application on the remote uses it.
 const DEVICES: Record<"camera" | "microphone", Omit<DeviceRow, "checked">> = {
   camera: {
     label: "Camera (experimental)",
@@ -564,7 +562,7 @@ const DEVICES: Record<"camera" | "microphone", Omit<DeviceRow, "checked">> = {
   },
   microphone: {
     label: "Microphone (experimental)",
-    note: "Offer the remote this browser's microphone, as speech Opus, to turn on from the session's menu. For a call or a recording.",
+    note: "Give the remote a microphone for the session, as speech Opus. This browser's microphone opens while an application on the remote records. For a call or a recording.",
   },
 };
 

@@ -664,12 +664,14 @@ export function useRemoteDesktop(
   // Whether the remote is consuming the camera right now — an application over
   // there has it open, and with it this browser's camera.
   const [cameraStreaming, setCameraStreaming] = useState(false);
-  // The microphone: capability, then an explicit per-session enable from the
-  // menu.
+  // The microphone, the camera's twin: whether the session offers it (the
+  // picker's Microphone tick), whether it is plugged in — the mic socket is
+  // open, which a session with the tick does as it connects — why it is not
+  // working, and whether the remote is recording from it right now, which is
+  // when this browser's microphone is open.
   const [canMic, setCanMic] = useState(false);
-  const [micEnabled, setMicEnabled] = useState(false);
+  const [micPlugged, setMicPlugged] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  // Whether the remote is recording from the microphone right now.
   const [micStreaming, setMicStreaming] = useState(false);
   // Why this browser is showing nothing for a video target, or null.
   //
@@ -1000,9 +1002,68 @@ export function useRemoteDesktop(
     const sender = micSenderRef.current;
     micSenderRef.current = null;
     sender?.stop();
-    setMicEnabled(false);
+    setMicPlugged(false);
     setMicStreaming(false);
   }, []);
+
+  // Plug the microphone into the remote, for a session started with the
+  // picker's Microphone tick: `startCamera`'s twin, guard for guard. Nothing
+  // here opens this browser's microphone: the sender does when an application
+  // on the remote starts recording, and closes it when the recording ends.
+  const startMic = useCallback(() => {
+    const url = micUrlRef.current?.();
+    if (!url || micSenderRef.current || micPendingRef.current !== null) {
+      return;
+    }
+    setMicError(null);
+    const generation = micGenerationRef.current;
+    micPendingRef.current = generation;
+    void startMicSender(url, {
+      onStopped: (reason) => {
+        if (micGenerationRef.current !== generation) {
+          return;
+        }
+        stopMic();
+        if (reason) {
+          setMicError(reason);
+        }
+      },
+      onStreaming: (streaming) => {
+        if (micGenerationRef.current === generation) {
+          setMicStreaming(streaming);
+        }
+      },
+      onCaptureError: (reason) => {
+        if (micGenerationRef.current === generation) {
+          setMicError(reason);
+        }
+      },
+    }).then(
+      (sender) => {
+        if (micPendingRef.current === generation) {
+          micPendingRef.current = null;
+        }
+        if (micGenerationRef.current !== generation) {
+          sender.stop();
+          return;
+        }
+        micSenderRef.current = sender;
+        setMicPlugged(true);
+      },
+      (e: unknown) => {
+        if (micPendingRef.current === generation) {
+          micPendingRef.current = null;
+        }
+        if (micGenerationRef.current === generation) {
+          setMicError(
+            e instanceof Error
+              ? e.message
+              : "this browser cannot offer a microphone",
+          );
+        }
+      },
+    );
+  }, [stopMic]);
 
   // The engine's latest pointer state, and where the touch gesture layer's
   // virtual pointer sits (null while a hardware mouse is driving). Both are
@@ -2124,11 +2185,11 @@ export function useRemoteDesktop(
         stopCamera();
         setCameraError(null);
       }
-      // Nothing here turns the microphone on: enabling it is explicit, every
-      // time. A session without one ends any microphone still offered; one
-      // with a microphone leaves it alone, as the camera's reattach does.
+      // The microphone the same way, under the Microphone tick.
       setCanMic(msg.microphone);
-      if (!msg.microphone) {
+      if (msg.microphone) {
+        startMic();
+      } else {
         stopMic();
         setMicError(null);
       }
@@ -2182,7 +2243,8 @@ export function useRemoteDesktop(
       closeAudioSocket();
       setAudioEnabled(false);
       setAudioError(null);
-      // The camera goes with the session it was enabled for.
+      // The camera and the microphone go with the session they were plugged
+      // into.
       setCanCamera(false);
       stopCamera();
       setCameraError(null);
@@ -2571,6 +2633,7 @@ export function useRemoteDesktop(
     releaseAudio,
     startCamera,
     stopCamera,
+    startMic,
     stopMic,
     tabDisplay,
   ]);
@@ -2670,67 +2733,6 @@ export function useRemoteDesktop(
       }
     },
     [releaseAudio],
-  );
-
-  // Start or stop offering this browser's microphone (the floating menu's
-  // Microphone button). The camera's twin, guard for guard, and like it
-  // **must be called from a click** for `getUserMedia`'s permission prompt.
-  const setMic = useCallback(
-    (enabled: boolean) => {
-      setMicError(null);
-      if (!enabled) {
-        stopMic();
-        return;
-      }
-      const url = micUrlRef.current?.();
-      if (!url || micSenderRef.current || micPendingRef.current !== null) {
-        return;
-      }
-      const generation = micGenerationRef.current;
-      micPendingRef.current = generation;
-      setMicEnabled(true);
-      void startMicSender(url, {
-        onStopped: (reason) => {
-          if (micGenerationRef.current !== generation) {
-            return;
-          }
-          stopMic();
-          if (reason) {
-            setMicError(reason);
-          }
-        },
-        onStreaming: (streaming) => {
-          if (micGenerationRef.current === generation) {
-            setMicStreaming(streaming);
-          }
-        },
-      }).then(
-        (sender) => {
-          if (micPendingRef.current === generation) {
-            micPendingRef.current = null;
-          }
-          if (micGenerationRef.current !== generation) {
-            sender.stop();
-            return;
-          }
-          micSenderRef.current = sender;
-        },
-        (e: unknown) => {
-          if (micPendingRef.current === generation) {
-            micPendingRef.current = null;
-          }
-          if (micGenerationRef.current === generation) {
-            setMicEnabled(false);
-            setMicError(
-              e instanceof Error
-                ? e.message
-                : "this browser cannot offer a microphone",
-            );
-          }
-        },
-      );
-    },
-    [stopMic],
   );
 
   // Inject a key chord from the floating toolbar — keys the browser swallows
@@ -3270,7 +3272,7 @@ export function useRemoteDesktop(
     cameraError,
     cameraStreaming,
     canMic,
-    micEnabled,
+    micPlugged,
     micError,
     micStreaming,
     displays,
@@ -3299,7 +3301,6 @@ export function useRemoteDesktop(
     switchTarget,
     selectDisplay,
     setAudio,
-    setMic,
     sendKeyCombo,
     requestClipboard,
     sendClipboard,

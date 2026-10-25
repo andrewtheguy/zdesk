@@ -796,10 +796,11 @@ wire format, no record and no second stream. See
   [The browser's camera over VNC with wlshare](wlshare-camera.md).
 - Browser microphone redirection is MS-RDPEAI on RDP and wlshare's microphone
   extension on a `wlshare` target: low-bitrate mono Opus from the browser, decoded here
-  to the 16-bit PCM the host records in. It uses its own `/ws/mic` socket, opened
-  explicitly per session from the menu, refused with `4002` when the target
-  carries no microphone and closed with the engine as the camera's is, and is
-  never put on the session socket. See [Camera frames](#camera-frames) and
+  to the 16-bit PCM the host records in. It uses its own `/ws/mic` socket, which a
+  session started with the picker's Microphone tick opens as it connects, refused
+  with `4002` when the target carries no microphone and closed with the engine as
+  the camera's is, and the browser's microphone is open only while the remote
+  records. It is never put on the session socket. See [Camera frames](#camera-frames) and
   [The browser's microphone over VNC with wlshare](wlshare-microphone.md).
 
 ## Backend
@@ -2349,12 +2350,10 @@ and `GET /api/targets` carries it:
   `choices.camera` and `choices.microphone`, each a tick labelled experimental,
   on `rdp`, over MS-RDPECAM and MS-RDPEAI, and on `wlshare`, over its camera and
   microphone extensions, and refused on a plain `vnc` target and on both Apple
-  subtypes, which have nowhere to put either. The Camera tick is the whole of
-  the camera's choice: the session opens `/ws/camera` as it connects, and the
-  browser's camera opens while an application on the remote uses it. The
-  Microphone tick is the offer alone, what the session lists to the host; the
-  microphone itself is turned on from the session's menu, per session, which
-  opens `/ws/mic` ([Camera frames](#camera-frames),
+  subtypes, which have nowhere to put either. Each tick is the whole of its
+  device's choice: the session opens `/ws/camera` or `/ws/mic` as it connects,
+  and the browser's camera or microphone opens while an application on the
+  remote uses it ([Camera frames](#camera-frames),
   [Microphone frames](#microphone-frames)).
   Neither until somebody ticks it, and `connected` reports what the session was
   started with as `camera` and `microphone`.
@@ -2850,14 +2849,21 @@ without the RDSH role. See
 **Experimental**, under the same testing boundary as the camera. The browser's
 microphone goes the other way on the fifth socket, in a session started with the
 picker's Microphone tick, on an `rdp` or `wlshare` target; a plain `vnc` target
-and both Apple subtypes refuse the choice. Opening `/ws/mic?session=<token>` is the enable. It has the camera socket's
-authentication, 4000/4001/4002 close codes, claim-and-engine binding, and
-per-session lifetime, so an engine end, takeover, or ordinary socket close stops
-the feed and the next session starts with the microphone off.
+and both Apple subtypes refuse the choice. A session started with it opens
+`/ws/mic?session=<token>` as it connects, which plugs the microphone in, and
+there is no other control. It has the camera socket's authentication,
+4000/4001/4002 close codes, claim-and-engine binding, and per-session lifetime,
+so an engine end, takeover, or ordinary socket close stops the feed and every
+session plugs its own.
 
 The remote controls when samples are useful. It sends `micOpen` when an
-application starts recording and `micClose` when it stops; the browser captures
-and encodes only between them. Inbound binary frames contain one packet:
+application starts recording and `micClose` when it stops; the browser opens its
+microphone on the open and encodes only until the close, then keeps the
+microphone open for two seconds before closing it, as the camera does. A Windows
+11 host does close `AUDIO_INPUT`'s recording when the application stops, so the
+microphone needs nothing like the camera's idle timer. A microphone that will
+not open leaves the device plugged and is tried again at the next open, and the
+Info card's Microphone row says why. Inbound binary frames contain one packet:
 
 ```text
 u8 kind = 0x05 | one Opus packet

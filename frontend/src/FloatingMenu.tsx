@@ -30,10 +30,11 @@ import {
   type AudioStreamInfo,
   audioBlockCopy,
   audioLabel,
-  type CameraRow,
   cameraLabel,
+  type DeviceRow,
   type HostPicture,
   hostPictureLabel,
+  micLabel,
   renderLabel,
   type VideoStreamInfo,
   videoLabel,
@@ -588,6 +589,7 @@ function ScreenHelp({
   oversize,
   audio,
   camera,
+  microphone,
   videoStream,
   hostPicture,
 }: {
@@ -597,7 +599,8 @@ function ScreenHelp({
   renderPlan: string;
   oversize: HoldCause | null;
   audio: AudioRow;
-  camera: CameraRow;
+  camera: DeviceRow;
+  microphone: DeviceRow;
   videoStream: VideoStreamInfo | null;
   hostPicture: HostPicture | null;
 }) {
@@ -656,6 +659,11 @@ function ScreenHelp({
               opens the camera, so this row is where a plugged camera nothing
               uses is told from one that failed. */}
           <dd>{cameraLabel(camera)}</dd>
+        </div>
+        <div className="help-item">
+          <dt>Microphone</dt>
+          {/* The Camera row's twin, for the picker's Microphone tick. */}
+          <dd>{micLabel(microphone)}</dd>
         </div>
         <div className="help-item">
           <dt>Video decoder</dt>
@@ -789,52 +797,6 @@ function AudioSection({
   );
 }
 
-// The microphone toggle. A session started without the microphone offered omits
-// the row — the same rule as Audio's — the click is the `getUserMedia` gesture,
-// nothing is remembered, and the label says "experimental" because the
-// redirection behind it has no automated coverage — no test carries a sample to
-// a host — where Audio's does.
-function MicSection({
-  available,
-  enabled,
-  error,
-  streaming,
-  onChange,
-}: {
-  available: boolean;
-  enabled: boolean;
-  error: string | null;
-  // Whether an application on the remote is recording right now.
-  streaming: boolean;
-  onChange: (enabled: boolean) => void;
-}) {
-  if (!available) {
-    return null;
-  }
-  return (
-    <div className="toolbar-section">
-      <span className="toolbar-label">Microphone (experimental)</span>
-      <button
-        type="button"
-        className="toolbar-btn"
-        onClick={() => onChange(!enabled)}
-        aria-pressed={enabled}
-        title="Offer this browser's microphone to the remote"
-      >
-        {enabled ? "Disable microphone" : "Enable microphone"}
-      </button>
-      {enabled && !error && (
-        <p className="audio-note">
-          {streaming
-            ? "The remote is recording the microphone"
-            : "Waiting for the remote to record"}
-        </p>
-      )}
-      {error && <p className="audio-note">{error}</p>}
-    </div>
-  );
-}
-
 // macOS-only Command-to-Control preference. It remains visible but inactive for
 // a Mac guest, where Command already has native meaning.
 function MacKeyboardSection({
@@ -949,10 +911,9 @@ export default function FloatingMenu({
   cameraError,
   cameraStreaming,
   canMic,
-  micEnabled,
+  micPlugged,
   micError,
   micStreaming,
-  onMicChange,
   macKeyOverridesEnabled,
   macKeyOverridesActive,
   isMacHost,
@@ -1032,14 +993,13 @@ export default function FloatingMenu({
   cameraPlugged: boolean;
   cameraError: string | null;
   cameraStreaming: boolean;
-  // The microphone: the picker's Microphone tick is RDP's and a wlshare
-  // target's (wlshare's microphone extension) alone, enabled per session from
-  // the menu, and `micStreaming` is whether the remote records.
+  // The microphone, the same way under the picker's Microphone tick, which is
+  // RDP's and a wlshare target's (wlshare's microphone extension) alone:
+  // `micStreaming` is whether the remote records.
   canMic: boolean;
-  micEnabled: boolean;
+  micPlugged: boolean;
   micError: string | null;
   micStreaming: boolean;
-  onMicChange: (enabled: boolean) => void;
   // The Command-to-Control preference and whether it is doing anything. The two
   // differ when the guest is itself a Mac, which is why the section reports the
   // reason rather than just showing the switch off. The whole section is absent
@@ -1254,14 +1214,6 @@ export default function FloatingMenu({
             onChange={onAudioChange}
           />
 
-          <MicSection
-            available={canMic}
-            enabled={micEnabled}
-            error={micError}
-            streaming={micStreaming}
-            onChange={onMicChange}
-          />
-
           <MacKeyboardSection
             enabled={macKeyOverridesEnabled}
             active={macKeyOverridesActive}
@@ -1339,6 +1291,12 @@ export default function FloatingMenu({
               plugged: cameraPlugged,
               streaming: cameraStreaming,
               error: cameraError,
+            }}
+            microphone={{
+              offered: canMic,
+              plugged: micPlugged,
+              streaming: micStreaming,
+              error: micError,
             }}
             videoStream={videoStream}
             hostPicture={hostPicture}

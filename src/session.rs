@@ -1419,8 +1419,8 @@ impl SessionManager {
     }
 
     /// Attach the microphone WebSocket holding `token`: the camera's rules, for the
-    /// microphone. Opening it is the enable, and it is refused when the running target
-    /// carries no microphone.
+    /// microphone. Opening it plugs the microphone, and it is refused when the running
+    /// target carries no microphone.
     pub fn attach_mic(self: &Arc<Self>, token: &str) -> Result<MicAttachment, UplinkRefused> {
         let mut st = self.state.lock().unwrap();
         if st.claim.as_deref() != Some(token) {
@@ -1798,8 +1798,7 @@ impl SessionManager {
         // exists for a session started with the camera offered — and there is no
         // arm/re-arm machinery beside it: the camera socket that would use it does
         // not exist yet, because every engine end closed the previous one and the
-        // browser opens one afresh for this session. The microphone's is the same,
-        // its socket opened by an enable from the menu.
+        // browser opens one afresh for this session. The microphone's is the same.
         let uplinks = Uplinks {
             camera: choices.camera.then(|| Arc::new(CameraBridge::new())),
             microphone: choices.microphone.then(|| Arc::new(MicBridge::new())),

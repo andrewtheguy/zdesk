@@ -44,7 +44,7 @@ defaults write -g NSConvolutionOverride1 -float 1
 - **直通（Passthrough）。** 把远程自己的流原样发送给浏览器，而不是由网关编码成图块。高性能模式 Mac 的画面始终直通，可以选择的是哪一路流：其 HEVC，浏览器无法接收时置灰；或其 H.264（beta），它提供给所有具备 `VideoDecoder` 的浏览器，页面中不需要 HEVC 解码器。在启用管道的 `rdp` 目标上，这不是一个选项：选择器会说明它始终直通，没有可勾选的框，无法合成管道的浏览器不能启动该目标。直通的 RDP 管道会跟随浏览器的链路：浏览器跟不上时，Windows 主机会绘制更少的帧，在 Adaptive 下还会更粗糙。Mac 直通的流则不会：Mac 按自己的速率发送，静止画面很少，运动时很多。在 `ard` 目标上，Picture 组为 *Apple's Adaptive (beta), passed through*（默认）或 *Gateway adaptive, settles to lossless*。Apple's Adaptive 是 Mac 自己的 8×8 图块，由本页面解码：每个变化区域先来一遍粗略的，随后是它的细化；在任何链路上精度都相同，较慢的链路只是更新更少，并在画面静止后才得到细化；它永远达不到无损。以它启动的会话在浏览器回来时会重新开始而不是恢复，与直通的 RDP 管道一样。Gateway adaptive 是 Mac 的无损 Full 质量，由网关解压后按 `video_quality` 以图块发送，与它发送任何 VNC 服务器的桌面一样：区域变化时用 JPEG，稳定后变为精确，适配链路，并在浏览器回来时恢复。在 Combined Display（见下文）下 Apple's Adaptive 会被置灰，因为 Combined Display 同样是网关的图块。在 `wlshare` 目标上，Picture 组为 *Video, passed through*（默认），即 wlshare 对整个桌面编码的 VP9；或 *Tiles with motion, passed through*，即 wlshare 自己的图块，适用于局域网：见 [wlshare](#wlshare-vnc-subtype--wlshare)。
 - **显示器（Displays）。** 在共享 Mac 物理屏幕的 `ard` 目标上：*One at a time*（beta，默认）从主屏幕开始，在显示器菜单中提供其他屏幕，画面采用上面选择的方式；*Combined*（alpha）同时显示所有屏幕，相当于 Apple 查看器的 Combined Display，不提供单个屏幕。Combined Display 向 Mac 请求 Full 质量，由网关解码、合成并按 `video_quality` 以图块发送，与网关编码的任何画面一样跟随浏览器的链路。在 1x 浏览器上，2x 屏幕由网关缩小为 1x，因此只占用其自身像素四分之一的链路；2x 浏览器收到 Mac 原生的像素，1x 屏幕由浏览器自己放大绘制。仅屏幕共享的标准模式提供。见 [A passed stream and the browser's link](architecture.md#a-passed-stream-and-the-browsers-link)。
 - **图形（Graphics）。** RDP 主机如何绘制其管道。*High quality*（默认）使用管道中除 H.264 以外的编码，适用于局域网：慢速链路只会得到更少的帧，而不会更粗糙。*Adaptive*（alpha）是主机按浏览器链路调整的 H.264：慢速链路更粗糙，快速链路更精细。其下，*H.264 full screen*（默认）用 H.264 绘制整个桌面，*H.264 region* 只对像视频那样运动的部分使用 H.264，其余部分按 High quality 的方式绘制，文字因此保持清晰，但自适应较少。在 `VideoDecoder` 无法解码主机 H.264 的浏览器中，Adaptive 会被置灰。要让主机无损绘制，见[精确画面](#精确画面)。
-- **摄像头（Camera）** 和 **麦克风（Microphone）**（实验性）。在 `rdp` 或 `wlshare` 目标上，这两个勾选项向远程提供本浏览器的设备：摄像头在整个会话中提供，远程有程序使用时才打开；麦克风之后在会话的菜单中打开。见[摄像头和麦克风](#摄像头和麦克风)。
+- **摄像头（Camera）** 和 **麦克风（Microphone）**（实验性）。在 `rdp` 或 `wlshare` 目标上，这两个勾选项向远程提供本浏览器的设备：两者都在整个会话中提供，远程有程序使用时才打开。见[摄像头和麦克风](#摄像头和麦克风)。
 
 一个网关只持有一个会话。重新加载或连接断开通常会恢复会话；启用图形管道的 RDP 会话以及标准模式 Mac 的 Adaptive 会话则会重新连接引擎，因为浏览器的合成器或解码器状态已经丢失。另一个浏览器若发现所有者仍连接着，会被询问是否接管；在所有者重新连接的宽限期内到达的浏览器可以直接占用该槽位。两种情况都从选择器开始，使用它自己的选项。远程会保留自己的桌面，因此再次启动该目标会回到相同的窗口。
 
@@ -200,7 +200,7 @@ vnc_password_ref = "workstation-vnc"
 
 ## 摄像头和麦克风
 
-**Camera** 和 **Microphone** 是 `rdp` 或 `wlshare` 目标在选择器中的勾选项，用于向远程提供本浏览器的摄像头和麦克风。两者都是**实验性**的，默认关闭，并像其他选项一样按目标记住。勾选摄像头启动的会话在连接时就给远程一个摄像头，本浏览器的摄像头只在远程有程序使用它时才打开，其余时间指示灯不亮；信息卡片的 Camera 一行会说明当前状态。麦克风在每个会话中从浮动菜单打开。它们面向临时需要的场景，例如一次通话或录制，并以尽可能低的开销发送：浏览器的 H.264 不经转码直通，以及低固定比特率的单声道语音 Opus。Apple 目标和普通 `vnc` 目标都不提供这两项。
+**Camera** 和 **Microphone** 是 `rdp` 或 `wlshare` 目标在选择器中的勾选项，用于向远程提供本浏览器的摄像头和麦克风。两者都是**实验性**的，默认关闭，并像其他选项一样按目标记住。勾选摄像头启动的会话在连接时就给远程一个摄像头，本浏览器的摄像头只在远程有程序使用它时才打开，其余时间指示灯不亮；信息卡片的 Camera 一行会说明当前状态。麦克风也一样：会话连接时就接入，本浏览器的麦克风只在远程有程序录音时才打开，信息卡片的 Microphone 一行会说明。它们面向临时需要的场景，例如一次通话或录制，并以尽可能低的开销发送：浏览器的 H.264 不经转码直通，以及低固定比特率的单声道语音 Opus。Apple 目标和普通 `vnc` 目标都不提供这两项。
 
 在 RDP 上，摄像头需要一台会重定向摄像头的 Windows 主机：工作站版本的 Windows，或安装了远程桌面会话主机角色的 Windows Server。Windows 主机只有在其上有程序录音时才会启动麦克风。
 

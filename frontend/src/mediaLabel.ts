@@ -122,26 +122,23 @@ export function audioLabel(row: AudioRow): string {
   return row.stream ? streamLabel(row.stream) : "Waiting for the audio format";
 }
 
-/** Everything the Camera row is derived from. See `useRemoteDesktop`. */
-export interface CameraRow {
-  /** The session was started with the picker's Camera tick (`camera` on `connected`). */
+/** Everything the Camera and Microphone rows are derived from. See `useRemoteDesktop`. */
+export interface DeviceRow {
+  /** The session was started with the picker's tick (`camera` or `microphone` on `connected`). */
   offered: boolean;
-  /** The camera socket is open, so the remote has a camera plugged in. */
+  /** The device's socket is open, so the remote has it plugged in. */
   plugged: boolean;
-  /** An application on the remote has it open, and with it this browser's camera. */
+  /** An application on the remote is using it, and with it this browser's device. */
   streaming: boolean;
   /** Why it is not working: unplugged when `plugged` is false, and otherwise
-   *  this browser's camera refusing to open. */
+   *  this browser's device refusing to open. */
   error: string | null;
 }
 
-/**
- * The Camera row: whether this session offers the remote a camera, set at the
- * picker, and what has become of it. This browser's camera is opened only while
- * an application on the remote uses it, so "plugged in" with the light off is
- * the normal state, and the row says so rather than leaving it to look broken.
- */
-export function cameraLabel(row: CameraRow): string {
+// Both rows' shared shape. This browser's device is opened only while an
+// application on the remote uses it, so "plugged in" with the light off is the
+// normal state, and the row says so rather than leaving it to look broken.
+function deviceLabel(row: DeviceRow, inUse: string, idle: string): string {
   if (!row.offered) {
     return "Not offered in this session";
   }
@@ -151,9 +148,26 @@ export function cameraLabel(row: CameraRow): string {
   if (row.error) {
     return `Plugged in, but ${row.error}`;
   }
-  return row.streaming
-    ? "In use by the remote"
-    : "Plugged in; this browser's camera opens when an application on the remote uses it";
+  return row.streaming ? inUse : `Plugged in; ${idle}`;
+}
+
+/** The Camera row: whether this session offers the remote a camera, set at the
+ *  picker, and what has become of it. */
+export function cameraLabel(row: DeviceRow): string {
+  return deviceLabel(
+    row,
+    "In use by the remote",
+    "this browser's camera opens when an application on the remote uses it",
+  );
+}
+
+/** The Microphone row: the Camera row's twin, for the Microphone tick. */
+export function micLabel(row: DeviceRow): string {
+  return deviceLabel(
+    row,
+    "Recording on the remote",
+    "this browser's microphone opens when an application on the remote records",
+  );
 }
 
 /** The Render row: the dial this session resolved to. */

@@ -9,9 +9,9 @@
 //!   ([`crate::config::Choices::microphone`], the picker's Microphone tick) lists the
 //!   pseudo-encoding in `SetEncodings`.
 //!   wlshare answers with an *available* message; any other server ignores the
-//!   encoding and says nothing, and the microphone the browser enables is then never
+//!   encoding and says nothing, and the microphone the browser offers is then never
 //!   plugged.
-//! - The browser's enable — the mic socket attaching — plugs the microphone, and the
+//! - The browser's mic socket attaching plugs the microphone, and the
 //!   socket going away unplugs it. A plug that arrives before the server's answer
 //!   waits for it ([`Device`]).
 //! - The server says when an application on the desktop starts recording (*start*,

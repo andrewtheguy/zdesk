@@ -12,6 +12,7 @@ import {
   audioLabel,
   cameraLabel,
   hostPictureLabel,
+  micLabel,
   renderLabel,
   videoLabel,
 } from "./mediaLabel.ts";
@@ -268,5 +269,20 @@ test("a camera that could not be plugged in is told from one that could not open
   assert.equal(
     cameraLabel({ ...CAMERA, error: "this browser has no camera to offer" }),
     "Plugged in, but this browser has no camera to offer",
+  );
+});
+
+test("the microphone row is the camera row's twin", () => {
+  assert.equal(
+    micLabel(CAMERA),
+    "Plugged in; this browser's microphone opens when an application on the remote records",
+  );
+  assert.equal(
+    micLabel({ ...CAMERA, streaming: true }),
+    "Recording on the remote",
+  );
+  assert.equal(
+    micLabel({ ...CAMERA, offered: false, plugged: false }),
+    "Not offered in this session",
   );
 });

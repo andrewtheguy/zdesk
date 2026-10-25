@@ -1024,9 +1024,10 @@ and this end's answers.
 **Experimental.** A session started with the microphone, the picker's Microphone tick, tells the logon that the client captures
 audio, asks for `drdynvc` when nothing else did, and accepts the one dynamic
 channel MS-RDPEAI uses, `AUDIO_INPUT`. A Windows host opens that channel only
-once an application starts recording. The browser's microphone is enabled
-separately by opening `/ws/mic`; closing that socket or ending the engine stops
-the feed, and a new session starts with it off.
+once an application starts recording, and closes the recording when the
+application stops (seen on Windows 11, 2026-10-24). The browser opens `/ws/mic`
+as the session connects and opens its microphone only between the host's Open
+and that close; closing the socket or ending the engine stops the feed.
 
 The host speaks first at every step. It sends its version and this end answers at
 no higher than version 2. It lists the PCM formats it can record, and this end
