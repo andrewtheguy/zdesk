@@ -321,6 +321,7 @@ export default function RemoteDesktop({
     onLocalShortcut,
     takeOver,
     retry,
+    dismissConnectError,
     releaseTab,
     connect,
     switchTarget,
@@ -479,6 +480,7 @@ export default function RemoteDesktop({
           connect={connect}
           pendingTarget={pendingTarget}
           connectError={connectError}
+          dismissConnectError={dismissConnectError}
           onLogout={onLogout}
           onUnauthorized={onUnauthorized}
         />
