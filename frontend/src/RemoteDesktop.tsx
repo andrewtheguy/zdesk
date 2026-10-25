@@ -298,11 +298,11 @@ export default function RemoteDesktop({
     videoStream,
     hostPicture,
     canCamera,
-    cameraEnabled,
+    cameraPlugged,
     cameraError,
     cameraStreaming,
     canMic,
-    micEnabled,
+    micPlugged,
     micError,
     micStreaming,
     displays,
@@ -326,8 +326,6 @@ export default function RemoteDesktop({
     switchTarget,
     selectDisplay,
     setAudio,
-    setCamera,
-    setMic,
     sendKeyCombo,
     requestClipboard,
     sendClipboard,
@@ -342,9 +340,8 @@ export default function RemoteDesktop({
     tabDisplay,
   );
 
-  // A speaker on the tab title while sound is playing, and a camera and a
-  // microphone while each is offered — the one place the desktop has room to
-  // say so, since the toggles live in the drawer, and for the camera and the
+  // A speaker on the tab title while sound is playing, and a camera or a
+  // microphone while the remote is using this browser's — the one place the desktop has room to say so, and for the camera and the
   // microphone it is also the honest little recording light. At the *front*,
   // not the end: a tab title is truncated from the right, so a suffix is the
   // first thing to vanish. Desktop only, so the picker's tab stays the plain
@@ -352,11 +349,11 @@ export default function RemoteDesktop({
   useEffect(() => {
     const marks =
       mode === "desktop"
-        ? `${cameraEnabled ? "🎥 " : ""}${micEnabled ? "🎤 " : ""}${audioEnabled ? "🔊 " : ""}`
+        ? `${cameraStreaming ? "🎥 " : ""}${micStreaming ? "🎤 " : ""}${audioEnabled ? "🔊 " : ""}`
         : "";
     const shown = tabDisplay === null ? "" : `Display ${tabDisplay} · `;
     document.title = `${marks}${shown}${branding}`;
-  }, [mode, audioEnabled, cameraEnabled, micEnabled, branding, tabDisplay]);
+  }, [mode, audioEnabled, cameraStreaming, micStreaming, branding, tabDisplay]);
 
   // The status overlay covers the connection lifecycle (connecting/reconnecting)
   // and the claim conflicts (busy/takenOver); in the desktop it also covers the
@@ -455,15 +452,13 @@ export default function RemoteDesktop({
             hostPicture={hostPicture}
             onAudioChange={setAudio}
             canCamera={canCamera}
-            cameraEnabled={cameraEnabled}
+            cameraPlugged={cameraPlugged}
             cameraError={cameraError}
             cameraStreaming={cameraStreaming}
-            onCameraChange={setCamera}
             canMic={canMic}
-            micEnabled={micEnabled}
+            micPlugged={micPlugged}
             micError={micError}
             micStreaming={micStreaming}
-            onMicChange={setMic}
             macKeyOverridesEnabled={macKeyOverridesEnabled}
             macKeyOverridesActive={macKeyOverridesActive}
             isMacHost={isMacHost}

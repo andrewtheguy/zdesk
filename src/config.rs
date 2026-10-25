@@ -493,10 +493,9 @@ pub struct Choices {
     /// carrying the Remote Desktop Session Host role — has anywhere to redirect
     /// a camera to.
     ///
-    /// The offer alone. The device itself appears when a client enables the
-    /// camera — explicitly, per session, never remembered — by opening
-    /// `/ws/camera`; a session started with the offer and no such client gives
-    /// the remote nothing. The browser encodes H.264 and the gateway passes it
+    /// The device itself appears when the session's browser opens `/ws/camera`,
+    /// which it does as a session started with this connects; a session with no
+    /// such browser gives the remote nothing. The browser encodes H.264 and the gateway passes it
     /// through, so there is no codec choice beside this one.
     #[serde(default)]
     pub camera: bool,
@@ -505,9 +504,9 @@ pub struct Choices {
     /// listed the way [`Self::camera`]'s is, and refused where it is
     /// ([`Offers::microphone`]). Experimental, like the camera.
     ///
-    /// The offer alone, like [`Self::camera`]: the recording device is fed when a
-    /// client enables its microphone — explicitly, per session — by opening
-    /// `/ws/mic`. The browser sends speech-grade Opus and the gateway decodes it to
+    /// The recording device is fed by the session's browser over `/ws/mic`, which it
+    /// opens as a session started with this connects, as [`Self::camera`]'s. The
+    /// browser sends speech-grade Opus and the gateway decodes it to
     /// the PCM the host records in, so there is no codec or quality choice beside
     /// this one.
     #[serde(default)]

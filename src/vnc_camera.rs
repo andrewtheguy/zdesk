@@ -10,9 +10,9 @@
 //! - A session started with the camera offered ([`crate::config::Choices::camera`],
 //!   the picker's Camera tick) lists the pseudo-encoding in `SetEncodings`.
 //!   wlshare answers with an *available* message; any other server ignores the
-//!   encoding and says nothing, and the camera the browser enables is then never
+//!   encoding and says nothing, and the camera the browser offers is then never
 //!   plugged — discovered, not configured, like the density report.
-//! - The browser's enable plugs the camera: its H.264's geometry and rate, as the
+//! - The browser's camera socket plugs the camera: its H.264's geometry and rate, as the
 //!   camera socket announced them. A plug that arrives before the server's answer
 //!   waits for it ([`Device`]).
 //! - The server says when an application on the desktop opens the camera
@@ -319,6 +319,11 @@ impl CameraControl for Control {
     fn unplug(&self) {
         self.command(Input::Unplug);
     }
+
+    /// Nothing to tell wlshare: its samples are not asked for one by one, so none is
+    /// left owed, and the application letting the camera go sends the stop that the
+    /// next opening's start follows.
+    fn unavailable(&self) {}
 
     /// A sample wlshare would refuse, or one that finds the queue full, is dropped
     /// with every later one but a keyframe.

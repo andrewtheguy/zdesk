@@ -362,8 +362,9 @@ pub enum ClientMsg {
     /// What the browser's camera will send, and the camera socket's opening
     /// move: `/ws/camera`'s first message must be this, and it is what plugs
     /// the virtual device into the remote. Never sent on the session socket —
-    /// the camera has its own socket the way audio does, and this message is
-    /// that socket's only text traffic inbound.
+    /// the camera has its own socket the way audio does, and this message and
+    /// [`ClientMsg::CameraUnavailable`] are that socket's only text traffic
+    /// inbound.
     ///
     /// The fields are the H.264 the browser's encoder is configured for, and
     /// the remote is offered exactly this one media type. The rate is rational
@@ -376,6 +377,11 @@ pub enum ClientMsg {
         #[serde(rename = "fpsDenominator")]
         fps_denominator: u32,
     },
+    /// The camera socket's other inbound text: this browser's camera could not
+    /// be opened for the remote's opening, or stopped giving pictures during
+    /// it. The device stays plugged; nothing more is coming until the remote's
+    /// next opening asks again.
+    CameraUnavailable,
 }
 
 /// The layout of a server -> client binary frame: a **batch** of records.

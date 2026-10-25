@@ -936,7 +936,8 @@ with the dynamic channel transport. A Windows Server without the Remote Desktop
 Session Host role never creates it, and Microsoft's own client gets no camera
 against such a host either. On it the client asks for version 2, the host answers
 with the highest it speaks that is not higher, and nothing more is said until the
-browser enables its camera. That plug is what sends the Device Added Notification —
+gateway plugs the camera, which it does as the session connects. That plug is what
+sends the Device Added Notification —
 a display name, `zDesk Camera`, and the name of a device channel — and the host
 then opens that channel by name. A version the client does not speak ends the
 protocol on that channel, as MS-RDPECAM 3.2.5.2 requires.
@@ -984,7 +985,26 @@ Samples are metered by the host: each Sample Request is owed one Sample Response
 sample that arrives with nothing owed waits in a queue of eight, and past that the
 queue is dropped whole and only a keyframe is taken until one comes — H.264 cannot
 resume mid-GOP — with the browser asked for one once per gap. A new stream opens the
-same way, on a keyframe. Unplugging answers every Sample Request still owed with an
+same way, on a keyframe.
+
+The requests are also the only sign that something on the host still wants the
+camera. MS-RDPECAM 1.3.5 has the host send a Stop Streams Request when it needs no
+more samples, and the Windows Enterprise host probed on 2026-10-24 does not: closing
+the Camera app ends its Sample Requests and nothing else, the stream left started
+for as long as the session lasts. So the session thread times the host while it is
+owed nothing: three seconds without a Sample Request (`CAMERA_IDLE`) and the stream
+is idle, the sink is told it stopped, and the samples waiting for it are dropped;
+the next Sample Request resumes it, from a keyframe, and the sink is told it
+started. Neither is a protocol state — the device stays Streaming throughout, as
+the host has it — and a host owed a sample is waiting on this end, so it is not
+timed, unless the caller has said its camera failed (`Rdpecam::unavailable`) and
+nothing owed will come. Then it is timed all the same, and going idle answers each
+request still owed with a Sample Error Response; against the same host on the same
+day the Camera app then stopped the stream and started it again, which is the
+caller's next try. `Rdpecam::idle` and `Output::Idle` / `Output::Resumed` are the
+state machine's side of it; the clock is the session's.
+
+Unplugging answers every Sample Request still owed with an
 error before the Device Removed Notification, so no request is left without its
 response. A sample is far longer than one dynamic channel PDU, so it goes as a Data
 First announcing its length and the Data PDUs after it (`dvc::pieces`, MS-RDPEDYC
@@ -1008,9 +1028,10 @@ and this end's answers.
 **Experimental.** A session started with the microphone, the picker's Microphone tick, tells the logon that the client captures
 audio, asks for `drdynvc` when nothing else did, and accepts the one dynamic
 channel MS-RDPEAI uses, `AUDIO_INPUT`. A Windows host opens that channel only
-once an application starts recording. The browser's microphone is enabled
-separately by opening `/ws/mic`; closing that socket or ending the engine stops
-the feed, and a new session starts with it off.
+once an application starts recording, and closes the recording when the
+application stops (seen on Windows 11, 2026-10-24). The browser opens `/ws/mic`
+as the session connects and opens its microphone only between the host's Open
+and that close; closing the socket or ending the engine stops the feed.
 
 The host speaks first at every step. It sends its version and this end answers at
 no higher than version 2. It lists the PCM formats it can record, and this end

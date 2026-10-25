@@ -67,7 +67,7 @@ pub enum MicSignal {
 /// May be called from any thread and must not block: it runs once per decoded group on
 /// the socket task.
 pub trait MicControl: Send + Sync {
-    /// The browser enabled its microphone: a mic socket attached. An engine whose remote
+    /// The browser plugged its microphone in: a mic socket attached. An engine whose remote
     /// has a recording device for the whole session has nothing to do; one that lends
     /// the remote a device makes it now.
     fn plug(&self);
@@ -388,7 +388,7 @@ mod tests {
         assert!(bytes <= exact && bytes + 640 >= exact, "{bytes} bytes for {exact}");
     }
 
-    /// A browser that enables its microphone while the engine is still connecting has
+    /// A browser that plugs its microphone in while the engine is still connecting has
     /// plugged it by the time the engine registers; one that let it go again has not.
     #[test]
     fn a_plug_made_before_the_engine_registers_reaches_it() {

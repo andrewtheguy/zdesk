@@ -141,8 +141,9 @@ config key.
   `VideoDecoder` cannot decode the host's H.264. See
   [An exact picture](#an-exact-picture) for having the host draw losslessly.
 - **Camera** and **Microphone** (experimental). On an `rdp` or `wlshare` target,
-  ticks that offer the remote this browser's devices, which the session's menu
-  then turns on: see [Camera and microphone](#camera-and-microphone).
+  ticks that offer the remote this browser's camera and microphone for the
+  whole session, each opening only while an application on the remote uses it. See
+  [Camera and microphone](#camera-and-microphone).
 
 One gateway holds one session. A reload or a dropped connection normally
 resumes it; an RDP session with the graphics pipeline on or a Standard Mac's
@@ -488,8 +489,13 @@ that its pixels are HiDPI; see [HiDPI over standard RFB](standard-rfb-hidpi.md).
 
 **Camera** and **Microphone** are ticks at the picker on an `rdp` or `wlshare`
 target, which offer the remote this browser's camera and microphone. Both are
-**experimental**, off until ticked and remembered per target as every choice is;
-the device itself is turned on per session from the floating menu. They are for
+**experimental**, off until ticked and remembered per target as every choice is.
+A session started with the camera gives the remote a camera as it connects, and
+this browser's camera opens only while an application on the remote uses it, so
+its light is off the rest of the time; the Info card's Camera row says which.
+The microphone is the same: plugged in as the session connects, and this
+browser's microphone open only while something on the remote records, as the
+Info card's Microphone row says. They are for
 someone who needs one for a while, a call or a recording, and are sent as
 cheaply as that allows: H.264 from the browser passed untranscoded, and mono
 speech Opus at a low fixed bitrate. An Apple target and a plain `vnc` target

@@ -2516,9 +2516,9 @@ fn translate_input(
         // Both halves of the clipboard pair are answered by the active loop, on the
         // clipboard channel, before translation.
         ClientMsg::Clipboard { .. } | ClientMsg::ClipboardRequest => Vec::new(),
-        // The camera socket's opening message, which acts on the slot's camera bridge;
-        // the camera reaches this engine through its feed, never through input.
-        ClientMsg::CameraFormat { .. } => Vec::new(),
+        // The camera socket's messages, which act on the slot's camera bridge; the
+        // camera reaches this engine through its feed, never through input.
+        ClientMsg::CameraFormat { .. } | ClientMsg::CameraUnavailable => Vec::new(),
         // Session-control messages act on the slot, not an engine — the ws
         // bridge handles them and they never reach here.
         ClientMsg::Connect { .. } | ClientMsg::Disconnect | ClientMsg::PaintAck { .. } => Vec::new(),

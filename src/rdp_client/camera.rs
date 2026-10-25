@@ -42,10 +42,12 @@ pub trait CameraSink: Send {
     fn negotiated(&self, version: u8);
     /// The host opened the device's channel: the camera is being installed over there.
     fn attached(&self);
-    /// An application on the host started the stream: samples in `format` are wanted,
-    /// from a keyframe on.
+    /// An application on the host started the stream, or the host asked for samples
+    /// again after going quiet: samples in `format` are wanted, from a keyframe on.
     fn started(&self, format: Format);
-    /// The stream stopped. The device stays plugged, and another start may follow.
+    /// The stream stopped, or the host stopped asking for samples without stopping it,
+    /// which is how a Windows host lets the camera go. The device stays plugged, and
+    /// another start may follow.
     fn stopped(&self);
     /// Samples were dropped, and the next one must be a keyframe.
     fn keyframe_needed(&self);
@@ -54,6 +56,7 @@ pub trait CameraSink: Send {
 pub(super) enum CameraCommand {
     Plug(Format),
     Unplug,
+    Unavailable,
 }
 
 pub(super) struct Sample {
@@ -130,6 +133,13 @@ impl CameraFeed {
     /// Withdraw the device; the host sees the camera unplug.
     pub fn unplug(&self) {
         let _ = self.commands.send(CameraCommand::Unplug);
+    }
+
+    /// The caller's camera failed for the stream the host started, so the Sample
+    /// Requests the host is owed will not be answered with samples. See
+    /// [`Rdpecam::unavailable`](super::proto::rdpecam::Rdpecam::unavailable).
+    pub fn unavailable(&self) {
+        let _ = self.commands.send(CameraCommand::Unavailable);
     }
 
     /// One encoded H.264 picture, Annex B, parameter sets inline on a keyframe.

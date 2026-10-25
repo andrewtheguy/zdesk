@@ -122,6 +122,54 @@ export function audioLabel(row: AudioRow): string {
   return row.stream ? streamLabel(row.stream) : "Waiting for the audio format";
 }
 
+/** Everything the Camera and Microphone rows are derived from. See `useRemoteDesktop`. */
+export interface DeviceRow {
+  /** The session was started with the picker's tick (`camera` or `microphone` on `connected`). */
+  offered: boolean;
+  /** The device's socket is open, so the remote has it plugged in. */
+  plugged: boolean;
+  /** An application on the remote is using it, and with it this browser's device. */
+  streaming: boolean;
+  /** Why it is not working: unplugged when `plugged` is false, and otherwise
+   *  this browser's device refusing to open. */
+  error: string | null;
+}
+
+// Both rows' shared shape. This browser's device is opened only while an
+// application on the remote uses it, so "plugged in" with the light off is the
+// normal state, and the row says so rather than leaving it to look broken.
+function deviceLabel(row: DeviceRow, inUse: string, idle: string): string {
+  if (!row.offered) {
+    return "Not offered in this session";
+  }
+  if (!row.plugged) {
+    return row.error ? `Not plugged in — ${row.error}` : "Plugging in";
+  }
+  if (row.error) {
+    return `Plugged in, but ${row.error}`;
+  }
+  return row.streaming ? inUse : `Plugged in; ${idle}`;
+}
+
+/** The Camera row: whether this session offers the remote a camera, set at the
+ *  picker, and what has become of it. */
+export function cameraLabel(row: DeviceRow): string {
+  return deviceLabel(
+    row,
+    "In use by the remote",
+    "this browser's camera opens when an application on the remote uses it",
+  );
+}
+
+/** The Microphone row: the Camera row's twin, for the Microphone tick. */
+export function micLabel(row: DeviceRow): string {
+  return deviceLabel(
+    row,
+    "Recording on the remote",
+    "this browser's microphone opens when an application on the remote records",
+  );
+}
+
 /** The Render row: the dial this session resolved to. */
 export function renderLabel(plan: string): string {
   return plan || "Waiting for the target";

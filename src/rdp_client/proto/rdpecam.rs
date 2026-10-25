@@ -48,6 +48,25 @@
 //! the far side of a gap in H.264 shows the gap until the next keyframe anyway. The
 //! caller is told once per gap, with [`Output::KeyframeNeeded`].
 //!
+//! # A host that stops asking
+//!
+//! [MS-RDPECAM] 1.3.5 has the host send a Stop Streams Request when it needs no more
+//! samples, and a Windows 11 host does not: measured against a Windows Enterprise host,
+//! the Camera app closing ends its Sample Requests and nothing else, the stream left
+//! Streaming for as long as the session lasts. The requests are the host's demand, so
+//! their absence is the stop it does not send: a caller that finds none for a while,
+//! with none owed ([`Rdpecam::awaits_request`], [`Rdpecam::sample_requests`]), calls
+//! [`Rdpecam::idle`], and the next Sample Request brings the stream back, from a
+//! keyframe. Neither is a protocol state: the device stays Streaming throughout, as the
+//! host has it.
+//!
+//! A host owed a sample asks for nothing more, so it is never timed while it waits on
+//! this end — unless the caller has said its camera failed ([`Rdpecam::unavailable`]),
+//! and nothing it is owed will come. Then it is timed all the same, and going idle
+//! answers what it is owed with a Sample Error Response: its next Sample Request resumes
+//! the stream, which is the caller's cue to try its camera again, where otherwise the
+//! host would wait on this end for as long as the session lasts.
+//!
 //! # Version 2
 //!
 //! Version 2 adds device properties — brightness, focus and the like — and every version
@@ -186,6 +205,13 @@ pub enum Output {
     /// The host stopped the stream — Stop Streams, Deactivate Device, or the stream's
     /// channel closing. The device stays announced, and another start may follow.
     Stopped,
+    /// The host stopped asking for samples while streaming, without stopping the
+    /// stream: nothing on it is consuming, and samples are not taken until it asks
+    /// again. See [`Rdpecam::idle`].
+    Idle,
+    /// The host asked for a sample again after [`Output::Idle`]: samples are wanted
+    /// in this format, from a keyframe.
+    Resumed(Format),
     /// Samples were dropped, and the next one taken must be a keyframe.
     KeyframeNeeded,
 }
@@ -254,6 +280,16 @@ pub struct Rdpecam {
     awaiting_keyframe: bool,
     /// Whether the caller has been told about the current gap.
     keyframe_asked: bool,
+    /// Whether the stream went idle ([`Self::idle`]): Streaming, but asked for nothing.
+    idle: bool,
+    /// Whether the caller's camera failed for this stream ([`Self::unavailable`]), so
+    /// what the host is owed will not be a sample. Held until the stream ends or goes
+    /// idle: a sample after it was encoded before the failure, since the caller tries
+    /// its camera again only when the stream is started or resumed.
+    unavailable: bool,
+    /// Sample Requests taken while streaming, ever: what a caller watching for a host
+    /// that stops asking compares.
+    requests: u64,
 }
 
 impl Rdpecam {
@@ -277,6 +313,9 @@ impl Rdpecam {
             pending: VecDeque::new(),
             awaiting_keyframe: false,
             keyframe_asked: false,
+            idle: false,
+            unavailable: false,
+            requests: 0,
         }
     }
 
@@ -399,7 +438,7 @@ impl Rdpecam {
     /// Nothing is taken while the host is not streaming.
     pub fn sample(&mut self, sample: Vec<u8>, keyframe: bool) -> Turn {
         let mut turn = Turn::default();
-        let (true, Some(channel)) = (self.streaming, self.stream_channel) else {
+        let (true, false, Some(channel)) = (self.streaming, self.idle, self.stream_channel) else {
             return turn;
         };
         if self.awaiting_keyframe {
@@ -424,6 +463,53 @@ impl Rdpecam {
         turn
     }
 
+    /// Whether the stream is waiting on the host: Streaming, not idle, and owed no
+    /// sample, or owed only what an unavailable camera will never send. The only state in
+    /// which a host asking for nothing means anything — one owed a sample is otherwise
+    /// waiting on this end.
+    pub fn awaits_request(&self) -> bool {
+        self.streaming && !self.idle && (self.credits == 0 || self.unavailable)
+    }
+
+    /// How many Sample Requests the host has made while streaming, ever.
+    pub fn sample_requests(&self) -> u64 {
+        self.requests
+    }
+
+    /// The caller's camera failed for this stream, and will send nothing for what the
+    /// host is owed. Nothing goes on the wire now: the host is timed from here as one
+    /// that stopped asking, and [`Self::idle`] answers it.
+    pub fn unavailable(&mut self) -> Turn {
+        if self.streaming && !self.idle {
+            self.unavailable = true;
+        }
+        Turn::default()
+    }
+
+    /// The host has asked for no sample for a while, with none owed but what an
+    /// unavailable camera will not send: the stream goes idle, each request still owed
+    /// is answered with a Sample Error Response, and what waited for one is dropped. The
+    /// next Sample Request resumes it from a keyframe. A no-op unless
+    /// [`Self::awaits_request`].
+    pub fn idle(&mut self) -> Turn {
+        let mut turn = Turn::default();
+        if self.awaits_request() {
+            let owed = std::mem::take(&mut self.credits);
+            if let Some(channel) = self.stream_channel {
+                for _ in 0..owed {
+                    turn.reply(channel, self.sample_error(0, UNEXPECTED_ERROR));
+                }
+            }
+            self.unavailable = false;
+            self.idle = true;
+            self.pending.clear();
+            self.awaiting_keyframe = true;
+            self.keyframe_asked = false;
+            turn.outputs.push(Output::Idle);
+        }
+        turn
+    }
+
     fn instance(&self, channel: u32) -> Option<&Instance> {
         self.devices.iter().find(|instance| instance.channel == channel)
     }
@@ -441,6 +527,8 @@ impl Rdpecam {
         self.pending.clear();
         self.awaiting_keyframe = false;
         self.keyframe_asked = false;
+        self.idle = false;
+        self.unavailable = false;
         std::mem::take(&mut self.streaming)
     }
 
@@ -597,6 +685,10 @@ impl Rdpecam {
             SAMPLE_REQUEST if !self.streaming => self.sample_error(0, INVALID_REQUEST),
             SAMPLE_REQUEST => {
                 self.stream_channel = Some(channel);
+                self.requests = self.requests.wrapping_add(1);
+                if std::mem::take(&mut self.idle) {
+                    turn.outputs.push(Output::Resumed(format));
+                }
                 self.owe_sample()
             }
             PROPERTY_LIST_REQUEST => vec![self.version, PROPERTY_LIST_RESPONSE],
@@ -1045,6 +1137,66 @@ mod tests {
         cam.sample(vec![5], false);
         cam.sample(vec![6], false);
         assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]), vec![vec![2, SAMPLE_RESPONSE, 0, 5]], "oldest first");
+    }
+
+    /// A host that stops asking: idle only while it is owed nothing, nothing taken while
+    /// idle, and the next Sample Request resuming the stream from a keyframe — with the
+    /// device Streaming throughout, so the request is answered, not refused.
+    #[test]
+    fn a_host_that_stops_asking_idles_the_stream_until_it_asks_again() {
+        let mut cam = streaming(VGA);
+        assert!(cam.awaits_request());
+        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty(), "owed until there is a sample");
+        assert_eq!(cam.sample_requests(), 1);
+        assert!(!cam.awaits_request(), "a host owed a sample is waiting on this end");
+        assert_eq!(cam.idle(), Turn::default(), "so it does not go idle");
+        assert_eq!(cam.sample(vec![1], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]);
+
+        cam.sample(vec![2], false);
+        assert_eq!(cam.idle().outputs, vec![Output::Idle]);
+        assert!(!cam.awaits_request());
+        assert_eq!(cam.idle(), Turn::default(), "idle once");
+        assert_eq!(cam.sample(vec![3], true), Turn::default(), "nothing is taken while idle");
+
+        let turn = cam.push(DEVICE, &[2, SAMPLE_REQUEST, 0]);
+        assert_eq!(turn.outputs, vec![Output::Resumed(VGA)]);
+        assert!(turn.replies.is_empty(), "what waited went with the idle, so the request is owed");
+        assert_eq!(cam.sample_requests(), 2);
+        assert_eq!(cam.sample(vec![4], false).outputs, vec![Output::KeyframeNeeded], "it resumes on a keyframe");
+        assert_eq!(cam.sample(vec![5], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 5])]);
+
+        // The host's own stop ends the idle with the stream.
+        cam.idle();
+        assert_eq!(cam.push(DEVICE, &[2, STOP_STREAMS_REQUEST]).outputs, vec![Output::Stopped]);
+        assert_eq!(cam.idle(), Turn::default(), "a stopped stream does not go idle");
+        assert_eq!(cam.push(DEVICE, &start(VGA)).outputs, vec![Output::Started(VGA)]);
+        assert!(cam.awaits_request(), "a new stream starts not idle");
+    }
+
+    /// A camera that failed leaves the host owed what it will never send: the host is
+    /// timed all the same, going idle answers what it is owed with an error, and its next
+    /// request resumes the stream for the caller to try again. A sample that arrives in
+    /// the meantime was encoded before the failure: it answers what it can, and the
+    /// camera is still unavailable.
+    #[test]
+    fn an_unavailable_camera_answers_what_is_owed_as_it_goes_idle() {
+        let mut cam = streaming(VGA);
+        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
+        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
+        assert!(!cam.awaits_request());
+        assert_eq!(cam.unavailable(), Turn::default(), "nothing goes on the wire at once");
+        assert!(cam.awaits_request(), "the host is timed although it is owed a sample");
+        assert_eq!(cam.sample(vec![1], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]);
+        assert!(cam.awaits_request(), "a sample from before the failure is not the camera back");
+
+        let turn = cam.idle();
+        assert_eq!(turn.outputs, vec![Output::Idle]);
+        let error = cam.sample_error(0, UNEXPECTED_ERROR);
+        assert_eq!(turn.replies, vec![(DEVICE, error)], "an error for the request still owed");
+
+        let turn = cam.push(DEVICE, &[2, SAMPLE_REQUEST, 0]);
+        assert_eq!(turn.outputs, vec![Output::Resumed(VGA)], "the caller is told to try again");
+        assert!(!cam.awaits_request(), "and the new request waits on it, as any does");
     }
 
     /// Version 2's properties: an empty list and no property found; under version 1 none

@@ -79,8 +79,8 @@
 //! host with the Windows Camera app: it opens the app through the Run dialog, plays the
 //! file named by [`CAMERA_STREAM_ENV`] into the camera the app opens, and closes the app
 //! again. What it asserts is the host's part of the Video Capture sequence — it starts
-//! the stream in the one format offered, takes the samples it asks for without stopping,
-//! and stops when the app closes. Whether the picture in the app is the test pattern is
+//! the stream in the one format offered, takes the samples it asks for, and stops when
+//! the app closes, which a Windows host does by asking for no more samples. Whether the picture in the app is the test pattern is
 //! for eyes: take a screenshot of the remote while the samples play.
 //!
 //! ```sh
@@ -1052,12 +1052,20 @@ async fn stream_camera() {
     // What the app shows of the samples is for eyes, as a desktop's picture is.
     dump(&session, &tally, "camera-playing");
 
-    // 3. Close the app, whatever happened above, and give the host its moment to stop.
+    // 3. Close the app, whatever happened above, and give the host its moment to stop,
+    // still playing the stream as a browser's open camera does: a Windows host stops by
+    // asking for no more samples, which a host still owed one is not seen to do.
     chord(input, &[(LALT, false)], F4, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(10), |_| {
-        eye.stops.load(Ordering::Relaxed) > stops_while_playing
-    })
-    .await;
+    let closing = Instant::now();
+    let mut next = closing;
+    let mut frames = units.iter().cycle();
+    while closing.elapsed() < Duration::from_secs(10) && eye.stops.load(Ordering::Relaxed) <= stops_while_playing {
+        if let (true, Some((unit, idr))) = (started, frames.next()) {
+            camera.sample(unit, *idr);
+        }
+        next += CAMERA_FRAME;
+        pump(&session, &mut events, &mut tally, next, |_| false).await;
+    }
     // Whether the app is gone, or something of it is still up, is for eyes too.
     dump(&session, &tally, "camera-closed");
     println!(
