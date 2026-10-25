@@ -22,39 +22,14 @@ Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建�
 
 ## 示範
 
-### Windows -> 有一個遠端虛擬顯示器的 Mac
+在 [zDesk 網站](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#demo)觀看示範：
 
-https://github.com/user-attachments/assets/982bf2d0-3fac-4a3c-8213-27412d10977d
-
-### Windows -> 有兩個遠端虛擬顯示器的 Mac
-
-- 兩個遠端虛擬顯示器分別顯示在不同的瀏覽器分頁中，視窗可以在兩個分頁之間直接跨顯示器拖曳。
-
-https://github.com/user-attachments/assets/a31030c8-dab9-467c-9231-20329e138e7d
-
-### iOS -> Windows
-
-- iOS 上的 Safari 連線到 Windows 內建的遠端桌面，雙指左右滑動即可水平捲動。
-
-https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
-
-### iOS -> Mac
-
-- iOS 上的 Safari 連線到 Mac 的高效能模式螢幕共享，支援水平捲動，並顯示網路傳輸量指示。
-
-https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
-
-### Mac -> Windows，Retina/HiDPI 密度並帶聲音
-
-- 以 Mac 的 Retina/HiDPI 密度顯示 Windows 內建的遠端桌面，並在瀏覽器中播放遠端的聲音。
-
-https://github.com/user-attachments/assets/3dfd0dc2-dc7d-4d41-b99e-1340f685390c
-
-### Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度並帶聲音
-
-- 以 Mac 的 Retina/HiDPI 密度顯示 Sway 上的 wlshare，帶有遠端的聲音，進入和離開沉浸式全螢幕時，遠端桌面會隨瀏覽器調整大小。
-
-https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
+- [Windows -> 有一個遠端虛擬顯示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#windows-to-mac-one-display)
+- [Windows -> 有兩個遠端虛擬顯示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#windows-to-mac-two-displays)：兩個遠端虛擬顯示器分別顯示在不同的瀏覽器分頁中，視窗可以在兩個分頁之間直接跨顯示器拖曳。
+- [iOS -> Windows](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#ios-to-windows)：iOS 上的 Safari 連線到 Windows 內建的遠端桌面，雙指左右滑動即可水平捲動。
+- [iOS -> Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#ios-to-mac)：iOS 上的 Safari 連線到 Mac 的高效能模式螢幕共享，支援水平捲動，並顯示網路傳輸量指示。
+- [Mac -> Windows，Retina/HiDPI 密度並帶聲音](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度顯示 Windows 內建的遠端桌面，並在瀏覽器中播放遠端的聲音。
+- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度並帶聲音](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度顯示 Sway 上的 wlshare，帶有遠端的聲音，進入和離開沉浸式全螢幕時，遠端桌面會隨瀏覽器調整大小。
 
 ## 功能
 

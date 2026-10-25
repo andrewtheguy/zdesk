@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zDesk</title>
+<meta name="description" content="在瀏覽器中使用遠端桌面，連線的是各平台內建的遠端桌面伺服器：Windows 內建的遠端桌面、macOS 內建的螢幕共享，以及 Linux 上的 wlshare。">
+<meta name="color-scheme" content="light dark">
+<link rel="alternate" hreflang="en" href="index.html">
+<link rel="alternate" hreflang="zh-CN" href="index.zh-CN.html">
+<link rel="alternate" hreflang="zh-TW" href="index.zh-TW.html">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<main>
+  <p class="locales"><a href="index.html" lang="en">English</a> | <a href="index.zh-CN.html" lang="zh-CN">简体中文</a> | 繁體中文</p>
+
+  <header>
+    <h1>zDesk</h1>
+    <p class="tagline">在瀏覽器中使用遠端桌面，連線的是各平台內建的遠端桌面伺服器。</p>
+    <ul class="links">
+      <li><a class="primary" href="https://github.com/andrewtheguy/zdesk/releases/latest">下載最新發行版</a></li>
+      <li><a href="https://github.com/andrewtheguy/zdesk/blob/main/README.zh-TW.md">GitHub 上的原始碼</a></li>
+      <li><a href="https://github.com/andrewtheguy/zdesk/blob/main/docs/guide.zh-TW.md">使用 zDesk</a></li>
+      <li><a href="https://github.com/andrewtheguy/zdesk/blob/main/docs/install.md">安裝 zDesk（英文）</a></li>
+    </ul>
+  </header>
+
+  <p>zDesk 是一個小型閘道，執行在你的電腦旁邊。它可以連線到：</p>
+  <ul>
+    <li><strong>Windows 10 和 11 內建的遠端桌面</strong>，透過 RDP 及其新式圖形管線。</li>
+    <li><strong>macOS 內建的螢幕共享</strong>，兩種模式都支援：標準（Standard）和高效能（High Performance）。</li>
+    <li><strong>Linux</strong>，透過 <a href="https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md">wlshare</a>，這是我們自己為 wlroots 合成器撰寫的 VNC 伺服器。</li>
+    <li>其他 RDP 和 VNC 伺服器，透過各協定的基本功能。</li>
+  </ul>
+  <p>Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建的共享功能即可。閘道提供一個顯示桌面的網頁，因此任何有瀏覽器的裝置，無論是 Windows、macOS、Linux、iOS 還是 Android，同樣不需要安裝用戶端就能存取上述所有桌面。</p>
+  <pre><code>瀏覽器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面</code></pre>
+  <p>顯示器會以瀏覽器視窗的螢幕密度跟隨視窗大小，因此在 Retina 或 HiDPI 顯示器上清晰且以真實尺寸顯示。主機提供自身畫面時，直接在瀏覽器中解碼；並帶有聲音、剪貼簿、分兩個分頁顯示的兩個顯示器，以及為手機和平板設計的觸控介面。</p>
+
+  <h2 id="demo">示範</h2>
+
+  <section class="demo" id="windows-to-mac-one-display">
+    <h3>Windows → 有一個遠端虛擬顯示器的 Mac</h3>
+    <video controls preload="metadata" playsinline
+      src="demo/windows-to-mac-one-display.mp4"></video>
+  </section>
+
+  <section class="demo" id="windows-to-mac-two-displays">
+    <h3>Windows → 有兩個遠端虛擬顯示器的 Mac</h3>
+    <p>兩個遠端虛擬顯示器分別顯示在不同的瀏覽器分頁中，視窗可以在兩個分頁之間直接跨顯示器拖曳。</p>
+    <video controls preload="metadata" playsinline
+      src="demo/windows-to-mac-two-displays.mp4"></video>
+  </section>
+
+  <section class="demo" id="ios-to-windows">
+    <h3>iOS → Windows</h3>
+    <p>iOS 上的 Safari 連線到 Windows 內建的遠端桌面，雙指左右滑動即可水平捲動。</p>
+    <video class="portrait" controls preload="metadata" playsinline
+      src="demo/ios-to-windows.mp4"></video>
+  </section>
+
+  <section class="demo" id="ios-to-mac">
+    <h3>iOS → Mac</h3>
+    <p>iOS 上的 Safari 連線到 Mac 的高效能模式螢幕共享，支援水平捲動，並顯示網路傳輸量指示。</p>
+    <video class="portrait" controls preload="metadata" playsinline
+      src="demo/ios-to-mac.mp4"></video>
+  </section>
+
+  <section class="demo" id="mac-to-windows">
+    <h3>Mac → Windows，Retina/HiDPI 密度並帶聲音</h3>
+    <p>以 Mac 的 Retina/HiDPI 密度顯示 Windows 內建的遠端桌面，並在瀏覽器中播放遠端的聲音。</p>
+    <video controls preload="metadata" playsinline
+      src="demo/mac-to-windows-hidpi-audio.mp4"></video>
+  </section>
+
+  <section class="demo" id="mac-to-linux">
+    <h3>Mac → Linux（Sway 上的 wlshare），Retina/HiDPI 密度並帶聲音</h3>
+    <p>以 Mac 的 Retina/HiDPI 密度顯示 Sway 上的 wlshare，帶有遠端的聲音，進入和離開沉浸式全螢幕時，遠端桌面會隨瀏覽器調整大小。</p>
+    <video controls preload="metadata" playsinline
+      src="demo/mac-to-linux-wlshare-hidpi-audio.mp4"></video>
+  </section>
+
+  <h2 id="quick-start">快速入門</h2>
+  <p>從<a href="https://github.com/andrewtheguy/zdesk/releases/latest">最新發行版</a>安裝適合你平台的套件。在 Debian 13 或 Ubuntu 24.04 及更新版本上：</p>
+  <pre><code>curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/latest/download/zdesk-linux-amd64.deb
+sudo apt install ./zdesk-linux-amd64.deb</code></pre>
+  <p><a href="https://github.com/andrewtheguy/zdesk/blob/main/docs/install.md">Installing zDesk</a>（英文）涵蓋所有平台；<a href="https://github.com/andrewtheguy/zdesk/blob/main/docs/guide.zh-TW.md">使用 zDesk</a> 說明瀏覽器用戶端，以及如何設定 Windows、Mac、wlshare 和 VNC 目標。</p>
+
+  <footer>
+    <p>zDesk 採用 <a href="https://github.com/andrewtheguy/zdesk/blob/main/LICENSE">MIT 授權條款</a>。zDesk 的方向仍在調整中，版本之間不保證回溯相容；詳見 <a href="https://github.com/andrewtheguy/zdesk/blob/main/README.zh-TW.md">README</a>。</p>
+  </footer>
+</main>
+</body>
+</html>

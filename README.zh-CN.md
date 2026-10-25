@@ -22,39 +22,14 @@ Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的�
 
 ## 演示
 
-### Windows -> 带一个远程虚拟显示器的 Mac
+在 [zDesk 网站](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#demo)观看演示：
 
-https://github.com/user-attachments/assets/982bf2d0-3fac-4a3c-8213-27412d10977d
-
-### Windows -> 带两个远程虚拟显示器的 Mac
-
-- 两个远程虚拟显示器分别显示在不同的浏览器标签页中，窗口可以在两个标签页之间直接跨显示器拖动。
-
-https://github.com/user-attachments/assets/a31030c8-dab9-467c-9231-20329e138e7d
-
-### iOS -> Windows
-
-- iOS 上的 Safari 连接 Windows 自带的远程桌面，双指左右滑动即可水平滚动。
-
-https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
-
-### iOS -> Mac
-
-- iOS 上的 Safari 连接 Mac 的高性能模式屏幕共享，支持水平滚动，并显示网络吞吐量指示。
-
-https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
-
-### Mac -> Windows，Retina/HiDPI 密度并带声音
-
-- 以 Mac 的 Retina/HiDPI 密度显示 Windows 自带的远程桌面，并在浏览器中播放远程的声音。
-
-https://github.com/user-attachments/assets/3dfd0dc2-dc7d-4d41-b99e-1340f685390c
-
-### Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度并带声音
-
-- 以 Mac 的 Retina/HiDPI 密度显示 Sway 上的 wlshare，带远程的声音，进入和退出沉浸式全屏时远程桌面会随浏览器调整大小。
-
-https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
+- [Windows -> 带一个远程虚拟显示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#windows-to-mac-one-display)
+- [Windows -> 带两个远程虚拟显示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#windows-to-mac-two-displays)：两个远程虚拟显示器分别显示在不同的浏览器标签页中，窗口可以在两个标签页之间直接跨显示器拖动。
+- [iOS -> Windows](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#ios-to-windows)：iOS 上的 Safari 连接 Windows 自带的远程桌面，双指左右滑动即可水平滚动。
+- [iOS -> Mac](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#ios-to-mac)：iOS 上的 Safari 连接 Mac 的高性能模式屏幕共享，支持水平滚动，并显示网络吞吐量指示。
+- [Mac -> Windows，Retina/HiDPI 密度并带声音](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度显示 Windows 自带的远程桌面，并在浏览器中播放远程的声音。
+- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度并带声音](https://andrewtheguy.github.io/zdesk/index.zh-CN.html#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度显示 Sway 上的 wlshare，带远程的声音，进入和退出沉浸式全屏时远程桌面会随浏览器调整大小。
 
 ## 功能
 
