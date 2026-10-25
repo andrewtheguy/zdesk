@@ -141,8 +141,8 @@ config key.
   `VideoDecoder` cannot decode the host's H.264. See
   [An exact picture](#an-exact-picture) for having the host draw losslessly.
 - **Camera** and **Microphone** (experimental). On an `rdp` or `wlshare` target,
-  ticks that offer the remote this browser's devices: the camera for the whole
-  session, each opening while an application on the remote uses it. See
+  ticks that offer the remote this browser's camera and microphone for the
+  whole session, each opening only while an application on the remote uses it. See
   [Camera and microphone](#camera-and-microphone).
 
 One gateway holds one session. A reload or a dropped connection normally

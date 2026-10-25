@@ -412,11 +412,39 @@ export async function startCameraSender(
       // The backlog cleared: resume at the IDR the far decoder needs.
       forceKeyframe = true;
     }
-    encoder.encode(sized, { keyFrame: forceKeyframe });
-    forceKeyframe = false;
-    if (sized !== frame) {
-      sized.close();
+    try {
+      encoder.encode(sized, { keyFrame: forceKeyframe });
+      forceKeyframe = false;
+    } finally {
+      if (sized !== frame) {
+        sized.close();
+      }
     }
+  };
+
+  // One captured frame's fate, closed either way.
+  const take = (frame: VideoFrame) => {
+    try {
+      encodeFrame(frame);
+    } catch (e) {
+      stop(e instanceof Error ? e.message : "the camera could not be encoded");
+    } finally {
+      frame.close();
+    }
+  };
+
+  // The capture behind `reader` ended by itself — the camera removed, the
+  // permission revoked — rather than by closeCapture(), which is said, and
+  // leaves the camera plugged for the remote's next opening.
+  const captureEnded = (
+    reader: ReadableStreamDefaultReader<VideoFrame>,
+    reason: string,
+  ) => {
+    if (stopped || capture?.reader !== reader) {
+      return;
+    }
+    closeCapture();
+    callbacks.onCaptureError(reason);
   };
 
   // The frame pump for one opening of the camera, ending with it.
@@ -425,15 +453,19 @@ export async function startCameraSender(
       let result: ReadableStreamReadResult<VideoFrame>;
       try {
         result = await reader.read();
-      } catch {
-        break; // cancelled by closeCapture()
+      } catch (e) {
+        captureEnded(
+          reader,
+          e instanceof Error ? e.message : "the camera capture failed",
+        );
+        break;
       }
       if (result.done || stopped) {
         result.value?.close();
+        captureEnded(reader, "the camera stopped");
         break;
       }
-      encodeFrame(result.value);
-      result.value.close();
+      take(result.value);
     }
   };
 
