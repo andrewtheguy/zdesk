@@ -176,7 +176,7 @@ username = "me"
 password_ref = "wayland"
 ```
 
-[wlshare](https://github.com/andrewtheguy/wlshare) 是本專案自己的 VNC 伺服器，針對以 wlroots 為基礎的 Wayland 桌面。這個子類型讓閘道列出 wlshare 的私有 RFB 擴充：它的 VP9 串流，原封不動地直通並隨瀏覽器連線自適應；像素密度；輸出清單；聲音；以及在勾選後啟動的工作階段中，作為桌面上 PipeWire 裝置的瀏覽器攝影機和麥克風。不設定子類型時，同一個伺服器會以任何 VNC 伺服器的方式讀取。
+[wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md) 是本專案自己的 VNC 伺服器，針對以 wlroots 為基礎的 Wayland 桌面。這個子類型讓閘道列出 wlshare 的私有 RFB 擴充：它的 VP9 串流，原封不動地直通並隨瀏覽器連線自適應；像素密度；輸出清單；聲音；以及在勾選後啟動的工作階段中，作為桌面上 PipeWire 裝置的瀏覽器攝影機和麥克風。不設定子類型時，同一個伺服器會以任何 VNC 伺服器的方式讀取。
 
 - **畫面（Picture）。** 選擇器的 Picture 群組為 *Video, passed through*（預設）：wlshare 針對整個桌面編碼的 VP9，依瀏覽器的連線調整。或 *Tiles with motion, passed through*：靜止的部分為精確的 PNG，每個移動區域有自己的一路視訊串流，使用主機硬體編碼器或 libx264 編碼的 H.264，停下後再精確地重送。圖塊適用於頻寬充裕的連線：wlshare 花在圖塊上的時間只是 VP9 的一小部分，最終畫面是精確的，代價是數倍的位元組數，大面積移動時達每秒數十 Mbit。其移動區域依 `video_quality` 編碼，`render_adaptive` 對它們沒有作用。
 
