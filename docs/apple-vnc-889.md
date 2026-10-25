@@ -694,6 +694,8 @@ before negotiating the new stream. It still has one change out at a time: a
 resize that ends while a change is outstanding is dropped, not queued. The next
 can go once the answering layout arrives or the new stream is ready, and the
 window is then refitted to the Mac's size. Nothing in that waits on a timer.
+On macvm, a second resize ended 1.3 s after the first sent nothing, and the
+window snapped back to the first one's size when it settled.
 
 A browser has no equivalent resize-end event, so zDesk's page debounces window
 reports for 250 ms. The gateway keeps the latest report rather than dropping
