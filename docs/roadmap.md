@@ -33,22 +33,17 @@ to the same rate control:
   MS-RDPEMT text on network detection and multitransport say of it, read from
   the specifications rather than recalled.
 
-### Two virtual displays past alpha
+### A second display's tab that says when the session's page is gone
 
-`virtual_displays = 2` is alpha on `rdp`, `ard-high-performance` and `wlshare`
-targets ([Windows](guide.md#windows-rdp)). What it lacks:
-
-- **A tab left behind.** When the session's page goes — closed, reloading, or
-  its socket dropped — the tab showing the second display carries on with no
-  word of it: its input still reaches the remote through the reattach grace, and
-  only the engine ending takes the display away. The tab's display socket already
-  carries one thing that is the session's rather than the display's, the
-  clipboard ([Clipboard](architecture.md#clipboard)). The plan is for it to carry
-  whether the session's page is attached too, and for the tab to say so over its
-  desktop until the page is back.
-
-Fixing that does not take it out of alpha by itself. It also needs more testing
-than it has had before it is offered as anything else.
+On `rdp`, `ard-high-performance` and `wlshare` targets with two displays
+([Windows](guide.md#windows-rdp)), when the session's page goes — closed,
+reloading, or its socket dropped — the tab showing the second display carries on
+with no word of it: its input still reaches the remote through the reattach
+grace, and only the engine ending takes the display away. The tab's display
+socket already carries one thing that is the session's rather than the
+display's, the clipboard ([Clipboard](architecture.md#clipboard)). The plan is
+for it to carry whether the session's page is attached too, and for the tab to
+say so over its desktop until the page is back.
 
 ### A touchpad's scroll as a gesture on a Mac
 
@@ -185,7 +180,7 @@ end-to-end tests against a real server never exercise.
 ### More than two virtual displays on a target
 
 `virtual_displays` is held to two. A browser tab shows one display: the one on
-the session's page, and on *All Displays* (alpha) the second in a tab of its own
+the session's page, and on *All Displays* (beta) the second in a tab of its own
 at `/display/2`. Nothing of either is encoded here: a Mac's streams are passed
 only while their display is shown, and an RDP host's span is passed whole and
 composed once in the page. Each

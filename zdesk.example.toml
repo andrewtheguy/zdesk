@@ -378,7 +378,7 @@ password_ref = "example"
 # microphone beside it have not been tried.
 #egfx = true
 
-# ALPHA. Ask the host for this many virtual displays, each the session's size.
+# BETA. Ask the host for this many virtual displays, each the session's size.
 # Where the second sits against the first is chosen at the picker, on an rdp
 # target: right, left, top or bottom. The session starts on the floating menu's
 # Display picker's All Displays, the first display on the page and the second a
@@ -539,7 +539,7 @@ password_ref = "example"
 # Mac's physical displays are disabled and all of its windows are placed on this
 # virtual display. Apple's official macOS Screen Sharing client can choose up to
 # two virtual displays; zdesk requests one, or two with `virtual_displays = 2`
-# on the target (alpha, described with the key above). In a session started with
+# on the target (beta, described with the key above). In a session started with
 # resize, viewport reports continuously replace the virtual display's mode as the
 # window changes.
 # Apple's fixed-resolution-preset control is not implemented.

@@ -48,7 +48,7 @@ read, in [andrewtheguy/ms-rdp-specs](https://github.com/andrewtheguy/ms-rdp-spec
 
 The desktop, the pointer, keyboard, mouse, resize, the clipboard, sound, and the
 browser's camera and microphone going the other way, over one monitor or two,
-side by side or stacked ([Virtual displays](#virtual-displays-alpha)). No touch: it does not ask
+side by side or stacked ([Virtual displays](#virtual-displays-beta)). No touch: it does not ask
 for MS-RDPEI. What it would take is in
 [`roadmap.md`](roadmap.md#touch-on-an-rdp-target-ms-rdpei).
 
@@ -790,7 +790,7 @@ capabilities PDU and honoured 6.7 s into the same session. The ladder lives in t
 engine (`LAYOUT_RETRY_DELAYS`), because a retry needs a clock and a policy and the
 client owns neither.
 
-## Virtual displays (alpha)
+## Virtual displays (beta)
 
 `Connect::monitors`, from the target's `virtual_displays`, asks the host for that
 many monitors of the session's size, the first the primary and the second against
@@ -846,7 +846,7 @@ two monitors; and asked for 1280×800 beside 1024×700, it answered a 2304×800
 `ResetGraphics` defining those two monitors, top-aligned. On 2026-10-03 the
 second monitor placed left of, above and below the first came back the same way,
 at connect and after a layout, and a position sent in the span's coordinates
-landed on the monitor it was made on. Alpha: one host, and
+landed on the monitor it was made on. Beta: one host, and
 nothing of the second display has been held
 against Microsoft's own client.
 

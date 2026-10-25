@@ -248,7 +248,7 @@ touch.
   gateway sends as tiles: the target for a browser that cannot compose the
   pipeline. The desktop then keeps its size: without the pipeline Windows
   resizes by rebuilding the share, which this gateway does not take.
-- **Alpha:** `virtual_displays = 2` asks the host for two displays, each the
+- **Beta:** `virtual_displays = 2` asks the host for two displays, each the
   session's size. Where the second sits against the first is chosen under the
   target at the picker, **Second display**: right, left, top or bottom, to match
   where the client's own second display is. The session starts on *All Displays*, in the floating menu's Display
@@ -367,7 +367,7 @@ connection with the same error as wrong credentials. See
   and puts every window on one virtual display, sized by the session, up to
   3840×2160 backing pixels. Picture and sound come over the Mac's media stream,
   HEVC and AAC-ELD over SRTP:
-  - **Alpha:** `virtual_displays = 2` asks the Mac for two virtual displays,
+  - **Beta:** `virtual_displays = 2` asks the Mac for two virtual displays,
     Apple's viewer's "2 Virtual Displays", the second to the right of the first:
     the Mac places it, so the picker offers no other side. To have it on another
     side, arrange the displays on the Mac while the session is open, in System
@@ -449,7 +449,7 @@ server is read as any VNC server is.
   bytes — tens of Mbit/s while something large moves. Their regions are held at
   `video_quality`, which `render_adaptive` does not reach.
 
-- **Alpha:** a desktop with exactly two outputs, monitors or headless ones, is
+- **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
   listed with *All Displays* and starts on it: the first stays here and the second opens at
   `/display/2` in a new tab of the same browser, with its own pointer and
   keyboard, as on an `rdp` target with two virtual displays. `virtual_displays = 2`

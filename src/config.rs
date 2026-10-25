@@ -948,7 +948,7 @@ pub struct TargetConfig {
     /// accepted and left inert ([`TargetConfig::egfx`]).
     #[serde(default)]
     pub egfx: Option<bool>,
-    /// ALPHA. How many virtual displays the remote is asked to lay out for the
+    /// BETA. How many virtual displays the remote is asked to lay out for the
     /// session, side by side at the session's size: `virtual_displays = 2`.
     /// One, the default, is the single desktop every target has always opened;
     /// at most [`MAX_VIRTUAL_DISPLAYS`].
@@ -980,7 +980,7 @@ pub struct TargetConfig {
     /// asked nothing, and the outputs are the compositor's. Refused on every
     /// other target, where it would be silently inert.
     ///
-    /// Alpha: checked against one Windows 11 host and one Mac, a virtual one; the
+    /// Beta: checked against one Windows 11 host and one Mac, a virtual one; the
     /// second display's density follows the first's, and nothing of it has been
     /// measured against Microsoft's or Apple's own client.
     #[serde(default = "one_display")]
@@ -1421,7 +1421,7 @@ pub const DEFAULT_SIZE: (u16, u16) = (1440, 900);
 
 /// The most virtual displays a target may ask for ([`TargetConfig::virtual_displays`]).
 ///
-/// Two, while the feature is alpha: two is what the picker, the input offset and
+/// Two, while the feature is beta: two is what the picker, the input offset and
 /// the span the host builds have been checked with, and each display is a desktop
 /// the host renders whether or not anybody is looking at it.
 pub const MAX_VIRTUAL_DISPLAYS: u8 = 2;
