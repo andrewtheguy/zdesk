@@ -12,7 +12,7 @@
 // screens plus an "Combined Display" entry. High Performance mode sends one virtual
 // display, leaving nothing to choose. A wlshare desktop sends the compositor's
 // outputs, one of which it is capturing. An RDP target or a High Performance Mac
-// asked for virtual displays (alpha) sends the ones the host laid out, and shows
+// asked for virtual displays (beta) sends the ones the host laid out, and shows
 // one of them — or, on its All Displays, the first here and each other one in a
 // browser tab of its own, which this panel links to; every other RDP or VNC
 // session exposes one framebuffer and no list.

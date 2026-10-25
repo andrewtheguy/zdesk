@@ -109,10 +109,10 @@ camera and microphone, and how its picture reaches the browser.
 
 | Server | Target | Displays | Sound | Camera and microphone | Picture |
 |---|---|---|---|---|---|
-| Windows 10 and 11's Remote Desktop | `rdp` | one desktop spanning the host's screens, following the window at its density; or up to two virtual displays, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (alpha) | Opus or FLAC | yes, experimental | the graphics pipeline passed through, high quality or adaptive H.264; lossless when the host's policy requests it; tiles from the gateway on the bitmap path |
-| macOS Screen Sharing, High Performance | `vnc`, `subtype = "ard-high-performance"` | one virtual display, following the window at its density; or two, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (alpha) | AAC-ELD, always | no | the Mac's HEVC or its H.264 (beta), passed through |
+| Windows 10 and 11's Remote Desktop | `rdp` | one desktop spanning the host's screens, following the window at its density; or up to two virtual displays, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (beta) | Opus or FLAC | yes, experimental | the graphics pipeline passed through, high quality or adaptive H.264; lossless when the host's policy requests it; tiles from the gateway on the bitmap path |
+| macOS Screen Sharing, High Performance | `vnc`, `subtype = "ard-high-performance"` | one virtual display, following the window at its density; or two, switched from the picker or, on *All Displays*, the second shown in a browser tab of its own (beta) | AAC-ELD, always | no | the Mac's HEVC or its H.264 (beta), passed through |
 | macOS Screen Sharing, Standard | `vnc`, `subtype = "ard"`, the unofficial `virtual_display = true` included | the Mac's physical displays, one or all, at their own size and density; the unofficial virtual display follows the window | none | no | tiles from the gateway of the Mac's lossless Full quality, which settle to lossless; or the Mac's Adaptive picture, passed through (beta) |
-| wlshare on Linux | `vnc`, `subtype = "wlshare"` | the compositor's outputs, switched from the picker or, on *All Displays* over two of them, the second shown in a browser tab of its own (alpha); a headless one follows the window at its density | Opus or FLAC | yes, experimental | its own VP9, passed through, adapting to the browser's link |
+| wlshare on Linux | `vnc`, `subtype = "wlshare"` | the compositor's outputs, switched from the picker or, on *All Displays* over two of them, the second shown in a browser tab of its own (beta); a headless one follows the window at its density | Opus or FLAC | yes, experimental | its own VP9, passed through, adapting to the browser's link |
 | any other VNC server, not prioritized | `vnc` | one framebuffer at the size the server says, at 1x, never resized from the browser | none | no | tiles from the gateway |
 
 The three native servers have these in common:
@@ -325,7 +325,7 @@ whose bitmap updates are sent as tiles by the gateway.
   own, let in by the login cookie the session was claimed under and never by a
   token. Only *All Displays* does this, over two virtual displays on an RDP target
   or a High Performance Mac and over a `wlshare` target's two outputs, for the
-  second display at `/display/2` (alpha). That is one session shown twice, not a shared one; do not
+  second display at `/display/2` (beta). That is one session shown twice, not a shared one; do not
   let a display socket in for any other login, or hand a tab the claim's token.
   In a session that passes an RDP host's pipeline, the second display's
   socket carries no picture: the tab is painted from the picture the session's
@@ -1743,7 +1743,7 @@ the pipeline.
   compositor resizes itself by.
 - **Two displays, one picture.** Over `virtual_displays = 2` the host draws both
   displays as one output through one pipeline
-  ([Virtual displays](rdp-client.md#virtual-displays-alpha)), and the pipeline's
+  ([Virtual displays](rdp-client.md#virtual-displays-beta)), and the pipeline's
   state crosses them: a cache slot filled from one surface is pasted onto the
   other, and a copy between surfaces may name both. So the commands are not dealt
   out by display, and no second compositor is fed them. The page holding the
@@ -1761,7 +1761,7 @@ the pipeline.
   latest picture and never a queue of old ones — and a tab that opens or reloads
   says what it shows and is sent all of it. The gateway holds nothing of a passed
   pipeline and sends the tab no pixels; the frame is acknowledged by the session
-  page's paint, as over one display, and the tab's painting paces nothing. Alpha,
+  page's paint, as over one display, and the tab's painting paces nothing. Beta,
   as the second display is: the two ends are unit tested against each other,
   `tests/playwright/egfx-two-displays.spec.ts` reads both displays' sockets of a
   headless browser showing a passed span in two tabs against one Windows 11
@@ -2190,7 +2190,7 @@ Authentication and desktop ownership are separate:
    rather than for each. The page closes its session socket
    when its display socket drops, and the reattach brings both back. `/ws/display?display=2`
    is the second display shown in a tab of its own, *All Displays* over two
-   virtual displays (alpha); see
+   virtual displays (beta); see
    [Display geometry](#display-geometry).
 4. `connect` starts the selected engine with the choices made at the picker.
    `disconnect` stops it and returns to the picker.
@@ -3048,7 +3048,7 @@ by asking that remote for that screen. RDP exposes a single framebuffer spanning
 every remote screen. On an `rdp` target left at one display it has nothing to
 enumerate, and a plain `vnc` target reads its server the same way, so neither
 sends the message and the picker stays hidden there. An `rdp` target with
-`virtual_displays = 2` (alpha) asks the host for two monitors of the session's
+`virtual_displays = 2` (beta) asks the host for two monitors of the session's
 size, the second against the edge of the first chosen at the picker, in the
 connect-time monitor data and in every monitor layout, and the host spans one
 desktop over both. Where each monitor is in it is read from the host's own
@@ -3065,7 +3065,7 @@ whole and shows one column of it
 displays are never coded here, so `egfx = false` beside them is refused at
 load: the bitmap path is one display.
 
-With two columns the list ends with *All Displays* (alpha), under the id Apple's
+With two columns the list ends with *All Displays* (beta), under the id Apple's
 own entry uses: the first column on the canvas and the second in a browser tab of
 its own, which the list names as `tab: 2` and the display panel links to as
 `/display/2`. It is the choice every engine with two displays starts on, at the
@@ -3138,7 +3138,7 @@ open. A page at
 without it, or no session in this browser — says the
 display is not available, why, and offers Retry; it does not keep reconnecting.
 
-An `ard-high-performance` target with `virtual_displays = 2` (alpha) is listed and
+An `ard-high-performance` target with `virtual_displays = 2` (beta) is listed and
 shown the same way, from another source. Its `SetDisplayConfiguration` names two
 virtual displays, Apple's viewer's "2 Virtual Displays", and the Mac creates the
 second to the right of the first and sends each as a video leg of its own in the
@@ -3172,7 +3172,7 @@ connection and has no combined view to offer, so its list is the compositor's
 outputs; see [Switching outputs over VNC with wlshare](wlshare-outputs.md).
 
 A `wlshare` target whose compositor has exactly two outputs is listed with *All
-Displays* (alpha) too, and shown the same way from a third source: a second
+Displays* (beta) too, and shown the same way from a third source: a second
 connection. `virtual_displays = 2` asks wlshare for the second, which wlshare
 on sway makes as a headless output; on another compositor the outputs are the
 compositor's and the key asks nothing. wlshare
@@ -3284,7 +3284,7 @@ with the pipeline on (`egfx` left on), which also carries Display Control, or
 for the camera or the microphone; `cliprdr` always; and `rdpsnd` with `rdpdr`
 for a session started with sound.
 
-`virtual_displays = 2` (alpha) asks the host for two monitors, each the
+`virtual_displays = 2` (beta) asks the host for two monitors, each the
 session's size and the second where the picker placed it, in the connect-time
 monitor data and in every layout a resizing
 session sends; the host spans one framebuffer over both and the engine shows one
@@ -3476,7 +3476,7 @@ exception because the browser is sent 30 frames a second. Once connected, the re
 Mac's physical displays are disabled and all of its windows are placed on that
 virtual display. Apple's
 official macOS Screen Sharing client can choose up to two virtual displays, and so
-can a target: zDesk requests one, or two with `virtual_displays = 2` (alpha). Every descriptor after the opening one enables
+can a target: zDesk requests one, or two with `virtual_displays = 2` (beta). Every descriptor after the opening one enables
 dynamic resolution, so every fresh session turns it on. In a session started with resize, the window continuously drives the
 virtual display through Apple's dynamic-resolution feature: later viewport reports
 resend the same full descriptor with the requested mode, and the Mac's answering

@@ -59,7 +59,7 @@ Watch the demos on the [zDesk site](https://zdesk.dev/#demo):
   Mac and wlshare's headless outputs follow the window at its screen density,
   so a Retina or HiDPI display shows them sharp and at their true size. A
   Standard Mac's displays keep the density they report.
-- **Two displays at once (alpha)** on Windows, a High Performance Mac and
+- **Two displays at once (beta)** on Windows, a High Performance Mac and
   wlshare, the second in a browser tab of its own. Apple's own viewer on
   macOS 26 offers no dynamic resolution with two virtual displays.
 - **The remote's own picture, decoded in the browser.** Windows' graphics
@@ -118,7 +118,7 @@ seamlessly of the three, since what RFB lacks is added to it.
   to the browser's link — or, for a link with room to spare, its own exact
   tiles with a video stream for each region that moves, H.264 from hardware or
   libx264. Two outputs can be shown at once, the second
-  in a browser tab of its own (alpha).
+  in a browser tab of its own (beta).
 
 Every other VNC server is a plain `vnc` target reached through the RFB
 baseline: one framebuffer at 1x, not resized, no sound, tiles from the gateway.
@@ -134,7 +134,7 @@ What each server and browser does and does not do, in one place.
 |---|---|---|---|---|---|
 | Resizes to the browser window | ✅ with the graphics pipeline (default) | ✅ | ❌ physical displays at their own size | ✅ headless outputs only | ❌ the server's size |
 | Sharp at HiDPI/Retina density | ✅ | ✅ | ✅ at the density the Mac reports | ✅ | ❌ 1x only |
-| Second display in its own tab | ⚠️ alpha, with the graphics pipeline | ⚠️ alpha | ❌ one screen at a time, switched from the display menu, or every screen combined in one tab (alpha) | ⚠️ alpha, with two outputs | ❌ |
+| Second display in its own tab | ⚠️ beta, with the graphics pipeline | ⚠️ beta | ❌ one screen at a time, switched from the display menu, or every screen combined in one tab (alpha) | ⚠️ beta, with two outputs | ❌ |
 | Sound | ✅ Opus or FLAC | ✅ AAC-ELD, always | ❌ | ✅ Opus or FLAC | ❌ |
 | Camera and microphone | ⚠️ experimental | ❌ | ❌ | ⚠️ experimental | ❌ |
 | Unicode clipboard | ✅ | ✅ | ✅ | ✅ | ⚠️ with Extended Clipboard, else Latin-1 |

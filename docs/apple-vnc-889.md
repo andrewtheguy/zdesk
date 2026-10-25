@@ -26,7 +26,7 @@ layer.
 | Subtype | Mode | Picture | Sound |
 |---|---|---|---|
 | `ard` | Standard, the physical displays | the gateway's tiles of the Mac's Full quality, its zlib inflated here; or, started with Adaptive, the Mac's own 8×8 tiles passed (beta) | none; the Mac's own output is left alone |
-| `ard-high-performance` | High Performance, one virtual display, or two with `virtual_displays = 2` (alpha) | HEVC, or H.264 (beta), over the media stream alone, a leg per display; until it is up the page says the screen is not available | AAC-ELD over the media stream |
+| `ard-high-performance` | High Performance, one virtual display, or two with `virtual_displays = 2` (beta) | HEVC, or H.264 (beta), over the media stream alone, a leg per display; until it is up the page says the screen is not available | AAC-ELD over the media stream |
 | `ard` with `virtual_display = true` | Unofficial: Standard's picture on High Performance's one virtual display, resizes included | as `ard` | none; the Mac's own output is left alone |
 
 `ard-high-performance` is High Performance as Apple's viewer has it. Its picture
@@ -622,7 +622,7 @@ for 60 Hz unless its preference or display capability says otherwise; zDesk's
 ### Two virtual displays
 
 Apple's viewer's High Performance sheet offers "2 Virtual Displays", and a
-target's `virtual_displays = 2` (alpha) asks the Mac for the same. What that
+target's `virtual_displays = 2` (beta) asks the Mac for the same. What that
 changes, as read from Apple's viewer and daemon and as macOS 26 answered:
 
 - **The Mac says how many it creates.** Its ServerInit flags carry the count

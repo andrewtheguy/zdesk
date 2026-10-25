@@ -160,7 +160,7 @@ export interface DisplayInfo {
   // the canvas: the number its page (`/display/N`) and its display socket name
   // it by. Null for a display the picker switches the canvas to. Set by *All
   // Displays* on an RDP target or a High Performance Mac with two virtual
-  // displays (alpha), for the second of them.
+  // displays (beta), for the second of them.
   tab: number | null;
 }
 
