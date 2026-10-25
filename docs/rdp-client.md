@@ -997,8 +997,12 @@ is idle, the sink is told it stopped, and the samples waiting for it are dropped
 the next Sample Request resumes it, from a keyframe, and the sink is told it
 started. Neither is a protocol state — the device stays Streaming throughout, as
 the host has it — and a host owed a sample is waiting on this end, so it is not
-timed. `Rdpecam::idle` and `Output::Idle` / `Output::Resumed` are the state
-machine's side of it; the clock is the session's.
+timed, unless the caller has said its camera failed (`Rdpecam::unavailable`) and
+nothing owed will come. Then it is timed all the same, and going idle answers each
+request still owed with a Sample Error Response; against the same host on the same
+day the Camera app then stopped the stream and started it again, which is the
+caller's next try. `Rdpecam::idle` and `Output::Idle` / `Output::Resumed` are the
+state machine's side of it; the clock is the session's.
 
 Unplugging answers every Sample Request still owed with an
 error before the Device Removed Notification, so no request is left without its

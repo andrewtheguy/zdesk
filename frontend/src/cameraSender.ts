@@ -433,6 +433,17 @@ export async function startCameraSender(
     }
   };
 
+  // Tell the gateway nothing is coming for the remote's opening. A Windows
+  // host asks for each picture and waits on the one it is owed, so it would
+  // wait for as long as the session lasts; told, the gateway answers it, and
+  // its next opening tries this browser's camera again.
+  const unavailable = () => {
+    if (streaming && socket.readyState === WebSocket.OPEN) {
+      const msg: ClientMsg = { type: "cameraUnavailable" };
+      socket.send(JSON.stringify(msg));
+    }
+  };
+
   // The capture behind `reader` ended by itself — the camera removed, the
   // permission revoked — rather than by closeCapture(), which is said, and
   // leaves the camera plugged for the remote's next opening.
@@ -445,6 +456,7 @@ export async function startCameraSender(
     }
     closeCapture();
     callbacks.onCaptureError(reason);
+    unavailable();
   };
 
   // The frame pump for one opening of the camera, ending with it.
@@ -486,6 +498,7 @@ export async function startCameraSender(
         callbacks.onCaptureError(
           e instanceof Error ? e.message : "the camera could not be opened",
         );
+        unavailable();
       }
       return;
     }

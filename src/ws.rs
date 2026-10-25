@@ -1111,9 +1111,10 @@ async fn camera(
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
-                        // The one inbound text message this socket has. Anything else
+                        // The two inbound text messages this socket has. Anything else
                         // parseable is a client bug worth a line, not a close.
                         match serde_json::from_str::<ClientMsg>(&text) {
+                            Ok(ClientMsg::CameraUnavailable) => sessions.camera_unavailable(camera_id),
                             Ok(ClientMsg::CameraFormat {
                                 width,
                                 height,

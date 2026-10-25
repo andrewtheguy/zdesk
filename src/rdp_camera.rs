@@ -81,6 +81,10 @@ impl CameraControl for Control {
         self.feed.unplug();
     }
 
+    fn unavailable(&self) {
+        self.feed.unavailable();
+    }
+
     fn sample(&self, data: &[u8], keyframe: bool) -> bool {
         match self.feed.sample(data, keyframe) {
             Fed::Queued => true,

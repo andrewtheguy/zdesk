@@ -111,7 +111,10 @@ export type ClientMsg =
       height: number;
       fpsNumerator: number;
       fpsDenominator: number;
-    };
+    }
+  // The camera socket's other message: this browser's camera could not be
+  // opened for the remote's opening, or stopped giving pictures during it.
+  | { type: "cameraUnavailable" };
 
 // Ceiling on one clipboard transfer, mirroring MAX_CLIPBOARD_BYTES in
 // src/protocol.rs. The backend refuses anything over it in either direction;

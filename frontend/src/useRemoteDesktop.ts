@@ -344,6 +344,24 @@ const CLOSE_IN_USE = 4003;
 const CLOSE_TAKEN = 4004;
 // The display a page shows unless it is one opened in a tab of its own.
 const FIRST_DISPLAY = 1;
+
+// A camera or microphone socket that closed by itself — its heartbeat lost,
+// say, while the session's own socket held — is opened again, plugging its
+// device back: after a second, doubling while it keeps closing up to half a
+// minute, and back to a second once the remote has used the device.
+const REPLUG_FIRST_MS = 1_000;
+const REPLUG_LONGEST_MS = 30_000;
+
+interface Replug {
+  timer: ReturnType<typeof setTimeout> | undefined;
+  delay: number;
+}
+
+function scheduleReplug(replug: Replug, start: () => void) {
+  clearTimeout(replug.timer);
+  replug.timer = setTimeout(start, replug.delay);
+  replug.delay = Math.min(replug.delay * 2, REPLUG_LONGEST_MS);
+}
 const MAX_RETRY_DELAY_MS = 15_000;
 // How many failed attempts in a row are reported as nothing but "Reconnecting…"
 // before the reason is shown as well. Four, because the backoff above reaches its
@@ -905,6 +923,13 @@ export function useRemoteDesktop(
   // second sender while the first is unresolved — `cameraSenderRef` cannot,
   // because it is only set once the build finishes.
   const cameraPendingRef = useRef<number | null>(null);
+  // A camera socket's reopening after it closed by itself, and the way to it
+  // from the sender's own callbacks.
+  const cameraReplugRef = useRef<Replug>({
+    timer: undefined,
+    delay: REPLUG_FIRST_MS,
+  });
+  const startCameraRef = useRef<() => void>(() => {});
 
   // Unplug the camera, idempotently: the sender's own `onStopped` also lands
   // here, so a server-side close and the session ending meet at one place.
@@ -913,6 +938,7 @@ export function useRemoteDesktop(
     // A build still in flight is overtaken by the bump above and stops itself
     // on arrival; clearing the pending mark is what lets the next one start.
     cameraPendingRef.current = null;
+    clearTimeout(cameraReplugRef.current.timer);
     const sender = cameraSenderRef.current;
     cameraSenderRef.current = null;
     sender?.stop();
@@ -949,11 +975,18 @@ export function useRemoteDesktop(
         stopCamera();
         if (reason) {
           setCameraError(reason);
+        } else {
+          scheduleReplug(cameraReplugRef.current, () =>
+            startCameraRef.current(),
+          );
         }
       },
       onStreaming: (streaming) => {
         if (cameraGenerationRef.current === generation) {
           setCameraStreaming(streaming);
+          if (streaming) {
+            cameraReplugRef.current.delay = REPLUG_FIRST_MS;
+          }
         }
       },
       onCaptureError: (reason) => {
@@ -989,16 +1022,23 @@ export function useRemoteDesktop(
       },
     );
   }, [stopCamera]);
+  startCameraRef.current = startCamera;
 
   // The microphone sender, with the camera's refs and guards.
   const micSenderRef = useRef<MicSender | null>(null);
   const micUrlRef = useRef<(() => string | null) | null>(null);
   const micGenerationRef = useRef(0);
   const micPendingRef = useRef<number | null>(null);
+  const micReplugRef = useRef<Replug>({
+    timer: undefined,
+    delay: REPLUG_FIRST_MS,
+  });
+  const startMicRef = useRef<() => void>(() => {});
 
   const stopMic = useCallback(() => {
     micGenerationRef.current += 1;
     micPendingRef.current = null;
+    clearTimeout(micReplugRef.current.timer);
     const sender = micSenderRef.current;
     micSenderRef.current = null;
     sender?.stop();
@@ -1026,11 +1066,16 @@ export function useRemoteDesktop(
         stopMic();
         if (reason) {
           setMicError(reason);
+        } else {
+          scheduleReplug(micReplugRef.current, () => startMicRef.current());
         }
       },
       onStreaming: (streaming) => {
         if (micGenerationRef.current === generation) {
           setMicStreaming(streaming);
+          if (streaming) {
+            micReplugRef.current.delay = REPLUG_FIRST_MS;
+          }
         }
       },
       onCaptureError: (reason) => {
@@ -1064,6 +1109,7 @@ export function useRemoteDesktop(
       },
     );
   }, [stopMic]);
+  startMicRef.current = startMic;
 
   // The engine's latest pointer state, and where the touch gesture layer's
   // virtual pointer sits (null while a hardware mouse is driving). Both are

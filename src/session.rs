@@ -1403,6 +1403,21 @@ impl SessionManager {
         }
     }
 
+    /// The browser's camera failed for the remote's opening, heard from the current
+    /// camera socket only.
+    pub fn camera_unavailable(&self, id: u64) {
+        let bridge = {
+            let st = self.state.lock().unwrap();
+            if st.camera.as_ref().is_none_or(|slot| slot.id != id) {
+                return;
+            }
+            st.engine.as_ref().and_then(|e| e.camera.clone())
+        };
+        if let Some(bridge) = bridge {
+            bridge.unavailable();
+        }
+    }
+
     /// Hand one encoded sample to the engine, with the same guard as every other
     /// per-message call: only the current camera socket is heard.
     pub fn camera_sample(&self, id: u64, data: &[u8], keyframe: bool) {
@@ -4359,6 +4374,7 @@ mod tests {
         fn unplug(&self) {
             self.unplugs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
+        fn unavailable(&self) {}
         fn sample(&self, _data: &[u8], _keyframe: bool) -> bool {
             self.samples.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             true

@@ -1185,13 +1185,11 @@ impl Capture {
         };
     }
 
-    /// The host went [`CAMERA_IDLE`] without asking: the stream is idle. Nothing goes
-    /// on the wire for it.
-    fn idle(&mut self) -> Result<()> {
+    /// The host went [`CAMERA_IDLE`] without asking: the stream is idle. What goes on
+    /// the wire for it is an error for each request an unavailable camera left owed.
+    fn idle(&mut self) -> Result<Vec<Vec<u8>>> {
         let turn = self.proto.idle();
-        let pdus = self.settle(turn)?;
-        debug_assert!(pdus.is_empty(), "going idle sends the host nothing");
-        Ok(())
+        self.settle(turn)
     }
 }
 
@@ -1379,8 +1377,14 @@ impl<'a> Active<'a> {
                 () = tokio::time::sleep_until(
                     self.capture.as_ref().and_then(Capture::idle_due).unwrap_or_else(Instant::now)
                 ), if self.capture.as_ref().is_some_and(|capture| capture.idle_due().is_some()) => {
-                    if let Some(capture) = &mut self.capture {
-                        capture.idle()?;
+                    let pdus = match &mut self.capture {
+                        Some(capture) => capture.idle()?,
+                        None => Vec::new(),
+                    };
+                    if let Some(dynamic) = self.dynamic {
+                        for pdu in pdus {
+                            self.write_channel(dynamic, &pdu).await?;
+                        }
                     }
                 }
                 // The caller's camera: a device plugged or unplugged, or a sample.
@@ -1756,6 +1760,10 @@ impl<'a> Active<'a> {
         let turn = match input {
             CameraInput::Command(CameraCommand::Plug(format)) => capture.proto.plug(format),
             CameraInput::Command(CameraCommand::Unplug) => capture.proto.unplug(),
+            CameraInput::Command(CameraCommand::Unavailable) => {
+                info!("rdp: the camera on this end failed; the host's next pause in asking ends its stream");
+                capture.proto.unavailable()
+            }
             CameraInput::Sample(sample) => capture.proto.sample(sample.data, sample.keyframe),
         };
         let pdus = capture.settle(turn)?;

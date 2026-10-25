@@ -2771,7 +2771,10 @@ eviction, and **4002** when the running target carries no camera (or no engine i
 running at all). Where the audio socket is bound to the claim alone and survives a
 target switch, the camera socket is bound to the claim *and the engine*: every
 engine end and every claim change closes it, so every session plugs its own.
-Closing it — either side — unplugs the virtual device from the remote.
+Closing it — either side — unplugs the virtual device from the remote. One that
+closes by itself while the session holds, its heartbeat lost say, is opened again
+after a second, doubling up to half a minute while it keeps closing, and plugs
+the camera back; the microphone's socket is reopened the same way.
 
 The socket's first message is `cameraFormat`, naming the H.264 the browser's
 `VideoEncoder` is configured for (geometry and a rational frame rate); its arrival
@@ -2794,13 +2797,21 @@ the browser keeps its camera open for two seconds before closing it, because an
 application settling on a format starts, stops and starts again. A camera that
 will not open — permission refused, none present, another application holding it
 — leaves the device plugged and is tried again at the next start, and the Info
-card's Camera row says why.
+card's Camera row says why. The browser also says so upstream, as
+`cameraUnavailable`, the socket's other text message, for a host that waits on
+the picture it asked for (below); a camera that stops giving pictures during a
+stream says it the same way.
 
 A Windows 11 host does not send the Stop Streams Request MS-RDPECAM 1.3.5 has it
 send when it needs no more samples: when the application lets the camera go, its
 Sample Requests end and the stream stays started. The RDP client takes three
 seconds without a request, with none owed, as that stop, and the next request as
 the start again, and the gateway relays them as `cameraStop` and `cameraStart`.
+A host owed a sample asks for nothing more, so after `cameraUnavailable` the
+request it waits on counts as none owed: the three seconds run, the request is
+answered with a Sample Error Response, and the host's Camera app, measured
+2026-10-24, stops the stream and starts it again, which tries this browser's
+camera once more while the application is still open.
 See [The RDP client](rdp-client.md#camera-ms-rdpecam).
 
 The host also decides whether redirection exists at all, before any client

@@ -60,6 +60,9 @@ pub trait CameraControl: Send + Sync {
     fn plug(&self, format: CameraFormat);
     /// Withdraw the device; the remote sees the camera unplug.
     fn unplug(&self);
+    /// The browser's camera failed for the stream the remote started: no sample
+    /// is coming until the remote starts it again.
+    fn unavailable(&self);
     /// One encoded H.264 access unit. Returns whether it was accepted — a
     /// refusal means the sample was dropped and a [`CameraSignal::Keyframe`]
     /// is on its way.
@@ -152,6 +155,13 @@ impl CameraBridge {
         }
     }
 
+    /// Tell the engine, if one is listening, that the browser's camera failed.
+    pub fn unavailable(&self) {
+        if let Some(control) = self.control() {
+            control.unavailable();
+        }
+    }
+
     /// Hand one encoded sample to the engine, if one is listening.
     pub fn sample(&self, data: &[u8], keyframe: bool) -> bool {
         match self.control() {
@@ -184,6 +194,7 @@ mod tests {
         fn unplug(&self) {
             self.unplugs.fetch_add(1, Ordering::Relaxed);
         }
+        fn unavailable(&self) {}
         fn sample(&self, _data: &[u8], _keyframe: bool) -> bool {
             self.samples.fetch_add(1, Ordering::Relaxed);
             true

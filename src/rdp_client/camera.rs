@@ -56,6 +56,7 @@ pub trait CameraSink: Send {
 pub(super) enum CameraCommand {
     Plug(Format),
     Unplug,
+    Unavailable,
 }
 
 pub(super) struct Sample {
@@ -132,6 +133,13 @@ impl CameraFeed {
     /// Withdraw the device; the host sees the camera unplug.
     pub fn unplug(&self) {
         let _ = self.commands.send(CameraCommand::Unplug);
+    }
+
+    /// The caller's camera failed for the stream the host started, so the Sample
+    /// Requests the host is owed will not be answered with samples. See
+    /// [`Rdpecam::unavailable`](super::proto::rdpecam::Rdpecam::unavailable).
+    pub fn unavailable(&self) {
+        let _ = self.commands.send(CameraCommand::Unavailable);
     }
 
     /// One encoded H.264 picture, Annex B, parameter sets inline on a keyframe.

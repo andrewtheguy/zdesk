@@ -320,6 +320,11 @@ impl CameraControl for Control {
         self.command(Input::Unplug);
     }
 
+    /// Nothing to tell wlshare: its samples are not asked for one by one, so none is
+    /// left owed, and the application letting the camera go sends the stop that the
+    /// next opening's start follows.
+    fn unavailable(&self) {}
+
     /// A sample wlshare would refuse, or one that finds the queue full, is dropped
     /// with every later one but a keyframe.
     fn sample(&self, data: &[u8], keyframe: bool) -> bool {

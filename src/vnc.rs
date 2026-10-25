@@ -7713,13 +7713,14 @@ fn translate_input(
         // shared buffer and the tile sink) before translation.
         ClientMsg::Clipboard { .. } | ClientMsg::ClipboardRequest => Vec::new(),
         // Session-control messages act on the slot, not an engine — the ws
-        // bridge handles them and they never reach here. `CameraFormat` is the
-        // camera socket's opening message, never forwarded as input, and a VNC
-        // target carries no camera anyway.
+        // bridge handles them and they never reach here. `CameraFormat` and
+        // `CameraUnavailable` are the camera socket's, never forwarded as input:
+        // a wlshare target's camera reaches this engine through its bridge.
         ClientMsg::Connect { .. }
         | ClientMsg::Disconnect
         | ClientMsg::PaintAck { .. }
-        | ClientMsg::CameraFormat { .. } => Vec::new(),
+        | ClientMsg::CameraFormat { .. }
+        | ClientMsg::CameraUnavailable => Vec::new(),
         // The session layer's words about a second display's socket, which this
         // engine never has: it shows one framebuffer on one display socket.
         ClientMsg::DisplayShown { .. } | ClientMsg::OnDisplay { .. } => Vec::new(),
