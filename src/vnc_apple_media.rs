@@ -100,8 +100,9 @@ pub const PASSED_SOUND: crate::audio::PassedFormat = crate::audio::PassedFormat 
     head: &crate::aac_eld::AUDIO_SPECIFIC_CONFIG,
 };
 
-/// The first `SetEncodings`, held for the whole session: the media stream first, as Apple's viewer
-/// lists it in High Performance mode. Naming the stream makes the Mac name its
+/// The first `SetEncodings`, held for the whole session and sent again after
+/// every answer: the media stream first, as Apple's viewer lists and re-sends it
+/// in High Performance mode. Naming the stream makes the Mac name its
 /// ports. The Mac's preferred codec is the first it
 /// knows in the list, and to a viewer whose preferred codec is the media stream
 /// its framebuffer sender sends no pixels: cursor shapes, layouts and the stream's
@@ -112,7 +113,9 @@ pub const PASSED_SOUND: crate::audio::PassedFormat = crate::audio::PassedFormat 
 /// the answer to an offer without it; a record from each at once fails its
 /// integrity check here and ends the session. `SetEncodings` is acted on under
 /// that lock, so an update being written is out before the first offer is
-/// read, and none follows it or any later offer.
+/// read, and none follows it or any later offer. Each repeat goes with no offer
+/// out; the Mac answers it with the layout again, and with no new ports while
+/// its stream runs.
 pub fn encodings_preferring_media_stream() -> Vec<i32> {
     let mut encodings = vec![ENCODING_MEDIA_STREAM];
     encodings.extend_from_slice(vnc_apple::ENCODINGS);

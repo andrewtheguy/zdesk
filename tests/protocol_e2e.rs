@@ -1040,12 +1040,19 @@ async fn serve_fake_mac_records(
             Err(err) => return Err(err),
         }
         match kind[0] {
-            // SetPixelFormat
+            // SetPixelFormat. High Performance sets it at each layout, at depth 32,
+            // as Apple's viewer does on macvm, so never before the first.
             0 => {
-                records.read_exact(&mut [0u8; 19]).await?;
+                let mut body = [0u8; 19];
+                records.read_exact(&mut body).await?;
+                if media_first {
+                    assert!(sent_layout, "High Performance sets its pixel format at a layout");
+                    assert_eq!(body[4], 32, "High Performance pixel format depth");
+                }
             }
             // SetEncodings. The list naming the media stream is answered with its
-            // ports, in an update of their own.
+            // ports, in an update of their own; the same list again, once the
+            // ports came, with the layout again, as macvm answers each.
             2 => {
                 let mut head = [0u8; 3];
                 records.read_exact(&mut head).await?;
@@ -1068,6 +1075,16 @@ async fn serve_fake_mac_records(
                     update.extend_from_slice(&1u16.to_be_bytes());
                     update.extend_from_slice(&fake_mac_ports());
                     write_half.write_all(writer.frame(&update)).await?;
+                } else if lists_media
+                    && sent_layout
+                    && let Some(&(points, density)) = configurations.last()
+                {
+                    let mut rect = vec![0u8, 0];
+                    rect.extend_from_slice(&1u16.to_be_bytes());
+                    rect.extend_from_slice(&[0u8; 8]);
+                    rect.extend_from_slice(&0x451i32.to_be_bytes());
+                    rect.extend_from_slice(&fake_mac_layout(MAC_VIRTUAL_DISPLAY, points, density));
+                    write_half.write_all(writer.frame(&rect)).await?;
                 }
             }
             // FramebufferUpdateRequest. A non-incremental one is answered, with

@@ -3042,7 +3042,12 @@ async fn apple_preface(
             ))
             .await?;
     }
-    uplink.send(&set_pixel_format()).await?;
+    // High Performance sets its pixel format at each layout instead, as Apple's
+    // viewer does, the first coming with the canonical displays' — see
+    // [`rearm_after_layout`].
+    if !media_stream {
+        uplink.send(&set_pixel_format()).await?;
+    }
     // Native names the media stream in the first list, so its ports can arrive
     // with the canonical layout and no pixel repaint can hold negotiation up.
     let encodings = if media_stream {
@@ -5946,6 +5951,13 @@ async fn read_rect<R: AsyncRead + Unpin>(
             reader.read_exact(&mut body).await?;
             let media = shared.media.as_ref().expect("guarded");
             let replied = media.lock().unwrap().on_reply(&body)?;
+            // The list again, as Apple's viewer sends it once each new stream is
+            // up: with no offer out, so nothing the Mac frames for it meets an
+            // answer. Ahead of any resize the answer releases, which waits for
+            // this update's end.
+            if replied.answered {
+                send(uplink, &set_encodings(&vnc_apple_media::encodings_preferring_media_stream())).await?;
+            }
             if replied.answered && desktop.lock().unwrap().hp.media_answered() {
                 debug!("vnc: the media stream is up; the session-ready resize may go out");
                 shared.hp_wake.notify_one();
@@ -7249,18 +7261,27 @@ async fn recompose(shared: &Shared, layout: &vnc_apple::Layout, sink: &VideoSink
 /// pasteboard watching on a virtual display's. A layout that answered nothing
 /// leaves a High Performance change out, and the region stays narrowed until the
 /// one that answers it — see [`HP_HOLD_REQUEST`].
+///
+/// High Performance sets its pixel format first, as Apple's viewer does at every
+/// layout. The Mac forces an update of the whole screen for it, which it serves
+/// with no pixels to a viewer preferring the media stream; still not while a
+/// change is out, whose display that screen may no longer be. The answering
+/// layout sets it.
 async fn rearm_after_layout(
     uplink: &SharedUplink,
     desktop: &SharedDesktop,
     pasteboard: bool,
 ) -> anyhow::Result<()> {
     let mut uplink = uplink.lock().await;
-    let (armed, interval) = {
+    let (armed, interval, pixel_format) = {
         let d = desktop.lock().unwrap();
-        (d.poll_size(), d.push_interval_us)
+        (d.poll_size(), d.push_interval_us, d.media_stream && !d.hp.holds_pixels() && !d.moved_off)
     };
     if pasteboard {
         uplink.send(&vnc_apple_clipboard::auto_pasteboard(true)).await?;
+    }
+    if pixel_format {
+        uplink.send(&apple_media_pixel_format()).await?;
     }
     debug!(
         "vnc: arming auto framebuffer updates for {}x{}",
@@ -7699,6 +7720,14 @@ fn set_pixel_format() -> [u8; 20] {
     msg[15] = 8; // green shift
     msg[16] = 0; // blue shift
     // msg[17..20]: padding
+    msg
+}
+
+/// [`set_pixel_format`] at depth 32, which is what Apple's viewer asks a High
+/// Performance Mac for. The bytes of a pixel are the same.
+fn apple_media_pixel_format() -> [u8; 20] {
+    let mut msg = set_pixel_format();
+    msg[5] = 32; // depth
     msg
 }
 
