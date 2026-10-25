@@ -1,27 +1,40 @@
 // The camera sender: this browser's webcam, encoded to H.264 and fed to
 // `/ws/camera`, whose far end is a virtual camera plugged into the remote.
 //
-// Opening the socket is the enable and closing it is the disable — the same
-// contract as audio's socket, with the media going the other way. The gateway
-// never transcodes: what `VideoEncoder` emits here is what the remote decodes,
-// which is why the encoder is configured for Annex B H.264 (the bitstream
-// MS-RDPECAM carries) and why a browser that cannot encode it gets a named
-// error instead of a fallback. The remote drives the traffic: frames are
-// encoded and sent only between its `cameraStart` and `cameraStop`, and a
-// `cameraKeyframe` makes the next frame an IDR so a stream the gateway had to
-// drop can resume.
+// Opening the socket plugs the camera and closing it unplugs it — the same
+// contract as audio's socket, with the media going the other way. A session
+// started with the picker's Camera tick opens it as it connects, so the remote
+// has a camera for the whole session, but this browser's camera is opened only
+// while the remote consumes it: between its `cameraStart` and `cameraStop`,
+// which an application over there opening and closing the camera sends. The
+// camera light is on exactly when something on the remote is using it, as it
+// is under a native client.
+//
+// The device is announced before any camera is opened, so it is announced in
+// one fixed geometry and rate, and every frame is fitted to that geometry. The
+// gateway never transcodes: what `VideoEncoder` emits here is what the remote
+// decodes, which is why the encoder is configured for Annex B H.264 (the
+// bitstream MS-RDPECAM carries) and why a browser that cannot encode it gets a
+// named error instead of a fallback. A `cameraKeyframe` makes the next frame an
+// IDR so a stream the gateway had to drop can resume.
 
 import { type ClientMsg, encodeCameraFrame } from "./protocol";
 
 export interface CameraSenderCallbacks {
   // The socket closed or the sender failed, and the sender has already stopped:
-  // the capture is released and the camera light is off. `reason` is non-null
-  // for a failure worth showing (no camera permission, no H.264 encoder, the
-  // target refusing the socket) and null for an ordinary close.
+  // the camera is released and unplugged. `reason` is non-null for a failure
+  // worth showing (no H.264 encoder, the target refusing the socket) and null
+  // for an ordinary close.
   onStopped: (reason: string | null) => void;
   // The remote started or stopped consuming — an application over there opened
-  // or closed the camera. UI feedback only; the sender already obeys.
+  // or closed the camera, which is also when this browser's camera opens and
+  // closes.
   onStreaming: (streaming: boolean) => void;
+  // Why this browser's camera could not be opened for the remote, or null once
+  // it opens. The device stays plugged: the next time an application on the
+  // remote opens it, opening is tried again, so a permission granted in the
+  // meantime takes effect without a new session.
+  onCaptureError: (reason: string | null) => void;
 }
 
 export interface CameraSender {
@@ -34,21 +47,48 @@ export interface CameraSender {
 // camera.
 const MAX_ENCODE_QUEUE = 2;
 
-// What the camera is asked for: a width, and a rate that is the ceiling of what
-// goes out. Low on purpose — a redirected camera is a video call's picture, and
-// a host without a GPU was measured asking for samples below 30 frames a
-// second, so a faster camera only fills the gateway's queue until it drops a
-// second's worth to the next keyframe.
-export const CAPTURE_WIDTH = 640;
-export const CAPTURE_FPS = 15;
+// The one format the remote is offered, announced before any camera is open:
+// 16:9, which most webcams are, so their picture is scaled rather than cropped.
+// Low on purpose — a redirected camera is a video call's picture, and a host
+// without a GPU was measured asking for samples below 30 frames a second, so a
+// faster camera only fills the gateway's queue until it drops a second's worth
+// to the next keyframe.
+export const CAMERA_WIDTH = 640;
+export const CAMERA_HEIGHT = 360;
+export const CAMERA_FPS = 15;
 
-// The rate the encoder is configured for and the remote is told: what the
-// camera reports, held to CAPTURE_FPS, which is also what a camera that reports
-// nothing is taken to run at.
-export function captureRate(reported: number | undefined): number {
-  return reported && reported > 0
-    ? Math.min(reported, CAPTURE_FPS)
-    : CAPTURE_FPS;
+// How long this browser's camera stays open after the remote stops consuming.
+// An application opening a camera commonly starts, stops and starts it again
+// while it settles on a format, and reopening a webcam costs a moment each
+// time; a camera nothing asks for again within this is closed.
+const CAPTURE_LINGER_MS = 2_000;
+
+// The part of a `sourceWidth`×`sourceHeight` frame shown in the announced
+// geometry: all of it when the aspect ratios agree, and otherwise the centre,
+// cropped on the long side, so the picture fills the frame undistorted. Split
+// out pure so a unit test can pin it without a camera.
+export function centreCrop(
+  sourceWidth: number,
+  sourceHeight: number,
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  if (sourceWidth * height > width * sourceHeight) {
+    const cropped = Math.round((sourceHeight * width) / height);
+    return {
+      x: Math.floor((sourceWidth - cropped) / 2),
+      y: 0,
+      width: cropped,
+      height: sourceHeight,
+    };
+  }
+  const cropped = Math.round((sourceWidth * height) / width);
+  return {
+    x: 0,
+    y: Math.floor((sourceHeight - cropped) / 2),
+    width: sourceWidth,
+    height: cropped,
+  };
 }
 
 // Bytes allowed to sit unsent in the socket before samples are dropped instead
@@ -58,7 +98,8 @@ export function captureRate(reported: number | undefined): number {
 // is never free in H.264 — everything until the next keyframe goes with the
 // first dropped delta, and that keyframe is asked for once the backlog clears,
 // the same drop-whole-and-rekey the gateway's own credit queue applies. A
-// quarter of a megabyte is a quarter second at the ceiling bitrate above.
+// quarter of a megabyte is a quarter second at the ceiling bitrate `h264Config`
+// allows.
 const MAX_BUFFERED_BYTES = 256 * 1024;
 
 // The H.264 configuration for one capture geometry. Split out pure so a unit
@@ -101,18 +142,6 @@ export function h264Config(
   return { codec: `avc1.42e0${level}`, bitrate: Math.round(bitrate) };
 }
 
-// Reduce the browser's fractional frame rate to the rational both wire formats
-// carry (29.97 → 30000/1001 territory; integers stay {fps, 1}).
-export function rationalFps(fps: number): {
-  numerator: number;
-  denominator: number;
-} {
-  const numerator = Math.round(fps * 1000);
-  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
-  const divisor = gcd(numerator, 1000);
-  return { numerator: numerator / divisor, denominator: 1000 / divisor };
-}
-
 // Chrome currently accepts an `avc1.42e0..` configuration but can emit a
 // Baseline SPS whose profile-compatibility byte is zero. DirectShow decodes
 // that stream, while Windows' MediaCapture camera source waits forever after
@@ -146,12 +175,62 @@ export function normalizeConstrainedBaseline(unit: Uint8Array): void {
   }
 }
 
-// Capture, configure, connect. The returned sender is live until its socket
-// closes (server side) or `stop` is called (this side); both end in exactly one
-// `onStopped`.
+// What a refused `getUserMedia` means, in the words the session card shows.
+function captureRefusal(e: unknown): string {
+  const name = e instanceof DOMException ? e.name : "";
+  switch (name) {
+    case "NotAllowedError":
+      return "this browser was not allowed to use the camera; allow it in the site's settings";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "this browser has no camera to offer";
+    case "NotReadableError":
+      return "the camera could not be opened; another application may be using it";
+    default:
+      return e instanceof Error && e.message
+        ? e.message
+        : "the camera could not be opened";
+  }
+}
+
+// This browser's camera, in the announced geometry and rate where it has them,
+// or a refusal worded for the session card.
 //
-// Must be called from a user gesture — `getUserMedia`'s permission prompt is
-// the camera counterpart of the AudioContext rule on the audio path.
+// A facing preference, not a bare `video: true`: bare leaves the browser its
+// device-order default, which on a Mac with an auxiliary capture device — Desk
+// View, a virtual camera — is a camera the user is not in front of. "user"
+// names the one pointed at the person, which is what a redirected webcam
+// means. Ideal rather than `exact`, so a webcam that reports no facing mode at
+// all — most external ones — is still eligible rather than refused. The
+// geometry and rate are asked for as `ideal`/`max` too, so a camera without
+// that exact mode still opens at its nearest, and is fitted.
+async function requestCamera(): Promise<MediaStreamTrack> {
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: CAMERA_WIDTH },
+        height: { ideal: CAMERA_HEIGHT },
+        frameRate: { ideal: CAMERA_FPS, max: CAMERA_FPS },
+      },
+    });
+  } catch (e) {
+    throw new Error(captureRefusal(e));
+  }
+  const track = stream.getVideoTracks()[0];
+  if (!track) {
+    for (const t of stream.getTracks()) {
+      t.stop();
+    }
+    throw new Error("the camera produced no video track");
+  }
+  return track;
+}
+
+// Check, configure, connect. The returned sender is live until its socket
+// closes (server side) or `stop` is called (this side); both end in exactly one
+// `onStopped`. Nothing here opens a camera: the remote's `cameraStart` does.
 export async function startCameraSender(
   url: string,
   callbacks: CameraSenderCallbacks,
@@ -172,68 +251,13 @@ export async function startCameraSender(
     throw new Error("this browser offers no camera capture");
   }
 
-  // A facing preference, not a bare `video: true`: bare leaves the browser its
-  // device-order default, which on a Mac with an auxiliary capture device —
-  // Desk View, a virtual camera — is a camera the user is not in front of.
-  // "user" names the one pointed at the person, which is what a redirected
-  // webcam means. Ideal rather than `exact`, so a webcam that reports no
-  // facing mode at all — most external ones — is still eligible rather than
-  // refused.
-  //
-  // The geometry and rate are asked for low, and as `ideal`/`max` so a camera
-  // without that exact mode still opens at its nearest: the width alone, so
-  // the camera keeps its own aspect ratio.
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: "user",
-      width: { ideal: CAPTURE_WIDTH },
-      frameRate: { ideal: CAPTURE_FPS, max: CAPTURE_FPS },
-    },
-  });
-  // From here on the camera light is on, so a setup step that throws must turn
-  // it off again: whatever was built after the capture, newest first, then the
-  // capture itself. Once the sender exists, its own `stop` owns all of it.
-  const undo: (() => void)[] = [
-    () => {
-      for (const t of stream.getTracks()) {
-        t.stop();
-      }
-    },
-  ];
-  try {
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      throw new Error("the camera produced no video track");
-    }
-    return await senderForTrack(url, callbacks, track, undo);
-  } catch (e) {
-    for (const release of undo.reverse()) {
-      release();
-    }
-    throw e;
-  }
-}
-
-// The rest of `startCameraSender`, for one captured track. Each resource is
-// pushed to `undo` as it is built, for the caller to release if a later step
-// throws.
-async function senderForTrack(
-  url: string,
-  callbacks: CameraSenderCallbacks,
-  track: MediaStreamTrack,
-  undo: (() => void)[],
-): Promise<CameraSender> {
-  const settings = track.getSettings();
-  const width = settings.width ?? 640;
-  const height = settings.height ?? 480;
-  const fps = captureRate(settings.frameRate);
+  const width = CAMERA_WIDTH;
+  const height = CAMERA_HEIGHT;
+  const fps = CAMERA_FPS;
   // Frames closer together than the announced rate are skipped before the
-  // encoder, for a camera that ignored the `max` above.
+  // encoder, for a camera that ignored the `max` asked of it.
   const frameInterval = 1_000_000 / fps;
-  let lastEncoded = Number.NEGATIVE_INFINITY;
-  const { numerator, denominator } = rationalFps(fps);
   const { codec, bitrate } = h264Config(width, height, fps);
-
   const config: VideoEncoderConfig = {
     codec,
     width,
@@ -255,14 +279,24 @@ async function senderForTrack(
   let stopped = false;
   let streaming = false;
   let forceKeyframe = true;
+  let lastEncoded = Number.NEGATIVE_INFINITY;
   // Whether the socket backed up past MAX_BUFFERED_BYTES and deltas are being
   // dropped. Set by the encoder's output, cleared by the keyframe that resumes
   // the stream; the pump requests that keyframe when the backlog has cleared.
   let droppingDeltas = false;
+  // This browser's camera while it is open, and whether an open is waiting on
+  // `getUserMedia` (its permission prompt, the first time).
+  let capture: {
+    track: MediaStreamTrack;
+    reader: ReadableStreamDefaultReader<VideoFrame>;
+  } | null = null;
+  let opening = false;
+  let lingerTimer: ReturnType<typeof setTimeout> | undefined;
+  // Where a frame whose size is not the announced one is fitted to it.
+  let fitCanvas: OffscreenCanvas | null = null;
 
   const socket = new WebSocket(url);
   socket.binaryType = "arraybuffer";
-  undo.push(() => socket.close());
 
   const encoder = new VideoEncoder({
     output: (chunk) => {
@@ -293,15 +327,17 @@ async function senderForTrack(
     },
     error: (e) => stop(e.message || "the H.264 encoder failed"),
   });
-  undo.push(() => {
-    if (encoder.state !== "closed") {
-      encoder.close();
-    }
-  });
   encoder.configure(config);
 
-  const processor = new MediaStreamTrackProcessor({ track });
-  const reader = processor.readable.getReader();
+  const closeCapture = () => {
+    clearTimeout(lingerTimer);
+    if (!capture) {
+      return;
+    }
+    void capture.reader.cancel().catch(() => {});
+    capture.track.stop();
+    capture = null;
+  };
 
   // One stop for every path out, idempotent: the socket's close handler and an
   // explicit `stop` can both fire, and the second must find nothing to do.
@@ -310,8 +346,7 @@ async function senderForTrack(
       return;
     }
     stopped = true;
-    void reader.cancel().catch(() => {});
-    track.stop();
+    closeCapture();
     if (encoder.state !== "closed") {
       encoder.close();
     }
@@ -324,49 +359,36 @@ async function senderForTrack(
     callbacks.onStopped(reason);
   };
 
-  socket.onopen = () => {
-    const format: ClientMsg = {
-      type: "cameraFormat",
+  // The announced geometry, from whatever the camera gives: as it is when it
+  // already matches, and otherwise its centre scaled into a canvas, which the
+  // frame is rebuilt from. Null when the canvas cannot be drawn on.
+  const fitted = (frame: VideoFrame): VideoFrame | null => {
+    if (frame.displayWidth === width && frame.displayHeight === height) {
+      return frame;
+    }
+    fitCanvas ??= new OffscreenCanvas(width, height);
+    const context = fitCanvas.getContext("2d");
+    if (!context) {
+      return null;
+    }
+    const crop = centreCrop(
+      frame.displayWidth,
+      frame.displayHeight,
       width,
       height,
-      fpsNumerator: numerator,
-      fpsDenominator: denominator,
-    };
-    socket.send(JSON.stringify(format));
-  };
-
-  socket.onmessage = (ev) => {
-    if (typeof ev.data !== "string") {
-      return;
-    }
-    let msg: { type?: string };
-    try {
-      msg = JSON.parse(ev.data) as { type?: string };
-    } catch {
-      return;
-    }
-    switch (msg.type) {
-      case "cameraStart":
-        streaming = true;
-        // Every (re)start opens on an IDR: the remote's decoder starts from
-        // parameter sets, and Annex B keyframes carry them.
-        forceKeyframe = true;
-        callbacks.onStreaming(true);
-        break;
-      case "cameraStop":
-        streaming = false;
-        callbacks.onStreaming(false);
-        break;
-      case "cameraKeyframe":
-        forceKeyframe = true;
-        break;
-    }
-  };
-
-  socket.onclose = (ev) => {
-    // 4002 is the gateway saying the target carries no camera (or the engine
-    // is gone); everything else is an ordinary end of the enable.
-    stop(ev.code === 4002 ? "this target carries no camera" : null);
+    );
+    context.drawImage(
+      frame,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      width,
+      height,
+    );
+    return new VideoFrame(fitCanvas, { timestamp: frame.timestamp });
   };
 
   // One frame's fate: skipped while the remote is not consuming or the encoder
@@ -381,25 +403,30 @@ async function senderForTrack(
     if (frame.timestamp - lastEncoded < frameInterval - 1000) {
       return;
     }
+    const sized = fitted(frame);
+    if (!sized) {
+      return;
+    }
     lastEncoded = frame.timestamp;
     if (droppingDeltas && socket.bufferedAmount <= MAX_BUFFERED_BYTES) {
       // The backlog cleared: resume at the IDR the far decoder needs.
       forceKeyframe = true;
     }
-    encoder.encode(frame, { keyFrame: forceKeyframe });
+    encoder.encode(sized, { keyFrame: forceKeyframe });
     forceKeyframe = false;
+    if (sized !== frame) {
+      sized.close();
+    }
   };
 
-  // The frame pump. Frames flow whenever the camera does; which of them cost
-  // anything is the remote's decision — outside start/stop they are closed
-  // unencoded, which keeps the capture pipeline drained without spending CPU.
-  void (async () => {
+  // The frame pump for one opening of the camera, ending with it.
+  const pump = async (reader: ReadableStreamDefaultReader<VideoFrame>) => {
     for (;;) {
       let result: ReadableStreamReadResult<VideoFrame>;
       try {
         result = await reader.read();
       } catch {
-        break; // cancelled by stop()
+        break; // cancelled by closeCapture()
       }
       if (result.done || stopped) {
         result.value?.close();
@@ -408,7 +435,92 @@ async function senderForTrack(
       encodeFrame(result.value);
       result.value.close();
     }
-  })();
+  };
+
+  // Open this browser's camera for a remote that has started consuming. The
+  // first time on a page this is the permission prompt, which comes up when the
+  // application on the remote opens the camera.
+  const openCapture = async () => {
+    if (capture || opening) {
+      return;
+    }
+    opening = true;
+    let track: MediaStreamTrack;
+    try {
+      track = await requestCamera();
+    } catch (e) {
+      opening = false;
+      if (!stopped) {
+        callbacks.onCaptureError(
+          e instanceof Error ? e.message : "the camera could not be opened",
+        );
+      }
+      return;
+    }
+    opening = false;
+    // Stopped, or no longer wanted while the prompt was up: put it straight
+    // down. The remote starting again opens it afresh.
+    if (stopped || !streaming) {
+      track.stop();
+      return;
+    }
+    callbacks.onCaptureError(null);
+    const reader = new MediaStreamTrackProcessor({
+      track,
+    }).readable.getReader();
+    capture = { track, reader };
+    lastEncoded = Number.NEGATIVE_INFINITY;
+    void pump(reader);
+  };
+
+  socket.onopen = () => {
+    const format: ClientMsg = {
+      type: "cameraFormat",
+      width,
+      height,
+      fpsNumerator: fps,
+      fpsDenominator: 1,
+    };
+    socket.send(JSON.stringify(format));
+  };
+
+  socket.onmessage = (ev) => {
+    if (typeof ev.data !== "string" || stopped) {
+      return;
+    }
+    let msg: { type?: string };
+    try {
+      msg = JSON.parse(ev.data) as { type?: string };
+    } catch {
+      return;
+    }
+    switch (msg.type) {
+      case "cameraStart":
+        streaming = true;
+        // Every (re)start opens on an IDR: the remote's decoder starts from
+        // parameter sets, and Annex B keyframes carry them.
+        forceKeyframe = true;
+        clearTimeout(lingerTimer);
+        callbacks.onStreaming(true);
+        void openCapture();
+        break;
+      case "cameraStop":
+        streaming = false;
+        callbacks.onStreaming(false);
+        clearTimeout(lingerTimer);
+        lingerTimer = setTimeout(closeCapture, CAPTURE_LINGER_MS);
+        break;
+      case "cameraKeyframe":
+        forceKeyframe = true;
+        break;
+    }
+  };
+
+  socket.onclose = (ev) => {
+    // 4002 is the gateway saying the target carries no camera (or the engine
+    // is gone); everything else is an ordinary end of the session's camera.
+    stop(ev.code === 4002 ? "this target carries no camera" : null);
+  };
 
   return { stop: () => stop(null) };
 }

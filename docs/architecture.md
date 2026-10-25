@@ -790,15 +790,16 @@ wire format, no record and no second stream. See
 
 - Browser camera redirection is MS-RDPECAM on RDP and wlshare's camera extension
   on a `wlshare` target, H.264-only, and never transcoded by the gateway. It uses its own
-  `/ws/camera` socket, is explicit per session, and is bound to both claim and
-  engine. See [Camera frames](#camera-frames) and
+  `/ws/camera` socket, which a session started with the picker's Camera tick opens
+  as it connects, bound to both claim and engine, and the browser's camera is
+  open only while the remote consumes it. See [Camera frames](#camera-frames) and
   [The browser's camera over VNC with wlshare](wlshare-camera.md).
 - Browser microphone redirection is MS-RDPEAI on RDP and wlshare's microphone
   extension on a `wlshare` target: low-bitrate mono Opus from the browser, decoded here
-  to the 16-bit PCM the host records in. It uses its own `/ws/mic` socket under
-  the camera socket's rules (explicit per session, refused with `4002` when the
-  target carries no microphone, closed with the engine) and is never put on the
-  session socket. See [Camera frames](#camera-frames) and
+  to the 16-bit PCM the host records in. It uses its own `/ws/mic` socket, opened
+  explicitly per session from the menu, refused with `4002` when the target
+  carries no microphone and closed with the engine as the camera's is, and is
+  never put on the session socket. See [Camera frames](#camera-frames) and
   [The browser's microphone over VNC with wlshare](wlshare-microphone.md).
 
 ## Backend
@@ -2348,10 +2349,13 @@ and `GET /api/targets` carries it:
   `choices.camera` and `choices.microphone`, each a tick labelled experimental,
   on `rdp`, over MS-RDPECAM and MS-RDPEAI, and on `wlshare`, over its camera and
   microphone extensions, and refused on a plain `vnc` target and on both Apple
-  subtypes, which have nowhere to put either. The tick is the offer alone, what
-  the session lists to the host; the device itself is turned on from the
-  session's menu, per session, which opens `/ws/camera` or `/ws/mic`
-  ([Camera frames](#camera-frames), [Microphone frames](#microphone-frames)).
+  subtypes, which have nowhere to put either. The Camera tick is the whole of
+  the camera's choice: the session opens `/ws/camera` as it connects, and the
+  browser's camera opens while an application on the remote uses it. The
+  Microphone tick is the offer alone, what the session lists to the host; the
+  microphone itself is turned on from the session's menu, per session, which
+  opens `/ws/mic` ([Camera frames](#camera-frames),
+  [Microphone frames](#microphone-frames)).
   Neither until somebody ticks it, and `connected` reports what the session was
   started with as `camera` and `microphone`.
 - **The second display is placed once.** `choices.placement` says `right`,
@@ -2759,20 +2763,22 @@ verified by hand against a Windows host, and a change here needs a hand check.
 The browser's camera goes the other way, on a fourth socket, in a session started
 with the picker's Camera tick, on an `rdp` or `wlshare` target (refused on a
 plain `vnc` target and on both Apple subtypes: neither has anywhere to put a
-camera). The tick is the offer, remembered at the picker as every choice is;
-**opening `/ws/camera?session=<token>` is the enable** — explicit, per session,
-and never remembered. Its refusals add one
+camera). The tick is remembered at the picker as every choice is, and is the
+whole of the choice: **a session started with it opens
+`/ws/camera?session=<token>` as it connects**, which plugs the camera into the
+remote for the session, and there is no other control. Its refusals add one
 code to the family: 401 before the upgrade, 4000 for a stale token, 4001 on
 eviction, and **4002** when the running target carries no camera (or no engine is
 running at all). Where the audio socket is bound to the claim alone and survives a
 target switch, the camera socket is bound to the claim *and the engine*: every
-engine end and every claim change closes it, so the next session always starts
-with the camera off. Closing it — either side — unplugs the virtual device from
-the remote.
+engine end and every claim change closes it, so every session plugs its own.
+Closing it — either side — unplugs the virtual device from the remote.
 
 The socket's first message is `cameraFormat`, naming the H.264 the browser's
 `VideoEncoder` is configured for (geometry and a rational frame rate); its arrival
-is what announces the device to the host. Binary frames follow, one encoded access
+is what announces the device to the host. It is sent before any camera is open,
+so it is always 640×360 at 15 frames a second, and each frame of whatever the
+camera gives is fitted to it, its centre scaled to fill. Binary frames follow, one encoded access
 unit each:
 
 ```text
@@ -2780,16 +2786,28 @@ u8 kind = 0x04 | u8 flags (bit 0: keyframe) | the Annex B access unit
 ```
 
 Downstream the gateway relays the host's decisions as `cameraStart` (with the
-confirmed format), `cameraStop`, and `cameraKeyframe`; the browser encodes only
-between start and stop, restarting at an IDR, and honors a keyframe request on the
-next frame. Streaming begins when an application on the host opens the camera,
-which is the host's move alone — an enabled camera on an idle desktop sends
-nothing.
+confirmed format), `cameraStop`, and `cameraKeyframe`; the browser opens its
+camera on start and encodes only until stop, restarting at an IDR, and honors a
+keyframe request on the next frame. Streaming begins when an application on the
+host opens the camera, which is the host's move alone — a plugged camera on an
+idle desktop sends nothing, and the browser's camera stays closed. After a stop
+the browser keeps its camera open for two seconds before closing it, because an
+application settling on a format starts, stops and starts again. A camera that
+will not open — permission refused, none present, another application holding it
+— leaves the device plugged and is tried again at the next start, and the Info
+card's Camera row says why.
+
+A Windows 11 host does not send the Stop Streams Request MS-RDPECAM 1.3.5 has it
+send when it needs no more samples: when the application lets the camera go, its
+Sample Requests end and the stream stays started. The RDP client takes three
+seconds without a request, with none owed, as that stop, and the next request as
+the start again, and the gateway relays them as `cameraStop` and `cameraStart`.
+See [The RDP client](rdp-client.md#camera-ms-rdpecam).
 
 The host also decides whether redirection exists at all, before any client
 message: the enumeration channel is created by the server, and a **Windows Server
 without the Remote Desktop Session Host role never creates it**. Microsoft's own
-client gets no camera against such a host either, so an enabled camera there is an
+client gets no camera against such a host either, so a plugged camera there is an
 announcement nobody asks about: the socket stays open and `cameraStart` never
 comes. Installing the role on the host is what turns the channel on:
 
@@ -2802,8 +2820,8 @@ camera, enumerable by every capture application, for exactly as long as the came
 socket holds it plugged.
 
 The gateway never transcodes. The browser encodes Annex B Constrained Baseline H.264
-(`frontend/src/cameraSender.ts`) from a capture asked for at 640 pixels wide and at
-most 15 frames a second — a host without a GPU was measured taking samples below 30,
+(`frontend/src/cameraSender.ts`) at 640×360 and 15 frames a second — a host without
+a GPU was measured taking samples below 30,
 and a faster camera only fills the queue until it drops to a keyframe — the host's
 own camera stack decodes it, and the
 gateway advertises exactly one media type: the announced geometry. There is no
@@ -2823,7 +2841,7 @@ camera extension, and wlshare makes it a PipeWire camera on the wlroots desktop.
 requests, holds the browser's plug until wlshare says it takes a camera, and
 relays wlshare's start, stop and keyframe as the same bridge signals, so the
 socket and the browser behave as they do against RDP. A server that never answers
-is sent nothing and the enabled camera is never started, as on a Windows Server
+is sent nothing and the plugged camera is never started, as on a Windows Server
 without the RDSH role. See
 [The browser's camera over VNC with wlshare](wlshare-camera.md).
 

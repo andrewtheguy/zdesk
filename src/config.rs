@@ -493,10 +493,9 @@ pub struct Choices {
     /// carrying the Remote Desktop Session Host role — has anywhere to redirect
     /// a camera to.
     ///
-    /// The offer alone. The device itself appears when a client enables the
-    /// camera — explicitly, per session, never remembered — by opening
-    /// `/ws/camera`; a session started with the offer and no such client gives
-    /// the remote nothing. The browser encodes H.264 and the gateway passes it
+    /// The device itself appears when the session's browser opens `/ws/camera`,
+    /// which it does as a session started with this connects; a session with no
+    /// such browser gives the remote nothing. The browser encodes H.264 and the gateway passes it
     /// through, so there is no codec choice beside this one.
     #[serde(default)]
     pub camera: bool,

@@ -31,10 +31,10 @@ port = 5900
 (experimental), carried by `connect` as `choices.camera`, is what makes the
 gateway list the extension to it in that session. The tick is offered on a
 `wlshare` target and refused on a plain `vnc` target and on both Apple subtypes,
-none of which has anywhere to put a camera. As on RDP it is the offer only: the
-camera is plugged when a browser enables it from the floating menu, per session
-and never remembered, and unplugged when that socket closes, the session changes
-hands, or the engine ends. wlshare's own `camera` key (default `false`) is the
+none of which has anywhere to put a camera. As on RDP, a session started with it
+plugs the camera as it connects, and unplugs it when that socket closes, the
+session changes hands, or the engine ends; the browser's camera itself opens only
+between wlshare's start and stop. wlshare's own `camera` key (default `false`) is the
 server's side of the same switch.
 
 ## The wire
@@ -88,9 +88,10 @@ so two decisions leave in the order they were made:
 - An unplug goes out only for a camera that was plugged on the wire.
 - A sample goes out only on a plugged camera the server knows about.
 
-The browser encodes between `cameraStart` and `cameraStop` alone, and wlshare
-sends start only while an application on the desktop has the camera open, so an
-enabled camera on a desktop nobody is filming costs nothing past the plug.
+The browser opens its camera and encodes between `cameraStart` and `cameraStop`
+alone, and wlshare sends start only while an application on the desktop has the
+camera open, so a plugged camera on a desktop nobody is filming costs nothing past
+the plug, and its light stays off.
 
 ## What is checked
 

@@ -648,21 +648,24 @@ export function useRemoteDesktop(
   // `OpusHead` is deliberately not kept — only a decoder wants it, and it is built
   // by the time this is set.
   const [audioStream, setAudioStream] = useState<AudioStreamInfo | null>(null);
-  // Whether this target redirects the browser's camera; capability, like canAudio.
+  // Whether this session offers the remote the browser's camera: the picker's
+  // Camera tick, as `connected` reports it.
   const [canCamera, setCanCamera] = useState(false);
-  // Whether this browser is offering its camera. Per session and never
-  // remembered, by design rather than by the AudioContext's necessity: pointing
-  // a camera at the remote is a choice to make each time, not a preference that
-  // follows the profile around. It starts off on every connect and reconnect.
-  const [cameraEnabled, setCameraEnabled] = useState(false);
-  // Why the camera is off, when it was asked for: no permission, no H.264
-  // encoder, the target refusing the socket. Named, never worked around — the
-  // gateway passes H.264 through and there is no second codec to fall back to.
+  // Whether the camera is plugged into the remote: the camera socket is open,
+  // which a session with the tick does as it connects. This browser's camera is
+  // opened only while the remote consumes it (`cameraStreaming`).
+  const [cameraPlugged, setCameraPlugged] = useState(false);
+  // Why the camera is not working, when the session offers it: no H.264
+  // encoder or the target refusing the socket, which leave it unplugged, or the
+  // browser's camera refusing to open, which leaves it plugged for the next try.
+  // Named, never worked around — the gateway passes H.264 through and there is
+  // no second codec to fall back to.
   const [cameraError, setCameraError] = useState<string | null>(null);
   // Whether the remote is consuming the camera right now — an application over
-  // there has it open. UI feedback only; frames stop by themselves without it.
+  // there has it open, and with it this browser's camera.
   const [cameraStreaming, setCameraStreaming] = useState(false);
-  // The microphone: the camera's twin, capability and per-session enable alike.
+  // The microphone: capability, then an explicit per-session enable from the
+  // menu.
   const [canMic, setCanMic] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
@@ -888,34 +891,104 @@ export function useRemoteDesktop(
   // The camera sender, while one is live, and the way to a camera socket URL.
   // The sender itself lives *outside* the connection effect — it owns a device
   // and an encoder, not the session socket — but the claim token lives inside
-  // it, so the effect publishes a URL getter the toggle reads at click time.
+  // it, so the effect publishes a URL getter `startCamera` reads.
   const cameraSenderRef = useRef<CameraSender | null>(null);
   const cameraUrlRef = useRef<(() => string | null) | null>(null);
-  // Bumped by every stop, so an enable still waiting on the permission prompt
-  // can tell it has been overtaken — by a disable click, a target switch, or
-  // the session ending — and put the sender it just built straight down.
+  // Bumped by every stop, so a sender still being built can tell it has been
+  // overtaken — by a target switch or the session ending — and put itself
+  // straight down.
   const cameraGenerationRef = useRef(0);
-  // The generation of an enable whose sender is still being built (the
-  // permission prompt is up), or null when none is. What keeps a second enable
-  // click from starting a second capture while the first is unresolved —
-  // `cameraSenderRef` cannot, because it is only set once the build finishes.
+  // The generation of a sender still being built (its encoder support check),
+  // or null when none is. What keeps a second `connected` from starting a
+  // second sender while the first is unresolved — `cameraSenderRef` cannot,
+  // because it is only set once the build finishes.
   const cameraPendingRef = useRef<number | null>(null);
 
-  // Stop offering the camera, idempotently: the sender's own `onStopped` also
-  // lands here, so a server-side close and the toggle meet at one place.
+  // Unplug the camera, idempotently: the sender's own `onStopped` also lands
+  // here, so a server-side close and the session ending meet at one place.
   const stopCamera = useCallback(() => {
     cameraGenerationRef.current += 1;
     // A build still in flight is overtaken by the bump above and stops itself
-    // on arrival; clearing the pending mark is what lets a re-enable start.
+    // on arrival; clearing the pending mark is what lets the next one start.
     cameraPendingRef.current = null;
     const sender = cameraSenderRef.current;
     cameraSenderRef.current = null;
     sender?.stop();
-    setCameraEnabled(false);
+    setCameraPlugged(false);
     setCameraStreaming(false);
   }, []);
 
-  // The microphone sender, the camera's twin in every ref and guard.
+  // Plug the camera into the remote, for a session started with the picker's
+  // Camera tick: called on its `connected`, and a no-op while a sender is live
+  // or being built, so a reattach that finds one keeps it.
+  //
+  // Opening the socket is the whole of the plug — its first message announces
+  // what the encoder will produce, and the gateway plugs a virtual camera into
+  // the remote on its arrival. Nothing here opens this browser's camera: the
+  // sender does when an application on the remote opens the plugged one, and
+  // closes it when that application lets go.
+  const startCamera = useCallback(() => {
+    const url = cameraUrlRef.current?.();
+    if (!url || cameraSenderRef.current || cameraPendingRef.current !== null) {
+      return;
+    }
+    setCameraError(null);
+    const generation = cameraGenerationRef.current;
+    cameraPendingRef.current = generation;
+    void startCameraSender(url, {
+      onStopped: (reason) => {
+        // A sender put down for being overtaken must not touch the live
+        // state: the generation it belonged to is over.
+        if (cameraGenerationRef.current !== generation) {
+          return;
+        }
+        // The sender is already stopped; what is left is the state saying so.
+        // `stopCamera` is safe here — its `stop` finds nothing to do.
+        stopCamera();
+        if (reason) {
+          setCameraError(reason);
+        }
+      },
+      onStreaming: (streaming) => {
+        if (cameraGenerationRef.current === generation) {
+          setCameraStreaming(streaming);
+        }
+      },
+      onCaptureError: (reason) => {
+        if (cameraGenerationRef.current === generation) {
+          setCameraError(reason);
+        }
+      },
+    }).then(
+      (sender) => {
+        if (cameraPendingRef.current === generation) {
+          cameraPendingRef.current = null;
+        }
+        // Overtaken while the support check ran — a target switch, an
+        // unmount. The session it belonged to is over.
+        if (cameraGenerationRef.current !== generation) {
+          sender.stop();
+          return;
+        }
+        cameraSenderRef.current = sender;
+        setCameraPlugged(true);
+      },
+      (e: unknown) => {
+        if (cameraPendingRef.current === generation) {
+          cameraPendingRef.current = null;
+        }
+        if (cameraGenerationRef.current === generation) {
+          setCameraError(
+            e instanceof Error
+              ? e.message
+              : "this browser cannot offer a camera",
+          );
+        }
+      },
+    );
+  }, [stopCamera]);
+
+  // The microphone sender, with the camera's refs and guards.
   const micSenderRef = useRef<MicSender | null>(null);
   const micUrlRef = useRef<(() => string | null) | null>(null);
   const micGenerationRef = useRef(0);
@@ -2038,19 +2111,22 @@ export function useRemoteDesktop(
       setCanAudio(msg.audio);
       const block = settleAudioBlock(msg);
       seedAudioForAttachment(msg.audio && block === null);
-      // Nothing here turns a camera on: unlike sound, the session is not started
-      // with one — enabling is explicit, every time. A target without one
-      // ends any camera still offered. One with a camera leaves it alone: an
-      // owner's reattach resumes the same engine, whose camera socket the
-      // gateway keeps, and every new engine or claim change has already closed
-      // that socket on the gateway's side, which the sender's `onStopped` turns
-      // into the camera going off.
+      // A session started with the Camera tick plugs the camera as it connects;
+      // this browser's camera opens only once an application on the remote
+      // opens the plugged one. An owner's reattach to the same engine finds its
+      // sender still live and keeps it, and every session's end has already
+      // unplugged it in `endDesktop`, so a new engine is plugged afresh. A
+      // session without the tick ends any camera still plugged.
       setCanCamera(msg.camera);
-      if (!msg.camera) {
+      if (msg.camera) {
+        startCamera();
+      } else {
         stopCamera();
         setCameraError(null);
       }
-      // The microphone follows the camera's rule.
+      // Nothing here turns the microphone on: enabling it is explicit, every
+      // time. A session without one ends any microphone still offered; one
+      // with a microphone leaves it alone, as the camera's reattach does.
       setCanMic(msg.microphone);
       if (!msg.microphone) {
         stopMic();
@@ -2493,6 +2569,7 @@ export function useRemoteDesktop(
     syncCursor,
     settleClipboardWaiters,
     releaseAudio,
+    startCamera,
     stopCamera,
     stopMic,
     tabDisplay,
@@ -2593,88 +2670,6 @@ export function useRemoteDesktop(
       }
     },
     [releaseAudio],
-  );
-
-  // Start or stop offering this browser's camera (the floating menu's Camera
-  // button).
-  //
-  // **Must be called from a click** — `getUserMedia`'s permission prompt is this
-  // path's gesture requirement, the way the AudioContext is audio's. Enabling
-  // is explicit and per session: nothing is remembered, so the button starts at
-  // "off" on every connect, and the camera light going on is always the direct
-  // consequence of a click on it.
-  //
-  // Opening the socket is the whole of the enable — its first message announces
-  // what the encoder will produce, and the gateway plugs a virtual camera into
-  // the remote on its arrival. Closing it is the whole of the disable, and the
-  // remote sees the device unplug.
-  const setCamera = useCallback(
-    (enabled: boolean) => {
-      setCameraError(null);
-      if (!enabled) {
-        stopCamera();
-        return;
-      }
-      const url = cameraUrlRef.current?.();
-      if (
-        !url ||
-        cameraSenderRef.current ||
-        cameraPendingRef.current !== null
-      ) {
-        return;
-      }
-      const generation = cameraGenerationRef.current;
-      cameraPendingRef.current = generation;
-      setCameraEnabled(true);
-      void startCameraSender(url, {
-        onStopped: (reason) => {
-          // A sender put down for being overtaken must not touch the live
-          // state: the generation it belonged to is over, and whatever enable
-          // is current has its own sender saying its own things.
-          if (cameraGenerationRef.current !== generation) {
-            return;
-          }
-          // The sender is already stopped; what is left is the state saying so.
-          // `stopCamera` is safe here — its `stop` finds nothing to do.
-          stopCamera();
-          if (reason) {
-            setCameraError(reason);
-          }
-        },
-        onStreaming: (streaming) => {
-          if (cameraGenerationRef.current === generation) {
-            setCameraStreaming(streaming);
-          }
-        },
-      }).then(
-        (sender) => {
-          if (cameraPendingRef.current === generation) {
-            cameraPendingRef.current = null;
-          }
-          // Overtaken while the permission prompt was up — a disable click, a
-          // target switch, an unmount. The enable it belonged to is over.
-          if (cameraGenerationRef.current !== generation) {
-            sender.stop();
-            return;
-          }
-          cameraSenderRef.current = sender;
-        },
-        (e: unknown) => {
-          if (cameraPendingRef.current === generation) {
-            cameraPendingRef.current = null;
-          }
-          if (cameraGenerationRef.current === generation) {
-            setCameraEnabled(false);
-            setCameraError(
-              e instanceof Error
-                ? e.message
-                : "this browser cannot offer a camera",
-            );
-          }
-        },
-      );
-    },
-    [stopCamera],
   );
 
   // Start or stop offering this browser's microphone (the floating menu's
@@ -3271,7 +3266,7 @@ export function useRemoteDesktop(
     videoStream,
     hostPicture,
     canCamera,
-    cameraEnabled,
+    cameraPlugged,
     cameraError,
     cameraStreaming,
     canMic,
@@ -3304,7 +3299,6 @@ export function useRemoteDesktop(
     switchTarget,
     selectDisplay,
     setAudio,
-    setCamera,
     setMic,
     sendKeyCombo,
     requestClipboard,

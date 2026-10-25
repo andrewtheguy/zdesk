@@ -10,6 +10,7 @@ import { test } from "node:test";
 import {
   audioBlockCopy,
   audioLabel,
+  cameraLabel,
   hostPictureLabel,
   renderLabel,
   videoLabel,
@@ -231,5 +232,41 @@ test("an RDP host's picture says whether it is lossless, and with what", () => {
       codecs: ["ClearCodec with NSCodec", "RemoteFX Progressive"],
     }),
     "Lossy (ClearCodec with NSCodec, RemoteFX Progressive): the host's image quality policy is not Lossless",
+  );
+});
+
+const CAMERA = { offered: true, plugged: true, streaming: false, error: null };
+
+test("a session without the Camera tick says so", () => {
+  assert.equal(
+    cameraLabel({ ...CAMERA, offered: false, plugged: false }),
+    "Not offered in this session",
+  );
+});
+
+test("a plugged camera nothing uses says the light is off by design", () => {
+  assert.equal(
+    cameraLabel(CAMERA),
+    "Plugged in; this browser's camera opens when an application on the remote uses it",
+  );
+  assert.equal(
+    cameraLabel({ ...CAMERA, streaming: true }),
+    "In use by the remote",
+  );
+});
+
+test("a camera that could not be plugged in is told from one that could not open", () => {
+  assert.equal(cameraLabel({ ...CAMERA, plugged: false }), "Plugging in");
+  assert.equal(
+    cameraLabel({
+      ...CAMERA,
+      plugged: false,
+      error: "this browser has no VideoEncoder",
+    }),
+    "Not plugged in — this browser has no VideoEncoder",
+  );
+  assert.equal(
+    cameraLabel({ ...CAMERA, error: "this browser has no camera to offer" }),
+    "Plugged in, but this browser has no camera to offer",
   );
 });

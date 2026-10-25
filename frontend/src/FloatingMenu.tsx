@@ -30,6 +30,8 @@ import {
   type AudioStreamInfo,
   audioBlockCopy,
   audioLabel,
+  type CameraRow,
+  cameraLabel,
   type HostPicture,
   hostPictureLabel,
   renderLabel,
@@ -585,6 +587,7 @@ function ScreenHelp({
   renderPlan,
   oversize,
   audio,
+  camera,
   videoStream,
   hostPicture,
 }: {
@@ -594,6 +597,7 @@ function ScreenHelp({
   renderPlan: string;
   oversize: HoldCause | null;
   audio: AudioRow;
+  camera: CameraRow;
   videoStream: VideoStreamInfo | null;
   hostPicture: HostPicture | null;
 }) {
@@ -643,6 +647,15 @@ function ScreenHelp({
               one state that is a fault rather than a setting — why a decoder
               stopped. See mediaLabel.ts. */}
           <dd>{audioLabel(audio)}</dd>
+        </div>
+        <div className="help-item">
+          <dt>Camera</dt>
+          {/* Whether the picker's Camera tick offered the remote this browser's
+              camera, and what became of it. The tick is the only control, and
+              the camera light stays off until an application on the remote
+              opens the camera, so this row is where a plugged camera nothing
+              uses is told from one that failed. */}
+          <dd>{cameraLabel(camera)}</dd>
         </div>
         <div className="help-item">
           <dt>Video decoder</dt>
@@ -776,62 +789,11 @@ function AudioSection({
   );
 }
 
-// The camera toggle is also the user gesture `getUserMedia`'s permission prompt
-// requires. Targets without a camera omit the row — the same rule as Audio's.
-// Unlike sound, no session is started with it: this button is the one and only
-// way the camera turns on, per session, every session.
-//
-// The row says "experimental" because the redirection behind it has no automated
-// coverage — no test carries a frame to a host — where Audio's does. The label
-// is where an operator meets that, since it is the one place the feature is
-// turned on.
-function CameraSection({
-  available,
-  enabled,
-  error,
-  streaming,
-  onChange,
-}: {
-  available: boolean;
-  enabled: boolean;
-  error: string | null;
-  // Whether the remote is consuming right now — an application over there has
-  // the camera open. Worded rather than implied, because "enabled and idle" is
-  // the normal state until one does.
-  streaming: boolean;
-  onChange: (enabled: boolean) => void;
-}) {
-  if (!available) {
-    return null;
-  }
-  return (
-    <div className="toolbar-section">
-      <span className="toolbar-label">Camera (experimental)</span>
-      <button
-        type="button"
-        className="toolbar-btn"
-        onClick={() => onChange(!enabled)}
-        aria-pressed={enabled}
-        title="Offer this browser's camera to the remote"
-      >
-        {enabled ? "Disable camera" : "Enable camera"}
-      </button>
-      {enabled && !error && (
-        <p className="audio-note">
-          {streaming
-            ? "The remote is using the camera"
-            : "Waiting for the remote to open the camera"}
-        </p>
-      )}
-      {error && <p className="audio-note">{error}</p>}
-    </div>
-  );
-}
-
-// The microphone toggle: the camera's twin, and the same rules — a session
-// started without the microphone offered omits the row, the click is the `getUserMedia`
-// gesture, nothing is remembered, and the label says "experimental" for the
-// same lack of coverage.
+// The microphone toggle. A session started without the microphone offered omits
+// the row — the same rule as Audio's — the click is the `getUserMedia` gesture,
+// nothing is remembered, and the label says "experimental" because the
+// redirection behind it has no automated coverage — no test carries a sample to
+// a host — where Audio's does.
 function MicSection({
   available,
   enabled,
@@ -983,10 +945,9 @@ export default function FloatingMenu({
   hostPicture,
   onAudioChange,
   canCamera,
-  cameraEnabled,
+  cameraPlugged,
   cameraError,
   cameraStreaming,
-  onCameraChange,
   canMic,
   micEnabled,
   micError,
@@ -1063,21 +1024,17 @@ export default function FloatingMenu({
   // null on every other session, which shows no such row.
   hostPicture: HostPicture | null;
   onAudioChange: (enabled: boolean) => void;
-  // The camera, under Audio's hide-don't-disable rule: the picker's Camera tick
-  // is RDP's and a wlshare target's (wlshare's camera extension) alone, so on every
-  // other target, and in a session started without it, there is nothing that
-  // could be switched on. `cameraEnabled` is per
-  // session and never remembered — see
-  // useRemoteDesktop — and `cameraStreaming` is whether the remote is
-  // consuming, which is the half the camera light cannot say.
+  // The camera, for the Info card's Camera row: no control, because the
+  // picker's Camera tick is the whole of the choice. A session started with it
+  // plugs the camera as it connects, and this browser's camera opens only while
+  // an application on the remote uses it — see useRemoteDesktop.
   canCamera: boolean;
-  cameraEnabled: boolean;
+  cameraPlugged: boolean;
   cameraError: string | null;
   cameraStreaming: boolean;
-  onCameraChange: (enabled: boolean) => void;
-  // The microphone, under the camera's rules: the picker's Microphone tick is RDP's
-  // and a wlshare target's (wlshare's microphone extension) alone, enabled per session, and
-  // `micStreaming` is whether the remote records.
+  // The microphone: the picker's Microphone tick is RDP's and a wlshare
+  // target's (wlshare's microphone extension) alone, enabled per session from
+  // the menu, and `micStreaming` is whether the remote records.
   canMic: boolean;
   micEnabled: boolean;
   micError: string | null;
@@ -1297,14 +1254,6 @@ export default function FloatingMenu({
             onChange={onAudioChange}
           />
 
-          <CameraSection
-            available={canCamera}
-            enabled={cameraEnabled}
-            error={cameraError}
-            streaming={cameraStreaming}
-            onChange={onCameraChange}
-          />
-
           <MicSection
             available={canMic}
             enabled={micEnabled}
@@ -1384,6 +1333,12 @@ export default function FloatingMenu({
               enabled: audioEnabled,
               error: audioError,
               stream: audioStream,
+            }}
+            camera={{
+              offered: canCamera,
+              plugged: cameraPlugged,
+              streaming: cameraStreaming,
+              error: cameraError,
             }}
             videoStream={videoStream}
             hostPicture={hostPicture}

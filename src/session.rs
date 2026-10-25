@@ -271,10 +271,9 @@ pub struct AudioAttachment {
 /// The camera has its own socket for the audio socket's reason inverted: its
 /// frames are the browser's, continuous, and must not queue behind — or ahead
 /// of — anything on the session socket. Unlike audio it is bound to the
-/// **engine** as well as the claim: the camera is enabled explicitly per
-/// session, so a target switch or an engine ending closes this socket rather
-/// than re-arming it, and the browser starts the next session with the camera
-/// off.
+/// **engine** as well as the claim: the camera is plugged for one session, so a
+/// target switch or an engine ending closes this socket rather than re-arming it,
+/// and the browser opens a new one for the next session that has the camera.
 pub struct CameraAttachment {
     /// Identifies this socket for [`SessionManager::detach_camera`] and the
     /// per-message calls, so a superseded socket cannot act on its replacement.
@@ -345,9 +344,9 @@ struct EngineSlot {
     audio: Option<Arc<AudioBridge>>,
     /// Where the camera socket's frames go, for a camera target. On the engine
     /// slot like [`Self::audio`], but with the *opposite* survival rule: the
-    /// camera socket is bound to this engine and closes with it, because
-    /// enabling the camera is an explicit per-session choice that must not
-    /// carry over to whatever desktop comes next.
+    /// camera socket is bound to this engine and closes with it, because the
+    /// camera is chosen per session at the picker and must not carry over to
+    /// whatever desktop comes next.
     camera: Option<Arc<CameraBridge>>,
     /// Where the mic socket's packets go, for a microphone target, with the camera's
     /// survival rule.
@@ -494,7 +493,7 @@ struct AudioSlot {
 ///
 /// Bound to the claim **and** the engine, which is the deliberate asymmetry with
 /// [`AudioSlot`]: sound is a persisted preference that survives target switches, the
-/// camera is an explicit per-session enable that must not. Every path through
+/// camera is a per-session choice that must not. Every path through
 /// [`State::take_engine`] closes this socket, and so does every claim change.
 struct CameraSlot {
     id: u64,
@@ -1799,7 +1798,8 @@ impl SessionManager {
         // exists for a session started with the camera offered — and there is no
         // arm/re-arm machinery beside it: the camera socket that would use it does
         // not exist yet, because every engine end closed the previous one and the
-        // browser must enable the camera afresh. The microphone's is the same.
+        // browser opens one afresh for this session. The microphone's is the same,
+        // its socket opened by an enable from the menu.
         let uplinks = Uplinks {
             camera: choices.camera.then(|| Arc::new(CameraBridge::new())),
             microphone: choices.microphone.then(|| Arc::new(MicBridge::new())),

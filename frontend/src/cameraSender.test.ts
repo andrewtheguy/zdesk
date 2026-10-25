@@ -1,24 +1,56 @@
-// The camera sender's pure halves: the H.264 configuration chosen for a capture
-// geometry, and the rational frame rate the wire carries. The capture and
-// socket halves need a camera and a gateway, which is browser QA's business.
+// The camera sender's pure halves: the H.264 configuration chosen for a
+// geometry, and the part of a camera's frame fitted into the announced one. The
+// capture and socket halves need a camera and a gateway, which is browser QA's
+// business.
 //
 // Run with `bun test src/cameraSender.test.ts` from frontend/.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CAPTURE_FPS,
-  captureRate,
+  CAMERA_FPS,
+  CAMERA_HEIGHT,
+  CAMERA_WIDTH,
+  centreCrop,
   h264Config,
   normalizeConstrainedBaseline,
-  rationalFps,
 } from "./cameraSender";
 import { encodeCameraFrame } from "./protocol";
 
-test("the announced rate is the camera's, held to the capture ceiling", () => {
-  assert.equal(captureRate(10), 10);
-  assert.equal(captureRate(30), CAPTURE_FPS, "a camera that ignored the max");
-  assert.equal(captureRate(undefined), CAPTURE_FPS);
-  assert.equal(captureRate(0), CAPTURE_FPS);
+test("a frame of the announced shape is shown whole", () => {
+  assert.deepEqual(centreCrop(1280, 720, 640, 360), {
+    x: 0,
+    y: 0,
+    width: 1280,
+    height: 720,
+  });
+});
+
+test("a 4:3 camera loses its top and bottom, centred", () => {
+  // 640x480 into 16:9 keeps 640x360, 60 rows off each edge.
+  assert.deepEqual(centreCrop(640, 480, 640, 360), {
+    x: 0,
+    y: 60,
+    width: 640,
+    height: 360,
+  });
+});
+
+test("a camera wider than 16:9 loses its sides, centred", () => {
+  // 21:9 at 1080 rows keeps 1920 of its 2560 columns.
+  assert.deepEqual(centreCrop(2560, 1080, 640, 360), {
+    x: 320,
+    y: 0,
+    width: 1920,
+    height: 1080,
+  });
+});
+
+test("the announced format fits level 3.1 at the bitrate floor", () => {
+  // 40x23 macroblocks at 15 fps, and 640*360*15*0.1 = 345,600 bit/s.
+  assert.deepEqual(h264Config(CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS), {
+    codec: "avc1.42e01f",
+    bitrate: 345_600,
+  });
 });
 
 test("a 720p30 camera fits level 3.1", () => {
@@ -41,16 +73,6 @@ test("the bitrate is a tenth of a bit per pixel per frame, clamped", () => {
   // A tiny capture stays at the floor, a 4K60 one at the ceiling.
   assert.equal(h264Config(160, 120, 15).bitrate, 300_000);
   assert.equal(h264Config(3840, 2160, 60).bitrate, 8_000_000);
-});
-
-test("integer frame rates stay {fps, 1}", () => {
-  assert.deepEqual(rationalFps(30), { numerator: 30, denominator: 1 });
-  assert.deepEqual(rationalFps(60), { numerator: 60, denominator: 1 });
-});
-
-test("fractional frame rates keep their thousandths, reduced", () => {
-  assert.deepEqual(rationalFps(29.97), { numerator: 2997, denominator: 100 });
-  assert.deepEqual(rationalFps(23.976), { numerator: 2997, denominator: 125 });
 });
 
 test("baseline SPS units are normalized to the requested constrained profile", () => {
