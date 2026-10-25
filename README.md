@@ -52,44 +52,36 @@ Watch the demos on the [zDesk site](https://andrewtheguy.github.io/zdesk/#demo):
 ## Features
 
 - **One browser client, nothing to install.** Chrome, Edge or Safari on a
-  desktop, Chrome on Android, and Safari on an iPhone or iPad. For desktop use,
-  install the page as an app from Chrome's or Edge's menu, so it opens in a
-  window of its own.
-- **Remote-sized, density-aware display.** Windows with its graphics pipeline,
-  a High Performance Mac and wlshare's headless outputs follow the browser
-  window at its screen density, so they are sharp on a Retina or HiDPI display
-  and shown at their true size. A Standard Mac's physical displays are shown at
-  the density they report.
-- **Two displays at once (alpha).** On Windows, a High Performance Mac and
-  wlshare, the second display opens in a browser tab of its own. In a session
-  that follows the window, each tab's window sizes its display if it is virtual
-  or headless; a physical monitor keeps its own mode. Apple's own viewer on macOS 26 does not offer this:
-  with two virtual displays it reports that dynamic resolution is not available.
-- **The remote's own picture, decoded in the browser, or the gateway's tiles.**
-  A Windows host's graphics pipeline is passed for the browser to compose, drawn
-  in high quality for a LAN or, in alpha, as H.264 the host fits to the browser
-  link. A High Performance Mac's HEVC or its H.264 (beta) is passed unchanged. A
-  Standard Mac's own Adaptive picture is passed (beta) and paced by the browser
-  link: a slower link gets fewer updates and later refinement at the same
-  precision. wlshare's passed VP9 follows the browser link too. Where the
-  gateway codes the picture, it sends 64×64 tiles, exact as PNG where they hold
-  few colours and as JPEG where they move, sent again exactly once still, as
-  fast as the browser paints them, which settle to lossless.
-- **Remote sound in the browser**, as Opus at a bitrate that follows the browser
-  link, as lossless FLAC for a LAN, or as a High Performance Mac's own AAC-ELD.
+  desktop, Chrome on Android, and Safari on an iPhone or iPad. On a desktop,
+  install the page as an app from Chrome's or Edge's menu to give it a window
+  of its own.
+- **Sized to the browser, sharp at its density.** Windows, a High Performance
+  Mac and wlshare's headless outputs follow the window at its screen density,
+  so a Retina or HiDPI display shows them sharp and at their true size. A
+  Standard Mac's displays keep the density they report.
+- **Two displays at once (alpha)** on Windows, a High Performance Mac and
+  wlshare, the second in a browser tab of its own. Apple's own viewer on
+  macOS 26 offers no dynamic resolution with two virtual displays.
+- **The remote's own picture, decoded in the browser.** Windows' graphics
+  pipeline, a High Performance Mac's HEVC or H.264, a Standard Mac's Adaptive
+  picture and wlshare's VP9 are passed through untouched, and all but the High
+  Performance Mac's are paced to the browser link.
+- **Tiles that settle to lossless.** Where the gateway codes the picture itself,
+  it sends 64×64 tiles: PNG where they are exact, JPEG where they move, and
+  sent again exactly once they are still.
+- **Remote sound in the browser**, as Opus paced to the browser link, lossless
+  FLAC for a LAN, or a High Performance Mac's own AAC-ELD.
 - **Clipboard text in both directions**, synced automatically where the browser
   permits it and through the Clipboard panel where it does not.
-- **Camera and microphone redirection (experimental).** An RDP or wlshare
-  session started with them at the picker receives the browser's devices for a
-  call or recording.
-- **Reattachment without losing the remote desktop.** The owning browser has a
-  60-second grace period to reattach after a reload or dropped socket. A takeover
-  or later connection starts a fresh gateway session, but the prioritized
-  servers keep their desktop running, so reconnecting to the target returns to
-  the windows left there.
-- **Mouse, keyboard and a touch-screen interface.** The page installed as a
-  Chrome or Edge app receives the key chords a tab keeps for the browser. On a phone or tablet, fingers act
-  as a trackpad with pinch zoom and a soft keyboard.
+- **Camera and microphone redirection (experimental)** for an RDP or wlshare
+  session started with them at the picker.
+- **Reattach without losing the desktop.** After a reload or a dropped socket,
+  the owning browser has 60 seconds to reattach. A takeover or later connection
+  starts a fresh session, but Windows, a Mac and wlshare keep the desktop
+  running, with its windows where they were left.
+- **Mouse, keyboard and touch.** Installed as an app, the page receives the key
+  chords a tab leaves to the browser. On a phone or tablet, fingers act as a
+  trackpad, with pinch zoom and a soft keyboard.
 
 ## Supported servers
 
@@ -130,9 +122,9 @@ Another RDP server may happen to work but is not tested against. See
 [Prioritized servers](docs/architecture.md#prioritized-servers) for the
 comparison table, what they share, and what each passes.
 
-## Limitations
+## Server and browser support
 
-What each server and browser does not do, in one place.
+What each server and browser does and does not do, in one place.
 
 | | Windows Remote Desktop | Mac, High Performance | Mac, Standard | wlshare | Other VNC |
 |---|---|---|---|---|---|
