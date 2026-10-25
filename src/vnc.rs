@@ -818,6 +818,12 @@ struct DesktopState {
 /// agent. This only keeps a lost answer from pinning
 /// the cover and every later resize for the rest of the session.
 const HP_RESIZE_STUCK: Duration = Duration::from_secs(30);
+/// How long a High Performance density report waits for the window's viewport
+/// report. A window moved onto a screen of another density changes both, and
+/// the page sends the density at once but the viewport 250 ms debounced
+/// (`frontend/src/useRemoteDesktop.ts`): without the wait the old points would
+/// go out at the new density, and the viewport bring a second display change.
+const HP_DENSITY_JOIN: Duration = Duration::from_millis(400);
 
 /// The pixel region a High Performance session asks for while its display is
 /// being reconfigured: one pixel at the origin, which every mode has.
@@ -913,7 +919,8 @@ enum HpPhase {
 /// and goes out at an update boundary with pixel polling held to
 /// [`HP_HOLD_REQUEST`] until the answering layout. The browser debounces window
 /// changes; no second debounce or layout quiet timer delays the request or its
-/// media offer. Until the answering layout, the browser is told a resize is in
+/// media offer, save a density report's wait for the viewport report the same
+/// window change brings ([`HP_DENSITY_JOIN`]). Until the answering layout, the browser is told a resize is in
 /// progress ([`ServerMsg::Resizing`]) and covers the desktop, as
 /// Apple's client does. A session opens covered through native's canonical
 /// virtual-display creation and session-ready resize to the window's mode, which
@@ -926,6 +933,9 @@ enum HpPhase {
 struct HpResize {
     /// The newest window size, in points, not yet asked for.
     want: Option<(u16, u16)>,
+    /// When [`Self::want`] may go, for one a density report made: see
+    /// [`HP_DENSITY_JOIN`].
+    not_before: Option<tokio::time::Instant>,
     phase: HpPhase,
     /// When [`Self::phase`] left [`HpPhase::Idle`], for [`HP_RESIZE_STUCK`].
     since: Option<tokio::time::Instant>,
@@ -1021,10 +1031,21 @@ impl HpResize {
             self.since = None;
         }
         let opening = self.opening != HpOpening::Done;
+        self.not_before = None;
         if noop && self.phase == HpPhase::Idle && !opening {
             self.want = None;
         } else {
             self.want = Some(want);
+        }
+    }
+
+    /// The screen's density changed, re-expressing `want` points: reported as
+    /// [`Self::report`] does, and held [`HP_DENSITY_JOIN`] for the viewport
+    /// report the same window change brings, which replaces it.
+    fn report_density(&mut self, want: (u16, u16), noop: bool, now: tokio::time::Instant) {
+        self.report(want, noop);
+        if self.want.is_some() {
+            self.not_before = Some(now + HP_DENSITY_JOIN);
         }
     }
 
@@ -1117,7 +1138,11 @@ impl HpResize {
             HpOpening::Ready | HpOpening::Done => {}
         }
         if let Some(want) = self.want {
+            if self.not_before.is_some_and(|at| now < at) {
+                return None;
+            }
             self.want = None;
+            self.not_before = None;
             self.phase = HpPhase::Draining(want);
             self.since = Some(now);
             return Some(HpStep::Drain);
@@ -1142,7 +1167,7 @@ impl HpResize {
             HpOpening::Ready | HpOpening::Done => {}
         }
         if self.want.is_some() {
-            return Some(now);
+            return Some(self.not_before.map_or(now, |at| at.max(now)));
         }
         self.shown.then_some(now)
     }
@@ -1403,9 +1428,11 @@ impl DesktopState {
 
     /// Whether the media stream may be offered for the current display: one
     /// exists, and nothing is pending, out or covered but the session-ready
-    /// request that waits for the offer's answer.
+    /// request that waits for the offer's answer. Not inside an update, whose
+    /// layout is re-armed at its end, as Apple's viewer re-arms ahead of its
+    /// offer; the read loop offers there.
     fn media_offerable(&self) -> bool {
-        self.laid_out && (self.hp.settled() || self.hp.holds_for_media())
+        self.laid_out && !self.in_update && (self.hp.settled() || self.hp.holds_for_media())
     }
 
     fn generic_resize(&mut self, points: (u16, u16)) -> Option<[u8; 24]> {
@@ -4055,6 +4082,7 @@ async fn request_resize(
     let mut up = uplink.lock().await;
     let msg = {
         let mut d = desktop.lock().unwrap();
+        let density = matches!(ask, ResizeAsk::Density);
         let want = match ask {
             ResizeAsk::Viewport((0, _) | (_, 0)) => return Ok(()),
             ResizeAsk::Viewport(points) if virtual_display => vnc_apple::raised_to_minimum(points),
@@ -4070,7 +4098,11 @@ async fn request_resize(
             // boundaries. The browser already debounced the window change.
             d.hp_points = Some(want);
             let noop = d.hp_noop(want);
-            d.hp.report(want, noop);
+            if density {
+                d.hp.report_density(want, noop, tokio::time::Instant::now());
+            } else {
+                d.hp.report(want, noop);
+            }
             return Ok(());
         }
         // Points × the server's reported scale, or held — see
@@ -10930,6 +10962,19 @@ mod tests {
         assert_eq!(written(&wire), rearmed);
     }
 
+    /// A layout's update is re-armed at its end, ahead of the offer, as Apple's
+    /// viewer re-arms first: no offer inside an update.
+    #[test]
+    fn high_performance_offers_only_at_an_update_boundary() {
+        let desktop = shared_desktop((1024, 768), None, None);
+        let mut d = desktop.lock().unwrap();
+        d.laid_out = true;
+        d.in_update = true;
+        assert!(!d.media_offerable(), "inside the layout's update");
+        d.in_update = false;
+        assert!(d.media_offerable(), "at its end");
+    }
+
     /// Inside an update the read loop may hold a layout it has not counted, which
     /// would answer a size sent now: the size waits for the update's end.
     #[tokio::test(start_paused = true)]
@@ -11199,6 +11244,30 @@ mod tests {
         assert!(hp.settled(), "ready for an offer without a quiet timer");
         hp.layout(false);
         assert_eq!(hp.deadline(now), None, "duplicates restart no timer");
+    }
+
+    /// A density report waits for the viewport report its window change brings,
+    /// which replaces it and goes at once; alone, it goes when the wait is over.
+    #[test]
+    fn hp_density_report_waits_for_the_viewport() {
+        let t0 = tokio::time::Instant::now();
+        let mut hp = HpResize::default();
+        hp.report_density((1440, 900), false, t0);
+        assert_eq!(hp.step(t0), Some(HpStep::Show));
+        assert_eq!(hp.step(t0), None, "the density waits for the viewport");
+        assert_eq!(hp.deadline(t0), Some(t0 + HP_DENSITY_JOIN));
+        hp.report((1280, 800), false);
+        assert_eq!(hp.deadline(t0), Some(t0));
+        assert_eq!(hp.step(t0), Some(HpStep::Drain));
+        assert_eq!(hp.take_due(t0), Some(((1280, 800), false)), "one change, at the window's points");
+
+        let mut hp = HpResize::default();
+        hp.report_density((1440, 900), false, t0);
+        assert_eq!(hp.step(t0), Some(HpStep::Show));
+        let due = t0 + HP_DENSITY_JOIN;
+        assert_eq!(hp.step(due - Duration::from_millis(1)), None);
+        assert_eq!(hp.step(due), Some(HpStep::Drain));
+        assert_eq!(hp.take_due(due), Some(((1440, 900), false)), "a density alone goes");
     }
 
     /// A report while a size waits for its update boundary replaces it, and one
