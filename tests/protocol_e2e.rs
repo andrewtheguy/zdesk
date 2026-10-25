@@ -1060,6 +1060,9 @@ async fn serve_fake_mac_records(
                     .iter()
                     .map(|&e| i32::from_be_bytes(e))
                     .find(|&e| e == zdesk::vnc_apple::ENCODING_ADAPTIVE || e == zdesk::vnc_apple::ENCODING_ZLIB);
+                if standard.is_none() {
+                    assert!(media_first, "High Performance advertises media first from its opening list");
+                }
                 if lists_media && !std::mem::replace(&mut media_listed, true) {
                     let mut update = vec![0u8, 0];
                     update.extend_from_slice(&1u16.to_be_bytes());
@@ -2534,14 +2537,17 @@ async fn expect_native_opening(
     points: (u16, u16),
     density: u16,
 ) {
+    // Ports can precede the canonical layout now that the opening list names
+    // media. The update carrying them can earn a held poll before the re-arm.
+    let (rearm, _) = next_mac_request_past_held(requests).await;
     assert_eq!(
-        next_mac_request(requests).await,
+        rearm,
         MacRequest::AutoPasteboard(true),
         "the canonical layout did not re-arm its pasteboard"
     );
     assert_eq!(
         next_mac_request(requests).await,
-        MacRequest::AutoFramebuffer((MAC_NATIVE_OPENING.0 * 2, MAC_NATIVE_OPENING.1 * 2))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     let (offer, _) = next_mac_request_past_held(requests).await;
     assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered for the canonical display");
@@ -2586,7 +2592,7 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     );
     assert_eq!(
         next_mac_request(&mut requests).await,
-        MacRequest::AutoFramebuffer((MAC_DESKTOP, MAC_DESKTOP))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     expect_native_opening(&mut requests, (MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1).await;
 
@@ -2732,7 +2738,7 @@ async fn high_performance_opens_a_retina_client_at_its_screens_density() {
     );
     assert_eq!(
         next_mac_request(&mut requests).await,
-        MacRequest::AutoFramebuffer((MAC_DESKTOP, MAC_DESKTOP))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     expect_native_opening(&mut requests, (MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 2).await;
 

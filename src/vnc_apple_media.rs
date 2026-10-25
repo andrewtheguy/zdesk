@@ -100,8 +100,7 @@ pub const PASSED_SOUND: crate::audio::PassedFormat = crate::audio::PassedFormat 
     head: &crate::aac_eld::AUDIO_SPECIFIC_CONFIG,
 };
 
-/// The second `SetEncodings`, sent once the first layout has arrived and held
-/// for the rest of the session: the media stream first, as Apple's viewer
+/// The first `SetEncodings`, held for the whole session: the media stream first, as Apple's viewer
 /// lists it in High Performance mode. Naming the stream makes the Mac name its
 /// ports. The Mac's preferred codec is the first it
 /// knows in the list, and to a viewer whose preferred codec is the media stream
@@ -2309,16 +2308,6 @@ impl Receive {
     }
 }
 
-/// What [`MediaStream::offer`] has the session send.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Offer {
-    /// The `SetEncodings` naming [`ENCODING_MEDIA_STREAM`], which the Mac names its
-    /// ports for.
-    Encodings,
-    /// The `0x1c` offer for the display.
-    Configuration(Vec<u8>),
-}
-
 /// One session's media stream: its offers, and once the Mac names its ports, the
 /// receiver. Shared between the engine's two loops, which each decide on offers.
 ///
@@ -2341,8 +2330,6 @@ pub struct MediaStream {
     peer: std::net::IpAddr,
     /// This side's address on that connection, which the UDP sockets bind.
     local: std::net::IpAddr,
-    /// Whether the encodings naming the media stream have gone out.
-    asked: bool,
     /// An offer is out that the Mac has not answered.
     pending: bool,
     /// The Mac has named its ports, and no offer has gone out on that naming yet.
@@ -2453,8 +2440,7 @@ type Heard = std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>;
 /// What the stream owes the session, each a deadline the session ends at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Owed {
-    /// Nothing: no stream is offered, as before the first display and across a
-    /// display change.
+    /// Nothing: a display change has stopped the stream and no offer is out.
     Nothing,
     /// The Mac's ports, without which no offer can go out, since this instant: the
     /// encodings naming the stream went then, or the display settled without them.
@@ -2487,7 +2473,8 @@ fn leg_due(offered: std::time::Instant, last: Option<std::time::Instant>) -> std
 impl MediaStream {
     /// A stream for `displays` virtual displays, with the [`PassedUnits`] of each
     /// in the Mac's order, offered and passed as `receive` says. The first display
-    /// is shown from the start, and any other once [`Self::show`] says so.
+    /// is shown from the start, and any other once [`Self::show`] says so. The
+    /// handshake has advertised the stream, so the Mac already owes its ports.
     pub fn new(
         peer: std::net::SocketAddr,
         local: std::net::SocketAddr,
@@ -2519,11 +2506,10 @@ impl MediaStream {
             offers,
             peer: peer.ip(),
             local: local.ip(),
-            asked: false,
             pending: false,
             invited: false,
             offered: None,
-            owed: Owed::Nothing,
+            owed: Owed::Ports(std::time::Instant::now()),
             offer_made,
             receiver: None,
             legs,
@@ -2573,22 +2559,15 @@ impl MediaStream {
         if self.swapped && display < 2 { 1 - display } else { display }
     }
 
-    /// What to send toward a stream for displays of `sizes` backing pixels, which
-    /// the session's displays now are and nothing is about to change, unless an
-    /// offer is already out or the stream already runs at those sizes: first the
-    /// `SetEncodings` naming [`ENCODING_MEDIA_STREAM`], then, once the Mac has
-    /// named its ports for it, the `0x1c` offer. Until it has, the Mac owes them.
-    /// Nothing for sizes that are not one per leg: a layout still to catch up with
-    /// the displays asked for.
-    pub fn offer(&mut self, sizes: &[(u16, u16)]) -> Option<Offer> {
+    /// The `0x1c` offer for the current displays, once the Mac has named its
+    /// ports for the handshake's encoding list or a display change. One naming
+    /// permits one offer, and a pending offer holds every later one back.
+    /// A partial layout cannot offer fewer legs than the session asked for.
+    pub fn offer(&mut self, sizes: &[(u16, u16)]) -> Option<Vec<u8>> {
         if self.pending || sizes.len() != self.legs.len() || self.offered.as_deref() == Some(sizes) {
             return None;
         }
         let now = std::time::Instant::now();
-        if !std::mem::replace(&mut self.asked, true) {
-            self.owe(Owed::Ports(now));
-            return Some(Offer::Encodings);
-        }
         if !std::mem::take(&mut self.invited) {
             if self.owed == Owed::Nothing {
                 self.owe(Owed::Ports(now));
@@ -2604,7 +2583,7 @@ impl MediaStream {
             leg.strips.store(self.offers.receive.strips(), std::sync::atomic::Ordering::Relaxed);
             leg.reported.store(false, std::sync::atomic::Ordering::Relaxed);
         }
-        Some(Offer::Configuration(self.offers.configuration(&by_leg)))
+        Some(self.offers.configuration(&by_leg))
     }
 
     /// Owe `owed` from here, which sets a new deadline.
@@ -2657,7 +2636,7 @@ impl MediaStream {
     }
 
     /// The display changed. The Mac stops every stream for it and starts them
-    /// again only on an offer, which the settled layout gets once the Mac has named
+    /// again only on an offer, which its layout gets once the Mac has named
     /// its ports for it; until then the stream owes nothing but an answer to an
     /// offer still out, which holds back that one.
     pub fn stopped(&mut self) {
@@ -2740,9 +2719,8 @@ impl MediaStream {
     /// tests find one: no port is bound, which takes an address of this host's.
     #[cfg(test)]
     pub(crate) fn test_answered(&mut self, sizes: &[(u16, u16)]) {
-        self.asked = true;
         self.invited = true;
-        assert!(matches!(self.offer(sizes), Some(Offer::Configuration(_))), "no offer for {sizes:?}");
+        assert!(self.offer(sizes).is_some(), "no offer for {sizes:?}");
         self.pending = false;
     }
 
@@ -2752,7 +2730,7 @@ impl MediaStream {
         self.test_answered(sizes);
         self.stopped();
         self.invited = true;
-        assert!(matches!(self.offer(sizes), Some(Offer::Configuration(_))), "no offer for {sizes:?}");
+        assert!(self.offer(sizes).is_some(), "no offer for {sizes:?}");
     }
 
     /// The Mac's report of RTCP packet type `kind` on display `leg`'s leg, as
@@ -4782,10 +4760,9 @@ mod tests {
     /// ports. The naming is noted as [`MediaStream::on_reply`] notes it: binding
     /// the ports takes an address of this host's, which the tests' is not.
     fn offer_on_ports(m: &mut MediaStream, size: (u16, u16)) -> Vec<u8> {
-        m.asked = true;
         m.invited = true;
         match m.offer(&[size]) {
-            Some(Offer::Configuration(msg)) => msg,
+            Some(msg) => msg,
             other => panic!("no offer for {size:?}: {other:?}"),
         }
     }
@@ -4799,10 +4776,10 @@ mod tests {
     #[test]
     fn an_offer_waits_for_the_ports_and_goes_out_once_per_display_and_one_at_a_time() {
         let mut m = media();
-        assert_eq!(m.offer(&[(1600, 1000)]), Some(Offer::Encodings), "the encodings ask for the ports");
+        assert!(m.deadline().is_some(), "the handshake already asked for the ports");
         assert!(m.offer(&[(1600, 1000)]).is_none(), "no offer before the Mac names its ports");
         m.invited = true;
-        let Some(Offer::Configuration(msg)) = m.offer(&[(1600, 1000)]) else {
+        let Some(msg) = m.offer(&[(1600, 1000)]) else {
             panic!("the named ports allow an offer")
         };
         assert_eq!(msg[0], 0x1c);
@@ -4814,7 +4791,7 @@ mod tests {
         m.stopped();
         assert!(m.offer(&[(1600, 1000)]).is_none(), "a display change waits for the ports named after it");
         m.invited = true;
-        assert!(matches!(m.offer(&[(1600, 1000)]), Some(Offer::Configuration(_))));
+        assert!(m.offer(&[(1600, 1000)]).is_some());
     }
 
     /// The ports are owed from the encodings that ask for them. Named, they allow
@@ -4823,7 +4800,7 @@ mod tests {
     #[test]
     fn named_ports_allow_an_offer_and_named_again_take_the_stream_down() {
         let mut m = media();
-        m.offer(&[(1600, 1000)]).unwrap();
+        assert!(m.offer(&[(1600, 1000)]).is_none());
         let due = m.deadline().expect("the ports are owed once asked for");
         let unnamed = m.overdue(due).expect("overdue at the deadline");
         assert!(unnamed.to_string().contains("named no ports"), "{unnamed}");
@@ -4832,12 +4809,12 @@ mod tests {
         let bound = m.on_reply(&unhex(PORTS)).unwrap_err();
         assert!(format!("{bound:#}").contains("for the Mac's media stream"), "{bound:#}");
         assert_eq!(m.deadline(), None, "named");
-        assert!(matches!(m.offer(&[(1600, 1000)]), Some(Offer::Configuration(_))));
+        assert!(m.offer(&[(1600, 1000)]).is_some());
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
 
         m.on_reply(&unhex(PORTS)).unwrap_err();
         assert_eq!(m.offered, None, "the stream is down");
-        assert!(matches!(m.offer(&[(1600, 1000)]), Some(Offer::Configuration(_))), "and offered again");
+        assert!(m.offer(&[(1600, 1000)]).is_some(), "and offered again");
     }
 
     /// A refusal is an error, which ends the session as it ends Apple's viewer's.
@@ -4861,7 +4838,7 @@ mod tests {
     #[test]
     fn a_stream_without_pictures_or_sound_is_overdue_but_not_across_a_display_change() {
         let mut m = media();
-        assert_eq!(m.deadline(), None, "nothing is owed before an offer");
+        assert!(m.deadline().is_some(), "the handshake owes the ports before any offer");
         *m.sounded.lock().unwrap() = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
         let offered = std::time::Instant::now();
         offer_on_ports(&mut m, (1600, 1000));
@@ -5067,9 +5044,9 @@ mod tests {
 
         let sizes = [(1600, 1000), (1280, 800)];
         assert_eq!(m.offer(&sizes[..1]), None, "a layout of one display is not the two asked for");
-        assert_eq!(m.offer(&sizes), Some(Offer::Encodings));
+        assert_eq!(m.offer(&sizes), None, "the ports have not arrived");
         m.invited = true;
-        let Some(Offer::Configuration(msg)) = m.offer(&sizes) else {
+        let Some(msg) = m.offer(&sizes) else {
             panic!("the named ports allow an offer")
         };
         let length = |at: usize| usize::from(u16::from_be_bytes([msg[at], msg[at + 1]]));
@@ -5103,7 +5080,6 @@ mod tests {
         let local = "[fd00::1]:50000".parse().unwrap();
         let relaxed = std::sync::atomic::Ordering::Relaxed;
         let (mut m, _units) = MediaStream::new(peer, local, Receive::Hevc { strips: true }, 2);
-        m.asked = true;
         m.invited = true;
         assert_eq!((m.leg_of(0), m.leg_of(1)), (0, 1));
         m.show(0, true);
@@ -5140,7 +5116,6 @@ mod tests {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
         let (mut m, _units) = MediaStream::new(peer, local, Receive::Hevc { strips: true }, 2);
-        m.asked = true;
         m.invited = true;
         let offered = std::time::Instant::now();
         assert!(m.offer(&[(1600, 1000), (1280, 800)]).is_some());
