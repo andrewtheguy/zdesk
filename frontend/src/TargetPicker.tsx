@@ -42,7 +42,10 @@ import { decodesAppleH264, decodesVp9 } from "./videoCodecs.ts";
 // it the session will carry the remote's sound, so the click is spent on an audio
 // context. `pendingTarget` is the profile a Start is waiting on (buttons lock
 // until the server answers). `connectError` carries a failed connect's message so
-// it shows here rather than on a dead-end screen. `onLogout` ends the web login;
+// it shows here rather than on a dead-end screen, until the picker moves to
+// another screen: opening or closing a target, or the throughput view, calls
+// `dismissConnectError`, so the message is never read against a target it is not
+// about. `onLogout` ends the web login;
 // `onUnauthorized` fires if the target list itself comes back 401 (the login
 // expired).
 
@@ -51,6 +54,7 @@ export default function TargetPicker({
   connect,
   pendingTarget,
   connectError,
+  dismissConnectError,
   onLogout,
   onUnauthorized,
 }: {
@@ -58,6 +62,7 @@ export default function TargetPicker({
   connect: (name: string, choices: Choices, sound: boolean) => void;
   pendingTarget: string | null;
   connectError: string | null;
+  dismissConnectError: () => void;
   onLogout: () => void;
   onUnauthorized: () => void;
 }) {
@@ -75,6 +80,13 @@ export default function TargetPicker({
   // Offered only on a gateway with `[meter].enabled`; the view replaces the list while open.
   const throughputAvailable = useThroughputAvailable();
   const [showThroughput, setShowThroughput] = useState(false);
+  // Every change of screen goes through here, which takes the last failure's
+  // message down with it.
+  const showScreen = (target: string | null, throughput: boolean) => {
+    dismissConnectError();
+    setOpenTarget(target);
+    setShowThroughput(throughput);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +133,7 @@ export default function TargetPicker({
           <span className="picker-brand">{branding}</span>
           <ThroughputPanel
             closeLabel="Back to targets"
-            onClose={() => setShowThroughput(false)}
+            onClose={() => showScreen(openTarget, false)}
             onUnauthorized={onUnauthorized}
           />
         </div>
@@ -149,7 +161,11 @@ export default function TargetPicker({
       <div className="picker-panel">
         <span className="picker-brand">{branding}</span>
         <h1>Pick a target</h1>
-        {connectError && <p className="picker-error">{connectError}</p>}
+        {connectError && (
+          <p className="picker-error" role="alert">
+            {connectError}
+          </p>
+        )}
         {loadError && <p className="picker-error">{loadError}</p>}
         {stale && (
           <>
@@ -182,7 +198,7 @@ export default function TargetPicker({
                   className="picker-target"
                   aria-expanded={open}
                   aria-controls={optionsId}
-                  onClick={() => setOpenTarget(open ? null : t.name)}
+                  onClick={() => showScreen(open ? null : t.name, false)}
                   disabled={pendingTarget !== null}
                 >
                   <span className="picker-chevron" aria-hidden="true">
@@ -372,7 +388,7 @@ export default function TargetPicker({
           <button
             type="button"
             className="picker-logout"
-            onClick={() => setShowThroughput(true)}
+            onClick={() => showScreen(openTarget, true)}
             disabled={pendingTarget !== null}
           >
             Throughput

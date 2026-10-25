@@ -177,6 +177,11 @@ with no sound to tick. It needs an `rdp` target that configures a `size`, whose
 picker shows the size, sound and Graphics groups the spec checks, and the tone
 harness is one.
 
+`picker-error.spec.ts` is a failed Start's message on the picker: shown after
+the failure, and taken down when the picker moves to another screen, the failed
+target opened again, another target opened, or the throughput view and back. It
+needs two targets whose connects fail.
+
 `clipboard.spec.ts` is the live-Mac regression for the web clipboard panel. It
 proves that unsolicited remote copies still auto-sync, while opening and
 revealing the panel leave the local clipboard untouched until explicit Copy.
@@ -326,6 +331,15 @@ bunx playwright test '/display-drag\.spec\.ts$'
 On a Mac target, `ZDESK_PLAYWRIGHT_DRAG_MAC_SSH` (`user@mac`, optional) also has
 the spec ask the Mac over SSH where its pointer is while a drag is held past the
 edge: on the display beyond it.
+
+The picker-error spec needs two targets whose connects fail, such as two `vnc`
+targets on closed ports of 127.0.0.1, and `[meter].enabled` for its throughput
+case, which skips without it:
+
+```sh
+ZDESK_PLAYWRIGHT_REFUSED_TARGETS='closed-one,closed-two' \
+bunx playwright test '/picker-error\.spec\.ts$'
+```
 
 The target-switch spec needs a live RDP host named twice, once with the pipeline
 on and once with `egfx = false`, and a live Mac as an `ard` and an

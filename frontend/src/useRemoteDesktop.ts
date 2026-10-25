@@ -2693,6 +2693,9 @@ export function useRemoteDesktop(
   /// Stop showing the display this page shows in a tab of its own. Connecting
   /// again is `retry`.
   const releaseTab = useCallback(() => releaseTabRef.current?.(), []);
+  /// Stop showing a failed connect's message: the picker has moved on from the
+  /// attempt it belongs to.
+  const dismissConnectError = useCallback(() => setConnectError(null), []);
 
   // Start a target from the picker, with what was chosen under it: its session
   // is started over the live socket. The server answers `connected` (→ desktop)
@@ -3343,6 +3346,7 @@ export function useRemoteDesktop(
     takeOver,
     retry,
     releaseTab,
+    dismissConnectError,
     connect,
     switchTarget,
     selectDisplay,
