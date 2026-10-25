@@ -283,7 +283,9 @@ pub struct Rdpecam {
     /// Whether the stream went idle ([`Self::idle`]): Streaming, but asked for nothing.
     idle: bool,
     /// Whether the caller's camera failed for this stream ([`Self::unavailable`]), so
-    /// what the host is owed will not be a sample.
+    /// what the host is owed will not be a sample. Held until the stream ends or goes
+    /// idle: a sample after it was encoded before the failure, since the caller tries
+    /// its camera again only when the stream is started or resumed.
     unavailable: bool,
     /// Sample Requests taken while streaming, ever: what a caller watching for a host
     /// that stops asking compares.
@@ -439,8 +441,6 @@ impl Rdpecam {
         let (true, false, Some(channel)) = (self.streaming, self.idle, self.stream_channel) else {
             return turn;
         };
-        // A sample is the caller's camera back.
-        self.unavailable = false;
         if self.awaiting_keyframe {
             if !keyframe {
                 self.ask_for_keyframe(&mut turn);
@@ -1175,25 +1175,24 @@ mod tests {
 
     /// A camera that failed leaves the host owed what it will never send: the host is
     /// timed all the same, going idle answers what it is owed with an error, and its next
-    /// request resumes the stream for the caller to try again. A sample in the meantime
-    /// is the camera back, and the host is waiting on this end again.
+    /// request resumes the stream for the caller to try again. A sample that arrives in
+    /// the meantime was encoded before the failure: it answers what it can, and the
+    /// camera is still unavailable.
     #[test]
     fn an_unavailable_camera_answers_what_is_owed_as_it_goes_idle() {
         let mut cam = streaming(VGA);
         assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
+        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
         assert!(!cam.awaits_request());
         assert_eq!(cam.unavailable(), Turn::default(), "nothing goes on the wire at once");
         assert!(cam.awaits_request(), "the host is timed although it is owed a sample");
-        cam.sample(vec![1], true);
-        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
-        assert!(!cam.awaits_request(), "a sample is the camera back");
+        assert_eq!(cam.sample(vec![1], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]);
+        assert!(cam.awaits_request(), "a sample from before the failure is not the camera back");
 
-        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
-        cam.unavailable();
         let turn = cam.idle();
         assert_eq!(turn.outputs, vec![Output::Idle]);
         let error = cam.sample_error(0, UNEXPECTED_ERROR);
-        assert_eq!(turn.replies, vec![(DEVICE, error.clone()), (DEVICE, error)], "one error per request owed");
+        assert_eq!(turn.replies, vec![(DEVICE, error)], "an error for the request still owed");
 
         let turn = cam.push(DEVICE, &[2, SAMPLE_REQUEST, 0]);
         assert_eq!(turn.outputs, vec![Output::Resumed(VGA)], "the caller is told to try again");
