@@ -24,10 +24,10 @@ It needs:
   Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
   anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
   the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
-  the reason, where the decoder refuses them, and where it refuses the VP9 a
-  `wlshare` target cannot be started, since its Video picture is VP9; Tiles
-  with motion's moving regions are H.264, which a browser with `VideoDecoder`
-  is taken to decode. The Mac's H.264 is not
+  the reason, where the decoder refuses them, and where it refuses the VP9 it
+  greys a `wlshare` target's Video, leaving its Tiles with motion, whose
+  moving regions are H.264, which a browser with `VideoDecoder` is taken to
+  decode. The Mac's H.264 is not
   asked about: it is offered to every browser with `VideoDecoder` and greyed
   without one, and a decoder that refuses it says so in the session, by its
   error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser

@@ -9,7 +9,7 @@
 客户端就是网关提供的页面，编译在网关的二进制文件中。它需要：
 
 - **安全上下文。** 网关只使用纯 HTTP，没有 TLS 监听器，因此需要通过回环地址（`localhost`、`127.0.0.1`、`[::1]`、任何 `.localhost` 名称）或终止 TLS 的反向代理访问。通过纯 `http://` 访问局域网地址会被拒绝，页面会说明原因。
-- **WebCodecs**，用于远程以视频形式发送的画面：`VideoDecoder` 用于 wlshare 的 VP9、高性能模式 Mac 的 HEVC 或 H.264，以及 RDP 主机的 H.264。没有它时，客户端本身仍然可以启动，网关的图块、标准模式 Mac 的 Adaptive 画面以及不含 H.264 的 RDP 管道在任何浏览器中都能工作。页面会事先询问浏览器的解码器能否解码 Mac 的 HEVC、RDP 主机的 H.264 和 wlshare 的 VP9：解码器拒绝前两者时，选择器将其置灰并说明原因；解码器拒绝 VP9 时，`wlshare` 目标无法启动，因为它的 Video 画面是 VP9；Tiles with motion 的运动区域是 H.264，具备 `VideoDecoder` 的浏览器即被视为能够解码。Mac 的 H.264 不事先询问：它提供给所有具备 `VideoDecoder` 的浏览器，没有时置灰，解码器不接受它时会在会话中通过解码器的错误说明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；没有它的浏览器（Safari 16.4 到 18）不播放声音，更新的 Safari 的 `AudioDecoder` 无法解码 FLAC，可以播放 Opus 和 Mac 的声音。
+- **WebCodecs**，用于远程以视频形式发送的画面：`VideoDecoder` 用于 wlshare 的 VP9、高性能模式 Mac 的 HEVC 或 H.264，以及 RDP 主机的 H.264。没有它时，客户端本身仍然可以启动，网关的图块、标准模式 Mac 的 Adaptive 画面以及不含 H.264 的 RDP 管道在任何浏览器中都能工作。页面会事先询问浏览器的解码器能否解码 Mac 的 HEVC、RDP 主机的 H.264 和 wlshare 的 VP9：解码器拒绝前两者时，选择器将其置灰并说明原因；解码器拒绝 VP9 时，选择器将 `wlshare` 目标的 Video 置灰，仍可使用 Tiles with motion，其运动区域是 H.264，具备 `VideoDecoder` 的浏览器即被视为能够解码。Mac 的 H.264 不事先询问：它提供给所有具备 `VideoDecoder` 的浏览器，没有时置灰，解码器不接受它时会在会话中通过解码器的错误说明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；没有它的浏览器（Safari 16.4 到 18）不播放声音，更新的 Safari 的 `AudioDecoder` 无法解码 FLAC，可以播放 Opus 和 Mac 的声音。
 
 桌面使用时，请在 Chrome 或 Edge 中把页面安装为应用。应用窗口会把普通标签页自己保留的组合键（⌘W、⌘T、⌘N 等）交给页面。在标签页中，**Menu → Immersive full screen** 也能做到这一点，并且还能拿到窗口通常拿不到的按键，例如 Super 键和 Alt+Tab。
 

@@ -2144,8 +2144,8 @@ whether the browser's own decoder takes 4:4:4 VP9, decides the chroma of a
 `wlshare` target's stream, and a page that comes back answering otherwise than
 the session was started for is given it from its start. The page settles two
 more things for itself and states neither: whether it has `VideoDecoder`, which
-is taken to decode the Mac's H.264, and whether that decoder takes 4:2:0 VP9,
-without which a `wlshare` target cannot start. The gateway is sent no choice
+is taken to decode the Mac's H.264 and wlshare's tiles' regions, and whether
+that decoder takes 4:2:0 VP9, wlshare's Video. The gateway is sent no choice
 the picker greys.
 
 The refusal itself stays where it always was: one honest failure at the client's own
@@ -2316,10 +2316,11 @@ and `GET /api/targets` carries it:
   start, with the reason. A Standard Mac's pictures are never greyed for the
   browser's sake: its Adaptive picture is decoded by every page in WebAssembly,
   and the gateway's tiles are images every page decodes; Adaptive is greyed only
-  under Combined Display, which is the gateway's tiles. Nor are a `wlshare`
-  target's: VP9 is its video, so the target cannot start in a browser whose
-  decoder refuses VP9, and its tiles' moving regions are H.264, which the
-  `VideoDecoder` that decodes the VP9 is taken to decode, as the Mac's H.264 is. `/api/targets`
+  under Combined Display, which is the gateway's tiles. A `wlshare` target's
+  Video, VP9, is greyed in a browser whose decoder refuses VP9, and its tiles
+  with motion, whose moving regions are H.264, in one with no `VideoDecoder`,
+  as the Mac's H.264 is; a browser that takes neither cannot start the
+  target. `/api/targets`
   says which streams a target can pass, as `passthroughs`; on `rdp`, `wlshare`
   and `ard-high-performance` the picture is always one of them, while a
   Standard Mac's Full quality, which names none, is tiles coded here. For the pipeline the picker says the stream is always

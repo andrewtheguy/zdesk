@@ -34,9 +34,9 @@
 // - A `wlshare` target's picture is one of two, both wlshare's own, passed
 //   through: its VP9 of the whole desktop, which fits the link, or its tiles with
 //   motion, exact PNG where the desktop is still and video only where it moves, for
-//   a LAN: see `pictureOptions`. The VP9 until the other is chosen, and neither
-//   greyed: the target cannot start without the VP9 decoder, and the tiles' H.264
-//   is the `VideoDecoder`'s that decoder is.
+//   a LAN: see `pictureOptions`. The VP9 until the other is chosen, each greyed
+//   in a browser that cannot decode it: the VP9 where the decoder refuses VP9,
+//   the tiles' H.264 where there is no `VideoDecoder`.
 // - Sound is ticked or not where the target offers it, and a ticked one is Opus
 //   or lossless: see `soundRow`. Ticking takes Opus. A browser with no audio
 //   decoder has no sound to tick, and one whose decoder does not play FLAC is
@@ -190,8 +190,8 @@ export interface Abilities {
   rdpH264: boolean;
   /**
    * Whether it has a `VideoDecoder`, taken to decode a High Performance Mac's
-   * H.264 without asking, and whether that decoder takes wlshare's VP9 at 4:2:0
-   * (videoCodecs.ts).
+   * H.264 and the H.264 of wlshare's tiles without asking, and whether that
+   * decoder takes wlshare's VP9 at 4:2:0 (videoCodecs.ts).
    */
   appleH264: boolean;
   vp9: boolean;
@@ -341,10 +341,9 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
     "This browser cannot compose the host's graphics pipeline, which this target always passes: that needs WebGL 2 and a cross-origin isolated page. Use a browser that can, or a target with egfx disabled.",
 };
 
-// Why a `wlshare` target cannot start in a browser that does not decode VP9:
-// its Video, the picture of every session that names no other, is VP9.
-const NO_VP9 =
-  "This browser does not decode VP9, which this wlshare target's video is coded in. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+// Why a `wlshare` target cannot start in a browser that takes neither picture.
+const NO_WLSHARE_PICTURE =
+  "This browser decodes neither of wlshare's pictures, its VP9 or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -376,10 +375,9 @@ function noHevc(target: TargetInfo): string {
  *   stands in for it. Any that has one is taken to decode it, unasked.
  * - The Mac's Adaptive picture is never greyed, which every page decodes in WebAssembly
  *   (standardPicture.ts), nor the gateway's tiles, images every page decodes.
- * - Neither of wlshare's is greyed: its Video is VP9, which a `wlshare` target
- *   cannot start without (`blockedReason`), and its tiles' regions are H.264,
- *   which the `VideoDecoder` that decodes the VP9 is taken to decode, as the
- *   Mac's is.
+ * - wlshare's VP9 is greyed in a browser whose own decoder refuses it, and its
+ *   tiles with motion, whose regions are H.264, in one with no `VideoDecoder`,
+ *   as the Mac's H.264 is.
  */
 function pictureOptions(
   target: TargetInfo,
@@ -412,14 +410,18 @@ function pictureOptions(
     "wlshare-vp9": {
       value: "wlshare-vp9",
       label: "Video, passed through",
-      note: "wlshare's VP9 of the whole desktop, which it fits to this browser's link. For any link; never lossless.",
-      disabled: false,
+      note: abilities.vp9
+        ? "wlshare's VP9 of the whole desktop, which it fits to this browser's link. For any link; never lossless."
+        : "This browser does not decode VP9, which wlshare's video is coded in.",
+      disabled: !abilities.vp9,
     },
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",
       label: "Tiles with motion, passed through",
-      note: "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. Several times the bytes. For a LAN.",
-      disabled: false,
+      note: abilities.appleH264
+        ? "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. Several times the bytes. For a LAN."
+        : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
+      disabled: !abilities.appleH264,
     },
   };
   const offered = target.passthroughs.flatMap((passthrough) =>
@@ -789,8 +791,8 @@ export function targetOptions(
 /**
  * Why `target` cannot start here, or null: its only pictures are ones this
  * browser cannot take. An RDP host's pipeline in a page that cannot compose it,
- * a High Performance Mac with no picture `pictured` here, and a `wlshare`
- * target's pictures, VP9 both, in a browser whose decoder refuses VP9.
+ * and a High Performance Mac or a `wlshare` target with no picture `pictured`
+ * here.
  */
 function blockedReason(
   target: TargetInfo,
@@ -803,12 +805,8 @@ function blockedReason(
   if (target.passthroughs.includes("apple-media") && !pictured) {
     return NO_APPLE_PICTURE;
   }
-  if (
-    target.protocol === "vnc" &&
-    target.subtype === "wlshare" &&
-    !abilities.vp9
-  ) {
-    return NO_VP9;
+  if (target.protocol === "vnc" && target.subtype === "wlshare" && !pictured) {
+    return NO_WLSHARE_PICTURE;
   }
   return null;
 }

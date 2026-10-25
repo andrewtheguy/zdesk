@@ -9,7 +9,7 @@
 用戶端就是閘道提供的頁面，編譯在閘道的二進位檔中。它需要：
 
 - **安全環境（secure context）。** 閘道只使用純 HTTP，沒有 TLS 監聽器，因此需要透過回送位址（`localhost`、`127.0.0.1`、`[::1]`、任何 `.localhost` 名稱）或終止 TLS 的反向代理伺服器存取。透過純 `http://` 存取區域網路位址會被拒絕，頁面會說明原因。
-- **WebCodecs**，用於遠端以視訊形式傳送的畫面：`VideoDecoder` 用於 wlshare 的 VP9、高效能模式 Mac 的 HEVC 或 H.264，以及 RDP 主機的 H.264。沒有它時，用戶端本身仍然可以啟動，閘道的圖塊、標準模式 Mac 的 Adaptive 畫面以及不含 H.264 的 RDP 管線在任何瀏覽器中都能運作。頁面會事先詢問瀏覽器的解碼器能否解碼 Mac 的 HEVC、RDP 主機的 H.264 和 wlshare 的 VP9：解碼器拒絕前兩者時，選擇器將其變灰並說明原因；解碼器拒絕 VP9 時，`wlshare` 目標無法啟動，因為它的 Video 畫面是 VP9；Tiles with motion 的移動區域是 H.264，具備 `VideoDecoder` 的瀏覽器即被視為能夠解碼。Mac 的 H.264 不事先詢問：它提供給所有具備 `VideoDecoder` 的瀏覽器，沒有時變灰，解碼器不接受它時會在工作階段中透過解碼器的錯誤說明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；沒有它的瀏覽器（Safari 16.4 到 18）不播放聲音，較新的 Safari 的 `AudioDecoder` 無法解碼 FLAC，但可以播放 Opus 和 Mac 的聲音。
+- **WebCodecs**，用於遠端以視訊形式傳送的畫面：`VideoDecoder` 用於 wlshare 的 VP9、高效能模式 Mac 的 HEVC 或 H.264，以及 RDP 主機的 H.264。沒有它時，用戶端本身仍然可以啟動，閘道的圖塊、標準模式 Mac 的 Adaptive 畫面以及不含 H.264 的 RDP 管線在任何瀏覽器中都能運作。頁面會事先詢問瀏覽器的解碼器能否解碼 Mac 的 HEVC、RDP 主機的 H.264 和 wlshare 的 VP9：解碼器拒絕前兩者時，選擇器將其變灰並說明原因；解碼器拒絕 VP9 時，選擇器將 `wlshare` 目標的 Video 變灰，仍可使用 Tiles with motion，其移動區域是 H.264，具備 `VideoDecoder` 的瀏覽器即被視為能夠解碼。Mac 的 H.264 不事先詢問：它提供給所有具備 `VideoDecoder` 的瀏覽器，沒有時變灰，解碼器不接受它時會在工作階段中透過解碼器的錯誤說明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；沒有它的瀏覽器（Safari 16.4 到 18）不播放聲音，較新的 Safari 的 `AudioDecoder` 無法解碼 FLAC，但可以播放 Opus 和 Mac 的聲音。
 
 在桌面上使用時，請在 Chrome 或 Edge 中把頁面安裝為應用程式。應用程式視窗會把一般分頁自己保留的快速鍵（⌘W、⌘T、⌘N 等）交給頁面。在分頁中，**Menu → Immersive full screen** 也能做到這一點，而且還能收到視窗通常收不到的按鍵，例如 Super 鍵和 Alt+Tab。
 
