@@ -4311,7 +4311,7 @@ dependencies = [
 
 [[package]]
 name = "zdesk"
-version = "0.0.466"
+version = "0.0.467"
 dependencies = [
  "aes",
  "aes-gcm",
