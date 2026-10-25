@@ -2,9 +2,9 @@
 
 English | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-Remote desktop in a browser, for the remote desktop server each platform
-already has. zDesk is a small gateway you run next to your machines. It
-connects to:
+Remote desktop in a browser, for Windows' and macOS's own remote desktop
+servers, and for Linux through wlshare. zDesk is a small gateway you run next
+to your machines. It connects to:
 
 - **Windows 10 and 11's own Remote Desktop**, over RDP with its modern graphics
   pipeline.

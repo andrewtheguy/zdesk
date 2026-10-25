@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | 繁體中文
 
-在瀏覽器中使用遠端桌面，連線的是各平台內建的遠端桌面伺服器。zDesk 是一個小型閘道，執行在你的電腦旁邊。它可以連線到：
+在瀏覽器中使用遠端桌面，連線 Windows 和 macOS 內建的遠端桌面伺服器，以及 Linux 上的 wlshare。zDesk 是一個小型閘道，執行在你的電腦旁邊。它可以連線到：
 
 - **Windows 10 和 11 內建的遠端桌面**，透過 RDP 及其新式圖形管線。
 - **macOS 內建的螢幕共享**，兩種模式都支援：標準（Standard）和高效能（High Performance）。
