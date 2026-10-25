@@ -6,7 +6,7 @@
 
 - **Windows 10 和 11 內建的遠端桌面**，透過 RDP 及其新式圖形管線。
 - **macOS 內建的螢幕共享**，兩種模式都支援：標準（Standard）和高效能（High Performance）。
-- **Linux**，透過 [wlshare](https://github.com/andrewtheguy/wlshare)，這是我們自己為 wlroots 合成器撰寫的 VNC 伺服器。
+- **Linux**，透過 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md)，這是我們自己為 wlroots 合成器撰寫的 VNC 伺服器。
 - 其他 RDP 和 VNC 伺服器，透過各協定的基本功能。
 
 Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建的共享功能即可。閘道提供一個顯示桌面的網頁，因此任何有瀏覽器的裝置，無論是 Windows、macOS、Linux、iOS 還是 Android，同樣不需要安裝用戶端就能存取上述所有桌面。
@@ -70,7 +70,7 @@ https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
 
 ## 支援的伺服器
 
-zDesk 以各平台原生的遠端桌面伺服器為核心打造：Windows 內建的遠端桌面、macOS 內建的螢幕共享，以及 Linux 上我們自己的 [wlshare](https://github.com/andrewtheguy/wlshare)。Windows 和 macOS 優先：大多數人連線的是它們，所以功能先在它們上面測試和最佳化。wlshare 緊隨其後，不過它是三者中整合最無縫的，因為 RFB 缺少的功能都加到了它裡面。
+zDesk 以各平台原生的遠端桌面伺服器為核心打造：Windows 內建的遠端桌面、macOS 內建的螢幕共享，以及 Linux 上我們自己的 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md)。Windows 和 macOS 優先：大多數人連線的是它們，所以功能先在它們上面測試和最佳化。wlshare 緊隨其後，不過它是三者中整合最無縫的，因為 RFB 缺少的功能都加到了它裡面。
 
 - **Windows 10 和 11 的遠端桌面**（`rdp`）。依密度跟隨視窗，傳輸 Opus 或 FLAC 聲音，同時支援攝影機和麥克風。畫面是其圖形管線，直通給瀏覽器，可以是高品質，或（alpha）自適應 H.264。
 - **Mac 的高效能螢幕共享**（`vnc`，`subtype = "ard-high-performance"`）。依密度跟隨視窗，支援一個或兩個虛擬顯示器，一律傳輸 AAC-ELD 聲音。畫面是直通的 HEVC 或 H.264（beta），由 Mac 依自己的速率而非瀏覽器連線傳送：靜止畫面資料很少，移動時很多。H.264 需要瀏覽器具備 `VideoDecoder`，但頁面不需要額外元件；HEVC 則需要能解碼它的瀏覽器或頁面的軟體解碼器。

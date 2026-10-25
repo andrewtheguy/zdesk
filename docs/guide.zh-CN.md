@@ -176,7 +176,7 @@ username = "me"
 password_ref = "wayland"
 ```
 
-[wlshare](https://github.com/andrewtheguy/wlshare) 是本项目自己的 VNC 服务器，面向基于 wlroots 的 Wayland 桌面。这个子类型让网关列出 wlshare 的私有 RFB 扩展：它的 VP9 流，原样直通并随浏览器链路自适应；像素密度；输出列表；声音；以及在勾选后启动的会话中，作为桌面上 PipeWire 设备的浏览器摄像头和麦克风。不设置子类型时，同一服务器按任何 VNC 服务器的方式读取。
+[wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-CN.md) 是本项目自己的 VNC 服务器，面向基于 wlroots 的 Wayland 桌面。这个子类型让网关列出 wlshare 的私有 RFB 扩展：它的 VP9 流，原样直通并随浏览器链路自适应；像素密度；输出列表；声音；以及在勾选后启动的会话中，作为桌面上 PipeWire 设备的浏览器摄像头和麦克风。不设置子类型时，同一服务器按任何 VNC 服务器的方式读取。
 
 - **画面（Picture）。** 选择器的 Picture 组为 *Video, passed through*（默认）：wlshare 对整个桌面编码的 VP9，按浏览器的链路调整。或 *Tiles with motion, passed through*：静止的部分为精确的 PNG，每个运动区域有自己的一路视频流，使用主机硬件编码器或 libx264 编码的 H.264，停下后再精确地重发。图块适用于带宽充裕的链路：wlshare 花在图块上的时间只是 VP9 的一小部分，最终画面是精确的，代价是数倍的字节数，大面积运动时达每秒数十 Mbit。其运动区域按 `video_quality` 编码，`render_adaptive` 对它们不起作用。
 
