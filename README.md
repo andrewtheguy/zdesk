@@ -146,7 +146,7 @@ seamlessly of the three, since what RFB lacks is added to it.
   microphone, and codes its own VP9 for the gateway to pass through, adapting
   to the browser's link — or, for a link with room to spare, its own exact
   tiles with a video stream for each region that moves, H.264 from hardware or
-  libx264, with VP9 as the fallback. Two outputs can be shown at once, the second
+  libx264. Two outputs can be shown at once, the second
   in a browser tab of its own (alpha).
 
 Every other VNC server is a plain `vnc` target reached through the RFB

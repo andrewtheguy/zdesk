@@ -443,8 +443,8 @@ server is read as any VNC server is.
   default: wlshare's VP9 of the whole desktop, which it fits to the browser's
   link. Or *Tiles with motion, passed through*: what is still as exact PNG, and a
   video stream of its own for each region that moves, sent exact again once it
-  stops. wlshare uses H.264 from the host's hardware encoder or libx264, with
-  VP9 as the fallback. The tiles are for a link with room to spare: wlshare
+  stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
+  tiles are for a link with room to spare: wlshare
   spends a fraction of the VP9's time on them and the picture ends exact, for several times the
   bytes — tens of Mbit/s while something large moves. Their regions are held at
   `video_quality`, which `render_adaptive` does not reach.
