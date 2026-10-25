@@ -2568,17 +2568,38 @@ async fn expect_native_opening(
     );
     let (offer, _) = next_mac_request_past_held(requests).await;
     assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered for the canonical display");
-    let (narrowed, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(narrowed, MacRequest::AutoFramebuffer((1, 1)), "the region was not narrowed ahead of the change");
-    assert_eq!(next_mac_request(requests).await, MacRequest::Configuration(points, density, true));
-    assert_eq!(
-        next_mac_request(requests).await,
-        MacRequest::AutoPasteboard(true),
-        "the session-ready layout did not re-arm its pasteboard"
-    );
+    // The answer brings the list again, and the layout the Mac answers that with
+    // re-arms on either side of the session-ready change, as on macvm.
+    let mut narrowed = false;
+    loop {
+        match next_mac_request_past_held(requests).await.0 {
+            MacRequest::Configuration(asked, at, dynamic) => {
+                assert!(narrowed, "the region was not narrowed ahead of the change");
+                assert_eq!((asked, at, dynamic), (points, density, true), "the session-ready configuration");
+                break;
+            }
+            MacRequest::AutoFramebuffer((1, 1)) => narrowed = true,
+            MacRequest::AutoPasteboard(true) => narrowed = false,
+            other => panic!("unexpected ahead of the session-ready change: {other:?}"),
+        }
+    }
+    let mut rearmed = false;
+    loop {
+        match next_mac_request_past_held(requests).await.0 {
+            MacRequest::Offer { media_first } => {
+                assert!(rearmed, "the session-ready layout did not re-arm its pasteboard");
+                assert!(media_first, "the stream is offered again for the settled display");
+                break;
+            }
+            MacRequest::AutoPasteboard(true) => rearmed = true,
+            MacRequest::AutoFramebuffer((1, 1)) => {}
+            other => panic!("unexpected ahead of the settled display's offer: {other:?}"),
+        }
+    }
+    // Its answer brings the list again, whose layout re-arms once more.
+    let (rearm, _) = next_mac_request_past_held(requests).await;
+    assert_eq!(rearm, MacRequest::AutoPasteboard(true), "the repeated list's layout did not re-arm");
     assert_eq!(next_mac_request(requests).await, MacRequest::AutoFramebuffer((1, 1)));
-    let (offer, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered again for the settled display");
 }
 
 /// The whole `ard-high-performance` RFB wire, end to end: authentication, record setup,

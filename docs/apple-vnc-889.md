@@ -161,10 +161,12 @@ Both modes connect the same way until the record layer is up.
    `AutoPasteboard(start)`, then `SetEncryption` commands 1
    and 2. The Mac answers with the rekey, and everything after it travels in
    records.
-6. **The mode.** High Performance sends `SetDisplayConfiguration`, both modes send
-   `SetPixelFormat` and `SetEncodings`, Standard's naming its quality's codec, and
-   High Performance then arms `AutoFrameBufferUpdate`. The unofficial virtual
-   display under `ard` does the same, arming at 0. Standard on the physical
+6. **The mode.** High Performance sends `SetDisplayConfiguration` and
+   `SetEncodings`, then arms `AutoFrameBufferUpdate`, and sets its pixel format
+   at each layout ([RFB while the stream runs](#rfb-while-the-stream-runs)).
+   Standard sends `SetPixelFormat` and `SetEncodings`, naming its quality's
+   codec. The unofficial virtual display under `ard` sends
+   `SetDisplayConfiguration` ahead of them too, and arms at 0. Standard on the physical
    displays arms it when the first layout names the screen being sent: at 0, as
    Apple's viewer does, where High Performance arms one push a second (see
    [Other messages](#other-messages)).
@@ -2069,9 +2071,13 @@ screen unasked, which is stepped over like every rectangle of such a session.
 
 The first `SetEncodings` lists the media stream first and is held for the whole
 session, as Apple's viewer lists it. Apple's viewer sends that same list again
-once the session is ready and after every answer, each time with a
-`SetPixelFormat`, and the Mac sends the layout again for each; zDesk sends the
-list once. The Mac's
+after every answer, and the Mac sends the layout again for each; zDesk does too,
+with no offer out. Like Apple's viewer, zDesk sends no `SetPixelFormat` before
+the first layout, and then one at every layout, at depth 32, ahead of its
+`AutoFrameBufferUpdate`. The Mac forces an update of the whole screen for each,
+which it serves with no pixels to a viewer preferring the media stream; zDesk
+holds it while a display change is out, and the answering layout sends it. The
+Mac's
 preferred codec is the first it knows in the list, and its framebuffer sender
 sends no pixels to a viewer whose preferred codec is the media stream: cursor
 shapes, layouts and message 1 still come. That keeps the Mac's two framing
