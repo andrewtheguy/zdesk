@@ -422,7 +422,7 @@ pub enum ClientMsg {
 /// empty rectangle and one with no image.
 ///
 /// A `REGION` record is an access unit of one moving region's stream in wlshare's
-/// tiles, VP9 or H.264 as its `regionFormat` said, passed as wlshare sent it — see
+/// tiles, H.264 as its `regionFormat` said, passed as wlshare sent it — see
 /// [`RegionUnit`]. Its flags are
 /// [`batch::REGION_KEYFRAME`] and nothing else, and a receiver rejects any other bit,
 /// an empty rectangle and one with no payload.
@@ -952,9 +952,9 @@ impl TileUnit {
 }
 
 /// An access unit of one moving region's stream in wlshare's tiles
-/// ([`ServerMsg::TilesStart`] on a `wlshare` target that asks for them), VP9 or the
-/// H.264, the host's hardware encoder's where it has one, carried as a `REGION` record inside a
-/// [`batch`] frame, as wlshare sent it.
+/// ([`ServerMsg::TilesStart`] on a `wlshare` target that asks for them), H.264 by
+/// the host's hardware encoder where it has one and libx264 otherwise, carried as a
+/// `REGION` record inside a [`batch`] frame, as wlshare sent it.
 ///
 /// The contract every client implements:
 ///
@@ -1192,8 +1192,8 @@ pub enum ServerMsg {
     /// pipeline or a Mac's own picture before it is done with. `engine` is the engine
     /// that sent it ([`ServerMsg::stamped`]).
     TilesStart { engine: u64 },
-    /// An access unit of one moving region's stream in wlshare's tiles, VP9 or
-    /// H.264 as its [`ServerMsg::RegionFormat`] said. A binary
+    /// An access unit of one moving region's stream in wlshare's tiles, H.264 as
+    /// its [`ServerMsg::RegionFormat`] said. A binary
     /// record like [`ServerMsg::Video`], ordered the same way.
     Region(RegionUnit),
     /// Build the decoder for moving region `stream` of wlshare's tiles with this

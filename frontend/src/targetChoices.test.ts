@@ -525,7 +525,8 @@ test("a Mac neither of whose pictures this browser takes cannot start", () => {
 
 test("a wlshare target's picture is its VP9 passed or its tiles with motion passed", () => {
   // The VP9 until the tiles are chosen, and the choice is remembered; neither is
-  // greyed, since both are VP9 and the target cannot start without it.
+  // greyed, since the target cannot start without the VP9 and the tiles' H.264 is
+  // the same browser's `VideoDecoder`'s.
   const options = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(options), [
     ["wlshare-vp9", false],

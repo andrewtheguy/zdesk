@@ -471,9 +471,8 @@ struct Shared {
     pass_announced: Mutex<Option<(String, u8)>>,
     /// The moving regions of wlshare's tiles the browser was told of
     /// ([`VideoSink::pass_region`]) since the tiles last started, by stream id, each
-    /// with the rectangle it started at and keeps for its life and the codec its
-    /// START named: `(x, y, w, h, codec)` ([`REGION_VP9`], [`REGION_H264`]).
-    regions: Mutex<std::collections::HashMap<u8, LiveRegion>>,
+    /// with the rectangle it started at and keeps for its life, `(x, y, w, h)`.
+    regions: Mutex<std::collections::HashMap<u8, (u16, u16, u16, u16)>>,
     /// The browser's notice that the screen is not available is to come down
     /// behind the next unit queued — see [`VideoSink::uncover`].
     uncover_owed: AtomicBool,
@@ -592,16 +591,6 @@ pub struct VideoSink {
     tx: mpsc::Sender<Pending>,
     shared: Arc<Shared>,
 }
-
-/// The codec byte a region stream's START names ([`VideoSink::pass_region`]): VP9
-/// by libvpx, or H.264, the wlshare host's hardware encoder's where it has one, wlshare's choice,
-/// which the browser decodes either way.
-pub const REGION_VP9: u8 = 0;
-pub const REGION_H264: u8 = 1;
-
-/// A live region of wlshare's tiles as the browser holds it: its rectangle, `(x, y,
-/// w, h)`, fixed for its life, and the codec its START named.
-type LiveRegion = (u16, u16, u16, u16, u8);
 
 impl VideoSink {
     /// Start the picture for one engine. `engine` prefixes its log lines. `plan` is
@@ -946,64 +935,37 @@ impl VideoSink {
     }
 
     /// Queue a frame of one moving region's stream in wlshare's tiles, `w`×`h` at
-    /// `(x, y)`, as the next record, untouched: `start` with the codec byte for the
-    /// first of a new stream on `stream`, a keyframe, which goes behind the
-    /// `RegionFormat` that builds its decoder; `None` for the next frame of one.
+    /// `(x, y)`, as the next record, untouched: with `start` the first of a new
+    /// stream on `stream`, a keyframe, which goes behind the `RegionFormat` that
+    /// builds its decoder; without it the next frame of one.
     ///
-    /// Held to what wlshare promises of a region — 4:2:0, VP9 profile 0 with a
-    /// keyframe where and only where a stream starts ([`crate::vp9::pass`]), or H.264
-    /// starting at an IDR with its parameter sets and keyframed again only where the
-    /// dial moved ([`crate::h264::pass`]); the rectangle it started at for its life;
-    /// within the ceiling every passed stream is held to — and a frame of a stream
-    /// the browser was not told of since the tiles started over is dropped: one
-    /// coded before a reattach or a resize, of a stream the browser no longer has.
+    /// Held to what wlshare promises of a region — H.264, starting at an IDR with
+    /// its parameter sets and keyframed again only where the dial moved
+    /// ([`crate::h264::pass`]); the rectangle it started at for its life; within
+    /// the ceiling every passed stream is held to — and a frame of a stream the
+    /// browser was not told of since the tiles started over is dropped: one coded
+    /// before a reattach or a resize, of a stream the browser no longer has.
     #[allow(clippy::too_many_arguments)]
-    pub async fn pass_region(&self, stream: u8, x: u16, y: u16, w: u16, h: u16, start: Option<u8>, frame: Vec<u8>) -> anyhow::Result<()> {
-        // The codec: the START's byte, or the one the stream started in.
-        let codec = match start {
-            Some(codec) => codec,
-            None => match self.shared.regions.lock().unwrap().get(&stream) {
-                Some(&(_, _, _, _, codec)) => codec,
-                None => {
-                    debug!("{}: dropping a frame of region {stream}, which the browser does not hold", self.engine);
-                    return Ok(());
-                }
-            },
-        };
-        let (decode, keyframe) = match codec {
-            REGION_VP9 => {
-                let passed = crate::vp9::pass(w, h, &frame, crate::vp9::Chroma::Yuv420)?;
-                // A VP9 region's keyframe is its first frame and no other.
-                anyhow::ensure!(
-                    passed.keyframe == start.is_some(),
-                    "the server sent region {stream}'s {} as {}",
-                    if start.is_some() { "first frame" } else { "next frame" },
-                    if passed.keyframe { "a keyframe" } else { "a frame of another" }
-                );
-                (start.map(|_| passed.decode), passed.keyframe)
-            }
-            REGION_H264 => {
-                let region = crate::h264::pass(w, h, &frame)?;
-                // A stream starts at an IDR with its parameter sets; a later IDR,
-                // which a moved dial brings, is a keyframe of the same stream.
-                anyhow::ensure!(
-                    start.is_none() || (region.keyframe && region.decode.is_some()),
-                    "the server started region {stream} on a frame that is not an IDR with its parameter sets"
-                );
-                (start.and(region.decode), region.keyframe)
-            }
-            other => anyhow::bail!("the server started region {stream} in codec {other}, which is neither VP9 nor H.264"),
-        };
+    pub async fn pass_region(&self, stream: u8, x: u16, y: u16, w: u16, h: u16, start: bool, frame: Vec<u8>) -> anyhow::Result<()> {
+        if !start && !self.shared.regions.lock().unwrap().contains_key(&stream) {
+            debug!("{}: dropping a frame of region {stream}, which the browser does not hold", self.engine);
+            return Ok(());
+        }
+        let region = crate::h264::pass(w, h, &frame)?;
+        // A stream starts at an IDR with its parameter sets; a later IDR, which a
+        // moved dial brings, is a keyframe of the same stream.
+        anyhow::ensure!(
+            !start || (region.keyframe && region.decode.is_some()),
+            "the server started region {stream} on a frame that is not an IDR with its parameter sets"
+        );
+        let (decode, keyframe) = (region.decode.filter(|_| start), region.keyframe);
         self.tiles_begin().await?;
         {
             let mut regions = self.shared.regions.lock().unwrap();
-            if start.is_some() {
-                anyhow::ensure!(
-                    regions.insert(stream, (x, y, w, h, codec)).is_none(),
-                    "the server started region {stream} while it was live"
-                );
+            if start {
+                anyhow::ensure!(regions.insert(stream, (x, y, w, h)).is_none(), "the server started region {stream} while it was live");
             } else {
-                let Some(&(rx, ry, rw, rh, _)) = regions.get(&stream) else {
+                let Some(&(rx, ry, rw, rh)) = regions.get(&stream) else {
                     debug!("{}: dropping a frame of region {stream}, which the browser does not hold", self.engine);
                     return Ok(());
                 };
@@ -1983,40 +1945,34 @@ mod tests {
         frame
     }
 
-    /// A frame of a moving region in wlshare's tiles: 4:2:0, profile 0, a keyframe
-    /// or not, `len` bytes.
-    fn region_frame(keyframe: bool, len: usize) -> Vec<u8> {
-        let mut frame = vec![0u8; len];
-        frame[0] = if keyframe { 0x80 } else { 0x84 };
-        frame
-    }
-
     /// wlshare's tiles go out as they came, the first behind the `TilesStart` that
-    /// begins the picture, a region's first frame behind the format that builds its
-    /// decoder, and its end said once; the picture is passed, so its fences are held.
+    /// begins the picture, a region's first frame behind the format, read off its
+    /// own parameter sets, that builds its decoder, and its end said once; the
+    /// picture is passed, so its fences are held.
     #[tokio::test]
     async fn wlshares_tiles_and_regions_go_out_as_they_came() {
+        use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink_at(1280, 800, PASSED).await;
         sink.pass_tile(0, 0, 1280, 64, vec![0x89, 0x50]).await.unwrap();
-        sink.pass_region(0, 64, 64, 320, 192, Some(REGION_VP9), region_frame(true, 900)).await.unwrap();
-        sink.pass_region(0, 64, 64, 320, 192, None, region_frame(false, 40)).await.unwrap();
+        sink.pass_region(0, 64, 64, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
+        sink.pass_region(0, 64, 64, 320, 192, false, FRAME.to_vec()).await.unwrap();
+        // A later IDR, which a moved dial brings, is a keyframe of the same stream,
+        // and no new format.
+        sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec()).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_tile(64, 64, 320, 64, vec![0x89, 0x51]).await.unwrap();
         sink.flush().await;
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
-        let out = drain(&mut frame_rx, 6).await;
+        let out = drain(&mut frame_rx, 7).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
         assert!(matches!(&out[1], ServerMsg::Tile(unit) if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50]));
-        assert!(
-            matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "vp09.00.20.08.01.06.06.06.00"),
-            "{:?}",
-            out[2]
-        );
-        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (64, 64, 320, 192) && unit.data.len() == 900));
-        assert!(matches!(&out[4], ServerMsg::Region(unit) if !unit.keyframe && unit.data.len() == 40));
-        assert!(matches!(out[5], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[5]);
+        assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "avc1.64000D"), "{:?}", out[2]);
+        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (64, 64, 320, 192) && unit.data == KEYFRAME));
+        assert!(matches!(&out[4], ServerMsg::Region(unit) if !unit.keyframe && unit.data == FRAME));
+        assert!(matches!(&out[5], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe: {:?}", out[5]);
+        assert!(matches!(out[6], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[6]);
         let out = drain(&mut frame_rx, 1).await;
         assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.data == [0x89, 0x51]), "the end was said twice: {:?}", out[0]);
         assert!(frame_rx.try_recv().is_err());
@@ -2027,67 +1983,41 @@ mod tests {
     /// stream starts on its id.
     #[tokio::test]
     async fn wlshares_tiles_start_over_without_the_regions_before() {
+        use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink_at(1280, 800, PASSED).await;
-        sink.pass_region(1, 0, 0, 320, 320, Some(REGION_VP9), region_frame(true, 500)).await.unwrap();
+        sink.pass_region(1, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
         sink.flush().await;
         assert_eq!(drain(&mut frame_rx, 3).await.len(), 3);
         sink.reset_render();
-        sink.pass_region(1, 0, 0, 320, 320, None, region_frame(false, 40)).await.unwrap();
+        sink.pass_region(1, 0, 0, 320, 192, false, FRAME.to_vec()).await.unwrap();
         sink.pass_region_end(1).await.unwrap();
         sink.pass_tile(0, 0, 1280, 800, vec![0x89]).await.unwrap();
-        sink.pass_region(1, 0, 0, 640, 320, Some(REGION_VP9), region_frame(true, 600)).await.unwrap();
+        sink.pass_region(1, 64, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 4).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
         assert!(matches!(&out[1], ServerMsg::Tile(_)), "{:?}", out[1]);
         assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 1, .. }), "{:?}", out[2]);
-        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && unit.w == 640));
+        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && unit.x == 64));
         assert!(frame_rx.try_recv().is_err(), "a region from before the start went out");
     }
 
-    /// A region is held to what wlshare promises of one: profile 0, a keyframe where
-    /// and only where its stream starts, a stream started once, its rectangle fixed,
-    /// and the ceiling.
+    /// A region is held to what wlshare promises of one: H.264 starting at an IDR
+    /// with its parameter sets, of a picture the region's size, a stream started
+    /// once, its rectangle fixed, and the ceiling.
     #[tokio::test]
     async fn a_region_wlshare_did_not_promise_is_refused() {
-        let (sink, _frame_rx) = video_sink_at(1280, 800, PASSED).await;
-        assert!(sink.pass_region(0, 0, 0, 320, 320, Some(REGION_VP9), passed_frame(true, 100)).await.is_err(), "profile 1");
-        assert!(sink.pass_region(0, 0, 0, 320, 320, Some(REGION_VP9), region_frame(false, 100)).await.is_err(), "a start that is no keyframe");
-        assert!(sink.pass_region(0, 0, 0, 3841, 64, Some(REGION_VP9), region_frame(true, 100)).await.is_err(), "past the ceiling");
-        assert!(sink.pass_region(0, 0, 0, 320, 320, Some(7), region_frame(true, 100)).await.is_err(), "a codec that is neither");
-        sink.pass_region(0, 0, 0, 320, 320, Some(REGION_VP9), region_frame(true, 100)).await.unwrap();
-        assert!(sink.pass_region(0, 0, 0, 320, 320, None, region_frame(true, 100)).await.is_err(), "a keyframe that starts nothing");
-        assert!(sink.pass_region(0, 0, 0, 320, 320, Some(REGION_VP9), region_frame(true, 100)).await.is_err(), "a stream started twice");
-        assert!(sink.pass_region(0, 64, 0, 320, 320, None, region_frame(false, 40)).await.is_err(), "a stream moved");
-        assert!(sink.pass_region(0, 0, 0, 320, 256, None, region_frame(false, 40)).await.is_err(), "a stream resized");
-        sink.pass_region(0, 0, 0, 320, 320, None, region_frame(false, 40)).await.unwrap();
-    }
-
-    /// A region in H.264 is announced from its own parameter sets, its frames
-    /// keyframed as the stream says, and held to what wlshare promises of one: a
-    /// start at an IDR with its parameter sets, a picture the region's size, and a
-    /// frame that is an access unit at all.
-    #[tokio::test]
-    async fn a_region_in_h264_is_announced_from_its_parameter_sets() {
         use crate::h264::sample::{FRAME, KEYFRAME};
-        let (sink, mut frame_rx) = video_sink_at(1280, 800, PASSED).await;
-        assert!(sink.pass_region(3, 0, 0, 320, 192, Some(REGION_H264), FRAME.to_vec()).await.is_err(), "a start that is no IDR");
-        assert!(sink.pass_region(3, 0, 0, 640, 192, Some(REGION_H264), KEYFRAME.to_vec()).await.is_err(), "a picture of another size");
-        assert!(sink.pass_region(3, 0, 0, 320, 192, Some(REGION_H264), region_frame(true, 100)).await.is_err(), "a VP9 frame in an H.264 stream");
-        sink.pass_region(3, 0, 0, 320, 192, Some(REGION_H264), KEYFRAME.to_vec()).await.unwrap();
-        sink.pass_region(3, 0, 0, 320, 192, None, FRAME.to_vec()).await.unwrap();
-        // A later IDR is a keyframe of the same stream, and no new format.
-        sink.pass_region(3, 0, 0, 320, 192, None, KEYFRAME.to_vec()).await.unwrap();
-        sink.pass_region_end(3).await.unwrap();
-        sink.flush().await;
-        let out = drain(&mut frame_rx, 6).await;
-        assert!(matches!(&out[0], ServerMsg::TilesStart { .. }));
-        assert!(matches!(&out[1], ServerMsg::RegionFormat { stream: 3, decode, .. } if decode == "avc1.64000D"), "{:?}", out[1]);
-        assert!(matches!(&out[2], ServerMsg::Region(unit) if unit.keyframe && unit.data == KEYFRAME));
-        assert!(matches!(&out[3], ServerMsg::Region(unit) if !unit.keyframe && unit.data == FRAME));
-        assert!(matches!(&out[4], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe");
-        assert!(matches!(&out[5], ServerMsg::RegionEnd { stream: 3, .. }));
-        assert_eq!(out.len(), 6);
+        let (sink, _frame_rx) = video_sink_at(1280, 800, PASSED).await;
+        assert!(sink.pass_region(0, 0, 0, 320, 192, true, FRAME.to_vec()).await.is_err(), "a start that is no IDR");
+        assert!(sink.pass_region(0, 0, 0, 640, 192, true, KEYFRAME.to_vec()).await.is_err(), "a picture of another size");
+        assert!(sink.pass_region(0, 0, 0, 320, 192, true, vec![0x80; 100]).await.is_err(), "a frame that is no access unit");
+        assert!(sink.pass_region(0, 0, 0, 3841, 64, true, KEYFRAME.to_vec()).await.is_err(), "past the ceiling");
+        sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
+        assert!(sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.is_err(), "a stream started twice");
+        assert!(sink.pass_region(0, 64, 0, 320, 192, false, FRAME.to_vec()).await.is_err(), "a stream moved");
+        assert!(sink.pass_region(0, 0, 0, 320, 190, false, FRAME.to_vec()).await.is_err(), "a stream resized");
+        sink.pass_region(0, 0, 0, 320, 192, false, FRAME.to_vec()).await.unwrap();
     }
 
     /// A frame the remote encoded goes out as it came, behind the announcement a

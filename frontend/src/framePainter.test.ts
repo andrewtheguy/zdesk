@@ -2013,7 +2013,7 @@ function regionPainter(ctx: CanvasRenderingContext2D, regionRetireMs = 0) {
   });
 }
 
-const REGION = "vp09.00.21.08.01.06.06.06.00";
+const REGION = "avc1.64001F";
 const waited = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -2022,7 +2022,7 @@ test("wlshare's regions are decoded by their own decoders and drawn cut to their
   const p = regionPainter(ctx);
   p.startTiles();
   p.setRegionFormat(1, { decode: REGION });
-  p.setRegionFormat(2, { decode: "vp09.00.10.08.01.06.06.06.00" });
+  p.setRegionFormat(2, { decode: "avc1.42C00C" });
   // The first tile decodes last, and is still drawn first.
   decodeDelay.set(1, 20);
   await p.draw(
@@ -2039,7 +2039,7 @@ test("wlshare's regions are decoded by their own decoders and drawn cut to their
     "tile2 64,0",
     "frame 100,100 clip 100,100 16x16",
   ]);
-  assert.deepEqual(configured, [REGION, "vp09.00.10.08.01.06.06.06.00"]);
+  assert.deepEqual(configured, [REGION, "avc1.42C00C"]);
   // A stream's units after its keyframe go to its own decoder, in its chain.
   await p.draw(
     regionsFrame([

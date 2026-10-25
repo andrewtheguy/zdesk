@@ -2489,7 +2489,7 @@ export function useRemoteDesktop(
           // records.
           painter()?.setRegionFormat(msg.stream, { decode: msg.decode });
           // The card names the first region's configuration: every region is
-          // the codec wlshare chose, VP9 or the host's H.264, at another size.
+          // H.264, at another size.
           setVideoStream((prev) =>
             prev?.tiles && !prev.regions
               ? { ...prev, regions: msg.decode }

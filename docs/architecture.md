@@ -31,7 +31,7 @@ quality and walk the target's render plan resolves to, at 4:4:4 for a browser
 whose own decoder takes it and 4:2:0 for one that does not — or, in a session
 started with its tiles with motion, chosen at the picker, its own tiles, exact PNG
 where the desktop is still and a video stream of its own for each region that moves,
-VP9 or H.264, the host's hardware encoder's where it has one, as wlshare chooses, passed the same way. A `wlshare` desktop
+H.264 by the host's hardware encoder where it has one and libx264 otherwise, passed the same way. A `wlshare` desktop
 too large for that stream, in a session that does not resize it, has no picture:
 the session stays up and the page offers the server's outputs — see
 [past the ceiling](#past-the-ceiling). A Mac is reached over Apple's own RFB
@@ -529,8 +529,8 @@ whichever the session was started with, chosen at the picker's Picture group
 frames untouched. Its VP9, *Video*, is the picture of a session that names
 none, listed with the plan's dial, walk and chroma as pseudo-encodings beside
 it. Its tiles with motion, exact PNG tiles where the desktop is still and a
-4:2:0 video stream of its own for each region that moves, VP9 or H.264, the
-host's hardware encoder's where it has one, as wlshare chooses, are wlshare's picture
+4:2:0 H.264 stream of its own for each region that moves, by the host's
+hardware encoder where it has one and libx264 otherwise, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
 alone, which its regions are held at: they select no chroma, 4:2:0 for every
@@ -1133,29 +1133,28 @@ wlshare has a second picture encoding, `WLST` (`0x574c5354`), which a `wlshare`
 session started with its tiles with motion, chosen at the picker as *Tiles with
 motion* against its VP9, lists in place of `WLSV`: the desktop as exact PNG
 tiles where it is still, and a video stream of its own, 4:2:0, for each region
-that moves, at most four at once — VP9 profile 0 at libvpx's least search, or
-H.264, from the wlshare host's hardware encoder where it has one, as wlshare
-chooses — and every tile a stream carried sent again as PNG once it is still,
+that moves, at most four at once — H.264, by the wlshare host's hardware
+encoder where it has one and libx264 otherwise — and every tile a stream
+carried sent again as PNG once it is still,
 so the picture ends exact. It is Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
 Every rectangle of an update is one of four kinds: a PNG of it, a region
-stream's first frame, which names the stream's codec, its next, or its end.
+stream's first frame, its next, or its end.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
   `WLQ` plus `video_quality`, the dial wlshare holds every region's stream at:
   there is no walk, so the plan has no `adaptive` whatever the target's
   `render_adaptive` says, and no `WLSD` or `WLSS`, since every region is 4:2:0
-  for every browser. Which codec each region is in is wlshare's choice, not
-  this gateway's or the browser's: wlshare codes it with its host's hardware
-  H.264 encoder where it found one at its startup, the GPU's fixed-function
-  block rather than libvpx on its CPU, and with VP9 otherwise, and each
-  region's START says which. The browser decodes either with its own
-  `VideoDecoder`, the H.264 from the `avc1` string this gateway reads off the
-  stream's parameter sets (`src/h264.rs`). The VP9 stream of the whole desktop
-  is VP9 always.
+  for every browser. Every region is H.264, which wlshare codes with its host's
+  hardware encoder where it found one at its startup, the GPU's fixed-function
+  block, and with libx264 otherwise; a wlshare with neither does not start, and
+  a region it cannot code ends its session. The browser decodes it with its own
+  `VideoDecoder`, from the `avc1` string this gateway reads off the stream's
+  parameter sets (`src/h264.rs`). The VP9 stream of the whole desktop is VP9
+  always.
 - **Within the ceiling, as the VP9 is.** A moving region is a stream, and may be
   as large as the desktop, so the tiles are listed only for a desktop within the
   ceiling and come off the list past it, as the VP9 does
@@ -1165,15 +1164,13 @@ Nothing is coded here.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
   `pass_region_end`). A PNG becomes a `TILE` record, a region's frame a `REGION`
   record, behind a `regionFormat` for the first of its stream, whose
-  configuration is profile 0's string for the region's size, figured as a passed
-  VP9's is, or for an H.264 region `avc1.` and the profile, constraints and
-  level its own sequence parameter set names (`src/h264.rs`); its end becomes a
-  `regionEnd`. A region's frame is held to what wlshare promises of one — a VP9
-  region profile 0 with a keyframe where and only where its stream starts; an
-  H.264 region an Annex B access unit, started at an IDR with its parameter
-  sets, of a picture the region's size, and keyframed again only where the
-  dial moved, which the `REGION` record's flag then says; a stream started once
-  while live, in VP9 or H.264; and the ceiling every passed
+  configuration is `avc1.` and the profile, constraints and level its own
+  sequence parameter set names (`src/h264.rs`); its end becomes a
+  `regionEnd`. A region's frame is held to what wlshare promises of one — an
+  Annex B access unit, started at an IDR with its parameter sets, of a picture
+  the region's size, and keyframed again only where the dial moved, which the
+  `REGION` record's flag then says; a stream started once while live; and the
+  ceiling every passed
   stream is held to — and refused by name otherwise. Each record takes its share of
   `QUEUE_BUDGET` and goes out in order with the messages around it, so a `TILE`
   over a region's rectangle reaches the page after the region's `regionEnd`, as
@@ -2074,7 +2071,7 @@ six, the Mac's HEVC and H.264 in one row:
 
 The gateway **codes no video**. What it codes is tiles, a JPEG or a PNG each
 ([The tiles](#the-tiles)), and every stream the browser decodes is the remote's
-own, passed as it came: wlshare's VP9 and its moving regions' VP9 or H.264, a
+own, passed as it came: wlshare's VP9 and its moving regions' H.264, a
 High Performance Mac's HEVC or H.264, and an RDP host's pipeline, whose H.264 the
 page decodes. There is no codec key.
 
@@ -2320,8 +2317,9 @@ and `GET /api/targets` carries it:
   browser's sake: its Adaptive picture is decoded by every page in WebAssembly,
   and the gateway's tiles are images every page decodes; Adaptive is greyed only
   under Combined Display, which is the gateway's tiles. Nor are a `wlshare`
-  target's: VP9 is its video and the tiles' fallback for a moving region, so the
-  target cannot start in a browser whose decoder refuses VP9. `/api/targets`
+  target's: VP9 is its video, so the target cannot start in a browser whose
+  decoder refuses VP9, and its tiles' moving regions are H.264, which the
+  `VideoDecoder` that decodes the VP9 is taken to decode, as the Mac's H.264 is. `/api/targets`
   says which streams a target can pass, as `passthroughs`; on `rdp`, `wlshare`
   and `ard-high-performance` the picture is always one of them, while a
   Standard Mac's Full quality, which names none, is tiles coded here. For the pipeline the picker says the stream is always
@@ -2469,7 +2467,7 @@ other rejected, as are an empty rectangle and one with no image. Each replaces w
 the canvas held there and depends on no other
 ([The tiles](#the-tiles)). A session of wlshare's tiles with motion sends `TILE` records too, all
 PNG, and among them `REGION` records: an access unit of one moving region's
-stream, VP9 or H.264 as its `regionFormat` says, its flags `0x01` for a keyframe and any other bit rejected, as are an empty
+stream, H.264 as its `regionFormat` says, its flags `0x01` for a keyframe and any other bit rejected, as are an empty
 rectangle and one with no payload. A `regionFormat` (`stream`, `decode`, `engine`)
 comes ahead of a stream's first unit and builds its decoder, the unit's decoded
 picture is drawn at its rectangle, cut to it, in its turn among the tiles, and a

@@ -211,8 +211,8 @@ pub struct RenderPlan {
     /// wlshare's picture is its tiles rather than its VP9
     /// ([`Passthrough::WlshareTilesMotion`], chosen at the picker): exact PNG tiles where the
     /// desktop is still and a video stream of its own, 4:2:0, for each region that
-    /// moves — VP9, or H.264, the host's hardware encoder's where it has one, as wlshare chooses, each region's
-    /// stream saying which — asked of the server and passed as it comes. Set only with
+    /// moves, H.264 by the host's hardware encoder where it has one and libx264
+    /// otherwise — asked of the server and passed as it comes. Set only with
     /// [`Self::wlshare`], and never with [`Self::adaptive`]: the regions are held at
     /// [`Self::quality`].
     pub wlshare_tiles_motion: bool,
@@ -325,8 +325,8 @@ pub enum Passthrough {
     /// tiles, and passed in every session not started with them: the subtype's
     /// picture where none is named.
     WlshareVp9,
-    /// wlshare's tiles: the desktop as exact PNG where it is still and a VP9 stream
-    /// of its own, 4:2:0, for each region that moves, passed as they come for the
+    /// wlshare's tiles: the desktop as exact PNG where it is still and an H.264
+    /// stream of its own, 4:2:0, for each region that moves, passed as they come for the
     /// page to decode and sent exact again once it stops. Offered by a `wlshare`
     /// target beside its VP9, and chosen at the picker: wlshare's picture for a link
     /// with room to spare, a fraction of the VP9's encoder time and a picture that
@@ -4784,7 +4784,7 @@ vnc_password_ref = \"x\"")).unwrap();
     /// wlshare's tiles are chosen at the picker, against its VP9: a session started
     /// with them asks wlshare for its tiles, their regions at 4:2:0 whatever the
     /// browser takes and held at the quality, with no walk whatever the key says,
-    /// their codec wlshare's choice; one that names its VP9, or nothing, is sent
+    /// their codec H.264; one that names its VP9, or nothing, is sent
     /// the VP9.
     #[test]
     fn wlshares_tiles_with_motion_are_a_choice_at_the_picker() {

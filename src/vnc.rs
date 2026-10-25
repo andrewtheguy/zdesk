@@ -188,18 +188,13 @@ const MAX_WLSHARE_VP9_FRAME: u32 = 64 << 20;
 /// session started with it ([`crate::config::Passthrough::WlshareTilesMotion`]) lists
 /// in place of [`ENCODING_WLSHARE_VP9`]: the desktop as exact PNG
 /// tiles where it is still and a video stream of its own, 4:2:0, for each region that
-/// moves — VP9, or H.264, the host's hardware encoder's where it has one, as wlshare
-/// chooses — each rectangle of an update one of them, passed through untouched
+/// moves — H.264, by the host's hardware encoder where it has one and libx264
+/// otherwise — each rectangle of an update one of them, passed through untouched
 /// ([`VideoSink::pass_tile`], [`VideoSink::pass_region`]). The dial beside it,
 /// [`ENCODING_WLSHARE_VP9_QUALITY_BASE`]'s, is what the regions are held at.
 const ENCODING_WLSHARE_TILES: i32 = 0x574c_5354;
-/// The codec byte a region stream's START carries: wlshare's choice, H.264 by its
-/// host's hardware encoder where it has one and VP9 otherwise, which the browser
-/// decodes either way.
-const WLSHARE_REGION_VP9: u8 = 0;
-const WLSHARE_REGION_H264: u8 = 1;
 /// A `WLST` rectangle's body begins with its kind: a PNG of the rectangle, a region
-/// stream's first frame, which names the stream's codec, its next, and its end.
+/// stream's first frame, its next, and its end.
 const WLSHARE_TILE_PNG: u8 = 0;
 const WLSHARE_TILE_START: u8 = 1;
 const WLSHARE_TILE_FRAME: u8 = 2;
@@ -6094,19 +6089,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 WLSHARE_TILE_START | WLSHARE_TILE_FRAME | WLSHARE_TILE_END => Some(reader.read_u8().await?),
                 other => anyhow::bail!("server sent a tiles rectangle of kind {other}, which is none of wlshare's"),
             };
-            // A START says its stream's codec: VP9 or H.264, whichever wlshare
-            // chose. Any other is a server that lost its framing, or is not
-            // wlshare.
-            let start = if kind == WLSHARE_TILE_START {
-                let codec = reader.read_u8().await?;
-                anyhow::ensure!(
-                    codec == WLSHARE_REGION_VP9 || codec == WLSHARE_REGION_H264,
-                    "server started a region stream in codec {codec}, which is neither VP9 nor H.264"
-                );
-                Some(codec)
-            } else {
-                None
-            };
+            let start = kind == WLSHARE_TILE_START;
             let body = if kind == WLSHARE_TILE_END {
                 Vec::new()
             } else {
@@ -13152,10 +13135,11 @@ mod tests {
         msg
     }
 
-    /// An update of wlshare's tiles on a `w`×`h` desktop: a PNG over the top row, a
-    /// region's stream started, its next frame and its end, and a fence asking an echo
-    /// of `marker`.
+    /// An update of wlshare's tiles on a desktop `w` wide and at least 208 high: a
+    /// PNG over the top 16 rows, a 320×192 region's H.264 stream started below it,
+    /// its next frame and its end, and a fence asking an echo of `marker`.
     fn wlshare_tiles_update(w: u16, marker: &[u8]) -> Vec<u8> {
+        use crate::h264::sample::{FRAME, KEYFRAME};
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&4u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
@@ -13168,18 +13152,13 @@ mod tests {
         rect(&mut msg, (0, 0, w, 16), WLSHARE_TILE_PNG);
         msg.extend_from_slice(&3u32.to_be_bytes());
         msg.extend_from_slice(&[0x89, 0x50, 0x4e]);
-        for (kind, first) in [(WLSHARE_TILE_START, 0x80), (WLSHARE_TILE_FRAME, 0x84)] {
-            rect(&mut msg, (0, 16, 32, 16), kind);
+        for (kind, frame) in [(WLSHARE_TILE_START, KEYFRAME), (WLSHARE_TILE_FRAME, FRAME)] {
+            rect(&mut msg, (0, 16, 320, 192), kind);
             msg.push(2);
-            if kind == WLSHARE_TILE_START {
-                msg.push(WLSHARE_REGION_VP9);
-            }
-            let mut frame = vec![0u8; 50];
-            frame[0] = first;
             msg.extend_from_slice(&(frame.len() as u32).to_be_bytes());
-            msg.extend_from_slice(&frame);
+            msg.extend_from_slice(frame);
         }
-        rect(&mut msg, (0, 16, 32, 16), WLSHARE_TILE_END);
+        rect(&mut msg, (0, 16, 320, 192), WLSHARE_TILE_END);
         msg.push(2);
         msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
         msg
@@ -13190,15 +13169,15 @@ mod tests {
     #[tokio::test]
     async fn wlshares_tiles_are_passed_rectangle_by_rectangle() {
         let (uplink, sent) = test_uplink();
-        let (sink, mut rx) = sized_sink((64, 32)).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink((320, 208)).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
         shared.passthrough = Some(test_tiles_listing());
-        let task = open_read_loop(wlshare_tiles_update(64, b"t1"), shared, sink);
+        let task = open_read_loop(wlshare_tiles_update(320, b"t1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Tile(unit)) if (unit.w, unit.h) == (64, 16) && unit.data == [0x89, 0x50, 0x4e]));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, .. })));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (0, 16, 32, 16)));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::Tile(unit)) if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e]));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D"));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (0, 16, 320, 192)));
         assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if !unit.keyframe));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
         let echo = client_fence(0, b"t1");
