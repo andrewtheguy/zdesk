@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="zDesk">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b8bff"/>
+      <stop offset="1" stop-color="#0a4fc0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#tile)"/>
+  <rect x="11" y="12" width="42" height="31" rx="4.5" fill="none" stroke="#fff" stroke-width="3"/>
+  <path d="M26 50h12M32 43.5v6" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M20 23.5h22l-5.5-5.5M44 31.5H22l5.5 5.5" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
