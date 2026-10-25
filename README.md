@@ -40,39 +40,14 @@ side.
 
 ## Demo
 
-### Windows -> Mac with One Remote Virtual Display
+Watch the demos on the [zDesk site](https://andrewtheguy.github.io/zdesk/#demo):
 
-https://github.com/user-attachments/assets/982bf2d0-3fac-4a3c-8213-27412d10977d
-
-### Windows -> Mac with Two Remote Virtual Displays
-
-- Windows -> Mac with Two Remote Virtual Displays shown in separate browser tabs with a window being able to be dragged across displays right between the two tabs.
-
-https://github.com/user-attachments/assets/a31030c8-dab9-467c-9231-20329e138e7d
-
-### iOS -> Windows
-
-- Safari on iOS connected to Windows' own Remote Desktop, scrolling horizontally with a two-finger swipe left or right.
-
-https://github.com/user-attachments/assets/f8ef0f08-1d52-4ca3-b02f-8fb877d32b56
-
-### iOS -> Mac
-
-- Safari on iOS connected to a Mac's High Performance Screen Sharing, scrolling horizontally, with the network throughput meter shown.
-
-https://github.com/user-attachments/assets/94287b28-ecf4-430f-9f62-0d9b46ffcea7
-
-### Mac -> Windows at Retina/HiDPI Density with Audio
-
-- Windows' own Remote Desktop shown at the Mac's Retina/HiDPI density, with the remote's sound playing in the browser.
-
-https://github.com/user-attachments/assets/3dfd0dc2-dc7d-4d41-b99e-1340f685390c
-
-### Mac -> Linux (wlshare on Sway) at Retina/HiDPI Density with Audio
-
-- wlshare on Sway shown at the Mac's Retina/HiDPI density, with the remote's sound, and the remote desktop resizing to follow the browser into and out of immersive full screen.
-
-https://github.com/user-attachments/assets/68b73718-9406-4003-a374-2829f2536395
+- [Windows -> Mac with one remote virtual display](https://andrewtheguy.github.io/zdesk/#windows-to-mac-one-display)
+- [Windows -> Mac with two remote virtual displays](https://andrewtheguy.github.io/zdesk/#windows-to-mac-two-displays): shown in separate browser tabs, with a window dragged across displays right between the two tabs.
+- [iOS -> Windows](https://andrewtheguy.github.io/zdesk/#ios-to-windows): Safari on iOS connected to Windows' own Remote Desktop, scrolling horizontally with a two-finger swipe left or right.
+- [iOS -> Mac](https://andrewtheguy.github.io/zdesk/#ios-to-mac): Safari on iOS connected to a Mac's High Performance Screen Sharing, scrolling horizontally, with the network throughput meter shown.
+- [Mac -> Windows at Retina/HiDPI density with audio](https://andrewtheguy.github.io/zdesk/#mac-to-windows): Windows' own Remote Desktop shown at the Mac's Retina/HiDPI density, with the remote's sound playing in the browser.
+- [Mac -> Linux (wlshare on Sway) at Retina/HiDPI density with audio](https://andrewtheguy.github.io/zdesk/#mac-to-linux): wlshare on Sway shown at the Mac's Retina/HiDPI density, with the remote's sound, and the remote desktop resizing to follow the browser into and out of immersive full screen.
 
 ## Features
 
