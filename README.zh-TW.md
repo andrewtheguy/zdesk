@@ -22,14 +22,14 @@ Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建�
 
 ## 示範
 
-在 [zDesk 網站](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#demo)觀看示範：
+在 [zDesk 網站](https://zdesk.dev/index.zh-TW.html#demo)觀看示範：
 
-- [Windows -> 有一個遠端虛擬顯示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#windows-to-mac-one-display)
-- [Windows -> 有兩個遠端虛擬顯示器的 Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#windows-to-mac-two-displays)：兩個遠端虛擬顯示器分別顯示在不同的瀏覽器分頁中，視窗可以在兩個分頁之間直接跨顯示器拖曳。
-- [iOS -> Windows](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#ios-to-windows)：iOS 上的 Safari 連線到 Windows 內建的遠端桌面，雙指左右滑動即可水平捲動。
-- [iOS -> Mac](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#ios-to-mac)：iOS 上的 Safari 連線到 Mac 的高效能模式螢幕共享，支援水平捲動，並顯示網路傳輸量指示。
-- [Mac -> Windows，Retina/HiDPI 密度並帶聲音](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度顯示 Windows 內建的遠端桌面，並在瀏覽器中播放遠端的聲音。
-- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度並帶聲音](https://andrewtheguy.github.io/zdesk/index.zh-TW.html#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度顯示 Sway 上的 wlshare，帶有遠端的聲音，進入和離開沉浸式全螢幕時，遠端桌面會隨瀏覽器調整大小。
+- [Windows -> 有一個遠端虛擬顯示器的 Mac](https://zdesk.dev/index.zh-TW.html#windows-to-mac-one-display)
+- [Windows -> 有兩個遠端虛擬顯示器的 Mac](https://zdesk.dev/index.zh-TW.html#windows-to-mac-two-displays)：兩個遠端虛擬顯示器分別顯示在不同的瀏覽器分頁中，視窗可以在兩個分頁之間直接跨顯示器拖曳。
+- [iOS -> Windows](https://zdesk.dev/index.zh-TW.html#ios-to-windows)：iOS 上的 Safari 連線到 Windows 內建的遠端桌面，雙指左右滑動即可水平捲動。
+- [iOS -> Mac](https://zdesk.dev/index.zh-TW.html#ios-to-mac)：iOS 上的 Safari 連線到 Mac 的高效能模式螢幕共享，支援水平捲動，並顯示網路傳輸量指示。
+- [Mac -> Windows，Retina/HiDPI 密度並帶聲音](https://zdesk.dev/index.zh-TW.html#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度顯示 Windows 內建的遠端桌面，並在瀏覽器中播放遠端的聲音。
+- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度並帶聲音](https://zdesk.dev/index.zh-TW.html#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度顯示 Sway 上的 wlshare，帶有遠端的聲音，進入和離開沉浸式全螢幕時，遠端桌面會隨瀏覽器調整大小。
 
 ## 功能
 
