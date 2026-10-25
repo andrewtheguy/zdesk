@@ -10881,13 +10881,19 @@ mod tests {
 
     /// Let a High Performance report settle, run what falls due, and play the
     /// read loop's part at the update boundary the drain prompts: the
-    /// `SetDisplayConfiguration` that goes out there, if any.
+    /// `SetDisplayConfiguration` that goes out there, if any. A density report's
+    /// wait for a viewport ([`HP_DENSITY_JOIN`]) is let pass.
     async fn hp_settle(
         uplink: &SharedUplink,
         desktop: &SharedDesktop,
         sink: &VideoSink,
     ) -> Option<Vec<u8>> {
         hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink).await.unwrap();
+        let wait = desktop.lock().unwrap().hp.not_before;
+        if let Some(at) = wait {
+            tokio::time::advance(at.saturating_duration_since(tokio::time::Instant::now())).await;
+            hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink).await.unwrap();
+        }
         desktop.lock().unwrap().hp_take_request(tokio::time::Instant::now()).map(|request| request.msg)
     }
 
