@@ -687,10 +687,19 @@ a physical Mac, and what Apple's viewer does beside it have not been.
 
 Apple's viewer sends the new dimensions when a live window resize ends. It
 adds no debounce after that event and no quiet interval after a display layout
-before negotiating the new stream. A browser has no equivalent resize-end
-event, so zDesk's page debounces window reports for 250 ms; the gateway applies
-the latest report as soon as the preceding change or media offer has answered.
-A duplicate layout starts no timer and permits no additional offer.
+before negotiating the new stream. It still has one change out at a time: a
+resize that ends while a change is outstanding is dropped, not queued. The next
+can go once the answering layout arrives or the new stream is ready, and the
+window is then refitted to the Mac's size. Nothing in that waits on a timer.
+
+A browser has no equivalent resize-end event, so zDesk's page debounces window
+reports for 250 ms. The gateway keeps the latest report rather than dropping
+it, since a browser cannot refit its window to the Mac's size, and applies it
+as soon as the preceding change and any media offer have answered. Waiting for
+the offer is zDesk's own: Apple's viewer can send the next size while an offer
+is out. zDesk holds the size because the Mac is then starting a capture of the
+display the change would replace, and the answer ends an update, at which the
+size goes. A duplicate layout starts no timer and permits no additional offer.
 
 Three behaviours of the Mac shape how zDesk resizes:
 
@@ -1520,9 +1529,11 @@ plays nothing to one, which was confirmed on a physical Mac.
 **Ports first.** The Mac sends message 1 and the answer from separate paths, so
 an offer sent before message 1 can be answered before it, and the Mac names its
 ports once for the `SetEncodings` and once per display change, never again for an
-offer made in its place. zDesk therefore offers as Apple's viewer does: once
-for each message 1, as soon as the current display's layout is known and no
-display change or earlier offer is outstanding.
+offer made in its place. zDesk therefore offers once for each message 1, as
+Apple's viewer does. Apple's viewer offers as soon as message 1 arrives, for
+the screen configuration it already holds. zDesk also waits until the current
+display's layout is known and no display change or earlier offer is
+outstanding.
 
 **One offer at a time.** A second `0x1c` sent while the first one's capture was
 still starting left the capture failed (`didStart: 0 error: 32000`). When the
