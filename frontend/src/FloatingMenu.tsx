@@ -101,6 +101,7 @@ const ALT_AS_COMMAND_HELP: readonly { situation: string; effect: string }[] = [
 // The touch gesture cheat-sheet, mirroring touchGestures.ts.
 const GESTURE_HELP: readonly { gesture: string; action: string }[] = [
   { gesture: "Tap", action: "Left-click" },
+  { gesture: "Press and hold", action: "Hold left button + drag" },
   { gesture: "Double-tap and hold", action: "Grab, then drag" },
   { gesture: "One-finger drag", action: "Move cursor + pan" },
   { gesture: "Two-finger tap", action: "Right-click" },

@@ -7,8 +7,11 @@
 //   one-finger tap        left-click at the cursor
 //   one-finger drag       move the cursor (1.5x speed), panning the view when
 //                         the cursor pushes past the visible edge
-//   double-tap-and-hold   hold the left button (drag mode); a second finger
-//                         then moves the cursor while the first keeps holding
+//   press and hold        hold the left button (drag mode) once one finger
+//                         has rested where it landed for half a second
+//   double-tap-and-hold   hold the left button (drag mode) at once
+//                         either way the finger drags until it lifts, and a
+//                         second finger moves the cursor while it keeps holding
 //   two-finger tap        right-click at the cursor
 //   two-finger drag       one gesture, classified by what the fingers do:
 //                         changing the distance between them pinches (zoom
@@ -50,6 +53,9 @@ const PAN_ACTIVATION_THRESHOLD_PX = 12;
 const PAN_CURSOR_SPEED = 1.5;
 const FORCE_TAP_THRESHOLD = 0.15;
 const DOUBLE_TAP_WINDOW_MS = 300;
+// How long one finger has to rest, short of travelling far enough to move the
+// cursor, before the left button goes down under it.
+const LONG_PRESS_MS = 500;
 const TWO_FINGER_TAP_MAX_MOVE_PX = 12;
 const TWO_FINGER_TAP_MAX_DURATION_MS = 260;
 // How far two fingers must work before their gesture commits to pinching or
@@ -219,6 +225,7 @@ export function attachTouchGestures(
   let ignoreSingleTouch = false;
   let lastTapTime = 0;
   let pendingTapTimer: ReturnType<typeof setTimeout> | null = null;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   // The virtual trackpad cursor, in remote framebuffer coordinates.
   let cursor: Point = { x: 0, y: 0 };
   let hasCursor = false;
@@ -393,6 +400,30 @@ export function attachTouchGestures(
     }
   }
 
+  function cancelLongPress(): void {
+    if (longPressTimer !== null) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+
+  // A finger still pending when the hold comes due presses the left button
+  // where the cursor is, and the gesture is a drag from then on, released when
+  // the finger lifts — the double-tap-and-hold without its first tap. Until then
+  // the finger has not moved the cursor, so nothing jumps.
+  function armLongPress(gesture: MouseGesture): void {
+    cancelLongPress();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      if (mouseGesture !== gesture || gesture.mode !== "pending") {
+        return;
+      }
+      gesture.mode = "drag";
+      const c = currentCursor();
+      movePointer(c.x, c.y, true);
+    }, LONG_PRESS_MS);
+  }
+
   function beginMouseGesture(touch: Touch): void {
     const now = Date.now();
     // A touch landing right after a tap is the second half of a double-tap:
@@ -418,6 +449,8 @@ export function attachTouchGestures(
       lastTapTime = 0;
       const c = currentCursor();
       movePointer(c.x, c.y, true);
+    } else {
+      armLongPress(mouseGesture);
     }
   }
 
@@ -431,6 +464,7 @@ export function attachTouchGestures(
     const gesture = mouseGesture;
     mouseGesture = null;
     dragAssist = null;
+    cancelLongPress();
 
     if (touch) {
       gesture.maxForce = Math.max(gesture.maxForce, touch.force ?? 0);
@@ -491,6 +525,7 @@ export function attachTouchGestures(
       totalMove >= PAN_ACTIVATION_THRESHOLD_PX
     ) {
       gesture.mode = "pan";
+      cancelLongPress();
     }
 
     if (gesture.mode === "pan") {
@@ -990,6 +1025,7 @@ export function attachTouchGestures(
 
   function release(): void {
     cancelPendingTap();
+    cancelLongPress();
     mouseGesture = null;
     dragAssist = null;
     twoFinger = null;
