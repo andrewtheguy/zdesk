@@ -93,8 +93,8 @@
 # it out of every zdesk build: download
 # the release this gateway pins from the private andrewtheguy/hevc-wasm-archives,
 #
-#   gh release download v0.0.17 --repo andrewtheguy/hevc-wasm-archives \
-#     --pattern hevc-wasm-v0.0.17.tar.gz
+#   gh release download v0.0.18 --repo andrewtheguy/hevc-wasm-archives \
+#     --pattern hevc-wasm-v0.0.18.tar.gz
 #
 # as it is, into share/zdesk in the gateway's release tree, beside the
 # share/doc/zdesk that holds this file: /usr/share/zdesk for the .deb and
@@ -113,7 +113,7 @@
 # compositor's threads; the decoder's threads require that isolation too.
 #
 #[hevc_wasm]
-#archive = "/srv/zdesk/hevc-wasm-v0.0.17.tar.gz"
+#archive = "/srv/zdesk/hevc-wasm-v0.0.18.tar.gz"
 
 # The targets' passwords. A target never writes one: it names it, with
 # password_ref or vnc_password_ref, and [passwords] keeps it under that name,
