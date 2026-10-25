@@ -69,6 +69,10 @@ Watch the demos on the [zDesk site](https://zdesk.dev/#demo):
 - **Tiles that settle to lossless.** Where the gateway codes the picture itself,
   it sends 64×64 tiles: PNG where they are exact, JPEG where they move, and
   sent again exactly once they are still.
+- **A gateway with a low memory footprint.** One Rust binary serves one session
+  at a time, and where the remote's picture and sound are passed through, the
+  browser decodes them, so the gateway holds no decoder or decoded picture for
+  them.
 - **Remote sound in the browser**, as Opus paced to the browser link, lossless
   FLAC for a LAN, or a High Performance Mac's own AAC-ELD.
 - **Clipboard text in both directions**, synced automatically where the browser
