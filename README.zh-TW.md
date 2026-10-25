@@ -136,7 +136,7 @@ zdesk serve
 
 頁面需要安全環境，因此從其他電腦存取時，要把閘道放在終止 TLS 的反向代理伺服器後面；`localhost` 可以直接使用。
 
-另有 `.rpm`、macOS `.pkg`、Windows `.msi` 套件以及容器映像檔。映像檔的設定指定了 `[server].master_password_file = "/run/secrets/zdesk_master"`，主密碼掛載在該路徑；[Container](docs/install.md#container)（英文）說明了如何建立該檔案，以及如何用映像檔輸出設定的 `[master]` 和 `[passwords]`：
+另有 `.rpm`、macOS `.pkg`、Windows `.msi` 套件以及容器映像檔。映像檔的設定指定了 `[server].master_password_file = "/run/secrets/zdesk_master"`，主密碼掛載在該路徑；[容器](docs/install.zh-TW.md#容器)說明了如何建立該檔案，以及如何用映像檔輸出設定的 `[master]` 和 `[passwords]`：
 
 ```sh
 docker run -d --name zdesk -p 52380:52380 \
@@ -146,15 +146,15 @@ docker run -d --name zdesk -p 52380:52380 \
   ghcr.io/andrewtheguy/zdesk:latest
 ```
 
-[Installing zDesk](docs/install.md)（英文）涵蓋所有平台、升級和解除安裝。
+[安裝 zDesk](docs/install.zh-TW.md) 涵蓋所有平台、升級和解除安裝。
 
 ## 文件
 
 - [使用 zDesk](docs/guide.zh-TW.md)：瀏覽器用戶端、啟動工作階段、設定 Windows、Mac、wlshare 和 VNC 目標、`zdesk tui`
+- [安裝 zDesk](docs/install.zh-TW.md)：套件、首次設定、升級、解除安裝
 
 以下文件只有英文版：
 
-- [Installing zDesk](docs/install.md)：套件、首次設定、升級、解除安裝
 - [`zdesk.example.toml`](zdesk.example.toml)：所有設定項，附註解
 - [Known issues](docs/known-issues.md)：值得認得、不必重新調查的已知問題
 - [Roadmap](docs/roadmap.md)：計畫做什麼，以及不做什麼
