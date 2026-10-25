@@ -3549,7 +3549,7 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
                                         (w, h)
                                     });
                                     if let Err(e) =
-                                        request_resize(&uplink, &desktop, ResizeAsk::Density, virtual_display).await
+                                        request_resize(&uplink, &desktop, ResizeAsk::Current, virtual_display).await
                                     {
                                         break Err(e);
                                     }
@@ -4052,8 +4052,13 @@ enum ResizeAsk {
     /// A browser viewport report: points.
     Viewport((u16, u16)),
     /// No new size — the client's screen changed density, so the current size is
-    /// re-expressed at the new [`DesktopState::host_density`].
+    /// re-expressed at the new [`DesktopState::host_density`]. A High Performance
+    /// one waits for the viewport report the same window change brings
+    /// ([`HP_DENSITY_JOIN`]).
     Density,
+    /// No new size, and no density report: the current size asked for again, at
+    /// once, for a second display's window or the view going back to one display.
+    Current,
 }
 
 /// Handle a browser viewport report (dynamic resize).
@@ -4091,7 +4096,9 @@ async fn request_resize(
             // request that starts from pixels, and from this end's own. A size
             // still settling is the newer word on the points: a window dragged
             // to another screen reports both, and the density must not undo it.
-            ResizeAsk::Density => d.hp.newest_points().unwrap_or_else(|| d.hp_first_points()),
+            ResizeAsk::Density | ResizeAsk::Current => {
+                d.hp.newest_points().unwrap_or_else(|| d.hp_first_points())
+            }
         };
         if virtual_display {
             // Recorded for [`hp_resize_step`], which serializes changes at update
@@ -6993,7 +7000,7 @@ async fn hp_select(shared: &Shared, id: u32, sink: &VideoSink) -> anyhow::Result
     // may have changed: its window in a session that follows one, its screen in
     // any.
     if was.all && !now.all {
-        request_resize(uplink, desktop, ResizeAsk::Density, true).await?;
+        request_resize(uplink, desktop, ResizeAsk::Current, true).await?;
         hp_wake.notify_one();
     }
     Ok(())
@@ -11079,6 +11086,23 @@ mod tests {
 
         request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
         assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((1863, 983), 2.0)));
+    }
+
+    /// Only a density report waits for a viewport: the current size asked for
+    /// again, as a second display's window or the view going back to one display
+    /// asks for it, goes at once and ends a density's wait.
+    #[tokio::test(start_paused = true)]
+    async fn only_a_density_report_waits_for_a_viewport() {
+        let (uplink, _wire) = test_uplink();
+        let desktop = shared_desktop((1600, 1000), None, None);
+        request_resize(&uplink, &desktop, ResizeAsk::Current, true).await.unwrap();
+        assert_eq!(desktop.lock().unwrap().hp.not_before, None, "the current size goes at once");
+
+        desktop.lock().unwrap().host_density = 2.0;
+        request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
+        assert!(desktop.lock().unwrap().hp.not_before.is_some(), "a density waits");
+        request_resize(&uplink, &desktop, ResizeAsk::Current, true).await.unwrap();
+        assert_eq!(desktop.lock().unwrap().hp.not_before, None, "and is let go by the current size");
     }
 
     /// A window dragged to another screen reports its new size and then its new
