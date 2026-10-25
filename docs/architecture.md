@@ -3005,8 +3005,10 @@ whole, and its configured `size` may be any the host opens, up to 8192 a side.
 High Performance serializes what the window asks for. A second
 `SetDisplayConfiguration` overlapping the first, or a region of the old size
 served just after a change shrinks the display, crashes the Mac's agent. The page
-debounces window changes for 250 ms; the gateway adds no delay to a viewport or
-density report, retaining only the newest size while a change is outstanding.
+debounces window changes for 250 ms; the gateway adds no delay to a viewport
+report, retaining only the newest size while a change is outstanding. A density
+report, which the page sends at once, waits 400 ms for the viewport report the
+same window move brings, so the move makes one change.
 Only one change is out at a time, with no timeout short of 30 seconds. It is sent at the
 end of an update, just after the automatic-update region is re-armed to one pixel,
 and pixel polling holds to that pixel until the answering layout. A layout that

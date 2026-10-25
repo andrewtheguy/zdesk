@@ -706,7 +706,9 @@ as soon as the preceding change and any media offer have answered. Waiting for
 the offer is zDesk's own: Apple's viewer can send the next size while an offer
 is out. zDesk holds the size because the Mac is then starting a capture of the
 display the change would replace, and the answer ends an update, at which the
-size goes. A duplicate layout starts no timer and permits no additional offer.
+size goes. A density report waits 400 ms for the viewport report a window
+moved onto a screen of another density sends 250 ms after it, so the move is
+one change. A duplicate layout starts no timer and permits no additional offer.
 
 Three behaviours of the Mac shape how zDesk resizes:
 
