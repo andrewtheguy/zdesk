@@ -1040,12 +1040,19 @@ async fn serve_fake_mac_records(
             Err(err) => return Err(err),
         }
         match kind[0] {
-            // SetPixelFormat
+            // SetPixelFormat. High Performance sets it at each layout, at depth 32,
+            // as Apple's viewer does on macvm, so never before the first.
             0 => {
-                records.read_exact(&mut [0u8; 19]).await?;
+                let mut body = [0u8; 19];
+                records.read_exact(&mut body).await?;
+                if media_first {
+                    assert!(sent_layout, "High Performance sets its pixel format at a layout");
+                    assert_eq!(body[4], 32, "High Performance pixel format depth");
+                }
             }
             // SetEncodings. The list naming the media stream is answered with its
-            // ports, in an update of their own.
+            // ports, in an update of their own; the same list again, once the
+            // ports came, with the layout again, as macvm answers each.
             2 => {
                 let mut head = [0u8; 3];
                 records.read_exact(&mut head).await?;
@@ -1060,11 +1067,24 @@ async fn serve_fake_mac_records(
                     .iter()
                     .map(|&e| i32::from_be_bytes(e))
                     .find(|&e| e == zdesk::vnc_apple::ENCODING_ADAPTIVE || e == zdesk::vnc_apple::ENCODING_ZLIB);
+                if standard.is_none() {
+                    assert!(media_first, "High Performance advertises media first from its opening list");
+                }
                 if lists_media && !std::mem::replace(&mut media_listed, true) {
                     let mut update = vec![0u8, 0];
                     update.extend_from_slice(&1u16.to_be_bytes());
                     update.extend_from_slice(&fake_mac_ports());
                     write_half.write_all(writer.frame(&update)).await?;
+                } else if lists_media
+                    && sent_layout
+                    && let Some(&(points, density)) = configurations.last()
+                {
+                    let mut rect = vec![0u8, 0];
+                    rect.extend_from_slice(&1u16.to_be_bytes());
+                    rect.extend_from_slice(&[0u8; 8]);
+                    rect.extend_from_slice(&0x451i32.to_be_bytes());
+                    rect.extend_from_slice(&fake_mac_layout(MAC_VIRTUAL_DISPLAY, points, density));
+                    write_half.write_all(writer.frame(&rect)).await?;
                 }
             }
             // FramebufferUpdateRequest. A non-incremental one is answered, with
@@ -2534,28 +2554,52 @@ async fn expect_native_opening(
     points: (u16, u16),
     density: u16,
 ) {
+    // Ports can precede the canonical layout now that the opening list names
+    // media. The update carrying them can earn a held poll before the re-arm.
+    let (rearm, _) = next_mac_request_past_held(requests).await;
     assert_eq!(
-        next_mac_request(requests).await,
+        rearm,
         MacRequest::AutoPasteboard(true),
         "the canonical layout did not re-arm its pasteboard"
     );
     assert_eq!(
         next_mac_request(requests).await,
-        MacRequest::AutoFramebuffer((MAC_NATIVE_OPENING.0 * 2, MAC_NATIVE_OPENING.1 * 2))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     let (offer, _) = next_mac_request_past_held(requests).await;
     assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered for the canonical display");
-    let (narrowed, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(narrowed, MacRequest::AutoFramebuffer((1, 1)), "the region was not narrowed ahead of the change");
-    assert_eq!(next_mac_request(requests).await, MacRequest::Configuration(points, density, true));
-    assert_eq!(
-        next_mac_request(requests).await,
-        MacRequest::AutoPasteboard(true),
-        "the session-ready layout did not re-arm its pasteboard"
-    );
+    // The answer brings the list again, and the layout the Mac answers that with
+    // re-arms on either side of the session-ready change, as on macvm.
+    let mut narrowed = false;
+    loop {
+        match next_mac_request_past_held(requests).await.0 {
+            MacRequest::Configuration(asked, at, dynamic) => {
+                assert!(narrowed, "the region was not narrowed ahead of the change");
+                assert_eq!((asked, at, dynamic), (points, density, true), "the session-ready configuration");
+                break;
+            }
+            MacRequest::AutoFramebuffer((1, 1)) => narrowed = true,
+            MacRequest::AutoPasteboard(true) => narrowed = false,
+            other => panic!("unexpected ahead of the session-ready change: {other:?}"),
+        }
+    }
+    let mut rearmed = false;
+    loop {
+        match next_mac_request_past_held(requests).await.0 {
+            MacRequest::Offer { media_first } => {
+                assert!(rearmed, "the session-ready layout did not re-arm its pasteboard");
+                assert!(media_first, "the stream is offered again for the settled display");
+                break;
+            }
+            MacRequest::AutoPasteboard(true) => rearmed = true,
+            MacRequest::AutoFramebuffer((1, 1)) => {}
+            other => panic!("unexpected ahead of the settled display's offer: {other:?}"),
+        }
+    }
+    // Its answer brings the list again, whose layout re-arms once more.
+    let (rearm, _) = next_mac_request_past_held(requests).await;
+    assert_eq!(rearm, MacRequest::AutoPasteboard(true), "the repeated list's layout did not re-arm");
     assert_eq!(next_mac_request(requests).await, MacRequest::AutoFramebuffer((1, 1)));
-    let (offer, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered again for the settled display");
 }
 
 /// The whole `ard-high-performance` RFB wire, end to end: authentication, record setup,
@@ -2586,7 +2630,7 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     );
     assert_eq!(
         next_mac_request(&mut requests).await,
-        MacRequest::AutoFramebuffer((MAC_DESKTOP, MAC_DESKTOP))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     expect_native_opening(&mut requests, (MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1).await;
 
@@ -2732,7 +2776,7 @@ async fn high_performance_opens_a_retina_client_at_its_screens_density() {
     );
     assert_eq!(
         next_mac_request(&mut requests).await,
-        MacRequest::AutoFramebuffer((MAC_DESKTOP, MAC_DESKTOP))
+        MacRequest::AutoFramebuffer((1, 1))
     );
     expect_native_opening(&mut requests, (MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 2).await;
 

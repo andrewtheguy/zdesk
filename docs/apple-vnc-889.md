@@ -161,10 +161,12 @@ Both modes connect the same way until the record layer is up.
    `AutoPasteboard(start)`, then `SetEncryption` commands 1
    and 2. The Mac answers with the rekey, and everything after it travels in
    records.
-6. **The mode.** High Performance sends `SetDisplayConfiguration`, both modes send
-   `SetPixelFormat` and `SetEncodings`, Standard's naming its quality's codec, and
-   High Performance then arms `AutoFrameBufferUpdate`. The unofficial virtual
-   display under `ard` does the same, arming at 0. Standard on the physical
+6. **The mode.** High Performance sends `SetDisplayConfiguration` and
+   `SetEncodings`, then arms `AutoFrameBufferUpdate`, and sets its pixel format
+   at each layout ([RFB while the stream runs](#rfb-while-the-stream-runs)).
+   Standard sends `SetPixelFormat` and `SetEncodings`, naming its quality's
+   codec. The unofficial virtual display under `ard` sends
+   `SetDisplayConfiguration` ahead of them too, and arms at 0. Standard on the physical
    displays arms it when the first layout names the screen being sent: at 0, as
    Apple's viewer does, where High Performance arms one push a second (see
    [Other messages](#other-messages)).
@@ -575,14 +577,18 @@ for 60 Hz unless its preference or display capability says otherwise; zDesk's
   Mac creates no display: macOS refuses the configuration as an invalid size, and
   the session stays on the Mac's own display, answering no resize. Apple's viewer
   fills both from its largest mode.
-- **The window's size waits for the media stream.** Apple's viewer switches to
+- **The window's size waits for the media stream.** Apple's viewer opens at the
+  canonical displays with dynamic resolution off unless the session was started
+  with it, and then sends no window size until the user turns it on; zDesk
+  always follows the window. A viewer started with it switches to
   dynamic resolution only once its media stream is set up, so the stream is
   offered first for the canonical displays, and the size goes out when the Mac
   answers that offer. Its change then stops the stream, which is offered again
-  for the new displays once they have settled. zDesk waits 5 s for that
-  answer: an offer still out then holds the size until it is answered anyway,
-  so the wait only bounds a session whose offer never went. A login at the Mac
-  during the wait ends it, and the size goes out to the new agent at once.
+  for the new displays as soon as their layout and port announcement arrive.
+  zDesk keeps the same ordering: it never bypasses media negotiation to apply
+  the window's size. Missing ports or an unanswered offer end the session at
+  the media stream's deadline. A login at the Mac during the wait ends it,
+  and the size goes out to the new agent at once.
 - **The session-ready size goes even when it is the canonical one,** since it
   is what turns dynamic resolution on. A configuration asking for the mode
   showing changes no display, so nothing waits for a changed layout to answer
@@ -684,6 +690,26 @@ a physical Mac, and what Apple's viewer does beside it have not been.
 
 ### Resizing a High Performance display, as measured
 
+Apple's viewer sends the new dimensions when a live window resize ends. It
+adds no debounce after that event and no quiet interval after a display layout
+before negotiating the new stream. It still has one change out at a time: a
+resize that ends while a change is outstanding is dropped, not queued. The next
+can go once the answering layout arrives or the new stream is ready, and the
+window is then refitted to the Mac's size. Nothing in that waits on a timer.
+On macvm, a second resize ended 1.3 s after the first sent nothing, and the
+window snapped back to the first one's size when it settled.
+
+A browser has no equivalent resize-end event, so zDesk's page debounces window
+reports for 250 ms. The gateway keeps the latest report rather than dropping
+it, since a browser cannot refit its window to the Mac's size, and applies it
+as soon as the preceding change and any media offer have answered. Waiting for
+the offer is zDesk's own: Apple's viewer can send the next size while an offer
+is out. zDesk holds the size because the Mac is then starting a capture of the
+display the change would replace, and the answer ends an update, at which the
+size goes. A density report waits 400 ms for the viewport report a window
+moved onto a screen of another density sends 250 ms after it, so the move is
+one change. A duplicate layout starts no timer and permits no additional offer.
+
 Three behaviours of the Mac shape how zDesk resizes:
 
 - **A display change stops the Mac's media stream.** The Mac restarts nothing until
@@ -703,8 +729,9 @@ Three behaviours of the Mac shape how zDesk resizes:
 - **The Mac reads nothing while it writes an update.** It holds the connection's
   lock while it compresses and sends a rectangle. A client that drains a
   multi-megabyte repaint slowly therefore leaves its own messages unread until the
-  repaint is through. A debug-build gateway saw 20–30 s stalls; a release build
-  sees changes answered in about 2.5 s. Updates the Mac pushes unasked hold the
+  repaint is through. zDesk lists the media stream first from its opening
+  `SetEncodings`, as Apple's viewer does, so the Mac suppresses image repaints
+  before media negotiation starts. Updates the Mac pushes unasked hold the
   same lock (see [Other messages](#other-messages)).
 
 ## Input
@@ -1511,8 +1538,11 @@ plays nothing to one, which was confirmed on a physical Mac.
 **Ports first.** The Mac sends message 1 and the answer from separate paths, so
 an offer sent before message 1 can be answered before it, and the Mac names its
 ports once for the `SetEncodings` and once per display change, never again for an
-offer made in its place. zDesk therefore offers as Apple's viewer does: once
-for each message 1, and only once its display has settled.
+offer made in its place. zDesk therefore offers once for each message 1, as
+Apple's viewer does. Apple's viewer offers as soon as message 1 arrives, for
+the screen configuration it already holds. zDesk also waits until the current
+display's layout is known and no display change or earlier offer is
+outstanding.
 
 **One offer at a time.** A second `0x1c` sent while the first one's capture was
 still starting left the capture failed (`didStart: 0 error: 32000`). When the
@@ -2035,15 +2065,21 @@ link to a physical Mac has not been observed.
 The Mac keeps answering `FramebufferUpdateRequest`s with RFB pixels for the region
 asked for, and pushes them unrequested inside the armed `AutoFrameBufferUpdate`
 region.
-From the `SetEncodings` that names the media stream on, zDesk polls and arms
-one pixel (below).
+From its opening `SetEncodings`, zDesk names the media stream first and polls
+and arms one pixel (below).
 That still brings every cursor shape and layout: 11 cursor shapes in 20 s of
 moving over a TextEdit window, with 123 bytes of zlib. A login once pushed a whole
 screen unasked, which is stepped over like every rectangle of such a session.
 
-Once the first layout has arrived, a `SetEncodings` lists the media stream
-first and is held for the rest of the session, as Apple's viewer lists it for
-the whole of a High Performance session. The Mac's
+The first `SetEncodings` lists the media stream first and is held for the whole
+session, as Apple's viewer lists it. Apple's viewer sends that same list again
+after every answer, and the Mac sends the layout again for each; zDesk does too,
+with no offer out. Like Apple's viewer, zDesk sends no `SetPixelFormat` before
+the first layout, and then one at every layout, at depth 32, ahead of its
+`AutoFrameBufferUpdate`. The Mac forces an update of the whole screen for each,
+which it serves with no pixels to a viewer preferring the media stream; zDesk
+holds it while a display change is out, and the answering layout sends it. The
+Mac's
 preferred codec is the first it knows in the list, and its framebuffer sender
 sends no pixels to a viewer whose preferred codec is the media stream: cursor
 shapes, layouts and message 1 still come. That keeps the Mac's two framing
@@ -2076,10 +2112,10 @@ Every display change stops both legs, so the sound drops out with the picture
 until the new stream starts. The Mac then re-sends message 1 on its own,
 with no stream behind it. The offer it allows starts a new stream on the same
 ports, under a new SSRC, with an IDR at the new size. zDesk offers once message
-1 has come and the display has settled. The resize's cover comes down when the
-display settles, and `screenUnavailable` holds the page at "Screen not
-available", with no input sent to the Mac, until that IDR is on its way to
-the browser. Any rectangle the Mac sends meanwhile is stepped over.
+1 and the answering display layout have come, with no extra quiet interval.
+The resize's cover comes down at that layout, and `screenUnavailable` holds
+the page at "Screen not available", with input held back, until that IDR is
+on its way to the browser. Any rectangle the Mac sends meanwhile is stepped over.
 
 ### A login or logout at the Mac
 

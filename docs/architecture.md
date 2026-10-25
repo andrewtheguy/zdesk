@@ -3002,23 +3002,25 @@ source reaches the ceiling's refusal. An RDP session with `egfx = false` has no
 ceiling: its tiles are coded here at any size, it opens at the size it keeps,
 whole, and its configured `size` may be any the host opens, up to 8192 a side.
 
-High Performance paces what the window asks for. A second
+High Performance serializes what the window asks for. A second
 `SetDisplayConfiguration` overlapping the first, or a region of the old size
-served just after a change shrinks the display, crashes the Mac's agent. So a viewport or density report
-waits for a second of quiet, and the newest size is the one that goes. Only one
-change is out at a time, with no timeout short of 30 seconds. It is sent at the
+served just after a change shrinks the display, crashes the Mac's agent. The page
+debounces window changes for 250 ms; the gateway adds no delay to a viewport
+report, retaining only the newest size while a change is outstanding. A density
+report, which the page sends at once, waits 400 ms for the viewport report the
+same window move brings, so the move makes one change.
+Only one change is out at a time, with no timeout short of 30 seconds. It is sent at the
 end of an update, just after the automatic-update region is re-armed to one pixel,
 and pixel polling holds to that pixel until the answering layout. A layout that
 changes nothing, such as the Mac's repeat of its opening one, is not an answer.
-From the first report until the
-answering layout has held still for half a second, the gateway sends `resizing`
+From the first report until the answering layout, the gateway sends `resizing`
 with `active: true`, and the page covers the desktop with a dimmed, blurred
-"Resizing…" as Apple's client does, instead of showing each intermediate mode. A
+"Resizing…". A layout adds no quiet interval before the next media offer. A
 session opens covered. The display it connects to is the Mac's own, then its
 canonical virtual display arrives, and once its media stream is up the
 session-ready configuration applies the window's size. While the cover is up the page sends the Mac no input, releasing what was held; the menu stays reachable, and a
 browser that reattaches mid-resize is told again. No other engine sends
-`resizing`. Once the display has settled, a session with a media stream says
+`resizing`. Once the display's layout has arrived, a session with a media stream says
 "Screen not available" in its place until the stream's first picture of the new
 display (`screenUnavailable`), and holds input back the same way. The measurements are in
 [Resizing a High Performance display](apple-vnc-889.md#resizing-a-high-performance-display-as-measured).

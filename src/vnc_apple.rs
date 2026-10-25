@@ -132,17 +132,16 @@ pub fn raised_to_minimum(points: (u16, u16)) -> (u16, u16) {
 /// preferred codec, which is the first of zlib, ZRLE and Apple's own codecs listed.
 /// Measured on macOS 26.6 and read from the daemon — see
 /// docs/apple-vnc-889.md, "Which encodings make the Mac report its displays". ZRLE is
-/// therefore the one codec this list names, and not zlib: its per-tile runs and
-/// palettes take the redundancy out before deflate sees the bytes. It is High
-/// Performance's opening list; a Standard session opens with its quality's codec
-/// ahead of ZRLE instead ([`ADAPTIVE_ENCODINGS`], [`FULL_ENCODINGS`]).
+/// therefore the one codec this base list names, and not zlib: its per-tile runs
+/// and palettes take redundancy out before deflate sees the bytes. Standard
+/// puts its quality's codec ahead of ZRLE ([`ADAPTIVE_ENCODINGS`], [`FULL_ENCODINGS`]);
+/// High Performance puts its media stream first from the opening list.
 ///
 /// Every entry is decoded or deliberately stepped over, which is a requirement and
 /// not a courtesy: a server takes the list as a promise and will send what it finds
 /// here. Apple's own framebuffer codecs, and zlib, are listed only by a Standard
-/// session, whose page decodes them ([`encodings`]). Media-stream encoding 1010 is
-/// absent from the opening list: High Performance puts it first in a second
-/// `SetEncodings` once the display it offers the stream for exists
+/// session, whose page decodes them ([`encodings`]). High Performance advertises
+/// media-stream encoding 1010 ahead of this list from the start
 /// ([`crate::vnc_apple_media::encodings_preferring_media_stream`]).
 pub const ENCODINGS: &[i32] = &[
     ENCODING_RAW,
@@ -213,8 +212,8 @@ pub const FULL_ENCODINGS: &[i32] = &[
 
 /// What an Apple session asks the Mac for: on Standard, the list that brings the
 /// Mac's picture in `quality`, Adaptive's tiles to pass or Full's zlib to inflate
-/// here, and [`ENCODINGS`] to open High Performance, whose rectangles are stepped
-/// over.
+/// here, and the base [`ENCODINGS`] for High Performance to prepend its media
+/// stream to. Its image rectangles are stepped over.
 pub fn encodings(quality: Option<StandardQuality>) -> &'static [i32] {
     match quality {
         None => ENCODINGS,
