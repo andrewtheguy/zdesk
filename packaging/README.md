@@ -143,9 +143,10 @@ the `.pkg`, `share\zdesk` under the `.msi`'s install directory, and
 `/opt/zdesk/versions/<version>/share/zdesk` in the
 container image. No package owns or makes that directory: the operator does. A
 container can be given it from outside the image, as the private image
-`ghcr.io/andrewtheguy/hevc-wasm-archives` that hevc-wasm's `publish-image.sh`
-pushes under hevc-wasm's version, holding that archive and every one before it,
-mounted on that directory as an image volume. The gateway
+`ghcr.io/andrewtheguy/hevc-wasm-archives` that the Kubernetes deployment
+(andrewkubernetes' `publish_hevc_wasm_image.sh`) builds from hevc-wasm's
+releases and pushes under hevc-wasm's version, holding that archive and every
+one before it, mounted on that directory as an image volume. The gateway
 decodes none of the Mac's streams: its HEVC and its H.264 are passed, and its
 AAC-ELD sound too, so no artifact needs FFmpeg.
 Do not restore
