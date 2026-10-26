@@ -175,12 +175,13 @@ tab does the same and adds Alt+Tab and the Super key.
 
 ## Quick start
 
-Install the package for your platform from the
-[latest release](https://github.com/andrewtheguy/zdesk/releases/latest). On
-Debian 13 or Ubuntu 24.04 and later:
+Releases keep no backward compatibility (see the warning above), so install a
+specific version and stay on it until you choose to upgrade. Pick one from the
+[releases](https://github.com/andrewtheguy/zdesk/releases) and put its number in place of `0.0.x`.
+On Debian 13 or Ubuntu 24.04 and later:
 
 ```sh
-curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/latest/download/zdesk-linux-amd64.deb
+curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/download/v0.0.x/zdesk-linux-amd64.deb
 sudo apt install ./zdesk-linux-amd64.deb
 ```
 
@@ -242,7 +243,7 @@ docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
   -v ./zdesk_master:/run/secrets/zdesk_master:ro \
-  ghcr.io/andrewtheguy/zdesk:latest
+  ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
 
 [Installing zDesk](docs/install.md) covers every platform, upgrades and

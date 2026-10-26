@@ -90,10 +90,10 @@ hevc-wasm 是页面的软件 HEVC 解码器：网关在其安装目录的 `share
 
 ## 快速开始
 
-从[最新发布](https://github.com/andrewtheguy/zdesk/releases/latest)安装适合你平台的软件包。在 Debian 13 或 Ubuntu 24.04 及更高版本上：
+各版本之间不保证向后兼容（见上方的警告），因此请安装一个指定版本，并一直使用它，直到你决定升级。从[发布列表](https://github.com/andrewtheguy/zdesk/releases)中选一个版本，用它的版本号替换 `0.0.x`。在 Debian 13 或 Ubuntu 24.04 及更高版本上：
 
 ```sh
-curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/latest/download/zdesk-linux-amd64.deb
+curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/download/v0.0.x/zdesk-linux-amd64.deb
 sudo apt install ./zdesk-linux-amd64.deb
 ```
 
@@ -144,7 +144,7 @@ docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
   -v ./zdesk_master:/run/secrets/zdesk_master:ro \
-  ghcr.io/andrewtheguy/zdesk:latest
+  ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
 
 [安装 zDesk](docs/install.zh-CN.md) 涵盖所有平台、升级和卸载。
