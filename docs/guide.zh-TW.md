@@ -179,7 +179,7 @@ password_ref = "wayland"
 
 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md) 是本專案自己的 VNC 伺服器，針對以 wlroots 為基礎的 Wayland 桌面。這個子類型讓閘道列出 wlshare 的私有 RFB 擴充：它的 VP9 串流，原封不動地直通並隨瀏覽器連線自適應；像素密度；輸出清單；聲音；以及在勾選後啟動的工作階段中，作為桌面上 PipeWire 裝置的瀏覽器攝影機和麥克風。不設定子類型時，同一個伺服器會以任何 VNC 伺服器的方式讀取。
 
-- **畫面（Picture）。** 選擇器的 Picture 群組為 *Video, passed through*（預設）：wlshare 針對整個桌面編碼的 VP9，依瀏覽器的連線調整。或 *Tiles with motion, passed through*：靜止的部分為精確的 PNG，每個移動區域有自己的一路視訊串流，使用主機硬體編碼器或 libx264 編碼的 H.264，停下後再精確地重送。圖塊適用於頻寬充裕的連線：wlshare 花在圖塊上的時間只是 VP9 的一小部分，最終畫面是精確的，代價是數倍的位元組數，大面積移動時達每秒數十 Mbit。其移動區域依 `video_quality` 編碼，`render_adaptive` 對它們沒有作用。
+- **畫面（Picture）。** 選擇器的 Picture 群組為 *Video, passed through*（預設）：wlshare 針對整個桌面編碼的 VP9，依瀏覽器的連線調整。或 *Tiles with motion, passed through*：靜止的部分為精確的 PNG，每個移動區域有自己的一路視訊串流，使用主機硬體編碼器或 libx264 編碼的 H.264，停下後再精確地重送。圖塊適用於頻寬充裕的連線：wlshare 花在圖塊上的時間只是 VP9 的一小部分，最終畫面是精確的，代價是數倍的位元組數，大面積移動時達每秒數十 Mbit。`render_adaptive` 開啟時（預設），圖塊與 VP9 一樣依連線調整：移動區域的品質從 `video_quality` 逐步調降，連線跟不上時靜止部分先以有損 WebP 傳送，連線有餘裕後再精確地重送，因此在頻寬並非一直充裕的連線上也能省下時間；關閉時，移動區域固定依 `video_quality` 編碼，每個靜止部分都是精確的。
 
 - **Beta：** 剛好有兩個輸出（顯示器或無頭輸出）的桌面會列出 *All Displays* 並從它開始：第一個留在此處，第二個在同一個瀏覽器的新分頁中開啟 `/display/2`，有自己的指標和鍵盤，與有兩個虛擬顯示器的 `rdp` 目標一樣。`virtual_displays = 2` 要求 wlshare 提供兩個，就像要求 Windows 主機或 Mac 那樣：在 sway 上，wlshare 會讓合成器建立第二個無頭輸出，以兩個啟動的工作階段在要求一個（預設）時維持一個；在其他合成器上，輸出就是合成器既有的那些。
 

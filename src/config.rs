@@ -332,8 +332,8 @@ pub enum Passthrough {
     /// page to decode and sent exact again once it stops. Offered by a `wlshare`
     /// target beside its VP9, and chosen at the picker: wlshare's picture for a link
     /// with room to spare, a fraction of the VP9's encoder time and a picture that
-    /// ends exact, for several times the bytes. Its regions are held at the dial,
-    /// with no walk.
+    /// ends exact, for several times the bytes. Its regions follow wlshare's walk
+    /// as the VP9 does, or are held at the dial where `render_adaptive` is off.
     WlshareTilesMotion,
 }
 
@@ -1104,8 +1104,8 @@ impl TargetConfig {
     }
 
     /// wlshare's adaptive walk, resolved: on unless the operator turned it off, and
-    /// off wherever the picture is not wlshare's. A session started with wlshare's
-    /// tiles has no walk whatever this says ([`Self::render_plan`]).
+    /// off wherever the picture is not wlshare's. It walks wlshare's VP9 and its
+    /// tiles with motion alike ([`Self::render_plan`]).
     pub fn render_adaptive(&self) -> bool {
         self.wlshare() && self.render_adaptive.unwrap_or(true)
     }
@@ -4813,8 +4813,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// wlshare's tiles are chosen at the picker, against its VP9: a session started
     /// with them asks wlshare for its tiles, their regions at 4:2:0 whatever the
-    /// browser takes and held at the quality, with no walk whatever the key says,
-    /// their codec H.264; one that names its VP9, or nothing, is sent
+    /// browser takes and walked as the key says, their codec H.264; one that names its VP9, or nothing, is sent
     /// the VP9.
     #[cfg(feature = "wlshare")]
     #[test]
