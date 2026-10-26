@@ -2797,6 +2797,9 @@ async fn rfb38_preface(
     beside: bool,
 ) -> anyhow::Result<Connected> {
     uplink.send(&set_pixel_format()).await?;
+    // Read here for wlshare's answer to its protocol version.
+    #[cfg(feature = "wlshare")]
+    let mut downlink = downlink;
     #[cfg(feature = "wlshare")]
     let passthrough = if config.wlshare() {
         let encodings = if beside {
@@ -2807,6 +2810,7 @@ async fn rfb38_preface(
         };
         let lists = Listing::new(encodings, plan);
         uplink.send(&set_encodings(lists.listed((server.width, server.height)))).await?;
+        read_wlshare_version(&mut downlink).await?;
         Some(Arc::new(lists))
     } else {
         uplink.send(&set_encodings(&rfb38_encoding_list())).await?;
@@ -2984,6 +2988,9 @@ fn wlshare_encoding_list(audio: Option<bool>, camera: bool, microphone: bool) ->
     // than one output to offer, and why a switch to a differently sized one
     // needs the size pseudo-encodings above.
     encodings.push(ENCODING_OUTPUTS);
+    // The protocol version all of these are in, which wlshare answers first
+    // ([`read_wlshare_version`]).
+    encodings.push(wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION));
     encodings
 }
 
@@ -2998,7 +3005,39 @@ fn wlshare_beside_encoding_list() -> Vec<i32> {
     let mut encodings = rfb38_encoding_list();
     encodings.retain(|encoding| *encoding != vnc_clipboard::ENCODING);
     encodings.push(ENCODING_DENSITY);
+    encodings.push(wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION));
     encodings
+}
+
+/// wlshare's answer to the protocol version the list carried, the first message
+/// after it: its own version, which is this gateway's or the connection is
+/// refused, naming both. Read in the handshake, so a server that sends anything
+/// else first, or nothing, is refused before the session starts: it does not
+/// speak this version of wlshare's extensions, or any — wlshare from before
+/// they were versioned, or another server, which a plain `vnc` target reads.
+/// See [`wlshare_proto::version`].
+#[cfg(feature = "wlshare")]
+async fn read_wlshare_version<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::Result<()> {
+    use wlshare_proto::{PROTOCOL_VERSION, version};
+    let mut answer = [0u8; version::ANSWER_LEN];
+    // The type first: anything but an update is no answer, and is not waited
+    // out to the answer's length.
+    reader.read_exact(&mut answer[..1]).await.context("reading wlshare's protocol version")?;
+    if answer[0] == 0 {
+        reader.read_exact(&mut answer[1..]).await.context("reading wlshare's protocol version")?;
+    }
+    let theirs = version::parse_answer(&answer).with_context(|| {
+        format!(
+            "the server is not wlshare speaking protocol {PROTOCOL_VERSION}: an older wlshare, \
+             or another VNC server, which a plain `vnc` target reads"
+        )
+    })?;
+    anyhow::ensure!(
+        theirs == PROTOCOL_VERSION,
+        "this wlshare speaks protocol {theirs}, and this gateway {PROTOCOL_VERSION}: \
+         upgrade whichever of the two is older"
+    );
+    Ok(())
 }
 
 /// The RFB 003.889 tail, in either of Apple's modes: the cleartext prelude, the
@@ -8797,7 +8836,7 @@ mod tests {
         #[cfg(feature = "wlshare")]
         {
             let mut wlshare = generic;
-            wlshare.extend([ENCODING_DENSITY, ENCODING_OUTPUTS]);
+            wlshare.extend([ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION)]);
             assert_eq!(wlshare_encoding_list(None, false, false), wlshare);
         }
 
@@ -8810,12 +8849,21 @@ mod tests {
         // same. The pseudo-encodings are excluded because a server never sends
         // one as a rectangle at all — the clipboard's arrives as a
         // ServerCutText, the density report and the output list as their own
-        // messages, and the audio announcement is an empty rectangle with no
-        // pixels behind it.
+        // messages, and the audio announcement and the version's answer are
+        // empty rectangles with no pixels behind them, the second read in the
+        // handshake.
         #[cfg(feature = "wlshare")]
         let (listed, requests) = (
             wlshare_encoding_list(Some(false), true, true),
-            vec![ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::ENCODING_CAMERA, wlshare_proto::ENCODING_MICROPHONE, wlshare_proto::ENCODING_AUDIO, wlshare_proto::ENCODING_AUDIO_OPUS],
+            vec![
+                ENCODING_DENSITY,
+                ENCODING_OUTPUTS,
+                wlshare_proto::ENCODING_CAMERA,
+                wlshare_proto::ENCODING_MICROPHONE,
+                wlshare_proto::ENCODING_AUDIO,
+                wlshare_proto::ENCODING_AUDIO_OPUS,
+                wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION),
+            ],
         );
         #[cfg(not(feature = "wlshare"))]
         let (listed, requests) = (rfb38_encoding_list(), Vec::new());
@@ -9191,19 +9239,26 @@ mod tests {
         assert_eq!(&msg[20..24], &[0, 0, 0, 1]); // flags echoed
     }
 
-    /// The two wlshare requests, checked byte by byte against
-    /// wlshare's docs/architecture.md rather than through
-    /// the encoder's own eyes. Both are asked of a `wlshare` target, after
-    /// every encoding that decides pixels, and of no Mac (see
+    /// The two wlshare requests and the protocol version they are in, last,
+    /// checked byte by byte against wlshare's docs/architecture.md rather than
+    /// through the encoder's own eyes. All three are asked of a `wlshare`
+    /// target, after every encoding that decides pixels, and of no Mac (see
     /// `a_mac_is_asked_for_its_layout_and_zrle_and_no_generic_extension`).
     #[cfg(feature = "wlshare")]
     #[test]
     fn the_wlshare_extensions_are_asked_of_a_wlshare_target() {
         assert_eq!(ENCODING_DENSITY, i32::from_be_bytes(*b"WLSH"));
         assert_eq!(ENCODING_OUTPUTS, i32::from_be_bytes(*b"WLSO"));
+        assert_eq!(WLSHARE_REQUESTS[2], i32::from_be_bytes([b'W', b'L', b'V', wlshare_proto::PROTOCOL_VERSION]));
         let wlshare = wlshare_encoding_list(None, false, false);
-        assert_eq!(&wlshare[wlshare.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
+        assert_eq!(&wlshare[wlshare.len() - 3..], &WLSHARE_REQUESTS);
     }
+
+    /// What a `wlshare` target's list ends with: the density and outputs
+    /// requests, and the protocol version.
+    #[cfg(feature = "wlshare")]
+    const WLSHARE_REQUESTS: [i32; 3] =
+        [ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION)];
 
     /// A plain target lists nothing of wlshare's, so a wlshare server reached as
     /// one is read as any VNC server is: no stream of its own, no density, no
@@ -9809,8 +9864,8 @@ mod tests {
             assert_eq!(asked.contains(&wlshare_proto::ENCODING_AUDIO_OPUS), !lossless, "FLAC is a list without Opus");
             assert!(!asked.contains(&-259), "QEMU's raw samples are not taken");
             assert_eq!(
-                &asked[asked.len() - 2..],
-                &[ENCODING_DENSITY, ENCODING_OUTPUTS],
+                &asked[asked.len() - 3..],
+                &WLSHARE_REQUESTS,
                 "the wlshare requests stay last, so audio never weighs on encoding preference"
             );
         }
@@ -9823,25 +9878,26 @@ mod tests {
 
     /// The camera extension is asked of a wlshare target exactly where the target
     /// carries a camera, and — like every wlshare request — without weighing on
-    /// encoding preference: the density and outputs requests stay last.
+    /// encoding preference: the density and outputs requests and the protocol
+    /// version stay last.
     #[cfg(feature = "wlshare")]
     #[test]
     fn the_camera_extension_is_asked_only_where_a_camera_is_carried() {
         let asked = wlshare_encoding_list(Some(false), true, false);
         assert!(asked.contains(&wlshare_proto::ENCODING_CAMERA));
-        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
+        assert_eq!(&asked[asked.len() - 3..], &WLSHARE_REQUESTS);
         assert!(!wlshare_encoding_list(Some(false), false, false).contains(&wlshare_proto::ENCODING_CAMERA));
     }
 
     /// The microphone extension on the same terms: asked of a wlshare target exactly
     /// where the target carries a microphone, and never ahead of the density and
-    /// outputs requests.
+    /// outputs requests and the protocol version.
     #[cfg(feature = "wlshare")]
     #[test]
     fn the_microphone_extension_is_asked_only_where_a_microphone_is_carried() {
         let asked = wlshare_encoding_list(Some(false), true, true);
         assert!(asked.contains(&wlshare_proto::ENCODING_MICROPHONE));
-        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
+        assert_eq!(&asked[asked.len() - 3..], &WLSHARE_REQUESTS);
         assert!(!wlshare_encoding_list(Some(false), true, false).contains(&wlshare_proto::ENCODING_MICROPHONE));
     }
 

@@ -468,6 +468,12 @@ under `password_ref` and omit `username`: RSA-AES then sends the password alone.
 wlshare does not offer classic VNC authentication, so `vnc_password_ref` does
 not apply to it.
 
+The gateway and wlshare must speak the same version of wlshare's protocol;
+`wlshare --version` names the one a wlshare speaks. A session against a
+wlshare of another version fails at connect, naming both, and is fixed by
+upgrading whichever of the two is older. A wlshare release that changes
+nothing of the protocol keeps its version.
+
 See [density](wlshare-density.md), [outputs](wlshare-outputs.md),
 [audio](wlshare-audio.md), [camera](wlshare-camera.md) and
 [microphone](wlshare-microphone.md).

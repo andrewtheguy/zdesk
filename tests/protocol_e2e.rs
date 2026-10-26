@@ -58,6 +58,12 @@ async fn spawn_fake_vnc() -> u16 {
 
 /// As [`spawn_fake_vnc`], with a desktop of `w`×`h`.
 async fn spawn_fake_vnc_sized(w: u16, h: u16) -> u16 {
+    spawn_fake_vnc_answering((w, h), Answer::Version(WLSHARE_VERSION)).await
+}
+
+/// As [`spawn_fake_vnc`], with a desktop of `size`, answering wlshare's
+/// protocol version with `answer`.
+async fn spawn_fake_vnc_answering(size: (u16, u16), answer: Answer) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -65,11 +71,28 @@ async fn spawn_fake_vnc_sized(w: u16, h: u16) -> u16 {
         while let Ok((stream, _)) = listener.accept().await {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = serve_fake_vnc(stream, (w, h), None, tx).await;
+                let _ = serve_fake_vnc(stream, size, None, answer, tx).await;
             });
         }
     });
     port
+}
+
+/// The protocol version this gateway lists to a `wlshare` target, and which the
+/// fake answers it with unless told otherwise.
+#[cfg(feature = "wlshare")]
+const WLSHARE_VERSION: u8 = wlshare_proto::PROTOCOL_VERSION;
+#[cfg(not(feature = "wlshare"))]
+const WLSHARE_VERSION: u8 = 0;
+
+/// What the fake answers a list that carries wlshare's protocol version with,
+/// the first time: as wlshare does, first and unasked; or as a wlshare from
+/// before the versions did, with its density report.
+#[derive(Clone, Copy)]
+#[cfg_attr(not(feature = "wlshare"), expect(dead_code, reason = "a plain gateway lists no version"))]
+enum Answer {
+    Version(u8),
+    Unversioned,
 }
 
 /// As [`spawn_fake_vnc`], but the server announces `cut_text` as its clipboard
@@ -92,17 +115,19 @@ async fn spawn_fake_vnc_with_clipboard(
         while let Ok((stream, _)) = listener.accept().await {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = serve_fake_vnc(stream, (FAKE_DESKTOP, FAKE_DESKTOP), cut_text, tx).await;
+                let _ = serve_fake_vnc(stream, (FAKE_DESKTOP, FAKE_DESKTOP), cut_text, Answer::Version(WLSHARE_VERSION), tx).await;
             });
         }
     });
     (port, rx)
 }
 
+#[cfg_attr(not(feature = "wlshare"), expect(unused_variables, reason = "a plain gateway lists no version"))]
 async fn serve_fake_vnc(
     mut stream: TcpStream,
     (w, h): (u16, u16),
     cut_text: Option<&'static [u8]>,
+    answer: Answer,
     received_cut_text: mpsc::UnboundedSender<Vec<u8>>,
 ) -> std::io::Result<()> {
     // Version + security (None) + ClientInit/ServerInit.
@@ -121,6 +146,8 @@ async fn serve_fake_vnc(
     server_init.extend_from_slice(b"fake");
     stream.write_all(&server_init).await?;
 
+    #[cfg(feature = "wlshare")]
+    let mut answered = false;
     loop {
         let mut msg_type = [0u8; 1];
         stream.read_exact(&mut msg_type).await?;
@@ -136,6 +163,17 @@ async fn serve_fake_vnc(
                 let count = u16::from_be_bytes([head[1], head[2]]);
                 let mut encodings = vec![0u8; usize::from(count) * 4];
                 stream.read_exact(&mut encodings).await?;
+                #[cfg(feature = "wlshare")]
+                {
+                    let encodings: Vec<i32> = encodings.as_chunks::<4>().0.iter().map(|&c| i32::from_be_bytes(c)).collect();
+                    if !answered && wlshare_proto::version::listed(&encodings).is_ok_and(|v| v.is_some()) {
+                        answered = true;
+                        match answer {
+                            Answer::Version(version) => stream.write_all(&wlshare_proto::version::answer(version)).await?,
+                            Answer::Unversioned => stream.write_all(&wlshare_proto::density::output_scale(w, h, 1.0)).await?,
+                        }
+                    }
+                }
             }
             // FramebufferUpdateRequest
             3 => {
@@ -1880,6 +1918,48 @@ async fn an_oversize_wlshare_desktop_holds_the_session_without_a_picture() {
     expect_resize(&mut ws, w, h).await;
     assert_eq!(expect_control(&mut ws, "oversize").await["cause"], "size");
     expect_no_picture(&mut ws).await;
+}
+
+/// A `wlshare` target whose server answers another protocol version is refused,
+/// naming both, before the session starts.
+#[cfg(feature = "wlshare")]
+#[tokio::test]
+async fn a_wlshare_of_another_protocol_version_is_refused() {
+    let theirs = WLSHARE_VERSION + 1;
+    let vnc_port = spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Version(theirs)).await;
+    let addr = spawn_app(TargetConfig {
+        subtype: Some(zdesk::config::Subtype::Wlshare),
+        ..target(Protocol::Vnc, vnc_port)
+    })
+    .await;
+    let cookie = common::login(addr).await;
+    let token = common::claim_session(addr, &cookie).await;
+    let mut ws = connect_ws(addr, &token, &cookie).await;
+    common::connect_target(&mut ws, "test-target").await;
+    let error = expect_error(&mut ws).await;
+    assert!(
+        error.contains(&format!("speaks protocol {theirs}, and this gateway {WLSHARE_VERSION}")),
+        "unexpected error: {error}"
+    );
+}
+
+/// And one that answers with something else first, as a wlshare from before the
+/// versions did, is refused as no wlshare of this version.
+#[cfg(feature = "wlshare")]
+#[tokio::test]
+async fn an_unversioned_wlshare_is_refused() {
+    let vnc_port = spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Unversioned).await;
+    let addr = spawn_app(TargetConfig {
+        subtype: Some(zdesk::config::Subtype::Wlshare),
+        ..target(Protocol::Vnc, vnc_port)
+    })
+    .await;
+    let cookie = common::login(addr).await;
+    let token = common::claim_session(addr, &cookie).await;
+    let mut ws = connect_ws(addr, &token, &cookie).await;
+    common::connect_target(&mut ws, "test-target").await;
+    let error = expect_error(&mut ws).await;
+    assert!(error.contains(&format!("not wlshare speaking protocol {WLSHARE_VERSION}")), "unexpected error: {error}");
 }
 
 /// Read for half a second, failing on a binary frame of the desktop, an `error` or

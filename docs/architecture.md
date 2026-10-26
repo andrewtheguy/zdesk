@@ -523,6 +523,18 @@ here at 1x on the output it opened with, which is the fallback wlshare keeps for
 ordinary VNC clients. Do not list a wlshare extension on a plain target, or
 detect wlshare on one.
 
+Every list a `wlshare` target sends, on either of its connections, carries
+wlshare's protocol version, `WLV` and `wlshare_proto::PROTOCOL_VERSION`, the
+one version all of the extensions are in. wlshare answers the first with its
+own, before anything else, and the handshake reads that answer
+(`read_wlshare_version`): a server whose version is another is refused naming
+both, and one that sends anything else first, an older wlshare or another
+server, is refused as no wlshare of this version. The two must match exactly,
+since neither end keeps an older layout. That version is also what
+`wlshare-proto` is pinned at, its `proto-v<N>` tag, so a wlshare release that
+leaves the extensions alone is no reason to move the pin; one that changes
+them is a new version and a new tag.
+
 A `wlshare` target lists one of wlshare's two pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
 (`Passthrough::WlshareVp9`, `Passthrough::WlshareTilesMotion`), and passes its
@@ -3771,8 +3783,8 @@ binary that exposes any embedded CLI surface.
 
 wlshare is the other default feature, `wlshare`: the `subtype = "wlshare"`
 target and everything it lists, its private extensions' bytes coming from
-`wlshare-proto`, the crate the daemon builds them with, pinned by wlshare's
-release tag. A build without it links nothing of wlshare's and refuses a
+`wlshare-proto`, the crate the daemon builds them with, pinned by its
+protocol version's `proto-v<N>` tag. A build without it links nothing of wlshare's and refuses a
 `wlshare` target at startup; a plain `vnc` target still reads a wlshare
 server through the RFB baseline.
 
