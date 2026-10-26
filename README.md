@@ -40,14 +40,11 @@ side.
 
 ## Demo
 
-Watch the demos on the [zDesk site](https://zdesk.dev/demo):
+A Mac's Screen Sharing in a Chrome tab on Windows:
 
-- [Windows -> Mac with one remote virtual display](https://zdesk.dev/demo#windows-to-mac-one-display)
-- [Windows -> Mac with two remote virtual displays](https://zdesk.dev/demo#windows-to-mac-two-displays): shown in separate browser tabs, with a window dragged across displays right between the two tabs.
-- [iOS -> Windows](https://zdesk.dev/demo#ios-to-windows): Safari on iOS connected to Windows' own Remote Desktop, scrolling horizontally with a two-finger swipe left or right.
-- [iOS -> Mac](https://zdesk.dev/demo#ios-to-mac): Safari on iOS connected to a Mac's High Performance Screen Sharing, scrolling horizontally, with the network throughput meter shown.
-- [Mac -> Windows at Retina/HiDPI density with audio](https://zdesk.dev/demo#mac-to-windows): Windows' own Remote Desktop shown at the Mac's Retina/HiDPI density, with the remote's sound playing in the browser.
-- [Mac -> Linux (wlshare on Sway) at Retina/HiDPI density with audio](https://zdesk.dev/demo#mac-to-linux): wlshare on Sway shown at the Mac's Retina/HiDPI density, with the remote's sound, and the remote desktop resizing to follow the browser into and out of immersive full screen.
+https://github.com/user-attachments/assets/fd0610bb-444a-4222-aa1d-76a39d09b3f0
+
+Watch more demos on the [zDesk site](https://zdesk.dev/demo).
 
 ## Features
 
