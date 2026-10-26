@@ -237,7 +237,8 @@ export type ControlMsg =
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
       // "apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9" or
-      // "wlshare-tiles-motion" — or null for a desktop the gateway encodes.
+      // "wlshare-tiles-motion", "wlshare-tiles-adaptive" — or null for a desktop
+      // the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
       // started with at the picker (experimental). The offer alone — enabling is
