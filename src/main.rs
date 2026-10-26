@@ -3,7 +3,7 @@ use clap::Parser;
 use log::info;
 #[cfg(unix)]
 use log::warn;
-use zdesk::cli::{Cli, Commands, PasswordAction};
+use zdesk::cli::{Cli, Commands, MasterAction, PasswordAction};
 use zdesk::config::{AppConfig, ListenAddr};
 use zdesk::server;
 
@@ -132,26 +132,61 @@ fn read_secret(label: &str, confirm: bool) -> anyhow::Result<String> {
 /// `zdesk password`: print a config's `[master]` block or one of its `[passwords]`
 /// values, for whoever deploys the config to paste. Nothing is written to a file.
 fn password(action: PasswordAction) -> anyhow::Result<()> {
+    use std::io::IsTerminal as _;
+
     match action {
-        PasswordAction::Master { config } => {
+        PasswordAction::Master {
+            action: MasterAction::Show { config },
+        } => {
+            let path = zdesk::config::config_path(config.as_deref())?;
+            let file = existing_master_file(&path)?;
+            print_master_block(&zdesk::vault::MasterPassword::read_file(&file)?)?;
+        }
+        PasswordAction::Master {
+            action: MasterAction::Create { config, force },
+        } => {
             // The installed config when there is one, as `encrypt` takes, so both
-            // read the master password the gateway will; a first config can come later.
+            // use the master password the gateway will; a first config can come later.
             let path = config.or_else(|| zdesk::config::installed_config_path().filter(|path| path.exists()));
-            let (master, from_file) = command_master(path.as_deref(), true)?;
-            let (section, _) = zdesk::vault::Key::create(&master)?;
-            println!("[master]\nsalt = \"{}\"\ncheck = \"{}\"", section.salt, section.check);
-            if !from_file {
-                eprintln!(
-                    "the master password is not kept anywhere: give it to a served gateway \
-                     in a file named by [server].master_password_file"
+            let file = path.as_deref().map(zdesk::vault::master_file_of).transpose()?.flatten();
+            if let Some(file) = &file {
+                anyhow::ensure!(
+                    force || !master_file_exists(file)?,
+                    "the master password file {} already exists: `zdesk password master show` \
+                     prints a [master] block under it, and --force replaces it, after which \
+                     every value encrypted under the one it holds stops opening",
+                    file.display()
                 );
             }
+            // Asked twice: a new [master] block has nothing to check a typing mistake by.
+            let master = zdesk::vault::MasterPassword::new(read_secret("New master password", true)?)?;
+            match &file {
+                Some(file) => {
+                    master.write_file(file, force)?;
+                    eprintln!("wrote the master password to {}", file.display());
+                }
+                None => eprintln!(
+                    "the master password is not kept anywhere: give it to a served gateway \
+                     in a file named by [server].master_password_file"
+                ),
+            }
+            print_master_block(&master)?;
         }
         PasswordAction::Encrypt { config } => {
             let path = zdesk::config::config_path(config.as_deref())?;
             let section = zdesk::vault::master_of(&path)?;
-            // Asked once: a mistyped master is told as one by the block's check.
-            let (master, _) = command_master(Some(&path), false)?;
+            let master = match zdesk::vault::master_file_of(&path)? {
+                Some(_) => zdesk::vault::MasterPassword::read_file(&existing_master_file(&path)?)?,
+                None => {
+                    anyhow::ensure!(
+                        std::io::stdin().is_terminal(),
+                        "no master password: the config names no [server].master_password_file \
+                         and stdin is not a terminal to ask at"
+                    );
+                    // Asked once: a mistyped master is told as one by the block's check.
+                    zdesk::vault::MasterPassword::new(read_secret("Master password", false)?)?
+                }
+            };
             let key = zdesk::vault::Key::derive(&master, &section)
                 .with_context(|| format!("in {}", path.display()))?;
             let password = read_secret("Password", true)?;
@@ -162,26 +197,30 @@ fn password(action: PasswordAction) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The master password for a `zdesk password` run, and whether it came from a
-/// file: the `[server].master_password_file` of the config at `path`, else the
-/// terminal, asked twice there when `confirm` (a new `[master]` block has nothing
-/// to check it by). Never the keychain, which is the TUI's.
-fn command_master(
-    path: Option<&std::path::Path>,
-    confirm: bool,
-) -> anyhow::Result<(zdesk::vault::MasterPassword, bool)> {
-    use std::io::IsTerminal as _;
+/// Print a new `[master]` block under `master`, with a salt of its own.
+fn print_master_block(master: &zdesk::vault::MasterPassword) -> anyhow::Result<()> {
+    let (section, _) = zdesk::vault::Key::create(master)?;
+    println!("[master]\nsalt = \"{}\"\ncheck = \"{}\"", section.salt, section.check);
+    Ok(())
+}
 
-    if let Some(file) = path.map(zdesk::vault::master_file_of).transpose()?.flatten() {
-        return Ok((zdesk::vault::MasterPassword::read_file(&file)?, true));
-    }
+/// The `[server].master_password_file` of the config at `path`, which must name
+/// one and find it there. Never the keychain, which is the TUI's.
+fn existing_master_file(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    let file = zdesk::vault::master_file_of(path)?
+        .with_context(|| format!("{} names no [server].master_password_file", path.display()))?;
     anyhow::ensure!(
-        std::io::stdin().is_terminal(),
-        "no master password: the config names no [server].master_password_file and stdin \
-         is not a terminal to ask at"
+        master_file_exists(&file)?,
+        "the master password file {} does not exist: `zdesk password master create` asks \
+         for one and writes it there",
+        file.display()
     );
-    let master = read_secret("Master password", confirm)?;
-    Ok((zdesk::vault::MasterPassword::new(master)?, false))
+    Ok(file)
+}
+
+fn master_file_exists(file: &std::path::Path) -> anyhow::Result<bool> {
+    file.try_exists()
+        .with_context(|| format!("cannot look for the master password file {}", file.display()))
 }
 
 /// Run a managed embedded gateway, and stop when its parent does.

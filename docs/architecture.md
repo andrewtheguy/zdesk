@@ -3864,12 +3864,20 @@ Where the master password comes from is each audience's:
   TUI reads it; a container build, which has neither, links no credential
   store.
 
-`zdesk password master` prints a `[master]` block and `zdesk password
-encrypt` prints one value under a config's `[master]`, each taking the master
+`zdesk password master show` and `create` print a `[master]` block and
+`zdesk password encrypt` prints one value under a config's `[master]`, each taking the master
 password from the config's `[server].master_password_file`, else asking at the
-terminal, and neither touches the keychain. Neither writes a file: a served
+terminal, and neither touches the keychain. Neither writes the config: a served
 gateway's config is assembled by whoever deploys it, by hand or from Helm values, and the
-output goes wherever that is. A local instance's config belongs to the TUI,
+output goes wherever that is. The one file written is the master password's own:
+`password master create` asks for a new one twice and writes the file the config
+names, `0600` on Unix and under the directory's permissions on Windows. It
+refuses a file that exists, since some config's values may be encrypted under
+it, unless given `--force`, and then writes the new one beside it and renames it
+over, so an interrupted run leaves the old one whole. `show` only reads the file,
+printing a block under the master password already there. Writing it is
+what the shell would otherwise do with `stty -echo` and a `umask`, which a
+Windows install has no equivalent of. A local instance's config belongs to the TUI,
 whose `p` writes both tables into it through `toml_edit`, keeping its comments,
 and replaces the file by a rename.
 

@@ -207,15 +207,14 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-Then write the master password to that file and paste in the target's
-password, encrypted under it (see
-[Target passwords](docs/guide.md#target-passwords)): `password master` prints
-a `[master]` block for the config, and `password encrypt` prints the value to
-add as `workstation = "…"` under `[passwords]`.
+Then paste in the target's password, encrypted under your master password (see
+[Target passwords](docs/guide.md#target-passwords)): `password master create`
+asks for a new master password, writes it to that file, readable by you alone, and
+prints a `[master]` block for the config; `password encrypt` prints the value
+to add as `workstation = "…"` under `[passwords]`.
 
 ```sh
-(umask 077; trap 'stty echo' EXIT; trap 'exit 1' INT HUP TERM; stty -echo; printf 'Master password: '; IFS= read -r pw; echo; printf '%s' "$pw" > /etc/zdesk/master-password)
-zdesk password master
+zdesk password master create
 zdesk password encrypt
 ```
 
@@ -239,7 +238,7 @@ image:
 docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
 

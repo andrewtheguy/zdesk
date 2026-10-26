@@ -118,11 +118,10 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-然后把主密码写入该文件，再粘贴目标的密码，它用主密码加密（见 [目标密码](docs/guide.zh-CN.md#目标密码)）：`password master` 输出配置所需的 `[master]` 块，`password encrypt` 输出要以 `workstation = "…"` 的形式添加到 `[passwords]` 下的值。
+然后粘贴目标的密码，它用你的主密码加密（见 [目标密码](docs/guide.zh-CN.md#目标密码)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password encrypt` 输出要以 `workstation = "…"` 的形式添加到 `[passwords]` 下的值。
 
 ```sh
-(umask 077; trap 'stty echo' EXIT; trap 'exit 1' INT HUP TERM; stty -echo; printf 'Master password: '; IFS= read -r pw; echo; printf '%s' "$pw" > /etc/zdesk/master-password)
-zdesk password master
+zdesk password master create
 zdesk password encrypt
 ```
 
@@ -140,7 +139,7 @@ zdesk serve
 docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
 

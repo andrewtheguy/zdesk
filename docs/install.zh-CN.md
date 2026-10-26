@@ -110,10 +110,10 @@ zdesk gen-passwd admin
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-把生成的 `admin:$2b$...` 值粘贴到 `[server].site_passwd`，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。目标的密码不写在那里：目标通过 `password_ref` 引用它，配置用你的主密码将其加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。把主密码单独写入配置旁边的一个只有你的账户可以读取的文件，并在配置中指定它（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master` 输出要粘贴到配置中的 `[master]` 块，`password encrypt` 输出要以 `example = "…"` 的形式粘贴到 `[passwords]` 下的值；两者都从该文件读取主密码：
+把生成的 `admin:$2b$...` 值粘贴到 `[server].site_passwd`，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。目标的密码不写在那里：目标通过 `password_ref` 引用它，配置用你的主密码将其加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password encrypt` 从该文件读取主密码，输出要以 `example = "…"` 的形式粘贴到 `[passwords]` 下的值：
 
 ```sh
-zdesk password master
+zdesk password master create
 zdesk password encrypt
 ```
 
@@ -143,23 +143,23 @@ master_password_file = "/run/secrets/zdesk_master"
 ```
 
 ```sh
-# 不回显地询问，不进入 shell 历史，以 0600 写入
-(umask 077; trap 'stty echo' EXIT; trap 'exit 1' INT HUP TERM; stty -echo; printf 'Master password: '; IFS= read -r pw; echo; printf '%s' "$pw" > zdesk_master)
+mkdir -m 700 secrets
+# 询问新的主密码，以 0600 写入 secrets/zdesk_master
 docker run --rm -it -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
-  ghcr.io/andrewtheguy/zdesk:latest password master -c /opt/zdesk/etc/zdesk.toml
+  -v ./secrets:/run/secrets \
+  ghcr.io/andrewtheguy/zdesk:latest password master create -c /opt/zdesk/etc/zdesk.toml
 docker run --rm -it -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:latest password encrypt
 ```
 
-以只读方式挂载同一文件来启动网关：
+以只读方式挂载同一目录来启动网关：
 
 ```sh
 docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:latest
 ```
 

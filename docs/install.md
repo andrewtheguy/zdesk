@@ -139,16 +139,16 @@ Paste the generated `admin:$2b$...` value into `[server].site_passwd` and
 replace the example `[[targets]]` entry with the remote desktop to reach. Its
 password is not written there: the target names it with `password_ref`, and
 the config keeps it encrypted under your master password, which the gateway
-reads from the file `[server].master_password_file` names. Write the master
-password alone to a file beside the config, which only your account can read,
-and name it there (`master_password_file = "master-password"`; a relative path
-is taken from the config's directory). `password master` then prints the
-`[master]` block to paste into the config, and `password encrypt` the value to
-paste as `example = "…"` under `[passwords]`; both read the master password
-from that file:
+reads from the file `[server].master_password_file` names. Name a file beside
+the config for it (`master_password_file = "master-password"`; a relative path
+is taken from the config's directory). `password master create` then asks for
+a new master password, writes it to that file, which takes the directory's
+owner-only permissions, and prints the `[master]` block to paste into the
+config; `password encrypt` reads it from the file and prints the value to
+paste as `example = "…"` under `[passwords]`:
 
 ```sh
-zdesk password master
+zdesk password master create
 zdesk password encrypt
 ```
 
@@ -183,23 +183,23 @@ master_password_file = "/run/secrets/zdesk_master"
 ```
 
 ```sh
-# asked without echo, kept out of shell history, written 0600
-(umask 077; trap 'stty echo' EXIT; trap 'exit 1' INT HUP TERM; stty -echo; printf 'Master password: '; IFS= read -r pw; echo; printf '%s' "$pw" > zdesk_master)
+mkdir -m 700 secrets
+# asks for a new master password and writes it to secrets/zdesk_master, 0600
 docker run --rm -it -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
-  ghcr.io/andrewtheguy/zdesk:latest password master -c /opt/zdesk/etc/zdesk.toml
+  -v ./secrets:/run/secrets \
+  ghcr.io/andrewtheguy/zdesk:latest password master create -c /opt/zdesk/etc/zdesk.toml
 docker run --rm -it -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:latest password encrypt
 ```
 
-Start the gateway with the same file mounted read-only:
+Start the gateway with the same directory mounted read-only:
 
 ```sh
 docker run -d --name zdesk -p 52380:52380 \
   -e ZDESK_LISTEN=0.0.0.0:52380 \
   -v ./zdesk.toml:/opt/zdesk/etc/zdesk.toml:ro \
-  -v ./zdesk_master:/run/secrets/zdesk_master:ro \
+  -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:latest
 ```
 

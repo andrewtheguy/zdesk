@@ -120,12 +120,14 @@
 # encrypted with a key derived from your master password and the salt in
 # [master]. Neither table is typed: each is printed for you to paste here.
 #
-#   zdesk password master -c zdesk.toml    # prints the [master] block
-#   zdesk password encrypt -c zdesk.toml   # prints the ciphertext to paste as example = "…"
+#   zdesk password master create -c zdesk.toml  # writes the master password file, prints [master]
+#   zdesk password master show -c zdesk.toml    # prints [master] under the file already there
+#   zdesk password encrypt -c zdesk.toml        # prints the ciphertext to paste as example = "…"
 #
 # A served gateway reads the master password from the file
 # [server].master_password_file names; `password` reads it there too, or asks
-# when the config names none. The keychain is the TUI's alone.
+# when the config names none, and `password master create` writes it there.
+# The keychain is the TUI's alone.
 #
 #[master]
 #salt = "…"
