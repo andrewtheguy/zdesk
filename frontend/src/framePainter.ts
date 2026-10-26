@@ -654,7 +654,8 @@ export function createFramePainter(options: {
     if (record.kind !== "tile" || !tiles) {
       return null;
     }
-    const type = record.format === "jpeg" ? "image/jpeg" : "image/png";
+    const type = `image/${record.format}`;
+
     return createImageBitmap(
       new Blob([record.data as Uint8Array<ArrayBuffer>], { type }),
       {

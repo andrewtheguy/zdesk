@@ -450,8 +450,13 @@ server is read as any VNC server is.
   stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
   tiles are for a link with room to spare: wlshare
   spends a fraction of the VP9's time on them and the picture ends exact, for several times the
-  bytes — tens of Mbit/s while something large moves. Their regions are held at
-  `video_quality`, which `render_adaptive` does not reach.
+  bytes — tens of Mbit/s while something large moves. With `render_adaptive`
+  on, the default, they follow the link as the VP9 does, the regions' dial
+  walking down from `video_quality` and what is still going out as lossy
+  WebP while the link is behind, exact again once it has room, so the time is
+  saved on a link that is not always wide too; off, the regions are held at
+  `video_quality` and every still is exact.
+
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
   listed with *All Displays* and starts on it: the first stays here and the second opens at

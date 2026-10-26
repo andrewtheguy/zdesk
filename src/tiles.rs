@@ -76,6 +76,10 @@ pub enum Format {
     Jpeg,
     /// A PNG, the exact pixels.
     Png,
+    /// A lossy WebP, which only wlshare's tiles send ([`crate::encode::Encoder::pass_tile`]):
+    /// a still of its picture while its link is behind, owed its exact PNG by
+    /// wlshare. Nothing here codes one.
+    Webp,
 }
 
 impl Format {
@@ -84,9 +88,11 @@ impl Format {
         match self {
             Self::Jpeg => crate::protocol::batch::TILE_JPEG,
             Self::Png => crate::protocol::batch::TILE_PNG,
+            Self::Webp => crate::protocol::batch::TILE_WEBP,
         }
     }
 }
+
 
 /// What the browser is owed of one tile.
 #[derive(Debug, Clone, Copy, Default)]
@@ -469,7 +475,9 @@ fn code_run(run: &Run, exact: bool, coarse: bool, quality: u8) -> anyhow::Result
         let data = match format {
             Format::Png => png(w, h, &rgb),
             Format::Jpeg => jpeg(w, h, &rgb, quality),
+            Format::Webp => Err(anyhow::anyhow!("this gateway codes no WebP of its own tiles: WebP is wlshare's, passed through")),
         }
+
         .with_context(|| format!("coding a {w}x{h} tile as {format:?}"))?;
         coded.push(Coded {
             x: run.rect.left + left as u16,

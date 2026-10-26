@@ -515,11 +515,13 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG and as PNG, and their bytes.
+    /// Rectangles of tiles sent as JPEG, as PNG and as WebP, and their bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
+    webp: AtomicU64,
+    webp_bytes: AtomicU64,
     code_micros: AtomicU64,
     /// Wall time the order task spent waiting for rounds to be coded.
     waited_micros: AtomicU64,
@@ -535,6 +537,15 @@ struct Shared {
 }
 
 impl Shared {
+    /// The count and the bytes tallied of tiles sent in `format`.
+    fn tally(&self, format: Format) -> (&AtomicU64, &AtomicU64) {
+        match format {
+            Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
+            Format::Png => (&self.png, &self.png_bytes),
+            Format::Webp => (&self.webp, &self.webp_bytes),
+        }
+    }
+
     fn new(plan: RenderPlan, feedback: Arc<LinkFeedback>, oversize: Oversize) -> Self {
         let RenderPlan { quality, chroma, .. } = plan;
         Self {
@@ -570,6 +581,8 @@ impl Shared {
             jpeg_bytes: AtomicU64::new(0),
             png: AtomicU64::new(0),
             png_bytes: AtomicU64::new(0),
+            webp: AtomicU64::new(0),
+            webp_bytes: AtomicU64::new(0),
             code_micros: AtomicU64::new(0),
             waited_micros: AtomicU64::new(0),
             stalled_micros: AtomicU64::new(0),
@@ -911,8 +924,10 @@ impl VideoSink {
         }
     }
 
-    /// Queue a PNG of a rectangle of the desktop in wlshare's tiles as the next record,
-    /// untouched: the desktop's pixels there exactly, as wlshare coded them.
+    /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
+    /// record, untouched: a PNG of the desktop's pixels there exactly, or a lossy WebP
+    /// of them while wlshare's walk of this link stands below its ceiling, which
+    /// wlshare sends exact once the link has room; `format` says which.
     ///
     /// wlshare's tiles are a passed picture, as its VP9 is ([`Self::pass`]): wlshare
     /// decides what is sent, codes it and paces it by the fences the engine echoes once
@@ -922,14 +937,15 @@ impl VideoSink {
     /// picture starts over ([`Self::reset_render`]) goes behind a `TilesStart`, which
     /// tells the browser every region it held is over; the full update the engine asks
     /// for at the same moment is what brings wlshare's whole picture.
-    pub async fn pass_tile(&self, x: u16, y: u16, w: u16, h: u16, png: Vec<u8>) -> anyhow::Result<()> {
+    pub async fn pass_tile(&self, x: u16, y: u16, w: u16, h: u16, format: Format, image: Vec<u8>) -> anyhow::Result<()> {
         self.tiles_begin().await?;
-        let bytes = png.len();
+        let bytes = image.len();
         let held = self.hold(bytes).await;
         self.shared.feedback.handed(tokio::time::Instant::now());
-        self.shared.png.fetch_add(1, Ordering::Relaxed);
-        self.shared.png_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
-        let unit = TileUnit { x, y, w, h, format: Format::Png, data: png, held, painted: Painted::default() };
+        let (count, total) = self.shared.tally(format);
+        count.fetch_add(1, Ordering::Relaxed);
+        total.fetch_add(bytes as u64, Ordering::Relaxed);
+        let unit = TileUnit { x, y, w, h, format, data: image, held, painted: Painted::default() };
         self.push(Pending::Msg(ServerMsg::Tile(unit))).await?;
         self.uncover_behind().await
     }
@@ -1397,11 +1413,9 @@ async fn send_round(
     );
     for part in coded {
         let len = part.data.len();
-        let (count, total) = match part.format {
-            Format::Jpeg => (&shared.jpeg, &shared.jpeg_bytes),
-            Format::Png => (&shared.png, &shared.png_bytes),
-        };
+        let (count, total) = shared.tally(part.format);
         count.fetch_add(1, Ordering::Relaxed);
+
         total.fetch_add(len as u64, Ordering::Relaxed);
         let ticket = shared.ahead.take_over(len as u64);
         let (ahead, wake) = (Arc::clone(&shared.ahead), Arc::clone(&shared.round_returned));
@@ -1471,6 +1485,8 @@ struct Totals {
     jpeg_bytes: u64,
     png: u64,
     png_bytes: u64,
+    webp: u64,
+    webp_bytes: u64,
     code_micros: u64,
     waited_micros: u64,
     stalled_micros: u64,
@@ -1515,6 +1531,8 @@ impl Totals {
             jpeg_bytes: load(&shared.jpeg_bytes),
             png: load(&shared.png),
             png_bytes: load(&shared.png_bytes),
+            webp: load(&shared.webp),
+            webp_bytes: load(&shared.webp_bytes),
             code_micros: load(&shared.code_micros),
             waited_micros: load(&shared.waited_micros),
             stalled_micros: load(&shared.stalled_micros),
@@ -1528,7 +1546,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes{}, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes and {} PNG / {} bytes, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} WebP / {} bytes, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1544,7 +1562,10 @@ impl fmt::Display for Totals {
             self.jpeg_bytes,
             self.png,
             self.png_bytes,
+            self.webp,
+            self.webp_bytes,
             self.code_micros,
+
             self.waited_micros,
             self.stalled_micros
         )
@@ -1953,7 +1974,7 @@ mod tests {
     async fn wlshares_tiles_and_regions_go_out_as_they_came() {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink_at(1280, 800, PASSED).await;
-        sink.pass_tile(0, 0, 1280, 64, vec![0x89, 0x50]).await.unwrap();
+        sink.pass_tile(0, 0, 1280, 64, Format::Png, vec![0x89, 0x50]).await.unwrap();
         sink.pass_region(0, 64, 64, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
         sink.pass_region(0, 64, 64, 320, 192, false, FRAME.to_vec()).await.unwrap();
         // A later IDR, which a moved dial brings, is a keyframe of the same stream,
@@ -1961,7 +1982,7 @@ mod tests {
         sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec()).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
-        sink.pass_tile(64, 64, 320, 64, vec![0x89, 0x51]).await.unwrap();
+        sink.pass_tile(64, 64, 320, 64, Format::Webp, vec![b'R', b'I']).await.unwrap();
         sink.flush().await;
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
@@ -1974,7 +1995,8 @@ mod tests {
         assert!(matches!(&out[5], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe: {:?}", out[5]);
         assert!(matches!(out[6], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[6]);
         let out = drain(&mut frame_rx, 1).await;
-        assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.data == [0x89, 0x51]), "the end was said twice: {:?}", out[0]);
+        assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.format == Format::Webp && unit.data == *b"RI"), "the end was said twice: {:?}", out[0]);
+
         assert!(frame_rx.try_recv().is_err());
     }
 
@@ -1991,7 +2013,8 @@ mod tests {
         sink.reset_render();
         sink.pass_region(1, 0, 0, 320, 192, false, FRAME.to_vec()).await.unwrap();
         sink.pass_region_end(1).await.unwrap();
-        sink.pass_tile(0, 0, 1280, 800, vec![0x89]).await.unwrap();
+        sink.pass_tile(0, 0, 1280, 800, Format::Png, vec![0x89]).await.unwrap();
+
         sink.pass_region(1, 64, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 4).await;

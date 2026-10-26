@@ -418,7 +418,7 @@ pub enum ClientMsg {
 ///
 /// A `TILE` record is a rectangle of the desktop in the tiles this gateway codes, an
 /// image the browser decodes on its own — see [`TileUnit`]. Its format is
-/// [`batch::TILE_JPEG`] or [`batch::TILE_PNG`], and a receiver rejects any other, an
+/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`] or [`batch::TILE_WEBP`], and a receiver rejects any other, an
 /// empty rectangle and one with no image.
 ///
 /// A `REGION` record is an access unit of one moving region's stream in wlshare's
@@ -453,6 +453,9 @@ pub mod batch {
     pub const TILE_JPEG: u8 = 0x01;
     /// A `TILE` record's image is a PNG.
     pub const TILE_PNG: u8 = 0x02;
+    /// A `TILE` record's image is a lossy WebP: wlshare's, while its link is behind.
+    pub const TILE_WEBP: u8 = 0x03;
+
 
     /// Bytes a `REGION` record costs besides its payload.
     pub const REGION_HEADER_LEN: usize = 15;

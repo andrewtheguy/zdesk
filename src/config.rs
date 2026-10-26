@@ -197,10 +197,10 @@ pub struct RenderPlan {
     /// and on a `wlshare` target the ceiling of wlshare's VP9, which wlshare maps onto
     /// its own quantizer.
     pub quality: u8,
-    /// Whether wlshare's VP9 walks its dial on the browser's lag
-    /// ([`TargetConfig::render_adaptive`]), on a `wlshare` target and nowhere else:
-    /// the tiles coded here follow the browser's painting at the one quality, with a
-    /// coarse first pass on a slow link.
+    /// Whether wlshare's picture, its VP9 or its tiles with motion, walks its dial
+    /// on the browser's lag ([`TargetConfig::render_adaptive`]), on a `wlshare`
+    /// target and nowhere else: the tiles coded here follow the browser's painting
+    /// at the one quality, with a coarse first pass on a slow link.
     pub adaptive: bool,
     /// The picture is wlshare's own, its VP9 ([`Passthrough::WlshareVp9`],
     /// [`Self::chroma`]) or its tiles ([`Self::wlshare_tiles_motion`]), asked of a `wlshare`
@@ -213,8 +213,10 @@ pub struct RenderPlan {
     /// desktop is still and a video stream of its own, 4:2:0, for each region that
     /// moves, H.264 by the host's hardware encoder where it has one and libx264
     /// otherwise — asked of the server and passed as it comes. Set only with
-    /// [`Self::wlshare`], and never with [`Self::adaptive`]: the regions are held at
-    /// [`Self::quality`].
+    /// [`Self::wlshare`]; with [`Self::adaptive`] the dial walks on the browser's lag
+    /// as the VP9's does, the regions following it and the stills going lossy WebP
+    /// while the link is behind, sent exact once it has room, and without it the
+    /// regions are held at [`Self::quality`] and every still is exact.
     pub wlshare_tiles_motion: bool,
     /// The Mac's picture passes as it came, its HEVC:
     /// [`Passthrough::AppleMedia`], chosen at the picker. None of the fields
@@ -330,8 +332,8 @@ pub enum Passthrough {
     /// page to decode and sent exact again once it stops. Offered by a `wlshare`
     /// target beside its VP9, and chosen at the picker: wlshare's picture for a link
     /// with room to spare, a fraction of the VP9's encoder time and a picture that
-    /// ends exact, for several times the bytes. Its regions are held at the dial,
-    /// with no walk.
+    /// ends exact, for several times the bytes. Its regions follow wlshare's walk
+    /// as the VP9 does, or are held at the dial where `render_adaptive` is off.
     WlshareTilesMotion,
 }
 
@@ -792,7 +794,8 @@ impl RenderPlan {
     /// whether the walk runs.
     pub fn describe(&self) -> String {
         if self.wlshare_tiles_motion {
-            return format!("tiles with motion q{} · {}", self.quality, self.chroma.name());
+            let adaptive = if self.adaptive { " · adaptive" } else { "" };
+            return format!("tiles with motion q{} · {}{adaptive}", self.quality, self.chroma.name());
         }
         if self.wlshare {
             // The walk as a suffix: the quality named before it is a ceiling the
@@ -995,11 +998,14 @@ pub struct TargetConfig {
     /// regions of its tiles are held at.
     #[serde(default)]
     pub video_quality: Option<u8>,
-    /// Let wlshare's VP9 walk [`Self::video_quality`] on the measured link — on
-    /// unless the operator turned it off. A `wlshare` target's key alone: the tiles
-    /// coded here follow the browser's painting at the one quality, and have no walk,
-    /// and nor have wlshare's tiles, which hold their regions at the dial: a session
-    /// started with them ([`Passthrough::WlshareTilesMotion`]) has no walk to turn off.
+    /// Let wlshare's picture, its VP9 or its tiles with motion, walk
+    /// [`Self::video_quality`] on the measured link — on unless the operator turned
+    /// it off. A `wlshare` target's key alone: the tiles coded here follow the
+    /// browser's painting at the one quality, and have no walk. On wlshare's tiles
+    /// ([`Passthrough::WlshareTilesMotion`]) the regions follow the dial and what
+    /// is still goes out as lossy WebP while the link is behind, exact once it has
+    /// room; off, the regions are held at the dial and every still is exact.
+
     ///
     /// The configured quality stays the *ceiling* — a link with room to spare
     /// never earns a better picture than the one asked for — and the walk's floor
@@ -1098,8 +1104,8 @@ impl TargetConfig {
     }
 
     /// wlshare's adaptive walk, resolved: on unless the operator turned it off, and
-    /// off wherever the picture is not wlshare's. A session started with wlshare's
-    /// tiles has no walk whatever this says ([`Self::render_plan`]).
+    /// off wherever the picture is not wlshare's. It walks wlshare's VP9 and its
+    /// tiles with motion alike ([`Self::render_plan`]).
     pub fn render_adaptive(&self) -> bool {
         self.wlshare() && self.render_adaptive.unwrap_or(true)
     }
@@ -1116,10 +1122,10 @@ impl TargetConfig {
         let quality = self.video_quality();
         let passthrough = self.passthrough(choices);
         // wlshare's picture is the one the session was started with, its VP9 where
-        // none was named; the tiles hold their regions at the dial, with no walk.
+        // none was named; either walks its dial where the target's key says so.
         let wlshare_tiles_motion = passthrough == Some(Passthrough::WlshareTilesMotion);
         let wlshare = wlshare_tiles_motion || passthrough == Some(Passthrough::WlshareVp9);
-        let adaptive = wlshare && !wlshare_tiles_motion && self.render_adaptive();
+        let adaptive = wlshare && self.render_adaptive();
         let apple_media = passthrough == Some(Passthrough::AppleMedia);
         let apple_h264 = passthrough == Some(Passthrough::AppleH264);
         let hevc_instead = apple_h264 && decoders.takes(Passthrough::AppleMedia);
@@ -3563,7 +3569,7 @@ mod tests {
         let wlshare = |extra: &str| {
             ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\nvideo_quality = 60\n{extra}"))).unwrap().targets.remove(0)
         };
-        assert_eq!(wlshare("").render_summary(), "VP9 q60 · 4:4:4 · adaptive, or tiles with motion q60 · 4:2:0");
+        assert_eq!(wlshare("").render_summary(), "VP9 q60 · 4:4:4 · adaptive, or tiles with motion q60 · 4:2:0 · adaptive");
         assert_eq!(wlshare("render_adaptive = false").render_summary(), "VP9 q60 · 4:4:4, or tiles with motion q60 · 4:2:0");
     }
 
@@ -4807,8 +4813,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// wlshare's tiles are chosen at the picker, against its VP9: a session started
     /// with them asks wlshare for its tiles, their regions at 4:2:0 whatever the
-    /// browser takes and held at the quality, with no walk whatever the key says,
-    /// their codec H.264; one that names its VP9, or nothing, is sent
+    /// browser takes and walked as the key says, their codec H.264; one that names its VP9, or nothing, is sent
     /// the VP9.
     #[cfg(feature = "wlshare")]
     #[test]
@@ -4821,8 +4826,10 @@ vnc_password_ref = \"x\"")).unwrap();
             assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion], "{key}");
             target.accepts(tiles).expect("the tiles are offered");
             let plan = target.render_plan(tiles, Decoders::ALL);
-            assert_eq!(plan, RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: true, chroma: crate::vp9::Chroma::Yuv420 }, "{key}");
-            assert_eq!(plan.describe(), "tiles with motion q80 · 4:2:0", "{key}");
+            let adaptive = key != "render_adaptive = false";
+            assert_eq!(plan, RenderPlan { quality: 80, adaptive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: true, chroma: crate::vp9::Chroma::Yuv420 }, "{key}");
+            assert_eq!(plan.describe(), if adaptive { "tiles with motion q80 · 4:2:0 · adaptive" } else { "tiles with motion q80 · 4:2:0" }, "{key}");
+
             assert_eq!(plan.passthrough(), Some(Passthrough::WlshareTilesMotion), "{key}");
             for choices in [vp9, Choices::default()] {
                 let plan = target.render_plan(choices, Decoders::ALL);

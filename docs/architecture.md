@@ -545,8 +545,10 @@ it. Its tiles with motion, exact PNG tiles where the desktop is still and a
 hardware encoder where it has one and libx264 otherwise, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
-alone, which its regions are held at: they select no chroma, 4:2:0 for every
-browser, and take no walk. A server that ignores the listing is sent as tiles
+and the walk as the VP9 is, the regions following the dial and what is still
+going out as lossy WebP while the link is behind, exact once it has room, or
+with `WLSD` the dial held and every still exact: they select no chroma, 4:2:0 for every
+browser. A server that ignores the listing is sent as tiles
 from its ZRLE. Do not transcode a passed frame, pass one at a chroma other than
 the plan's, ask wlshare for the plan with a client message, or add a key that
 selects the picture, or a key or a choice that selects its chroma. See
@@ -1148,18 +1150,21 @@ tiles where it is still, and a video stream of its own, 4:2:0, for each region
 that moves, at most four at once — H.264, by the wlshare host's hardware
 encoder where it has one and libx264 otherwise — and every tile a stream
 carried sent again as PNG once it is still,
-so the picture ends exact. It is Motion, which this gateway removed because here
+so the picture ends exact; while wlshare's link is behind, a still may go out
+first as a lossy WebP, sent exact once it has room. It is Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of four kinds: a PNG of it, a region
-stream's first frame, its next, or its end.
+Every rectangle of an update is one of five kinds: a PNG of it, a lossy WebP
+of it, a region stream's first frame, its next, or its end.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
-  `WLQ` plus `video_quality`, the dial wlshare holds every region's stream at:
-  there is no walk, so the plan has no `adaptive` whatever the target's
-  `render_adaptive` says, and no `WLSD` or `WLSS`, since every region is 4:2:0
+  `WLQ` plus `video_quality`, the ceiling, as the VP9 is. With the target's
+  `render_adaptive` on, the plan's `adaptive`, wlshare walks the regions' dial
+  down from it on the browser's lag and sends what is still as lossy WebP while
+  the link is behind; off, `WLSD` beside it holds every region's stream at the
+  dial and every still is exact. There is no `WLSS`, since every region is 4:2:0
   for every browser. Every region is H.264, which wlshare codes with its host's
   hardware encoder where it found one at its startup, the GPU's fixed-function
   block, and with libx264 otherwise; a wlshare with neither does not start, and
@@ -1174,7 +1179,8 @@ Nothing is coded here.
   resize, refused in one started with it. A desktop within it is what holds every
   region to it, so wlshare splits or drops none for its size.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
-  `pass_region_end`). A PNG becomes a `TILE` record, a region's frame a `REGION`
+  `pass_region_end`). A PNG or a WebP becomes a `TILE` record, painted as
+  `image/png` or `image/webp`, a region's frame a `REGION`
   record, behind a `regionFormat` for the first of its stream, whose
   configuration is `avc1.` and the profile, constraints and level its own
   sequence parameter set names (`src/h264.rs`); its end becomes a
