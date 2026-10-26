@@ -11,11 +11,11 @@
 //!   a list without it and as Opus for one with. The codec is this client's to
 //!   choose, from what was chosen at the picker, and nothing in wlshare's
 //!   configuration.
-//! - A server that speaks it announces so with an **empty pseudo-rectangle** of
-//!   the first inside a `FramebufferUpdate` — the only announcement there is,
-//!   the same shape ExtendedDesktopSize uses. A server that does not speak it
-//!   says nothing, which is how the extension is discovered rather than
-//!   configured.
+//! - wlshare announces it with an **empty pseudo-rectangle** of the first
+//!   inside a `FramebufferUpdate` — the only announcement there is, the same
+//!   shape ExtendedDesktopSize uses — to every client that lists it: it has no
+//!   switch of its own for the sound, and a `wlshare` target reaches nothing
+//!   but a wlshare of the gateway's protocol version.
 //! - The client then names the format it wants ([`WANTED`]), the rate Opus is
 //!   to be coded at, and turns the stream on; it may turn it off again.
 //!   Set-format, enable and disable are the client messages of the QEMU Audio
@@ -27,9 +27,7 @@
 //!   wlshare's own, each one FLAC frame or one Opus packet.
 //!
 //! QEMU's own pseudo-encoding, -259, is not listed: what it promises is raw
-//! samples, and a server that answers it — QEMU itself — would send them. A
-//! target on such a server gets a desktop and no sound, as on any server that
-//! does not speak this extension.
+//! samples, and a server that answers it — QEMU itself — would send them.
 //!
 //! Nothing is decoded or coded here. An Opus packet is what the browser's own
 //! decoder takes, so it goes to the bridge as it came ([`PASSED_OPUS`]), made by

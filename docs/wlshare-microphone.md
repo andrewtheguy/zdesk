@@ -33,8 +33,8 @@ the gateway list the extension to it in that session. The tick is offered on a
 As on RDP, the microphone is plugged as such a session connects, when the
 browser opens its mic socket, and unplugged when that socket closes, the session
 changes hands, or the engine ends. The browser's microphone opens only while an
-application on the desktop records. wlshare's own
-`microphone` key (default `false`) is the server's side of the same switch.
+application on the desktop records. wlshare has no switch of its own for the
+microphone: it takes one from every client that lists the extension.
 
 ## The wire
 

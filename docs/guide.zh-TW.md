@@ -207,6 +207,8 @@ vnc_password_ref = "workstation-vnc"
 
 在 RDP 上，攝影機需要一台會重新導向攝影機的 Windows 主機：工作站版本的 Windows，或安裝了遠端桌面工作階段主機角色的 Windows Server。Windows 主機只有在上面有程式錄音時才會啟動麥克風。
 
+在 wlshare 上，攝影機是桌面上的一個 PipeWire 攝影機，桌面上的瀏覽器只能透過搭配 `xdg-desktop-portal-gtk` 的 `xdg-desktop-portal` 存取它，wlshare 的套件建議安裝（Recommends）這兩者；Chrome 還需要開啟 `chrome://flags/#enable-webrtc-pipewire-camera`。缺少它們時，要求攝影機的網頁找不到任何攝影機。麥克風兩者都不需要：它是一個一般的 PipeWire 音訊來源。
+
 ## 本機執行個體
 
 原生安裝包含一個終端機控制平面，可以在一台電腦上執行多個閘道，每個都有自己的設定和瀏覽器來源（origin）：

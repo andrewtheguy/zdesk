@@ -51,14 +51,10 @@ the host. The choice is offered on a `wlshare` target and on no other `vnc`
 target: a plain one is read through the
 RFB baseline, which carries no sound, `ard` carries none either, and
 `ard-high-performance` takes its sound from the media stream. A `wlshare`
-target pointed at a server that is not wlshare, or at a wlshare with its own
-switch off, lists the pseudo-encoding, hears no announcement, and runs in
-silence. QEMU's own audio extension, which carries raw samples, is never asked
-for.
-
-wlshare's own `audio` key (default `false`) is the server's side of the same
-switch: with it off the extension is not announced, and a client that lists the
-pseudo-encoding is told nothing.
+target reaches nothing but a wlshare of the gateway's protocol version, which
+the handshake checks, and wlshare has no switch of its own for the sound: it
+announces the extension to every client that lists it. QEMU's own audio
+extension, which carries raw samples, is never asked for.
 
 ## The wire
 
@@ -168,18 +164,6 @@ With a 6-second 440/660 Hz stereo tone playing into the default sink through
 306 frames, 306 packets, 73746 bytes     tone:    241 bytes a packet
 192 frames, 192 packets,   576 bytes     silence:   3 bytes a packet
 ```
-
-And the control, wayvnc on another host, reached as a `wlshare` target and asked
-for sound:
-
-```
-vnc: the server carries no audio; the session runs without sound
-0 frames
-```
-
-The format is still announced on `/ws/audio` there — the gateway advertises one
-format and writes the header before any remote channel is up — so a server
-without the extension is silence measured in packets, not in the announcement.
 
 Exercise the current path:
 

@@ -1165,8 +1165,8 @@ enum Audio {
 impl DesktopState {
     /// The density request's deadline, checked on every framebuffer update.
     /// wlshare answers `SetEncodings` before it sends a single update, so
-    /// pixels with no report before them mean a server that does not speak the
-    /// extension: the desktop is generic RFB at 1x from here, and the resize a
+    /// pixels with no report before them would be a wlshare out of that order:
+    /// the desktop is generic RFB at 1x from here, and the resize a
     /// report would have released goes out with the rect that declares
     /// SetDesktopSize support instead.
     fn first_update(&mut self) {
@@ -2261,8 +2261,8 @@ pub async fn run(
     } else {
         Oversize::Shown
     };
-    // Every browser is sent wlshare's own VP9 as it comes when the server is wlshare,
-    // asked for at the plan's dial and walk; any other server but a Mac is
+    // Every browser is sent wlshare's own VP9 as it comes on a `wlshare` target,
+    // asked for at the plan's dial and walk; a plain target's server but a Mac is
     // encoded here from ZRLE. A High Performance session is sent the Mac's HEVC or
     // H.264, and a Standard one the Mac's own picture, each passed.
     let sink = VideoSink::new("vnc", frame_tx, plan, feedback, oversize);
@@ -4952,9 +4952,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
                     answer_audio(uplink, &shared.audio_announced, audio.as_deref(), *audio_rate).await?;
                 } else if audio_state == Audio::Asked && painted {
                     // The announcement comes in an update of its own before any
-                    // pixels, so pixels without one are a server that does not
-                    // speak the extension — wayvnc, TigerVNC, x11vnc. The
-                    // desktop is unaffected; only the sound is not there.
+                    // pixels, so pixels without one would be a wlshare out of
+                    // that order. The desktop is unaffected; only the sound is
+                    // not there.
                     audio_state = Audio::Unanswered;
                     info!("vnc: the server carries no audio; the session runs without sound");
                 }

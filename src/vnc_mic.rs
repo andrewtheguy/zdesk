@@ -10,9 +10,8 @@
 //! - A session started with the microphone offered
 //!   ([`crate::config::Choices::microphone`], the picker's Microphone tick) lists the
 //!   pseudo-encoding in `SetEncodings`.
-//!   wlshare answers with an *available* message; any other server ignores the
-//!   encoding and says nothing, and the microphone the browser offers is then never
-//!   plugged.
+//!   wlshare answers with an *available* message, and until it has, the
+//!   microphone the browser offers is not plugged.
 //! - The browser's mic socket attaching plugs the microphone, and the
 //!   socket going away unplugs it. A plug that arrives before the server's answer
 //!   waits for it ([`Device`]).
@@ -316,8 +315,8 @@ mod tests {
         assert_eq!(device.sample(&[1, 0]), None, "until the new microphone's start");
     }
 
-    /// A server that never answers — anything but wlshare — is never sent a byte of
-    /// the extension, whatever the browser does.
+    /// Until wlshare answers, not a byte of the extension is sent, whatever the
+    /// browser does.
     #[test]
     fn a_server_that_never_answers_hears_nothing() {
         let mut device = Device::default();

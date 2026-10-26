@@ -2747,9 +2747,11 @@ with an empty rectangle, at which point the gateway names the format it wants â€
 Opus is to be coded at, and turns the stream on; the sound then
 arrives on the RFB connection itself as wlshare coded it, Opus packets or the
 FLAC frames of a lossless session, and each goes to the queue and on to the
-browser as it came, with no decoder or encoder here. A server
-that announces nothing, because it is not wlshare or has its own switch off,
-gives a desktop and no sound, which is the whole of the failure mode. The extension is wlshare's
+browser as it came, with no decoder or encoder here. wlshare
+announces the extension to every client that lists it, and a `wlshare` target
+reaches nothing but a wlshare of the gateway's protocol version, which the
+handshake checks; a server that sent pixels and no announcement would give a
+desktop and no sound, which is the whole of the failure mode. The extension is wlshare's
 own, its control messages borrowed from `rfbproto`'s QEMU Audio extension â€” see
 [`wlshare-audio.md`](wlshare-audio.md).
 
@@ -2861,9 +2863,9 @@ camera extension, and wlshare makes it a PipeWire camera on the wlroots desktop.
 `src/vnc_camera.rs` asks for the extension beside the density and outputs
 requests, holds the browser's plug until wlshare says it takes a camera, and
 relays wlshare's start, stop and keyframe as the same bridge signals, so the
-socket and the browser behave as they do against RDP. A server that never answers
-is sent nothing and the plugged camera is never started, as on a Windows Server
-without the RDSH role. See
+socket and the browser behave as they do against RDP. wlshare answers every list
+that asks, and until it has, nothing is sent and a plugged camera is not
+started, as on a Windows Server without the RDSH role. See
 [The browser's camera over VNC with wlshare](wlshare-camera.md).
 
 #### Microphone frames

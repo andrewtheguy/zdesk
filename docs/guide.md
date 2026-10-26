@@ -516,6 +516,13 @@ On RDP the camera needs a Windows host that redirects cameras: a workstation, or
 a Windows Server carrying the Remote Desktop Session Host role. A Windows host
 starts the microphone only once something on it records.
 
+On wlshare the camera is a PipeWire camera on the desktop, and a browser there
+reaches it only through `xdg-desktop-portal` with `xdg-desktop-portal-gtk`,
+which wlshare's package recommends; Chrome also needs
+`chrome://flags/#enable-webrtc-pipewire-camera` turned on. Without them a page
+that asks for a camera finds none. The microphone needs neither: it is an
+ordinary PipeWire source.
+
 ## Local instances
 
 Native installs include a terminal control plane that runs several gateways on

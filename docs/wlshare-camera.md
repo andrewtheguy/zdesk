@@ -34,8 +34,8 @@ gateway list the extension to it in that session. The tick is offered on a
 none of which has anywhere to put a camera. As on RDP, a session started with it
 plugs the camera as it connects, and unplugs it when that socket closes, the
 session changes hands, or the engine ends; the browser's camera itself opens only
-between wlshare's start and stop. wlshare's own `camera` key (default `false`) is the
-server's side of the same switch.
+between wlshare's start and stop. wlshare has no switch of its own for the camera: it
+takes one from every client that lists the extension.
 
 ## The wire
 
@@ -79,9 +79,8 @@ What reaches the wire is `vnc_camera::Device`'s decision, taken under the uplink
 so two decisions leave in the order they were made:
 
 - A plug the browser makes before wlshare's answer is held, and goes out with the
-  answer. A server that never answers is sent nothing at all — no plug, no
-  samples — whatever the browser does, so a session started with the camera
-  against wayvnc or TigerVNC loses nothing but the camera.
+  answer. Until the answer, nothing at all is sent — no plug, no samples —
+  whatever the browser does.
 - A plug with no area or no rate is never sent, as the RDP path refuses it too:
   wlshare takes one as a client that does not speak the extension and ends the
   session over it.

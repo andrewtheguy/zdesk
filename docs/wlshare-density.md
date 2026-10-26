@@ -43,11 +43,12 @@ target at the picker.
 `subtype = "wlshare"` names the server, and is what makes the gateway list the
 pseudo-encoding in its `SetEncodings`, after everything that decides pixels and
 immediately before the output-list request, so it never weighs on encoding
-preference. wlshare answers it before its first framebuffer update. A target
-that says wlshare and reaches some other server gets pixels with no report
-before them, which settle the request as unanswered: the desktop is plain RFB
-at 1x from there, and a report that arrives after all is still taken, since the
-label is the wire's word. A plain `vnc` target is not asked, whatever server it
+preference. wlshare answers it before its first framebuffer update, and a
+`wlshare` target reaches nothing but a wlshare of the gateway's protocol
+version, which the handshake checks, so the report comes first. Pixels with no
+report before them would settle the request as unanswered: the desktop is plain
+RFB at 1x from there, and a report that arrives after all is still taken, since
+the label is the wire's word. A plain `vnc` target is not asked, whatever server it
 reaches, and is 1x; nor are the Apple subtypes, since a Mac reports its
 densities in its display layout.
 
@@ -89,9 +90,8 @@ framebuffer's size in pixels and a scale. What the gateway makes of them:
 `src/vnc.rs` keeps the extension's state per connection as `Density`: `Off`
 on a plain target and on the Apple dialects, `Asked` from a `wlshare` target's
 handshake, `Reported` after the first
-message, and `Unanswered` once pixels have arrived while still `Asked`, since
-wlshare answers `SetEncodings` before its first update and any other server
-never will. `Unanswered` releases a held resize at 1x and still takes a late
+message, and `Unanswered` once pixels have arrived while still `Asked`, which
+wlshare, answering `SetEncodings` before its first update, never brings about. `Unanswered` releases a held resize at 1x and still takes a late
 report.
 
 - **Label.** Every `DesktopSize` and `ExtendedDesktopSize` rectangle of a
@@ -104,8 +104,8 @@ report.
 - **Resize.** In a session started with resize the window's points are asked for as
   `points × scale` pixels, so the logical desktop is the window. The first
   request waits for the report, or for the first update that shows none is
-  coming, because a request in the wrong pixels is a desktop redrawn twice; on
-  a server without the extension nothing is lost by the wait, since the
+  coming, because a request in the wrong pixels is a desktop redrawn twice; the
+  wait costs nothing, since wlshare reports before its first update and the
   request also needs the `ExtendedDesktopSize` rect that update carries. Every
   report that changes the scale, or answers a
   declaration, re-asks for the window in the new pixels, unless the report
@@ -146,8 +146,8 @@ resize  1728x883   scale=1.0  -> 1728x883 CSS px      re-asked at points × 1
 ```
 
 The two intermediate lines are the moment between the compositor's scale change
-and the desktop's resize. Any other server against the same target stays at
-`scale=1.0` throughout, never having answered the pseudo-encoding.
+and the desktop's resize. A plain `vnc` target on the same server stays at
+`scale=1.0` throughout, never having asked.
 
 Reproduce it:
 

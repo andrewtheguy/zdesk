@@ -10,9 +10,8 @@
 //!
 //! - A session started with the camera offered ([`crate::config::Choices::camera`],
 //!   the picker's Camera tick) lists the pseudo-encoding in `SetEncodings`.
-//!   wlshare answers with an *available* message; any other server ignores the
-//!   encoding and says nothing, and the camera the browser offers is then never
-//!   plugged — discovered, not configured, like the density report.
+//!   wlshare answers with an *available* message, and until it has, the camera
+//!   the browser offers is not plugged.
 //! - The browser's camera socket plugs the camera: its H.264's geometry and rate, as the
 //!   camera socket announced them. A plug that arrives before the server's answer
 //!   waits for it ([`Device`]).
@@ -356,8 +355,8 @@ mod tests {
         assert_eq!(device.sample(&[1], true), None);
     }
 
-    /// A server that never answers — anything but wlshare — is never sent a byte of
-    /// the extension, whatever the browser does.
+    /// Until wlshare answers, not a byte of the extension is sent, whatever the
+    /// browser does.
     #[test]
     fn a_server_that_never_answers_hears_nothing() {
         let mut device = Device::default();

@@ -207,6 +207,8 @@ vnc_password_ref = "workstation-vnc"
 
 在 RDP 上，摄像头需要一台会重定向摄像头的 Windows 主机：工作站版本的 Windows，或安装了远程桌面会话主机角色的 Windows Server。Windows 主机只有在其上有程序录音时才会启动麦克风。
 
+在 wlshare 上，摄像头是桌面上的一个 PipeWire 摄像头，桌面上的浏览器只能通过带有 `xdg-desktop-portal-gtk` 的 `xdg-desktop-portal` 访问它，wlshare 的软件包推荐（Recommends）这两者；Chrome 还需要打开 `chrome://flags/#enable-webrtc-pipewire-camera`。缺少它们时，请求摄像头的网页找不到任何摄像头。麦克风两者都不需要：它是一个普通的 PipeWire 音频源。
+
 ## 本地实例
 
 原生安装包含一个终端控制面，可以在一台机器上运行多个网关，每个都有自己的配置和浏览器源（origin）：
