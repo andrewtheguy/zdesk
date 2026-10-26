@@ -199,7 +199,7 @@ desk is listed as two and starts on *All Displays*.
 Measured 2026-09-09 on `macintel`, a sway session with two physical outputs —
 `HDMI-A-1` at 1920×1080 and `LVDS-1` at 1280×800, both at scale 1 — through
 `tests/ws_probe.py` over an SSH tunnel to wlshare on its loopback port. That
-session's wlshare has `resize = false`, since it shares physical panels.
+session's wlshare shares physical panels, which it never resizes.
 
 Connect, then switch to the laptop panel:
 
