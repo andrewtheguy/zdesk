@@ -185,6 +185,8 @@ password_ref = "wayland"
 
 示例使用 wlshare 运行所用的账户，通过 RSA-AES 上的 PAM 校验。如果 wlshare 改用 `[password]` 表，请用 `password_ref` 引用该密码，并省略 `username`，RSA-AES 此时只发送密码。wlshare 不提供经典 VNC 认证，因此不使用 `vnc_password_ref`。
 
+网关和 wlshare 必须使用同一个版本的 wlshare 协议；`wlshare --version` 会给出某个 wlshare 所使用的版本。连接到另一个版本的 wlshare 时，会话会在连接时失败，并指明两个版本；把两者中较旧的那一个升级即可解决。不改动协议的 wlshare 发布会保持其版本不变。
+
 见 [密度](wlshare-density.md)、[输出](wlshare-outputs.md)、[音频](wlshare-audio.md)、[摄像头](wlshare-camera.md) 和 [麦克风](wlshare-microphone.md)。
 
 ## 其他 VNC 服务器 (`vnc`)

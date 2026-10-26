@@ -185,6 +185,8 @@ password_ref = "wayland"
 
 範例使用 wlshare 執行時所用的帳號，透過 RSA-AES 上的 PAM 驗證。如果 wlshare 改用 `[password]` 表格，請用 `password_ref` 參照該密碼，並省略 `username`，此時 RSA-AES 只傳送密碼。wlshare 不提供傳統 VNC 認證，因此不使用 `vnc_password_ref`。
 
+閘道和 wlshare 必須使用同一個版本的 wlshare 協定；`wlshare --version` 會列出某個 wlshare 所使用的版本。連線到另一個版本的 wlshare 時，工作階段會在連線時失敗，並指明兩個版本；把兩者中較舊的那一個升級即可解決。不變更協定的 wlshare 發行會維持其版本不變。
+
 請見 [密度](wlshare-density.md)、[輸出](wlshare-outputs.md)、[音訊](wlshare-audio.md)、[攝影機](wlshare-camera.md) 和 [麥克風](wlshare-microphone.md)。
 
 ## 其他 VNC 伺服器 (`vnc`)

@@ -16,7 +16,7 @@
 # and the image installs it with apt, so the image has exactly the package's
 # Depends — the libraries it links, and PipeWire, WirePlumber and
 # pipewire-pulse for its sound — rather than a hand-kept copy of them that
-# drifts. Its sound is turned on, so a client that asks for it is heard.
+# drifts.
 #
 # The session is unauthenticated: the published port is on loopback, and the
 # RSA-AES login is the gateway's own unit tests' business.
@@ -69,10 +69,6 @@ RUN printf '%s\n' \
     && printf '%s\n' \
     'listen = "0.0.0.0:5900"' \
     'output = "HEADLESS-1"' \
-    'resize = true' \
-    'audio = true' \
-    'camera = true' \
-    'microphone = true' \
     > /etc/wlshare-e2e.toml
 # Start PipeWire, WirePlumber and its PulseAudio server for the sound and the
 # microphone node, then sway, and once its IPC answers run wlshare in the
