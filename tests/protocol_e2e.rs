@@ -963,8 +963,9 @@ async fn serve_fake_mac(
     let mut configurations = Vec::new();
     // The gateway ends the session by closing the stream, and the close may land
     // while a reply is mid-write: a client is free to vanish between a request
-    // and its answer, so a broken pipe reads as the EOF it is about to become
-    // rather than as a fault — with the recorded configurations kept either way.
+    // and its answer, so a broken pipe, or the reset or abort Windows reports
+    // for it, reads as the EOF it is about to become rather than as a fault —
+    // with the recorded configurations kept either way.
     match serve_fake_mac_records(
         records,
         write_half,
@@ -980,7 +981,9 @@ async fn serve_fake_mac(
         Err(err)
             if matches!(
                 err.kind(),
-                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
             ) =>
         {
             Ok(configurations)
@@ -2364,7 +2367,6 @@ async fn expect_error(ws: &mut Ws) -> String {
 /// The fake is set to refuse any offer, which would end the session — so a session
 /// that opens, resizes and disconnects cleanly is one that never made an offer.
 #[tokio::test]
-#[ignore = "flaky: a HeldFramebuffer arrives where AutoPasteboard(true) is expected"]
 async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
     let (mac_port, mut requests, _actions, fake_mac) =
         spawn_fake_mac_with(MAC_COMMANDS, MacStream::Refuse).await;
@@ -2434,11 +2436,12 @@ async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
     ws.send(Message::text(format!(r#"{{"type":"viewport","w":{},"h":{}}}"#, MAC_WINDOW.0, MAC_WINDOW.1))).await.unwrap();
     assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoFramebuffer((1, 1)));
     assert_eq!(next_mac_request(&mut requests).await, MacRequest::Configuration(MAC_WINDOW, 1, true));
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::HeldFramebuffer);
     let resize = expect_resize_msg(&mut ws).await;
     assert_eq!(resize["w"], MAC_WINDOW.0, "{resize}");
     assert_eq!(resize["h"], MAC_WINDOW.1, "{resize}");
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoPasteboard(true));
+    let (rearm, held) = next_mac_request_past_held(&mut requests).await;
+    assert_eq!(rearm, MacRequest::AutoPasteboard(true));
+    assert!(held > 0, "polling did not hold to one pixel while the resize was out");
     assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoFramebuffer(MAC_WINDOW));
     // The same zlib goes on over the resize, not started over, and inflates here.
     expect_fake_tiles(&mut ws, false).await;
@@ -2607,7 +2610,6 @@ async fn expect_native_opening(
 /// initial and dynamic virtual-display configurations, pixels, and native Apple
 /// pasteboard messages in both directions.
 #[tokio::test]
-#[ignore = "flaky: on Windows the fake Mac ends with ConnectionAborted at the disconnect"]
 async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard() {
     let (mac_port, mut requests, actions, fake_mac) = spawn_fake_mac().await;
     let addr = spawn_app(mac_target(mac_port)).await;
