@@ -120,6 +120,21 @@ unwrapped. The record and its
 acknowledgement would stay as they are: one stream per pipeline, started at
 `graphicsStart` and flushed at each record, in place of the host's.
 
+### A settings file for the TUI
+
+Taken up when the TUI needs a setting that belongs to the control plane rather
+than to any one instance, such as a locale for its screens. Nothing needs one
+today: the only such setting is the shared port, and `--port` and
+`ZDESK_TUI_PORT` cover it.
+
+The file would be `tui.toml` in the instances directory, beside the instance
+folders it applies to, so a control plane started with `--instances-dir` has its
+own. The first start would write it with every key commented out, so the
+defaults hold and the file shows what can be set. It would be parsed strictly:
+an unknown key or a bad value refuses the start instead of being skipped. The
+port would move into it as `port`, with `--port` and `ZDESK_TUI_PORT` still
+taking precedence. A change would apply at the next start.
+
 ### Touch on an RDP target (MS-RDPEI)
 
 Taken up if the need for it shows. Nothing carries touch today: the RDP client
