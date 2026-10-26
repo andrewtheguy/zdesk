@@ -4180,6 +4180,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
+name = "wlshare-proto"
+version = "0.0.89"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4367,6 +4374,7 @@ dependencies = [
  "uuid",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
+ "wlshare-proto",
  "zbus-secret-service-keyring-store",
  "zdesk-rdp-graphics",
 ]

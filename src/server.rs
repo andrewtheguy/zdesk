@@ -1252,6 +1252,7 @@ mod tests {
     /// of it, and because `subtype` and `passthrough` are `null` far more often
     /// than they are set — a field that were *absent* on those targets is one the
     /// client has to test for two ways.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_target_entry_names_its_subtype_and_what_its_type_offers() {
         let passwd = crate::auth::generate("admin", "hunter2", 4).unwrap();

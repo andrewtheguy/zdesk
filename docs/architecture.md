@@ -3766,8 +3766,15 @@ the module, token authentication, config audience, CLI commands, and their
 `check-config --embedded` validation mode compile out together. Native packages
 retain it. Container artifacts are built separately with
 `--no-default-features` and the features the script names, none unless told
-otherwise; the build script and Dockerfile reject a
+otherwise — release CI names `wlshare`; the build script and Dockerfile reject a
 binary that exposes any embedded CLI surface.
+
+wlshare is the other default feature, `wlshare`: the `subtype = "wlshare"`
+target and everything it lists, its private extensions' bytes coming from
+`wlshare-proto`, the crate the daemon builds them with, pinned by wlshare's
+release tag. A build without it links nothing of wlshare's and refuses a
+`wlshare` target at startup; a plain `vnc` target still reads a wlshare
+server through the RFB baseline.
 
 There is no separate native client: every instance is the same SPA loaded
 by Chrome or Edge from its subdomain. The TUI is process and configuration

@@ -30,6 +30,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aes::Aes128;
+#[cfg(feature = "wlshare")]
+use anyhow::Context as _;
 use des::Des;
 use des::cipher::generic_array::GenericArray;
 use des::cipher::{BlockEncrypt as _, KeyInit as _};
@@ -40,6 +42,18 @@ use log::{debug, info, warn};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, mpsc};
+#[cfg(feature = "wlshare")]
+use wlshare_proto::audio::{self, AudioParseError, ServerAudio};
+#[cfg(feature = "wlshare")]
+use wlshare_proto::camera::{self, ServerCamera};
+#[cfg(feature = "wlshare")]
+use wlshare_proto::microphone::{self, ServerMicrophone};
+#[cfg(feature = "wlshare")]
+use wlshare_proto::outputs::{self, EntryHeader, ListHeader};
+#[cfg(feature = "wlshare")]
+use wlshare_proto::tiles::TileHeader;
+#[cfg(feature = "wlshare")]
+use wlshare_proto::{ENCODING_DENSITY, ENCODING_OUTPUTS, ENCODING_TILES, ENCODING_VP9, density};
 
 use crate::combined::{Composition, Compositor};
 use crate::config::{Choices, Passthrough, RenderPlan, StandardQuality, Subtype, TargetConfig};
@@ -54,13 +68,33 @@ use crate::protocol::{
 use crate::shadow::{Rect, Shadow};
 use crate::vnc_apple::{self, CursorCache};
 use crate::vnc_apple_media::{self, MediaStream, PassedUnit, PassedUnits};
-use crate::vnc_audio::{self, ServerAudio};
+#[cfg(feature = "wlshare")]
+use crate::vnc_audio;
 use crate::vnc_encodings::{Decoders, Payload};
 use crate::vnc_apple_clipboard;
+#[cfg(feature = "wlshare")]
 use crate::camera::CameraSignal;
-use crate::vnc_camera::{self, ServerCamera};
+#[cfg(feature = "wlshare")]
+use crate::vnc_camera::{self, Input as CameraInput, Link as CameraLink, Queues as CameraQueues};
+#[cfg(feature = "wlshare")]
 use crate::mic::MicSignal;
-use crate::vnc_mic::{self, ServerMicrophone};
+#[cfg(feature = "wlshare")]
+use crate::vnc_mic::{self, Input as MicrophoneInput, Link as MicrophoneLink, Queues as MicrophoneQueues};
+// A gateway built without the `wlshare` feature lends no camera or microphone
+// over VNC: wlshare's extensions are the one way it does. What the engine holds in
+// their place can never be made, so the loop's branches for them never resolve.
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as CameraInput;
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as CameraLink;
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as CameraQueues;
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as MicrophoneInput;
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as MicrophoneLink;
+#[cfg(not(feature = "wlshare"))]
+use std::convert::Infallible as MicrophoneQueues;
 use crate::vnc_clipboard;
 use crate::vnc_record::{self, Keys, RecordReader, RecordWriter};
 use crate::vnc_rsa_aes::{self, FrameReader, Sealer, Strength};
@@ -129,77 +163,6 @@ const MSG_END_OF_CONTINUOUS_UPDATES: u8 = 150;
 /// ServerFence and ClientFence share a message type in the two directions.
 const MSG_FENCE: u8 = 248;
 
-/// The wlshare density extension's pseudo-encoding, the ASCII bytes `WLSH`. Listed
-/// in `SetEncodings` on a `wlshare` target alone: wlshare answers it with an
-/// [`MSG_WLSHARE_DENSITY`] report before its first update. See
-/// docs/wlshare-density.md.
-const ENCODING_WLSHARE_DENSITY: i32 = 0x574c_5348;
-/// The extension's one message type, used in both directions: the server's
-/// `OutputScale` report and the client's `ClientDensity` declaration. Outside
-/// every registered RFB message type.
-const MSG_WLSHARE_DENSITY: u8 = 0xE0;
-
-/// wlshare's scroll message: a distance, where RFB's wheel buttons have only
-/// notches. Six bytes — this type, padding, and the horizontal and vertical
-/// distance as S16 logical pixels of the output, positive rightward and
-/// downward. Sent on a `wlshare` target alone and not listed for: wlshare holds
-/// no state for it and answers nothing.
-const MSG_WLSHARE_SCROLL: u8 = 0xE5;
-/// The wlshare outputs extension's pseudo-encoding, the ASCII bytes `WLSO`.
-/// Listed beside the density request on a `wlshare` target: wlshare answers it
-/// with an [`MSG_WLSHARE_OUTPUTS`] list of the compositor's outputs. It is what
-/// fills the display picker on such a target — one
-/// framebuffer is one output, so a two-monitor desktop has to be asked which one
-/// to send. See docs/wlshare-outputs.md.
-const ENCODING_WLSHARE_OUTPUTS: i32 = 0x574c_534f;
-/// wlshare's VP9 encoding, `WLSV`: every update one rectangle over the whole
-/// desktop, a `u8` quality, a `u32` length and one frame of a single VP9 stream —
-/// the stream this gateway would encode from the same pixels, coded by the same
-/// crate at the chroma, dial and walk the plan resolves to, which it then passes
-/// through untouched ([`VideoSink::pass`]). The quality is the 1–100 dial wlshare
-/// coded the frame at, which a frame passed undecoded says nowhere else: nothing
-/// here turns on it, and it is counted for the session's picture totals. Listed
-/// for every browser on a `wlshare` target and on no other. wlshare sends it in
-/// place of ZRLE wherever it is listed and announces nothing; unlisted, as on a
-/// plain target, it sends ZRLE as to any VNC client.
-const ENCODING_WLSHARE_VP9: i32 = 0x574c_5356;
-/// Listed beside [`ENCODING_WLSHARE_VP9`] with the dial added, names the ceiling
-/// wlshare's walk never goes above, which wlshare has no quality of its own for: `WLQ` and the
-/// 1–100 value. What the plan is to be rides the encoding list as pseudo-encodings
-/// ([`with_wlshare_vp9`]), the way Tight's quality levels do, because a server that
-/// is not wlshare ignores an encoding it does not know where a client message it
-/// does not know ends the connection — and because they ride the list that names
-/// the encoding, so wlshare's first frame is already the plan's.
-const ENCODING_WLSHARE_VP9_QUALITY_BASE: i32 = 0x574c_5100;
-/// Listed beside [`ENCODING_WLSHARE_VP9`], holds wlshare's dial at the ceiling
-/// rather than walking it on the browser's lag: `WLSD`, for a plan without
-/// `render_adaptive`.
-const ENCODING_WLSHARE_VP9_HELD: i32 = 0x574c_5344;
-/// Listed beside [`ENCODING_WLSHARE_VP9`], has wlshare code the stream at 4:2:0,
-/// VP9 profile 0, rather than 4:4:4: `WLSS`, subsampled, for a plan at 4:2:0
-/// ([`crate::config::RenderPlan::chroma`]), which is a browser's whose own decoder
-/// takes no profile 1.
-const ENCODING_WLSHARE_VP9_SUBSAMPLED: i32 = 0x574c_5353;
-/// The largest `WLSV` frame read rather than refused. A 4:4:4 keyframe of the largest
-/// desktop the ceiling admits at the finest quantizer is a few megabytes; a length
-/// past this is a server that has lost its framing.
-const MAX_WLSHARE_VP9_FRAME: u32 = 64 << 20;
-/// wlshare's tiles encoding, `WLST`, its other picture, tiles with motion, which a
-/// session started with it ([`crate::config::Passthrough::WlshareTilesMotion`]) lists
-/// in place of [`ENCODING_WLSHARE_VP9`]: the desktop as exact PNG
-/// tiles where it is still and a video stream of its own, 4:2:0, for each region that
-/// moves — H.264, by the host's hardware encoder where it has one and libx264
-/// otherwise — each rectangle of an update one of them, passed through untouched
-/// ([`VideoSink::pass_tile`], [`VideoSink::pass_region`]). The dial beside it,
-/// [`ENCODING_WLSHARE_VP9_QUALITY_BASE`]'s, is what the regions are held at.
-const ENCODING_WLSHARE_TILES: i32 = 0x574c_5354;
-/// A `WLST` rectangle's body begins with its kind: a PNG of the rectangle, a region
-/// stream's first frame, its next, and its end.
-const WLSHARE_TILE_PNG: u8 = 0;
-const WLSHARE_TILE_START: u8 = 1;
-const WLSHARE_TILE_FRAME: u8 = 2;
-const WLSHARE_TILE_END: u8 = 3;
-
 /// The most a rectangle of a Mac's Adaptive picture is read as, past which it is
 /// refused: the ceiling wlshare's frames have, under the 100,000,000 bytes Apple's
 /// viewer allows one.
@@ -222,15 +185,6 @@ const STANDARD_RECEIVE_BUFFER: usize = 32 * 1024;
 /// window: past it the echo goes, and a client that is only slow still holds the
 /// engine where it always did, at the budget.
 const FENCE_HOLD_LIMIT: Duration = Duration::from_millis(500);
-/// The extension's one message type, used in both directions: the server's
-/// `OutputList` and the client's `SelectOutput`. Outside every registered RFB
-/// message type.
-const MSG_WLSHARE_OUTPUTS: u8 = 0xE1;
-/// The ClientInit byte with which a connection asks wlshare to show it another
-/// output beside the one the session's connection is on, which stays: what the
-/// second display's tab is fed from on *All Displays*. wlshare takes the desktop
-/// for every other value.
-const CLIENT_INIT_WLSHARE_BESIDE: u8 = 0xB5;
 /// A fence the server wants echoed. Nothing else in the flags word obliges a
 /// client, and the two it may keep are [`FENCE_BLOCK_BEFORE`] and
 /// [`FENCE_BLOCK_AFTER`].
@@ -240,13 +194,6 @@ const FENCE_BLOCK_AFTER: u32 = 1 << 1;
 /// Longest fence payload the extension defines. A server sending more is malformed;
 /// the excess is consumed to keep the stream in step and left out of the echo.
 const MAX_FENCE_PAYLOAD: usize = 64;
-/// Longest frame one audio message may carry. A frame is 20 ms of the format
-/// this client asks for, 3840 bytes before compression: FLAC never grows it by
-/// more than a few header bytes and an Opus packet is far under it, so
-/// anything past 64 KiB is a
-/// server that has lost its framing rather than one with a lot to say: its
-/// bytes are stepped over instead of allocated.
-const MAX_AUDIO_FRAME: u32 = 1 << 16;
 /// Bytes per pixel of the format we force with SetPixelFormat.
 pub(crate) const BPP: usize = 4;
 /// Cap on server-sent reason/name strings, so a bogus length can't OOM us.
@@ -380,6 +327,7 @@ impl Backlog {
     /// stop being fed to it. Their queues upstream are bounded and shed what a
     /// stalled server cannot take; input and the read loop's own messages are
     /// small, owed to the server whatever its pace, and never held to this.
+    #[cfg(feature = "wlshare")]
     const MEDIA_LIMIT: usize = 256 * 1024;
 
     /// The most that may be waiting before pointer motion and scrolling are held
@@ -406,6 +354,7 @@ impl Backlog {
     }
 
     /// Wait until the socket has caught up enough to be worth a media sample.
+    #[cfg(feature = "wlshare")]
     async fn room_for_media(&self) {
         self.room(Self::MEDIA_LIMIT).await;
     }
@@ -599,6 +548,7 @@ async fn send(uplink: &SharedUplink, msg: &[u8]) -> anyhow::Result<()> {
 /// last asked for, or `own` where none has. Read under the uplink's lock, so a
 /// rate asked for meanwhile is either the one sent here or sent after it by the
 /// loop that hears it, and never before a staler one.
+#[cfg(feature = "wlshare")]
 async fn send_asked_rate(
     uplink: &SharedUplink,
     bridge: &crate::audio::AudioBridge,
@@ -606,7 +556,7 @@ async fn send_asked_rate(
 ) -> anyhow::Result<()> {
     let mut uplink = uplink.lock().await;
     let rate = bridge.asked_rate().borrow().unwrap_or(own);
-    uplink.send(&vnc_audio::set_bitrate(rate as u32)).await
+    uplink.send(&audio::set_bitrate(rate as u32)).await
 }
 
 /// Send several, in order, stopping at the first failure. The lock is taken once
@@ -687,6 +637,7 @@ struct DesktopState {
     /// that declaration was out, or an output switched under it, is declared
     /// again then, so one transition is in flight at a time and the server's
     /// last word is the browser's newest.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     declared: Option<f32>,
     /// A scale report relabelled the current pixels, which cleared the browser's
     /// canvas, and nothing since has asked the server for them again. Cleared
@@ -704,6 +655,7 @@ struct DesktopState {
     hp_displays: usize,
     /// How many virtual displays a `wlshare` session asked wlshare for, one or
     /// two: the target's `virtual_displays`, one on every other session.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_displays: u8,
     /// Every virtual display is asked for with even sides, a pixel less than the
     /// window on an odd one ([`vnc_apple::VirtualMode::even_sided`]): the session
@@ -1169,7 +1121,7 @@ impl HpResize {
 }
 
 /// The wlshare density extension's state on one connection — see
-/// [`ENCODING_WLSHARE_DENSITY`] and docs/wlshare-density.md. A `wlshare` target
+/// [`wlshare_proto::density`] and docs/wlshare-density.md. A `wlshare` target
 /// asks, and the server's first update decides whether it was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Density {
@@ -1482,6 +1434,7 @@ impl DesktopState {
     /// with a report, and until it does no resize goes out. The window it
     /// carries is no longer held: the answer asks again only if it was not
     /// granted.
+    #[cfg(feature = "wlshare")]
     fn declare_density(&mut self, declared: f32) -> Option<[u8; 10]> {
         // The reported scale, not the canvas's label: a first report is declared
         // back before it relabels the canvas.
@@ -1499,6 +1452,13 @@ impl DesktopState {
         self.following = true;
         self.declared = Some(declared);
         Some(client_density(pixels, declared))
+    }
+
+    /// Nothing, in a gateway built without wlshare: the report a declaration
+    /// answers is wlshare's, and is never read, so no density is declared.
+    #[cfg(not(feature = "wlshare"))]
+    fn declare_density(&mut self, _: f32) -> Option<[u8; 10]> {
+        None
     }
 
     /// The `ClientDensity` for a `HostDisplay` report mid-session, or `None`.
@@ -1523,6 +1483,7 @@ impl DesktopState {
     /// answering that one declares instead, finding [`Self::declared`] cleared.
     /// The declaration carries the window, so the new output, whose size is its
     /// own and not the window's, takes it in the same configuration.
+    #[cfg(feature = "wlshare")]
     fn output_switched(&mut self) -> Option<[u8; 10]> {
         self.declared = None;
         (self.density == Density::Reported && !self.following)
@@ -1555,6 +1516,7 @@ async fn send_decided<M: AsRef<[u8]>>(
 /// [`send_decided`] for the camera: the uplink first, then the device, so a plug
 /// decided from newer state never trails an unplug decided from older — the
 /// server's announcement, read on the read loop, can race the browser's plug.
+#[cfg(feature = "wlshare")]
 async fn send_camera_decided(
     uplink: &SharedUplink,
     link: &vnc_camera::Link,
@@ -1571,6 +1533,7 @@ async fn send_camera_decided(
 /// [`send_camera_decided`] for the microphone. A decision that ended a recording is
 /// told to the bridge under the device's lock, so a start the read loop hears for the
 /// same device can never be told after it.
+#[cfg(feature = "wlshare")]
 async fn send_microphone_decided(
     uplink: &SharedUplink,
     link: &vnc_mic::Link,
@@ -1593,7 +1556,8 @@ async fn send_microphone_decided(
 
 /// The mic socket's next command for the loop to send; never, on a session without a
 /// microphone. Held while the uplink is behind, like [`camera_input`].
-async fn microphone_input(queues: &mut Option<vnc_mic::Queues>, backlog: &Backlog) -> vnc_mic::Input {
+#[cfg(feature = "wlshare")]
+async fn microphone_input(queues: &mut Option<MicrophoneQueues>, backlog: &Backlog) -> MicrophoneInput {
     let next = match queues {
         Some(queues) => {
             backlog.room_for_media().await;
@@ -1613,7 +1577,8 @@ async fn microphone_input(queues: &mut Option<vnc_mic::Queues>, backlog: &Backlo
 /// without a camera. Held while the uplink is behind: a send no longer waits on the
 /// socket, so this is where a server that is not reading stops being fed samples,
 /// and the socket's own queue sheds what it cannot take.
-async fn camera_input(queues: &mut Option<vnc_camera::Queues>, backlog: &Backlog) -> vnc_camera::Input {
+#[cfg(feature = "wlshare")]
+async fn camera_input(queues: &mut Option<CameraQueues>, backlog: &Backlog) -> CameraInput {
     let next = match queues {
         Some(queues) => {
             backlog.room_for_media().await;
@@ -1627,6 +1592,65 @@ async fn camera_input(queues: &mut Option<vnc_camera::Queues>, backlog: &Backlog
         // the engine runs, so the queues only end with the engine.
         None => std::future::pending().await,
     }
+}
+
+/// The camera socket's command, sent as the device decides: what reaches the wire
+/// is the device's decision.
+#[cfg(feature = "wlshare")]
+async fn send_camera_input(uplink: &SharedUplink, link: Option<&CameraLink>, input: CameraInput) -> anyhow::Result<()> {
+    let Some(link) = link else { return Ok(()) };
+    send_camera_decided(uplink, link, |device| match input {
+        vnc_camera::Input::Plug(format) => device.plug(format),
+        vnc_camera::Input::Unplug => device.unplug(),
+        vnc_camera::Input::Sample { unit, keyframe } => device.sample(&unit, keyframe),
+    })
+    .await
+}
+
+/// The mic socket's command, the same way.
+#[cfg(feature = "wlshare")]
+async fn send_microphone_input(uplink: &SharedUplink, link: Option<&MicrophoneLink>, input: MicrophoneInput) -> anyhow::Result<()> {
+    let Some(link) = link else { return Ok(()) };
+    send_microphone_decided(uplink, link, |device| match input {
+        vnc_mic::Input::Plug => device.plug(),
+        vnc_mic::Input::Unplug => device.unplug(),
+        vnc_mic::Input::Sample(pcm) => vnc_mic::Decision { message: device.sample(&pcm), closed: false },
+    })
+    .await
+}
+
+/// A session's camera and microphone where nothing lends them ([`CameraInput`]):
+/// no `vnc` target is offered either without wlshare, so neither ever arrives.
+#[cfg(not(feature = "wlshare"))]
+fn lent<B>(bridge: Option<B>) -> (Option<Arc<std::convert::Infallible>>, Option<std::convert::Infallible>) {
+    debug_assert!(bridge.is_none(), "a VNC target lends a device over wlshare's extensions alone");
+    (None, None)
+}
+
+#[cfg(not(feature = "wlshare"))]
+async fn camera_input(queues: &mut Option<CameraQueues>, _: &Backlog) -> CameraInput {
+    if let Some(queues) = queues {
+        match *queues {}
+    }
+    std::future::pending().await
+}
+
+#[cfg(not(feature = "wlshare"))]
+async fn microphone_input(queues: &mut Option<MicrophoneQueues>, _: &Backlog) -> MicrophoneInput {
+    if let Some(queues) = queues {
+        match *queues {}
+    }
+    std::future::pending().await
+}
+
+#[cfg(not(feature = "wlshare"))]
+async fn send_camera_input(_: &SharedUplink, _: Option<&CameraLink>, input: CameraInput) -> anyhow::Result<()> {
+    match input {}
+}
+
+#[cfg(not(feature = "wlshare"))]
+async fn send_microphone_input(_: &SharedUplink, _: Option<&MicrophoneLink>, input: MicrophoneInput) -> anyhow::Result<()> {
+    match input {}
 }
 
 type SharedDesktop = Arc<std::sync::Mutex<DesktopState>>;
@@ -1678,21 +1702,27 @@ struct DisplayState {
     hp_infos: Vec<DisplayInfo>,
     /// wlshare's outputs as its last `OutputList` named them, and the one this
     /// connection shares: what [`Self::wlshare_list`] builds the list from.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_outputs: Vec<DisplayInfo>,
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_shared: u32,
     /// *All Displays* is chosen on a wlshare target, as it is from the moment a
     /// desk lists two outputs: its first output on the canvas and its second in a
     /// tab of its own. The gateway's choice, in force once wlshare says the
     /// connection is on the first.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_all: bool,
     /// One output alone was the picker's last choice, which a desk becoming two
     /// outputs again does not undo.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_picked: bool,
     /// The most virtual displays the server makes, as its last list said; `None`
     /// before the first.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_most: Option<u8>,
     /// The session's `VirtualDisplays` request has been decided on, at its first
     /// list: sent where the server makes as many as asked, and not otherwise.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     wlshare_asked: bool,
 }
 
@@ -1725,6 +1755,7 @@ impl DisplayState {
     /// to wlshare, so the first stays on the canvas and the second is shown in a
     /// tab, fed by a second connection ([`Beside`]). More than two have no such
     /// entry, there being one tab. Whether the list or the checkmark changed.
+    #[cfg(feature = "wlshare")]
     fn wlshare_list(&mut self) -> bool {
         let two = self.wlshare_outputs.len() == 2;
         self.wlshare_all &= two;
@@ -1934,7 +1965,7 @@ const BESIDE_DISPLAY: u32 = 2;
 
 /// A wlshare target's second output, shown in a browser tab of its own while
 /// *All Displays* is chosen: a second connection to wlshare, which shows it the
-/// output the session's connection is not on ([`CLIENT_INIT_WLSHARE_BESIDE`]),
+/// output the session's connection is not on ([`wlshare_proto::CLIENT_INIT_BESIDE`]),
 /// run as a session of its own into the display socket the session handed over.
 /// Everything a display has is then that connection's: its size and density,
 /// its pointer, its VP9 stream and the walk of its own link. The sound, the
@@ -2438,7 +2469,7 @@ struct Connected {
     /// Performance session has one, and every other session `None`.
     media: Option<(MediaStream, Vec<PassedUnits>)>,
     /// The encodings a `wlshare` target lists, with and without
-    /// [`ENCODING_WLSHARE_VP9`]: what the read loop lists on its own while the
+    /// [`ENCODING_VP9`]: what the read loop lists on its own while the
     /// desktop is past the video ceiling, and with it again once it is back.
     /// `None` on every other target, which lists nothing of wlshare's.
     passthrough: Option<Arc<Listing>>,
@@ -2532,7 +2563,10 @@ async fn connect(
                 }
             };
             read_security_result(&mut downlink).await?;
-            let init = if beside { CLIENT_INIT_WLSHARE_BESIDE } else { dialect.client_init() };
+            #[cfg(feature = "wlshare")]
+            let init = if beside { wlshare_proto::CLIENT_INIT_BESIDE } else { dialect.client_init() };
+            #[cfg(not(feature = "wlshare"))]
+            let init = dialect.client_init();
             uplink.send(&[init]).await?;
             // wlshare closes a connection it has no other output to show.
             let server = match read_server_init(&mut downlink).await {
@@ -2751,6 +2785,7 @@ fn encoding_label(encoding: i32) -> String {
 /// of them, so a wlshare server reached as one serves it as it serves any VNC
 /// client: ZRLE, coded here as tiles.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "wlshare"), expect(unused_variables, reason = "they decide what of wlshare's is listed"))]
 async fn rfb38_preface(
     downlink: Downlink,
     mut uplink: Uplink,
@@ -2762,6 +2797,7 @@ async fn rfb38_preface(
     beside: bool,
 ) -> anyhow::Result<Connected> {
     uplink.send(&set_pixel_format()).await?;
+    #[cfg(feature = "wlshare")]
     let passthrough = if config.wlshare() {
         let encodings = if beside {
             wlshare_beside_encoding_list()
@@ -2773,6 +2809,12 @@ async fn rfb38_preface(
         uplink.send(&set_encodings(lists.listed((server.width, server.height)))).await?;
         Some(Arc::new(lists))
     } else {
+        uplink.send(&set_encodings(&rfb38_encoding_list())).await?;
+        None
+    };
+    // A gateway built without wlshare speaks to every RFB 3.8 server as to any.
+    #[cfg(not(feature = "wlshare"))]
+    let passthrough = {
         uplink.send(&set_encodings(&rfb38_encoding_list())).await?;
         None
     };
@@ -2803,6 +2845,7 @@ struct Listing {
 }
 
 impl Listing {
+    #[cfg(feature = "wlshare")]
     fn new(plain: Vec<i32>, plan: RenderPlan) -> Self {
         let wlshare = if plan.wlshare_tiles_motion { with_wlshare_tiles_motion(&plain, plan) } else { with_wlshare_vp9(&plain, plan) };
         Self { plain, wlshare }
@@ -2826,6 +2869,7 @@ impl Listing {
     /// Whether `encoding` is the wlshare picture this session lists, its VP9 or its
     /// tiles, which [`with_wlshare_vp9`] and [`with_wlshare_tiles_motion`] put at the head:
     /// the other is never listed, so the server sending it is a protocol violation.
+    #[cfg(feature = "wlshare")]
     fn picture(&self, encoding: i32) -> bool {
         self.wlshare[0] == encoding
     }
@@ -2833,8 +2877,9 @@ impl Listing {
 
 /// `encodings` with wlshare's tiles encoding ahead of them, and beside it the dial
 /// its regions are held at, from the plan: the same `WLQ` the VP9 is asked at.
+#[cfg(feature = "wlshare")]
 fn with_wlshare_tiles_motion(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let mut listed = vec![ENCODING_WLSHARE_TILES, ENCODING_WLSHARE_VP9_QUALITY_BASE + i32::from(plan.quality)];
+    let mut listed = wlshare_proto::tiles::encodings(plan.quality);
     listed.extend_from_slice(encodings);
     listed
 }
@@ -2845,14 +2890,13 @@ fn with_wlshare_tiles_motion(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
 /// wlshare's walk never goes above, and `WLSD` for a plan that holds the dial rather
 /// than walking it, so the target's keys reach the passed stream; and `WLSS` for a
 /// plan at 4:2:0 ([`RenderPlan::chroma`]).
+#[cfg(feature = "wlshare")]
 fn with_wlshare_vp9(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let mut listed = vec![ENCODING_WLSHARE_VP9, ENCODING_WLSHARE_VP9_QUALITY_BASE + i32::from(plan.quality)];
-    if !plan.adaptive {
-        listed.push(ENCODING_WLSHARE_VP9_HELD);
-    }
-    if plan.chroma == crate::vp9::Chroma::Yuv420 {
-        listed.push(ENCODING_WLSHARE_VP9_SUBSAMPLED);
-    }
+    let chroma = match plan.chroma {
+        crate::vp9::Chroma::Yuv444 => wlshare_proto::vp9::Chroma::Yuv444,
+        crate::vp9::Chroma::Yuv420 => wlshare_proto::vp9::Chroma::Yuv420,
+    };
+    let mut listed = wlshare_proto::vp9::Vp9Stream { quality: plan.quality, adaptive: plan.adaptive, chroma }.encodings();
     listed.extend_from_slice(encodings);
     listed
 }
@@ -2905,6 +2949,7 @@ fn rfb38_encoding_list() -> Vec<i32> {
 /// `audio` is `Some` in a session started with sound, and says whether that
 /// sound is lossless; `camera` and `microphone` are whether the session was
 /// started offering the browser's ([`crate::config::Choices`]).
+#[cfg(feature = "wlshare")]
 fn wlshare_encoding_list(audio: Option<bool>, camera: bool, microphone: bool) -> Vec<i32> {
     let mut encodings = rfb38_encoding_list();
     if let Some(lossless) = audio {
@@ -2912,33 +2957,33 @@ fn wlshare_encoding_list(audio: Option<bool>, camera: bool, microphone: bool) ->
         // announces it with a rectangle of this encoding, and a server that does
         // not speak it says nothing and the session runs in silence. See
         // [`crate::vnc_audio`].
-        encodings.push(vnc_audio::ENCODING);
+        encodings.push(wlshare_proto::ENCODING_AUDIO);
         // And as Opus, which the browser decodes as it came, unless the session
         // was started with its sound lossless: wlshare's FLAC is what a list
         // without this asks for.
         if !lossless {
-            encodings.push(vnc_audio::ENCODING_OPUS);
+            encodings.push(wlshare_proto::ENCODING_AUDIO_OPUS);
         }
     }
     if camera {
         // The wlshare camera extension, on a target that carries a camera, asked
         // the way audio is: wlshare answers that it takes one. See
         // [`crate::vnc_camera`].
-        encodings.push(vnc_camera::ENCODING);
+        encodings.push(wlshare_proto::ENCODING_CAMERA);
     }
     if microphone {
         // And the wlshare microphone extension, on a target that carries a
         // microphone, the same way. See [`crate::vnc_mic`].
-        encodings.push(vnc_mic::ENCODING);
+        encodings.push(wlshare_proto::ENCODING_MICROPHONE);
     }
     // The density request, after everything that decides pixels so it never
     // weighs on encoding preference. Its answer is the scale every framebuffer
     // from then on is labelled with.
-    encodings.push(ENCODING_WLSHARE_DENSITY);
+    encodings.push(ENCODING_DENSITY);
     // The output list, on the same terms: the one way wlshare says it has more
     // than one output to offer, and why a switch to a differently sized one
     // needs the size pseudo-encodings above.
-    encodings.push(ENCODING_WLSHARE_OUTPUTS);
+    encodings.push(ENCODING_OUTPUTS);
     encodings
 }
 
@@ -2948,10 +2993,11 @@ fn wlshare_encoding_list(audio: Option<bool>, camera: bool, microphone: bool) ->
 /// density request, since the output it is shown has a scale of its own. Not
 /// the output list: which output it shows is wlshare's to say, the one the
 /// first connection is not on.
+#[cfg(feature = "wlshare")]
 fn wlshare_beside_encoding_list() -> Vec<i32> {
     let mut encodings = rfb38_encoding_list();
     encodings.retain(|encoding| *encoding != vnc_clipboard::ENCODING);
-    encodings.push(ENCODING_WLSHARE_DENSITY);
+    encodings.push(ENCODING_DENSITY);
     encodings
 }
 
@@ -3279,6 +3325,7 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
     let tab: SharedTab = Arc::default();
     // The camera socket's traffic comes to this loop through the queues, and the
     // server's decisions go to the bridge from the read loop: both share the link.
+    #[cfg(feature = "wlshare")]
     let (camera, mut camera_queues) = match camera {
         Some(bridge) => {
             let (link, queues) = vnc_camera::attach(&bridge);
@@ -3286,7 +3333,10 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
         }
         None => (None, None),
     };
+    #[cfg(not(feature = "wlshare"))]
+    let (camera, mut camera_queues) = lent(camera);
     // The mic socket's the same way.
+    #[cfg(feature = "wlshare")]
     let (microphone, mut microphone_queues) = match microphone {
         Some(bridge) => {
             let (link, queues) = vnc_mic::attach(&bridge);
@@ -3294,6 +3344,8 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
         }
         None => (None, None),
     };
+    #[cfg(not(feature = "wlshare"))]
+    let (microphone, mut microphone_queues) = lent(microphone);
     // The rates a listener's walk asks wlshare's Opus for, sent from this loop
     // once the read loop has heard the extension announced.
     let mut audio_rates = wlshare_audio.as_ref().map(|bridge| bridge.asked_rate());
@@ -3377,30 +3429,14 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
             // The camera socket's plug, unplug and samples, written in the order the
             // browser sent them; what reaches the wire is the device's decision.
             input = camera_input(&mut camera_queues, &backlog) => {
-                if let Some(link) = &camera {
-                    let sent = send_camera_decided(&uplink, link, |device| match input {
-                        vnc_camera::Input::Plug(format) => device.plug(format),
-                        vnc_camera::Input::Unplug => device.unplug(),
-                        vnc_camera::Input::Sample { unit, keyframe } => device.sample(&unit, keyframe),
-                    })
-                    .await;
-                    if let Err(e) = sent {
-                        break Err(e);
-                    }
+                if let Err(e) = send_camera_input(&uplink, camera.as_deref(), input).await {
+                    break Err(e);
                 }
             }
             // The mic socket's plug, unplug and PCM, the same way.
             input = microphone_input(&mut microphone_queues, &backlog) => {
-                if let Some(link) = &microphone {
-                    let sent = send_microphone_decided(&uplink, link, |device| match input {
-                        vnc_mic::Input::Plug => device.plug(),
-                        vnc_mic::Input::Unplug => device.unplug(),
-                        vnc_mic::Input::Sample(pcm) => vnc_mic::Decision { message: device.sample(&pcm), closed: false },
-                    })
-                    .await;
-                    if let Err(e) = sent {
-                        break Err(e);
-                    }
+                if let Err(e) = send_microphone_input(&uplink, microphone.as_deref(), input).await {
+                    break Err(e);
                 }
             }
             // The listener's walk moved the rate wlshare's Opus is coded at
@@ -3409,7 +3445,7 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
             // the rate current at the announcement itself.
             rate = asked_audio_rate(&mut audio_rates) => {
                 if audio_announced.load(Ordering::Relaxed)
-                    && let Err(e) = send(&uplink, &vnc_audio::set_bitrate(rate as u32)).await
+                    && let Err(e) = send_rate(&uplink, rate).await
                 {
                     break Err(e);
                 }
@@ -3950,53 +3986,61 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
                         }
                         .await
                     } else {
-                        // wlshare: the list it sent is itself the proof it speaks
-                        // the extension, since nothing else fills `displays` on a
-                        // generic target. The request is answered with a list
-                        // whatever becomes of it, and the repaint rides along for
-                        // the same reason as above — a switch to a same-sized
-                        // output carries no resize rectangle to redraw through,
-                        // and the old screen's pixels are not this one's.
-                        //
-                        // *All Displays* is this gateway's entry: the first
-                        // output here and the second in a tab of its own, on a
-                        // connection of its own. So wlshare is asked only for
-                        // the first, and not even that when the canvas is on it
-                        // already, where the list is answered from here. Any
-                        // other choice ends the second connection before the
-                        // output it shows is asked for.
-                        let (ask, answer) = {
-                            let mut state = display.lock().unwrap();
-                            state.wlshare_all = id == DisplayState::COMBINED;
-                            state.wlshare_picked = !state.wlshare_all;
-                            let ask = if state.wlshare_all {
-                                state.wlshare_outputs.first().map(|first| first.id).filter(|first| *first != state.wlshare_shared)
-                            } else {
-                                Some(id)
+                        #[cfg(feature = "wlshare")]
+                        let sent = {
+                            // wlshare: the list it sent is itself the proof it speaks
+                            // the extension, since nothing else fills `displays` on a
+                            // generic target. The request is answered with a list
+                            // whatever becomes of it, and the repaint rides along for
+                            // the same reason as above — a switch to a same-sized
+                            // output carries no resize rectangle to redraw through,
+                            // and the old screen's pixels are not this one's.
+                            //
+                            // *All Displays* is this gateway's entry: the first
+                            // output here and the second in a tab of its own, on a
+                            // connection of its own. So wlshare is asked only for
+                            // the first, and not even that when the canvas is on it
+                            // already, where the list is answered from here. Any
+                            // other choice ends the second connection before the
+                            // output it shows is asked for.
+                            let (ask, answer) = {
+                                let mut state = display.lock().unwrap();
+                                state.wlshare_all = id == DisplayState::COMBINED;
+                                state.wlshare_picked = !state.wlshare_all;
+                                let ask = if state.wlshare_all {
+                                    state.wlshare_outputs.first().map(|first| first.id).filter(|first| *first != state.wlshare_shared)
+                                } else {
+                                    Some(id)
+                                };
+                                let answer = if ask.is_none() && state.wlshare_list() { state.displays_msg() } else { None };
+                                (ask, answer)
                             };
-                            let answer = if ask.is_none() && state.wlshare_list() { state.displays_msg() } else { None };
-                            (ask, answer)
-                        };
-                        if id != DisplayState::COMBINED {
-                            beside = None;
-                        }
-                        if let Some(msg) = answer
-                            && let Err(e) = sink.msg(msg).await
-                        {
-                            break Err(e);
-                        }
-                        match ask {
-                            Some(id) => {
-                                debug!("vnc: asking the server for output {id}");
-                                let size = desktop.lock().unwrap().size;
-                                send_all(
-                                    &uplink,
-                                    &[select_output(id).to_vec(), update_request(false, size).to_vec()],
-                                )
-                                .await
+                            if id != DisplayState::COMBINED {
+                                beside = None;
                             }
-                            None => Ok(()),
-                        }
+                            if let Some(msg) = answer
+                                && let Err(e) = sink.msg(msg).await
+                            {
+                                break Err(e);
+                            }
+                            match ask {
+                                Some(id) => {
+                                    debug!("vnc: asking the server for output {id}");
+                                    let size = desktop.lock().unwrap().size;
+                                    send_all(
+                                        &uplink,
+                                        &[outputs::select_output(id).to_vec(), update_request(false, size).to_vec()],
+                                    )
+                                    .await
+                                }
+                                None => Ok(()),
+                            }
+                        };
+                        // Nothing fills a generic target's `displays` but wlshare's
+                        // outputs extension, which a gateway without it never reads.
+                        #[cfg(not(feature = "wlshare"))]
+                        let sent = Ok(());
+                        sent
                     }
                 } else {
                     let msgs = translate_input(
@@ -4456,6 +4500,7 @@ async fn next_of(units: &mut PassedUnits) -> FromStream {
 /// [`HpResize::deadline`], re-read whenever `wake` says the read loop changed it.
 /// The next rate, in bits per second, asked of the remote's Opus. Never, on a
 /// session with no such sound or once its queue is gone.
+#[cfg(feature = "wlshare")]
 async fn asked_audio_rate(rates: &mut Option<tokio::sync::watch::Receiver<Option<i32>>>) -> i32 {
     if let Some(rates) = rates {
         while rates.changed().await.is_ok() {
@@ -4465,6 +4510,24 @@ async fn asked_audio_rate(rates: &mut Option<tokio::sync::watch::Receiver<Option
         }
     }
     std::future::pending().await
+}
+
+/// Name `rate` to wlshare's Opus, which has announced the extension.
+#[cfg(feature = "wlshare")]
+async fn send_rate(uplink: &SharedUplink, rate: i32) -> anyhow::Result<()> {
+    send(uplink, &audio::set_bitrate(rate as u32)).await
+}
+
+/// No rate is ever asked of a server where nothing is built to name it to: only
+/// wlshare's sound has a walk to follow.
+#[cfg(not(feature = "wlshare"))]
+async fn asked_audio_rate(_: &mut Option<tokio::sync::watch::Receiver<Option<i32>>>) -> std::convert::Infallible {
+    std::future::pending().await
+}
+
+#[cfg(not(feature = "wlshare"))]
+async fn send_rate(_: &SharedUplink, rate: std::convert::Infallible) -> anyhow::Result<()> {
+    match rate {}
 }
 
 async fn hp_resize_due(desktop: &SharedDesktop, wake: &tokio::sync::Notify) {
@@ -4517,17 +4580,21 @@ struct Shared {
     /// and the extension is then neither advertised nor read.
     audio: Option<Arc<crate::audio::AudioBridge>>,
     /// See [`Flags::audio_rate`].
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     audio_rate: i32,
     /// Whether wlshare has announced its audio extension, so that a rate may be
     /// named to it: set by the read loop, which hears the announcement, for the
     /// loop that hears the walk.
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
     audio_announced: Arc<AtomicBool>,
     /// The browser's camera — see [`Flags::camera`]. `None` is a session with no
     /// camera to lend, and the extension is then neither advertised nor read.
-    camera: Option<Arc<vnc_camera::Link>>,
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
+    camera: Option<Arc<CameraLink>>,
     /// The browser's microphone — see [`Flags::microphone`]. `None` is a session with no
     /// microphone to lend, and the extension is then neither advertised nor read.
-    microphone: Option<Arc<vnc_mic::Link>>,
+    #[cfg_attr(not(feature = "wlshare"), allow(dead_code))]
+    microphone: Option<Arc<MicrophoneLink>>,
     /// High Performance's media stream — see [`Connected::media`]. Both loops
     /// offer it: the read loop at an update boundary, the input loop when a
     /// resize's cover comes down.
@@ -4540,8 +4607,35 @@ struct Shared {
     /// else tells apart, and which a passed stream's decoder cannot take.
     switch: Arc<tokio::sync::Mutex<()>>,
     /// See [`Connected::passthrough`]. `Some` is a session that may be sent
-    /// [`ENCODING_WLSHARE_VP9`], and the only one that reads it.
+    /// [`ENCODING_VP9`], and the only one that reads it.
     passthrough: Option<Arc<Listing>>,
+}
+
+/// Answer wlshare's audio announcement: the format this client wants, the rate
+/// Opus is coded at, and the switch that starts the stream.
+#[cfg(feature = "wlshare")]
+async fn answer_audio(
+    uplink: &SharedUplink,
+    announced: &AtomicBool,
+    bridge: Option<&crate::audio::AudioBridge>,
+    rate: i32,
+) -> anyhow::Result<()> {
+    info!(
+        "vnc: the server carries desktop audio; asking for {} Hz, {} channel, {}-bit sound",
+        vnc_audio::SOURCE_FORMAT.sample_rate,
+        vnc_audio::SOURCE_FORMAT.channels,
+        vnc_audio::SOURCE_FORMAT.bits_per_sample
+    );
+    send(uplink, &audio::set_format(vnc_audio::WANTED)).await?;
+    // The rate Opus is coded at, before the stream starts: what a listener's walk
+    // last asked for, or the target's own. The flag goes up first, so a rate
+    // asked for from here on is sent by the loop that hears it, and none is
+    // missed.
+    announced.store(true, Ordering::Relaxed);
+    if let Some(bridge) = bridge {
+        send_asked_rate(uplink, bridge, rate).await?;
+    }
+    send(uplink, &audio::enable()).await
 }
 
 /// Read server messages forever, forwarding framebuffer updates to the sink.
@@ -4555,14 +4649,15 @@ async fn read_loop<R: AsyncRead + Unpin>(
     mut apple: Option<Apple>,
     sink: VideoSink,
 ) -> anyhow::Result<()> {
-    let Shared {
-        uplink, desktop, clipboard, display, hp_wake, audio, audio_rate, camera, microphone, media, passthrough, ..
-    } = &shared;
+    let Shared { uplink, desktop, clipboard, display, hp_wake, audio, media, passthrough, .. } = &shared;
+    #[cfg(feature = "wlshare")]
+    let Shared { audio_rate, camera, microphone, .. } = &shared;
     // Where the audio extension stands here. `Off` on a session with no bridge
     // to feed, which is also a session that never listed the encoding, so
     // neither the announcement nor a frame can arrive.
     let mut audio_state = if audio.is_some() { Audio::Asked } else { Audio::Off };
     // Whether a stream is running, from a begin to its end.
+    #[cfg(feature = "wlshare")]
     let mut streaming = false;
     let mut full_repaint: Option<FullRepaint> = None;
     let mut apple_poll_paused = false;
@@ -4814,23 +4909,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 // answered mid-message.
                 if audio_announced && audio_state != Audio::Announced {
                     audio_state = Audio::Announced;
-                    info!(
-                        "vnc: the server carries desktop audio; asking for {} Hz, {} channel, \
-                         {}-bit sound",
-                        vnc_audio::SOURCE_FORMAT.sample_rate,
-                        vnc_audio::SOURCE_FORMAT.channels,
-                        vnc_audio::SOURCE_FORMAT.bits_per_sample
-                    );
-                    send(uplink, &vnc_audio::set_format(vnc_audio::WANTED)).await?;
-                    // The rate Opus is coded at, before the stream starts: what
-                    // a listener's walk last asked for, or the target's own.
-                    // The flag goes up first, so a rate asked for from here on
-                    // is sent by the loop that hears it, and none is missed.
-                    shared.audio_announced.store(true, Ordering::Relaxed);
-                    if let Some(bridge) = audio {
-                        send_asked_rate(uplink, bridge, *audio_rate).await?;
-                    }
-                    send(uplink, &vnc_audio::enable()).await?;
+                    #[cfg(feature = "wlshare")]
+                    answer_audio(uplink, &shared.audio_announced, audio.as_deref(), *audio_rate).await?;
                 } else if audio_state == Audio::Asked && painted {
                     // The announcement comes in an update of its own before any
                     // pixels, so pixels without one are a server that does not
@@ -5051,7 +5131,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // The wlshare OutputScale report: the framebuffer's density, from the one
             // server that can say. Only a session that asked reads it; on a plain
             // target and on the Apple dialects, 0xE0 is as unknown as it was.
-            MSG_WLSHARE_DENSITY if desktop.lock().unwrap().density != Density::Off => {
+            #[cfg(feature = "wlshare")]
+            density::MSG_DENSITY if desktop.lock().unwrap().density != Density::Off => {
                 read_output_scale(&mut reader, uplink, desktop, &shared.shadow, &sink).await?;
             }
             // The wlshare OutputList: which outputs the compositor has and which
@@ -5059,21 +5140,24 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // that listed the encoding; on a plain target and on the Apple
             // dialects 0xE1 is as unknown as it was, and a Mac's screens arrive in
             // its display layout.
-            MSG_WLSHARE_OUTPUTS if shared.passthrough.is_some() => {
+            #[cfg(feature = "wlshare")]
+            outputs::MSG_OUTPUTS if shared.passthrough.is_some() => {
                 read_output_list(&mut reader, uplink, desktop, display, &sink).await?;
             }
             // The QEMU message type, which wlshare's audio extension borrows for
             // a stream beginning and a stream ending ([`vnc_audio`]). Only a
             // session that asked for sound reads it — nothing else listed the
             // encoding — and on the Apple dialects 255 is as unknown as it was.
-            vnc_audio::MSG_QEMU if audio_state != Audio::Off => {
-                let mut header = [0u8; 3];
-                reader.read_exact(&mut header).await?;
+            #[cfg(feature = "wlshare")]
+            audio::MSG_QEMU if audio_state != Audio::Off => {
+                let mut msg = [audio::MSG_QEMU; audio::AUDIO_SWITCH_LEN];
+                reader.read_exact(&mut msg[1..]).await?;
                 // A submessage this client cannot measure is fatal rather than
                 // skipped: the QEMU submessages share no length field, so one it
                 // does not know leaves the stream at an offset nothing recovers
                 // from.
-                match vnc_audio::parse_server(header)? {
+                let (operation, _) = audio::parse_server(&msg).context("wlshare's audio message")?.expect("read whole");
+                match operation {
                     ServerAudio::Begin => {
                         info!("vnc: the server started the desktop's audio stream");
                         streaming = true;
@@ -5095,25 +5179,29 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // browser to decode and to refuse, and nothing here reads it.
             // Framed by its own length, so an implausible one is read past
             // rather than allocated.
-            vnc_audio::MSG_FRAME if audio_state != Audio::Off => {
-                let mut header = [0u8; vnc_audio::FRAME_HEADER_LEN];
-                reader.read_exact(&mut header).await?;
-                let length = vnc_audio::frame_length(header);
-                if length > MAX_AUDIO_FRAME {
-                    discard(&mut reader, u64::from(length)).await?;
-                    warn!("vnc: dropped a {length}-byte audio frame, over the {MAX_AUDIO_FRAME} byte limit");
-                } else {
-                    let mut frame = vec![0u8; length as usize];
-                    reader.read_exact(&mut frame).await?;
-                    if !streaming {
-                        warn!("vnc: dropped an audio frame sent outside a stream");
-                    // A packet's length is a `u16` on the audio socket
-                    // ([`crate::protocol::audio`]), sixteen times a frame of
-                    // this format at its largest.
-                    } else if frame.is_empty() || frame.len() > usize::from(u16::MAX) {
-                        warn!("vnc: dropped a {length}-byte audio frame, which is not one to pass");
-                    } else if let Some(bridge) = audio {
-                        bridge.unit(frame);
+            #[cfg(feature = "wlshare")]
+            audio::MSG_AUDIO_FRAME if audio_state != Audio::Off => {
+                let mut header = [audio::MSG_AUDIO_FRAME; audio::AUDIO_FRAME_HEADER_LEN];
+                reader.read_exact(&mut header[1..]).await?;
+                match audio::frame_len(&header) {
+                    Err(AudioParseError::FrameTooLong(length)) => {
+                        discard(&mut reader, length as u64).await?;
+                        warn!("vnc: dropped a {length}-byte audio frame, over the {} byte limit", audio::MAX_AUDIO_FRAME);
+                    }
+                    Err(e) => return Err(e.into()),
+                    Ok(length) => {
+                        let mut frame = vec![0u8; length];
+                        reader.read_exact(&mut frame).await?;
+                        if !streaming {
+                            warn!("vnc: dropped an audio frame sent outside a stream");
+                        // A packet's length is a `u16` on the audio socket
+                        // ([`crate::protocol::audio`]), sixteen times a frame of
+                        // this format at its largest.
+                        } else if frame.is_empty() || frame.len() > usize::from(u16::MAX) {
+                            warn!("vnc: dropped a {length}-byte audio frame, which is not one to pass");
+                        } else if let Some(bridge) = audio {
+                            bridge.unit(frame);
+                        }
                     }
                 }
             }
@@ -5122,13 +5210,17 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // keyframe is owed ([`vnc_camera`]). Only a session that carries a
             // camera listed the encoding, so only it reads the type; on every other
             // session 0xE2 is as unknown as it was.
-            vnc_camera::MSG_CAMERA if let Some(link) = camera => {
-                let mut header = [0u8; vnc_camera::SERVER_HEADER_LEN];
-                reader.read_exact(&mut header).await?;
-                let mut body = [0u8; vnc_camera::START_FORMAT_LEN];
-                let body = &mut body[..vnc_camera::body_len(header)?];
-                reader.read_exact(body).await?;
-                match vnc_camera::parse_server(header, body)? {
+            #[cfg(feature = "wlshare")]
+            camera::MSG_CAMERA if let Some(link) = camera => {
+                // An operation this client does not know is fatal: the messages
+                // share no length field, so one that cannot be measured leaves the
+                // stream at an offset nothing recovers from.
+                let mut msg = [camera::MSG_CAMERA; camera::CAMERA_FORMAT_LEN];
+                reader.read_exact(&mut msg[1..camera::CAMERA_BARE_LEN]).await?;
+                let len = camera::server_len(msg.first_chunk().expect("the header")).context("wlshare's camera message")?;
+                reader.read_exact(&mut msg[camera::CAMERA_BARE_LEN..len]).await?;
+                let (signal, _) = camera::parse_server(&msg[..len])?.expect("read whole");
+                match signal {
                     ServerCamera::Available => {
                         send_camera_decided(uplink, link, vnc_camera::Device::announce).await?;
                     }
@@ -5137,7 +5229,7 @@ async fn read_loop<R: AsyncRead + Unpin>(
                             "vnc: an application on the desktop opened the camera ({}x{})",
                             format.width, format.height
                         );
-                        link.bridge.signal(CameraSignal::Start(format));
+                        link.bridge.signal(CameraSignal::Start(vnc_camera::bridge_format(format)));
                     }
                     ServerCamera::Stop => {
                         info!("vnc: the camera is no longer open on the desktop");
@@ -5150,13 +5242,15 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // microphone, or an application on the desktop started or stopped recording
             // ([`vnc_mic`]). Only a session that carries a microphone listed the
             // encoding, so only it reads the type.
-            vnc_mic::MSG_MICROPHONE if let Some(link) = microphone => {
-                let mut header = [0u8; vnc_mic::SERVER_HEADER_LEN];
-                reader.read_exact(&mut header).await?;
-                let mut body = [0u8; vnc_mic::START_FORMAT_LEN];
-                let body = &mut body[..vnc_mic::body_len(header)?];
-                reader.read_exact(body).await?;
-                match vnc_mic::parse_server(header, body)? {
+            #[cfg(feature = "wlshare")]
+            microphone::MSG_MICROPHONE if let Some(link) = microphone => {
+                // Measured as the camera's are, and fatal where it cannot be.
+                let mut msg = [microphone::MSG_MICROPHONE; microphone::MICROPHONE_START_LEN];
+                reader.read_exact(&mut msg[1..microphone::MICROPHONE_BARE_LEN]).await?;
+                let len = microphone::server_len(msg.first_chunk().expect("the header")).context("wlshare's microphone message")?;
+                reader.read_exact(&mut msg[microphone::MICROPHONE_BARE_LEN..len]).await?;
+                let (signal, _) = microphone::parse_server(&msg[..len])?.expect("read whole");
+                match signal {
                     ServerMicrophone::Available => {
                         send_microphone_decided(uplink, link, |device| vnc_mic::Decision {
                             message: device.announce(),
@@ -5167,6 +5261,7 @@ async fn read_loop<R: AsyncRead + Unpin>(
                     // Told to the bridge under the device's lock, for the reason
                     // [`send_microphone_decided`] gives.
                     ServerMicrophone::Start(format) => {
+                        let format = vnc_mic::bridge_format(format);
                         let mut device = link.device.lock().unwrap();
                         // The bridge sizes its resampler from the rate, so a format it
                         // cannot produce is refused before anything opens.
@@ -5823,6 +5918,7 @@ impl RectEffect {
         audio_announced: false,
     };
 
+    #[cfg(feature = "wlshare")]
     const AUDIO_ANNOUNCED: Self = Self { audio_announced: true, ..Self::NOTHING };
     const LAST: Self = Self { last: true, ..Self::NOTHING };
 
@@ -5959,7 +6055,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // Only a session that asked can see one: the encoding was advertised
         // nowhere else, and an unadvertised encoding still falls through to the
         // refusal below.
-        vnc_audio::ENCODING if shared.audio.is_some() => {
+        #[cfg(feature = "wlshare")]
+        wlshare_proto::ENCODING_AUDIO if shared.audio.is_some() => {
             return Ok(RectEffect::AUDIO_ANNOUNCED);
         }
         // A rekey after the preface. The Mac rotates only when the viewer asks
@@ -6042,18 +6139,12 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // A frame of wlshare's VP9, which is the whole desktop: passed to the browser
         // untouched, or dropped while the desktop is past the ceiling, until the list
         // the read loop sends without the encoding brings the desktop again as ZRLE.
-        ENCODING_WLSHARE_VP9 if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_WLSHARE_VP9)) => {
-            let quality = reader.read_u8().await?;
-            anyhow::ensure!(
-                (crate::video::QUALITY_MIN..=crate::video::QUALITY_MAX).contains(&quality),
-                "server sent a VP9 frame coded at q{quality}, which is not on the 1 to 100 dial"
-            );
-            let len = reader.read_u32().await?;
-            anyhow::ensure!(
-                len <= MAX_WLSHARE_VP9_FRAME,
-                "server sent a {len}-byte VP9 frame, past the {MAX_WLSHARE_VP9_FRAME} bytes one can be"
-            );
-            let mut frame = vec![0u8; len as usize];
+        #[cfg(feature = "wlshare")]
+        ENCODING_VP9 if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_VP9)) => {
+            let mut header = [0u8; wlshare_proto::vp9::FRAME_HEADER_LEN];
+            reader.read_exact(&mut header).await?;
+            let (quality, len) = wlshare_proto::vp9::parse_frame_header(&header).context("the server's VP9 rectangle")?;
+            let mut frame = vec![0u8; len];
             reader.read_exact(&mut frame).await?;
             let size = desktop.lock().unwrap().size;
             anyhow::ensure!(
@@ -6075,7 +6166,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // without them reached it are dropped while the picture is held, as the VP9's
         // are, and refused in a session that sized the remote; the list it answers
         // brings the whole desktop again as ZRLE.
-        ENCODING_WLSHARE_TILES if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_WLSHARE_TILES)) => {
+        #[cfg(feature = "wlshare")]
+        ENCODING_TILES if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_TILES)) => {
             let size = desktop.lock().unwrap().size;
             anyhow::ensure!(
                 w > 0 && h > 0 && u32::from(x) + u32::from(w) <= u32::from(size.0) && u32::from(y) + u32::from(h) <= u32::from(size.1),
@@ -6083,37 +6175,31 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 size.0,
                 size.1
             );
-            let kind = reader.read_u8().await?;
-            let stream = match kind {
-                WLSHARE_TILE_PNG => None,
-                WLSHARE_TILE_START | WLSHARE_TILE_FRAME | WLSHARE_TILE_END => Some(reader.read_u8().await?),
-                other => anyhow::bail!("server sent a tiles rectangle of kind {other}, which is none of wlshare's"),
+            // The kind says how long the rest of the header is, and an unknown
+            // one is fatal: nothing else says where the rectangle ends.
+            let mut header = [reader.read_u8().await?; 6];
+            let used = TileHeader::len_of(header[0]).context("the server's tiles rectangle")?;
+            reader.read_exact(&mut header[1..used]).await?;
+            let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
+            let len = match header {
+                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
+                TileHeader::End { .. } => 0,
             };
-            let start = kind == WLSHARE_TILE_START;
-            let body = if kind == WLSHARE_TILE_END {
-                Vec::new()
-            } else {
-                let len = reader.read_u32().await?;
-                anyhow::ensure!(
-                    len > 0 && len <= MAX_WLSHARE_VP9_FRAME,
-                    "server sent a {len}-byte tiles rectangle, where one is 1 to {MAX_WLSHARE_VP9_FRAME} bytes"
-                );
-                let mut body = vec![0u8; len as usize];
-                reader.read_exact(&mut body).await?;
-                body
-            };
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body).await?;
             if sink.oversized() {
                 debug!("vnc: dropping a {w}x{h} tiles rectangle past the video ceiling");
                 return Ok(RectEffect::NOTHING);
             }
             crate::video::check_picture(size)?;
-            if kind == WLSHARE_TILE_END {
-                sink.pass_region_end(stream.expect("read for its kind")).await?;
-                return Ok(RectEffect::NOTHING);
-            }
-            match stream {
-                None => sink.pass_tile(x, y, w, h, body).await?,
-                Some(stream) => sink.pass_region(stream, x, y, w, h, start, body).await?,
+            match header {
+                TileHeader::End { stream } => {
+                    sink.pass_region_end(stream).await?;
+                    return Ok(RectEffect::NOTHING);
+                }
+                TileHeader::Png { .. } => sink.pass_tile(x, y, w, h, body).await?,
+                TileHeader::Start { stream, .. } => sink.pass_region(stream, x, y, w, h, true, body).await?,
+                TileHeader::Frame { stream, .. } => sink.pass_region(stream, x, y, w, h, false, body).await?,
             }
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
@@ -6409,7 +6495,7 @@ async fn read_extended_desktop_size<R: AsyncRead + Unpin>(
     Ok(resized)
 }
 
-/// Handle the wlshare `OutputScale` report — see [`MSG_WLSHARE_DENSITY`] and
+/// Handle the wlshare `OutputScale` report — see [`wlshare_proto::density`] and
 /// docs/wlshare-density.md.
 ///
 /// The report names the framebuffer size it describes and the scale it is drawn
@@ -6429,6 +6515,7 @@ async fn read_extended_desktop_size<R: AsyncRead + Unpin>(
 /// that no resize request follows asks for the whole framebuffer: the relabel
 /// cleared the browser's canvas, and outside a `FramebufferUpdate` nothing
 /// else would paint the parts of the desktop that never change.
+#[cfg(feature = "wlshare")]
 async fn read_output_scale<R: AsyncRead + Unpin>(
     reader: &mut R,
     uplink: &SharedUplink,
@@ -6436,9 +6523,9 @@ async fn read_output_scale<R: AsyncRead + Unpin>(
     shadow: &SharedShadow,
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    let mut body = [0u8; OUTPUT_SCALE_BODY];
-    reader.read_exact(&mut body).await?;
-    let report = OutputScale::parse(&body)?;
+    let mut msg = [density::MSG_DENSITY; density::DENSITY_LEN];
+    reader.read_exact(&mut msg[1..]).await?;
+    let report = OutputScale::parse(&msg)?;
     debug!(
         "vnc: server reports its {}x{} framebuffer at {}x",
         report.size.0, report.size.1, report.scale
@@ -6522,7 +6609,7 @@ async fn read_output_scale<R: AsyncRead + Unpin>(
     Ok(())
 }
 
-/// Handle the wlshare `OutputList` — see [`MSG_WLSHARE_OUTPUTS`] and
+/// Handle the wlshare `OutputList` — see [`wlshare_proto::outputs`] and
 /// docs/wlshare-outputs.md.
 ///
 /// The list is what the display picker shows on a generic target, and the id it
@@ -6538,6 +6625,7 @@ async fn read_output_scale<R: AsyncRead + Unpin>(
 /// output's size into its framebuffer blank and reports the geometry, so a
 /// different size arrives as an `ExtendedDesktopSize` rectangle and a same-sized
 /// output as the repaint the selection asked for.
+#[cfg(feature = "wlshare")]
 async fn read_output_list<R: AsyncRead + Unpin>(
     reader: &mut R,
     uplink: &SharedUplink,
@@ -6545,11 +6633,9 @@ async fn read_output_list<R: AsyncRead + Unpin>(
     display: &SharedDisplay,
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    let mut header = [0u8; OUTPUT_LIST_HEADER];
-    reader.read_exact(&mut header).await?;
-    let most = header[0];
-    let count = u16::from_be_bytes([header[1], header[2]]);
-    let active = u32::from_be_bytes([header[3], header[4], header[5], header[6]]);
+    let mut header = [outputs::MSG_OUTPUTS; outputs::LIST_HEADER_LEN];
+    reader.read_exact(&mut header[1..]).await?;
+    let ListHeader { virtual_displays: most, count, active } = ListHeader::parse(&header);
     // A count no desk reaches. The entries are self-describing, so an
     // implausible one is a server that has lost its place in the stream rather
     // than a session to keep reading.
@@ -6559,9 +6645,10 @@ async fn read_output_list<R: AsyncRead + Unpin>(
     );
     let mut displays = Vec::with_capacity(usize::from(count));
     for _ in 0..count {
-        let mut entry = [0u8; OUTPUT_ENTRY];
+        let mut entry = [0u8; outputs::ENTRY_HEADER_LEN];
         reader.read_exact(&mut entry).await?;
-        let mut name = vec![0u8; usize::from(entry[13])];
+        let entry = EntryHeader::parse(&entry);
+        let mut name = vec![0u8; usize::from(entry.name_len)];
         reader.read_exact(&mut name).await?;
         displays.push(output_info(&entry, &name));
     }
@@ -6618,12 +6705,12 @@ async fn read_output_list<R: AsyncRead + Unpin>(
     }
     if let Some(count) = request {
         debug!("vnc: asking the server for {count} virtual display(s)");
-        send(uplink, &virtual_displays(count)).await?;
+        send(uplink, &outputs::virtual_displays(u32::from(count))).await?;
     }
     if let Some(id) = ask {
         debug!("vnc: asking the server for output {id}, the first of two");
         let size = desktop.lock().unwrap().size;
-        send_all(uplink, &[select_output(id).to_vec(), update_request(false, size).to_vec()]).await?;
+        send_all(uplink, &[outputs::select_output(id).to_vec(), update_request(false, size).to_vec()]).await?;
     }
     if switched {
         send_decided(uplink, desktop, DesktopState::output_switched).await?;
@@ -6638,13 +6725,10 @@ async fn read_output_list<R: AsyncRead + Unpin>(
 /// the only name anything here has for it. The detail is the Apple path's, and
 /// says the same thing: the points the desktop occupies, then the density that
 /// earns it more pixels, stated only when there is one to state.
-fn output_info(entry: &[u8; OUTPUT_ENTRY], name: &[u8]) -> DisplayInfo {
-    let id = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
-    let pixels = (
-        u16::from_be_bytes([entry[4], entry[5]]),
-        u16::from_be_bytes([entry[6], entry[7]]),
-    );
-    let fixed = u32::from_be_bytes([entry[8], entry[9], entry[10], entry[11]]);
+#[cfg(feature = "wlshare")]
+fn output_info(entry: &EntryHeader, name: &[u8]) -> DisplayInfo {
+    let pixels = (entry.width, entry.height);
+    let fixed = entry.fixed;
     // A zero scale would divide the size away; the label falls back to the
     // pixels, which is what an unscaled output's label is anyway.
     let scale = if fixed > 0 { fixed as f32 / 65536.0 } else { UNSCALED };
@@ -6658,13 +6742,13 @@ fn output_info(entry: &[u8; OUTPUT_ENTRY], name: &[u8]) -> DisplayInfo {
         String::new()
     };
     DisplayInfo {
-        id,
+        id: entry.id,
         label: String::from_utf8_lossy(name).into_owned(),
         detail: format!("{}×{}{suffix}", logical.0, logical.1),
         // wlroots names no primary output, and a list of two monitors has none
         // to mark.
         main: false,
-        virtual_display: entry[12] & OUTPUT_HEADLESS != 0,
+        virtual_display: entry.headless,
         tab: None,
     }
 }
@@ -7370,7 +7454,7 @@ async fn hp_moved_off(shared: &Shared, layout: &vnc_apple::Layout, sink: &VideoS
 /// in.
 ///
 /// wlshare is ours, so there the vocabulary was widened: a `wlshare`
-/// target is sent the distance itself ([`MSG_WLSHARE_SCROLL`]), which the
+/// target is sent the distance itself ([`wlshare_proto::scroll`]), which the
 /// compositor hands its applications the way it hands them a touchpad's. Only a
 /// distance, though — a glide's pixels. A wheel's notches, lines and pages are
 /// still wheel-button pulses there, a notch apiece, which the compositor hands
@@ -7607,15 +7691,13 @@ fn translate_input(
             debug!("vnc: wheel dx={dx} dy={dy} {unit:?} -> {px} + {py} pulses");
             // A distance goes to wlshare as one; a wheel's notches are pulses
             // there as anywhere.
+            #[cfg(feature = "wlshare")]
             if matches!(wheel, Wheel::Wlshare { .. }) && unit == WheelUnit::Pixel {
                 if (px, py) == (0, 0) {
                     return Vec::new();
                 }
                 // Both fit: one event spends at most [`Wheel::MAX_PX`].
-                let mut msg = vec![MSG_WLSHARE_SCROLL, 0];
-                msg.extend_from_slice(&(px as i16).to_be_bytes());
-                msg.extend_from_slice(&(py as i16).to_be_bytes());
-                return vec![msg];
+                return vec![wlshare_proto::scroll::scroll(px as i16, py as i16).to_vec()];
             }
             // A Mac is sent the distance too, on both axes, in Apple's own
             // scroll message: its wheel bits buy two pixels a pulse and have no
@@ -7830,86 +7912,42 @@ fn set_desktop_size(size: (u16, u16), screen: Screen) -> [u8; 24] {
     msg
 }
 
-/// The bytes after the type of a wlshare `OutputScale` report: padding, width,
-/// height, then the scale.
-const OUTPUT_SCALE_BODY: usize = 9;
-
-/// The bytes after the type of a wlshare `OutputList`: the most virtual displays
-/// the server makes, the entry count, then the shared output's id.
-const OUTPUT_LIST_HEADER: usize = 7;
-/// The fixed part of one `OutputList` entry: id, width, height, scale, flags and
-/// the length of the name that follows it.
-const OUTPUT_ENTRY: usize = 14;
-/// An entry's flags, bit 0: an output the compositor made rather than a monitor
-/// somebody is sitting at.
-const OUTPUT_HEADLESS: u8 = 1;
 /// More outputs than a desk has. The list is read, not trusted.
+#[cfg(feature = "wlshare")]
 const MAX_OUTPUTS: u16 = 64;
 
 /// A wlshare `OutputScale` report: the server's framebuffer in pixels and the
 /// scale it is drawn at — see docs/wlshare-density.md.
+#[cfg(feature = "wlshare")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct OutputScale {
     size: (u16, u16),
     scale: f32,
 }
 
+#[cfg(feature = "wlshare")]
 impl OutputScale {
-    /// Decode the report's body. The scale is 16.16 unsigned fixed point; a zero
-    /// is a server bug rather than a density, and is refused as such.
-    fn parse(body: &[u8; OUTPUT_SCALE_BODY]) -> anyhow::Result<Self> {
-        let size = (
-            u16::from_be_bytes([body[1], body[2]]),
-            u16::from_be_bytes([body[3], body[4]]),
-        );
-        let fixed = u32::from_be_bytes([body[5], body[6], body[7], body[8]]);
-        anyhow::ensure!(fixed > 0, "the server reported a scale of zero for its {}x{} framebuffer", size.0, size.1);
+    /// Decode the report. The scale is 16.16 unsigned fixed point; a zero is a
+    /// server bug rather than a density, and is refused as such.
+    fn parse(msg: &[u8; density::DENSITY_LEN]) -> anyhow::Result<Self> {
+        let (density::Density { width, height, fixed }, _) = density::Density::parse(msg).expect("a whole report");
+        anyhow::ensure!(fixed > 0, "the server reported a scale of zero for its {width}x{height} framebuffer");
         Ok(Self {
-            size,
+            size: (width, height),
             scale: fixed as f32 / 65536.0,
         })
     }
 }
 
-/// The wlshare `ClientDensity` declaration, in `OutputScale`'s layout: padding,
-/// the window's width and height in pixels at the declared density, then the
-/// browser's density as 16.16 unsigned fixed point. Sent once the server has
-/// reported, whenever the client's screen changes density, and on a switch of
-/// output.
-fn client_density(pixels: (u16, u16), scale: f32) -> [u8; 10] {
+/// The wlshare `ClientDensity` declaration, in `OutputScale`'s layout: the
+/// window's width and height in pixels at the declared density, then the
+/// browser's density as 16.16 unsigned fixed point, never zero. Sent once the
+/// server has reported, whenever the client's screen changes density, and on a
+/// switch of output.
+#[cfg(feature = "wlshare")]
+fn client_density(pixels: (u16, u16), scale: f32) -> [u8; density::DENSITY_LEN] {
     let fixed = (f64::from(scale) * 65536.0).round().clamp(1.0, f64::from(u32::MAX)) as u32;
-    let mut msg = [0u8; 10];
-    msg[0] = MSG_WLSHARE_DENSITY;
-    // msg[1]: padding
-    msg[2..4].copy_from_slice(&pixels.0.to_be_bytes());
-    msg[4..6].copy_from_slice(&pixels.1.to_be_bytes());
-    msg[6..10].copy_from_slice(&fixed.to_be_bytes());
-    msg
-}
-
-/// The wlshare `SelectOutput` request: the id of the output to share, after the
-/// operation byte, 0, and two bytes of padding. Sent for a
-/// [`ClientMsg::SelectDisplay`] naming an id from the last `OutputList`, and
-/// answered by the server with another list.
-fn select_output(id: u32) -> [u8; 8] {
-    let mut msg = [0u8; 8];
-    msg[0] = MSG_WLSHARE_OUTPUTS;
-    // msg[1]: operation 0, select; msg[2..4]: padding
-    msg[4..8].copy_from_slice(&id.to_be_bytes());
-    msg
-}
-
-/// The wlshare `VirtualDisplays` request: operation 1 where a `SelectOutput` has
-/// 0, then the count after two bytes of padding. Sent with the target's
-/// `virtual_displays` on a session's first `OutputList`, when that says the
-/// server makes as many ([`read_output_list`]), and answered by the server with
-/// a list; what it brings about arrives as the outputs come and go.
-fn virtual_displays(count: u8) -> [u8; 8] {
-    let mut msg = [0u8; 8];
-    msg[0] = MSG_WLSHARE_OUTPUTS;
-    msg[1] = 1;
-    msg[4..8].copy_from_slice(&u32::from(count).to_be_bytes());
-    msg
+    density::Density { width: pixels.0, height: pixels.1, fixed }.to_bytes()
 }
 
 /// KeyEvent.
@@ -8756,9 +8794,12 @@ mod tests {
         ];
         assert_eq!(rfb38_encoding_list(), generic);
         // A wlshare target's is the same list with wlshare's requests after it.
-        let mut wlshare = generic;
-        wlshare.extend([ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS]);
-        assert_eq!(wlshare_encoding_list(None, false, false), wlshare);
+        #[cfg(feature = "wlshare")]
+        {
+            let mut wlshare = generic;
+            wlshare.extend([ENCODING_DENSITY, ENCODING_OUTPUTS]);
+            assert_eq!(wlshare_encoding_list(None, false, false), wlshare);
+        }
 
         // Every pixel encoding advertised is one this side can be handed. A rect
         // header alone is enough to prove it: an unrecognised encoding bails with
@@ -8771,13 +8812,14 @@ mod tests {
         // ServerCutText, the density report and the output list as their own
         // messages, and the audio announcement is an empty rectangle with no
         // pixels behind it.
-        let pixel_encodings = wlshare_encoding_list(Some(false), true, true)
-            .into_iter()
-            .filter(|encoding| {
-                *encoding >= 0
-                    && ![ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS, vnc_camera::ENCODING, vnc_mic::ENCODING, vnc_audio::ENCODING, vnc_audio::ENCODING_OPUS]
-                        .contains(encoding)
-            });
+        #[cfg(feature = "wlshare")]
+        let (listed, requests) = (
+            wlshare_encoding_list(Some(false), true, true),
+            vec![ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::ENCODING_CAMERA, wlshare_proto::ENCODING_MICROPHONE, wlshare_proto::ENCODING_AUDIO, wlshare_proto::ENCODING_AUDIO_OPUS],
+        );
+        #[cfg(not(feature = "wlshare"))]
+        let (listed, requests) = (rfb38_encoding_list(), Vec::new());
+        let pixel_encodings = listed.into_iter().filter(|encoding| *encoding >= 0 && !requests.contains(encoding));
         for encoding in pixel_encodings {
             let mut wire = vec![0u8, 0];
             wire.extend_from_slice(&1u16.to_be_bytes());
@@ -8816,14 +8858,17 @@ mod tests {
         let encodings = vnc_apple::ENCODINGS;
         assert!(encodings.contains(&vnc_apple::ENCODING_DISPLAY_LAYOUT));
         assert!(encodings.contains(&ENCODING_ZRLE));
-        for generic in [
-            vnc_clipboard::ENCODING,
-            vnc_audio::ENCODING,
-            vnc_camera::ENCODING,
-            vnc_mic::ENCODING,
-            ENCODING_WLSHARE_DENSITY,
-            ENCODING_WLSHARE_OUTPUTS,
-        ] {
+        #[cfg_attr(not(feature = "wlshare"), expect(unused_mut))]
+        let mut generic = vec![vnc_clipboard::ENCODING];
+        #[cfg(feature = "wlshare")]
+        generic.extend([
+            wlshare_proto::ENCODING_AUDIO,
+            wlshare_proto::ENCODING_CAMERA,
+            wlshare_proto::ENCODING_MICROPHONE,
+            ENCODING_DENSITY,
+            ENCODING_OUTPUTS,
+        ]);
+        for generic in generic {
             assert!(!encodings.contains(&generic), "{generic:#x}");
         }
     }
@@ -9151,27 +9196,29 @@ mod tests {
     /// the encoder's own eyes. Both are asked of a `wlshare` target, after
     /// every encoding that decides pixels, and of no Mac (see
     /// `a_mac_is_asked_for_its_layout_and_zrle_and_no_generic_extension`).
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_wlshare_extensions_are_asked_of_a_wlshare_target() {
-        assert_eq!(ENCODING_WLSHARE_DENSITY, i32::from_be_bytes(*b"WLSH"));
-        assert_eq!(ENCODING_WLSHARE_OUTPUTS, i32::from_be_bytes(*b"WLSO"));
+        assert_eq!(ENCODING_DENSITY, i32::from_be_bytes(*b"WLSH"));
+        assert_eq!(ENCODING_OUTPUTS, i32::from_be_bytes(*b"WLSO"));
         let wlshare = wlshare_encoding_list(None, false, false);
-        assert_eq!(&wlshare[wlshare.len() - 2..], &[ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS]);
+        assert_eq!(&wlshare[wlshare.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
     }
 
     /// A plain target lists nothing of wlshare's, so a wlshare server reached as
     /// one is read as any VNC server is: no stream of its own, no density, no
     /// output list, no sound, camera or microphone.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_plain_target_lists_no_wlshare_extension() {
         let plain = rfb38_encoding_list();
         for encoding in [
-            ENCODING_WLSHARE_VP9,
-            ENCODING_WLSHARE_DENSITY,
-            ENCODING_WLSHARE_OUTPUTS,
-            vnc_audio::ENCODING,
-            vnc_camera::ENCODING,
-            vnc_mic::ENCODING,
+            ENCODING_VP9,
+            ENCODING_DENSITY,
+            ENCODING_OUTPUTS,
+            wlshare_proto::ENCODING_AUDIO,
+            wlshare_proto::ENCODING_CAMERA,
+            wlshare_proto::ENCODING_MICROPHONE,
         ] {
             assert!(!plain.contains(&encoding), "{encoding:#x}");
         }
@@ -9182,46 +9229,49 @@ mod tests {
     /// the head of the list: the dial as the ceiling always, `WLSD` for a plan
     /// that holds the dial — not for one that walks, which is what a list without
     /// it means to wlshare — and `WLSS` for a plan at 4:2:0, not for one at 4:4:4.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_vp9_stream_asked_of_wlshare_is_the_plan() {
         use crate::config::RenderPlan;
-        assert_eq!(ENCODING_WLSHARE_VP9_HELD, i32::from_be_bytes(*b"WLSD"));
-        assert_eq!(ENCODING_WLSHARE_VP9_QUALITY_BASE, i32::from_be_bytes(*b"WLQ\0"));
-        let rest = [ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY];
+        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_HELD, i32::from_be_bytes(*b"WLSD"));
+        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_QUALITY_BASE, i32::from_be_bytes(*b"WLQ\0"));
+        let rest = [ENCODING_ZRLE, ENCODING_DENSITY];
         let walked = RenderPlan { quality: 60, adaptive: true, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: false, chroma: crate::vp9::Chroma::Yuv444 };
-        assert_eq!(with_wlshare_vp9(&rest, walked), [ENCODING_WLSHARE_VP9, 0x574c_513c, ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY]);
+        assert_eq!(with_wlshare_vp9(&rest, walked), [ENCODING_VP9, 0x574c_513c, ENCODING_ZRLE, ENCODING_DENSITY]);
         let held = RenderPlan { quality: 90, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: false, chroma: crate::vp9::Chroma::Yuv444 };
         assert_eq!(
             with_wlshare_vp9(&rest, held),
-            [ENCODING_WLSHARE_VP9, 0x574c_515a, ENCODING_WLSHARE_VP9_HELD, ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY]
+            [ENCODING_VP9, 0x574c_515a, wlshare_proto::vp9::ENCODING_VP9_HELD, ENCODING_ZRLE, ENCODING_DENSITY]
         );
-        assert_eq!(ENCODING_WLSHARE_VP9_SUBSAMPLED, i32::from_be_bytes(*b"WLSS"));
+        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_SUBSAMPLED, i32::from_be_bytes(*b"WLSS"));
         assert_eq!(
             with_wlshare_vp9(&rest, RenderPlan { chroma: crate::vp9::Chroma::Yuv420, ..held }),
-            [ENCODING_WLSHARE_VP9, 0x574c_515a, ENCODING_WLSHARE_VP9_HELD, ENCODING_WLSHARE_VP9_SUBSAMPLED, ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY]
+            [ENCODING_VP9, 0x574c_515a, wlshare_proto::vp9::ENCODING_VP9_HELD, wlshare_proto::vp9::ENCODING_VP9_SUBSAMPLED, ENCODING_ZRLE, ENCODING_DENSITY]
         );
     }
 
     /// A plan that asks for wlshare's tiles lists them in place of its VP9, with the
     /// dial beside them, and off the list past the ceiling as the VP9 is: a moving
     /// region may be the whole desktop.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_tiles_asked_of_wlshare_are_the_plan_within_the_ceiling() {
         use crate::config::RenderPlan;
-        assert_eq!(ENCODING_WLSHARE_TILES, i32::from_be_bytes(*b"WLST"));
-        let rest = vec![ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY];
+        assert_eq!(ENCODING_TILES, i32::from_be_bytes(*b"WLST"));
+        let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
         let tiles = RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: true, chroma: crate::vp9::Chroma::Yuv420 };
         let lists = Listing::new(rest.clone(), tiles);
-        assert_eq!(lists.listed((1280, 800)), [ENCODING_WLSHARE_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_WLSHARE_DENSITY]);
+        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_DENSITY]);
         assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
         let vp9 = Listing::new(rest.clone(), RenderPlan { wlshare_tiles_motion: false, ..tiles });
-        assert_eq!(vp9.listed((1280, 800))[0], ENCODING_WLSHARE_VP9);
+        assert_eq!(vp9.listed((1280, 800))[0], ENCODING_VP9);
         assert_eq!(vp9.listed((7680, 4320)), rest, "the VP9 past the ceiling");
     }
 
     // ── The outputs extension ───────────────────────────────────────────────
 
     /// One output as these tests spell it, before it is bytes.
+    #[cfg(feature = "wlshare")]
     struct Listed {
         id: u32,
         name: &'static str,
@@ -9234,11 +9284,13 @@ mod tests {
     /// wlshare's docs/architecture.md rather than from [`output_info`]'s own reading.
     /// The list from a server that makes no virtual displays: the outputs are
     /// what they are, and a request is never sent.
+    #[cfg(feature = "wlshare")]
     fn output_list_body(active: u32, outputs: &[Listed]) -> Vec<u8> {
         output_list_body_making(0, active, outputs)
     }
 
     /// The list from a server that makes up to `most` virtual displays.
+    #[cfg(feature = "wlshare")]
     fn output_list_body_making(most: u8, active: u32, outputs: &[Listed]) -> Vec<u8> {
         let mut body = vec![most];
         body.extend_from_slice(&(outputs.len() as u16).to_be_bytes());
@@ -9259,6 +9311,7 @@ mod tests {
     /// names, the points each screen occupies, and the checkmark on the one being
     /// sent. A list that says nothing new is not forwarded again, since the
     /// browser holds no display state to correct.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_output_list_becomes_the_display_picker() {
         let (uplink, sent) = test_uplink();
@@ -9292,7 +9345,7 @@ mod tests {
         assert!(displays[1].virtual_display, "the headless flag is what marks it");
         assert_eq!(display.lock().unwrap().active, 7);
         // A desk of two starts on All Displays, so the canvas is asked onto the first.
-        assert!(written(&sent).starts_with(&select_output(3)));
+        assert!(written(&sent).starts_with(&outputs::select_output(3)));
         let asked = written(&sent).len();
 
         // The same list again: nothing new to say, and nothing asked again.
@@ -9317,6 +9370,7 @@ mod tests {
     /// says the canvas is on the first: the second is then marked for a tab of its
     /// own. Any other number of outputs has no such entry, and a list that stops
     /// being two drops the choice with the tab.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn two_outputs_are_listed_with_all_displays_and_the_second_in_a_tab() {
         let (uplink, _wire) = test_uplink();
@@ -9362,17 +9416,18 @@ mod tests {
     }
 
     /// The second connection lists a display and nothing of the session's.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_second_connection_lists_no_clipboard_outputs_or_media() {
         let listed = wlshare_beside_encoding_list();
-        assert!(listed.contains(&ENCODING_WLSHARE_DENSITY));
+        assert!(listed.contains(&ENCODING_DENSITY));
         assert!(listed.contains(&ENCODING_CURSOR_WITH_ALPHA));
         for absent in [
             vnc_clipboard::ENCODING,
-            ENCODING_WLSHARE_OUTPUTS,
-            vnc_audio::ENCODING,
-            vnc_camera::ENCODING,
-            vnc_mic::ENCODING,
+            ENCODING_OUTPUTS,
+            wlshare_proto::ENCODING_AUDIO,
+            wlshare_proto::ENCODING_CAMERA,
+            wlshare_proto::ENCODING_MICROPHONE,
         ] {
             assert!(!listed.contains(&absent), "{}", encoding_label(absent));
         }
@@ -9382,6 +9437,7 @@ mod tests {
     /// browser left holding the last non-empty list would keep offering outputs
     /// the compositor no longer has. An empty list that says nothing new is not
     /// forwarded again.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_output_list_that_empties_clears_the_picker() {
         let (uplink, _wire) = test_uplink();
@@ -9436,6 +9492,7 @@ mod tests {
     /// now shared: it was declared to the one left behind, and the browser's own
     /// report is unchanged by the switch. The session's first list and a list
     /// that empties declare nothing.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_switch_of_output_declares_the_density_again() {
         let (uplink, wire) = test_uplink();
@@ -9487,6 +9544,7 @@ mod tests {
     /// A switch while a declaration is out waits its turn, as a density change
     /// does: the report answering that declaration finds nothing declared to the
     /// output now shared and declares the browser's density to it.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_switch_while_a_declaration_is_out_is_declared_by_the_answer() {
         let (uplink, wire) = test_uplink();
@@ -9535,6 +9593,7 @@ mod tests {
     /// not the window's, and it takes the window's in the same configuration.
     /// Measured against wlshare on a headless sway, where nothing else would
     /// ever ask.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_switch_at_the_same_density_carries_the_window_to_the_new_output() {
         let (uplink, wire) = test_uplink();
@@ -9580,6 +9639,7 @@ mod tests {
     /// A count no compositor sends ends the session: the entries are
     /// self-describing, so a number like that is a stream this end has lost its
     /// place in rather than a desk with that many monitors.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_implausible_output_count_is_refused() {
         let (uplink, _wire) = test_uplink();
@@ -9596,6 +9656,7 @@ mod tests {
     /// its first list, and a list short of the count asked — one output where
     /// two were asked, two where one was — is not one to start *All Displays*
     /// from: the next list, with the count asked, is.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn virtual_displays_are_asked_on_the_first_list_and_all_displays_waits_for_the_count() {
         let listed = |id, name| Listed { id, name, size: (1280, 800), scale: 1.0, headless: true };
@@ -9610,14 +9671,14 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         read_output_list(&mut output_list_body_making(2, 3, &one).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
-        assert_eq!(written(&sent), virtual_displays(2));
+        assert_eq!(written(&sent), outputs::virtual_displays(2));
         let Some(ServerMsg::Displays { active: 3, displays }) = forwarded(&sink, &mut rx).await else {
             panic!("the one output was not listed as it is");
         };
         assert_eq!(displays.len(), 1);
         // The second arrives: All Displays, and nothing asked again.
         read_output_list(&mut output_list_body_making(2, 3, &two).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
-        assert_eq!(written(&sent), virtual_displays(2), "the request went once");
+        assert_eq!(written(&sent), outputs::virtual_displays(2), "the request went once");
         let Some(ServerMsg::Displays { active, .. }) = forwarded(&sink, &mut rx).await else {
             panic!("the two outputs were not listed");
         };
@@ -9629,7 +9690,7 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         read_output_list(&mut output_list_body_making(2, 3, &two).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
-        assert_eq!(written(&sent), virtual_displays(1));
+        assert_eq!(written(&sent), outputs::virtual_displays(1));
         let Some(ServerMsg::Displays { active: 3, .. }) = forwarded(&sink, &mut rx).await else {
             panic!("the canvas's output was not listed as the shared one");
         };
@@ -9647,12 +9708,13 @@ mod tests {
 
     /// The two requests' wire: the operation byte, two of padding, then the id or
     /// the count, big-endian.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_selected_output_is_asked_for_by_id_and_virtual_displays_by_count() {
-        assert_eq!(select_output(7), [0xE1, 0, 0, 0, 0, 0, 0, 7]);
-        assert_eq!(select_output(u32::MAX), [0xE1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
-        assert_eq!(virtual_displays(1), [0xE1, 1, 0, 0, 0, 0, 0, 1]);
-        assert_eq!(virtual_displays(2), [0xE1, 1, 0, 0, 0, 0, 0, 2]);
+        assert_eq!(outputs::select_output(7), [0xE1, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(outputs::select_output(u32::MAX), [0xE1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(outputs::virtual_displays(1), [0xE1, 1, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(outputs::virtual_displays(2), [0xE1, 1, 0, 0, 0, 0, 0, 2]);
     }
 
     // ── wlshare's audio extension ───────────────────────────────────────────
@@ -9703,6 +9765,7 @@ mod tests {
 
     /// What a client answers the announcement with, byte for byte: set-format
     /// for S16, two channels, 48 000 Hz; set-bitrate, 96 000 bit/s; enable.
+    #[cfg(feature = "wlshare")]
     const AUDIO_ANSWER: [u8; 22] = [255, 1, 0, 2, 3, 2, 0, 0, 0xBB, 0x80, 255, 1, 0, 3, 0, 1, 0x77, 0, 255, 1, 0, 0];
 
     /// Run one wire through the read loop with a bridge attached, and hand back
@@ -9736,23 +9799,24 @@ mod tests {
     /// The pseudo-encoding is asked of a wlshare target only where the target
     /// asked for sound, and as Opus unless that sound is lossless. QEMU's own,
     /// which promises raw samples, is never asked.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_audio_extension_is_asked_only_where_sound_was() {
-        assert_eq!(vnc_audio::ENCODING.to_be_bytes(), *b"WLSF");
+        assert_eq!(wlshare_proto::ENCODING_AUDIO.to_be_bytes(), *b"WLSF");
         for lossless in [false, true] {
             let asked = wlshare_encoding_list(Some(lossless), false, false);
-            assert!(asked.contains(&vnc_audio::ENCODING));
-            assert_eq!(asked.contains(&vnc_audio::ENCODING_OPUS), !lossless, "FLAC is a list without Opus");
+            assert!(asked.contains(&wlshare_proto::ENCODING_AUDIO));
+            assert_eq!(asked.contains(&wlshare_proto::ENCODING_AUDIO_OPUS), !lossless, "FLAC is a list without Opus");
             assert!(!asked.contains(&-259), "QEMU's raw samples are not taken");
             assert_eq!(
                 &asked[asked.len() - 2..],
-                &[ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS],
+                &[ENCODING_DENSITY, ENCODING_OUTPUTS],
                 "the wlshare requests stay last, so audio never weighs on encoding preference"
             );
         }
         let silent = wlshare_encoding_list(None, false, false);
         assert!(
-            !silent.contains(&vnc_audio::ENCODING) && !silent.contains(&vnc_audio::ENCODING_OPUS),
+            !silent.contains(&wlshare_proto::ENCODING_AUDIO) && !silent.contains(&wlshare_proto::ENCODING_AUDIO_OPUS),
             "a target without audio does not ask"
         );
     }
@@ -9760,23 +9824,25 @@ mod tests {
     /// The camera extension is asked of a wlshare target exactly where the target
     /// carries a camera, and — like every wlshare request — without weighing on
     /// encoding preference: the density and outputs requests stay last.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_camera_extension_is_asked_only_where_a_camera_is_carried() {
         let asked = wlshare_encoding_list(Some(false), true, false);
-        assert!(asked.contains(&vnc_camera::ENCODING));
-        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS]);
-        assert!(!wlshare_encoding_list(Some(false), false, false).contains(&vnc_camera::ENCODING));
+        assert!(asked.contains(&wlshare_proto::ENCODING_CAMERA));
+        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
+        assert!(!wlshare_encoding_list(Some(false), false, false).contains(&wlshare_proto::ENCODING_CAMERA));
     }
 
     /// The microphone extension on the same terms: asked of a wlshare target exactly
     /// where the target carries a microphone, and never ahead of the density and
     /// outputs requests.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_microphone_extension_is_asked_only_where_a_microphone_is_carried() {
         let asked = wlshare_encoding_list(Some(false), true, true);
-        assert!(asked.contains(&vnc_mic::ENCODING));
-        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_WLSHARE_DENSITY, ENCODING_WLSHARE_OUTPUTS]);
-        assert!(!wlshare_encoding_list(Some(false), true, false).contains(&vnc_mic::ENCODING));
+        assert!(asked.contains(&wlshare_proto::ENCODING_MICROPHONE));
+        assert_eq!(&asked[asked.len() - 2..], &[ENCODING_DENSITY, ENCODING_OUTPUTS]);
+        assert!(!wlshare_encoding_list(Some(false), true, false).contains(&wlshare_proto::ENCODING_MICROPHONE));
     }
 
     /// The announcement rectangle is answered with the format this client
@@ -9785,6 +9851,7 @@ mod tests {
     /// byte and one unit a frame, with nothing decoded here: garbage goes on
     /// too, for the browser's decoder to refuse. A frame outside a stream, an
     /// empty one and one past the audio socket's packet length do not.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_announced_audio_stream_is_turned_on_and_its_frames_reach_the_queue() {
         let wire = [
@@ -9808,6 +9875,7 @@ mod tests {
 
     /// The rate named at the announcement is the one a listener's walk last
     /// asked for, where one has, rather than the target's own.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn the_rate_a_walk_asked_for_is_the_one_named_at_the_announcement() {
         let (uplink, sent) = test_uplink();
@@ -9834,6 +9902,7 @@ mod tests {
     /// A rate asked for while the announcement's answer waits for the uplink is
     /// the one that answer names: it is read once the uplink is held, not
     /// before, so it cannot follow the newer one onto the wire.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_rate_asked_for_while_the_uplink_is_busy_is_the_one_named() {
         let (uplink, sent) = test_uplink();
@@ -9848,11 +9917,12 @@ mod tests {
         bridge.ask_rate(64_000);
         drop(held);
         naming.await.unwrap().unwrap();
-        assert_eq!(written(&sent), vnc_audio::set_bitrate(64_000));
+        assert_eq!(written(&sent), audio::set_bitrate(64_000));
     }
 
     /// The rates a walk asks for arrive in order, the latest standing in for
     /// any it overtook, and never on a session with no such sound.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_walks_rates_wake_the_loop_that_names_them() {
         let bridge = crate::audio::AudioBridge::new();
@@ -9868,6 +9938,7 @@ mod tests {
 
     /// A frame length past the limit is a server that lost its framing: it is
     /// read past, and the stream keeps its place for the frame after it.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_implausible_frame_is_dropped() {
         let wire = [
@@ -9885,6 +9956,7 @@ mod tests {
 
     /// QEMU's raw data operation is not something a server that announced this
     /// extension sends, and it cannot be measured as anything else: fatal.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn raw_qemu_samples_end_the_session() {
         let (uplink, _sent) = test_uplink();
@@ -9956,6 +10028,7 @@ mod tests {
     /// And giving up on a server is not final: the pixels above settle the
     /// extension as unanswered, and an announcement after them is still taken —
     /// the stream is turned on and its samples reach the queue as ever.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_announcement_after_the_pixels_is_still_taken() {
         let wire = [
@@ -9974,6 +10047,7 @@ mod tests {
     /// The QEMU submessages share no length field, so one this client cannot
     /// measure is fatal rather than stepped over — the alternative is a stream
     /// read at an offset nothing recovers from.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn an_unmeasurable_qemu_submessage_ends_the_session() {
         let (uplink, _sent) = test_uplink();
@@ -9997,6 +10071,7 @@ mod tests {
         assert!(format!("{err:#}").contains("submessage 2"), "{err:#}");
     }
 
+    #[cfg(feature = "wlshare")]
     #[test]
     fn client_density_is_the_type_padding_the_pixels_and_a_16_16_scale() {
         assert_eq!(
@@ -10009,25 +10084,26 @@ mod tests {
 
     /// The declaration is the report's layout, so the report's own parser reads
     /// it back: an independent decoder for the encoder.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn client_density_reads_back_as_an_output_scale() {
         let msg = client_density((2592, 1325), 1.5);
-        let body: [u8; OUTPUT_SCALE_BODY] = msg[1..].try_into().unwrap();
-        assert_eq!(OutputScale::parse(&body).unwrap(), OutputScale { size: (2592, 1325), scale: 1.5 });
+        assert_eq!(OutputScale::parse(&msg).unwrap(), OutputScale { size: (2592, 1325), scale: 1.5 });
     }
 
+    #[cfg(feature = "wlshare")]
     #[test]
     fn output_scale_parses_the_size_and_the_fixed_point_scale() {
-        // padding, 3456, 1766, 2.0
-        let body = [0, 0x0D, 0x80, 0x06, 0xE6, 0x00, 0x02, 0x00, 0x00];
+        // the type, padding, 3456, 1766, 2.0
+        let msg = [0xE0, 0, 0x0D, 0x80, 0x06, 0xE6, 0x00, 0x02, 0x00, 0x00];
         assert_eq!(
-            OutputScale::parse(&body).unwrap(),
+            OutputScale::parse(&msg).unwrap(),
             OutputScale { size: (3456, 1766), scale: 2.0 }
         );
-        let fractional = [0, 0x07, 0x80, 0x04, 0x38, 0x00, 0x01, 0x80, 0x00];
+        let fractional = [0xE0, 0, 0x07, 0x80, 0x04, 0x38, 0x00, 0x01, 0x80, 0x00];
         assert_eq!(OutputScale::parse(&fractional).unwrap().scale, 1.5);
         // A zero scale is a server bug, not a density.
-        let zero = [0, 0x07, 0x80, 0x04, 0x38, 0, 0, 0, 0];
+        let zero = [0xE0, 0, 0x07, 0x80, 0x04, 0x38, 0, 0, 0, 0];
         assert!(OutputScale::parse(&zero).is_err());
     }
 
@@ -10189,6 +10265,7 @@ mod tests {
 
     /// A `wlshare` target is sent the distance, as one message of its own type
     /// in place of wheel-button presses, with the fraction carried.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_wlshare_target_is_sent_the_distance() {
         let mut wheel = Wheel::wlshare();
@@ -10212,6 +10289,7 @@ mod tests {
     /// A wheel is not a glide: its notches reach a `wlshare` target as the
     /// wheel-button pulses they are everywhere else, one a notch, and never as
     /// the distance a browser prices a notch at.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_wlshare_target_is_sent_a_wheel_as_notches() {
         let mut wheel = Wheel::wlshare();
@@ -10488,6 +10566,7 @@ mod tests {
 
     /// The lists of a session that may be sent wlshare's VP9, at the plan the test
     /// sinks are built on: a `wlshare` target's for a browser that decodes 4:4:4.
+    #[cfg(feature = "wlshare")]
     fn test_listing() -> Arc<Listing> {
         let plan = crate::config::RenderPlan {
             quality: 60,
@@ -10505,6 +10584,7 @@ mod tests {
     }
 
     /// The lists of a session that may be sent wlshare's tiles in place of its VP9.
+    #[cfg(feature = "wlshare")]
     fn test_tiles_listing() -> Arc<Listing> {
         let plan = crate::config::RenderPlan {
             quality: 60,
@@ -11320,8 +11400,9 @@ mod tests {
     }
 
     /// The body of an OutputScale report for `size` at `scale`.
-    fn output_scale_body(size: (u16, u16), scale: f32) -> [u8; OUTPUT_SCALE_BODY] {
-        let mut body = [0u8; OUTPUT_SCALE_BODY];
+    #[cfg(feature = "wlshare")]
+    fn output_scale_body(size: (u16, u16), scale: f32) -> [u8; density::DENSITY_LEN - 1] {
+        let mut body = [0u8; density::DENSITY_LEN - 1];
         body[1..3].copy_from_slice(&size.0.to_be_bytes());
         body[3..5].copy_from_slice(&size.1.to_be_bytes());
         body[5..9].copy_from_slice(&((scale * 65536.0) as u32).to_be_bytes());
@@ -11332,6 +11413,7 @@ mod tests {
     /// scale it draws at. The report labels the framebuffer, and the held window
     /// goes out with the browser's density, in points × that density, as one
     /// declaration; its answer, naming those pixels, asks nothing more.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_resize_waits_for_the_scale_report_and_goes_out_with_the_declaration() {
         let (uplink, wire) = test_uplink();
@@ -11382,6 +11464,7 @@ mod tests {
     /// With no window asked for yet, the declaration keeps the desktop's logical
     /// size, in the points the report says it is drawn at — not the canvas's
     /// label, which the report has not relabelled yet.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_declaration_with_no_window_keeps_the_reported_logical_size() {
         let (uplink, wire) = test_uplink();
@@ -11404,6 +11487,7 @@ mod tests {
     /// the browser's pixels. A window that changes while the server follows is
     /// held, and the report answering the declaration releases it in the pixels
     /// the server settled on.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_declared_density_holds_the_resize_until_the_server_has_followed() {
         let (uplink, wire) = test_uplink();
@@ -11454,6 +11538,7 @@ mod tests {
     /// A server that will not follow — resizing disabled, another client owning
     /// the layout — answers the declaration with the scale as it is, and the held
     /// resize goes out in those pixels rather than waiting forever.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_refused_declaration_is_answered_and_the_resize_goes_out_as_is() {
         let (uplink, wire) = test_uplink();
@@ -11489,6 +11574,7 @@ mod tests {
     /// A density change mid-session is declared with the window in the new
     /// pixels, and a server that grants it answers with those pixels: one
     /// reconfiguration, with nothing asked again.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_density_change_mid_session_is_followed_by_the_answering_report() {
         let (uplink, wire) = test_uplink();
@@ -11523,6 +11609,7 @@ mod tests {
     /// answering report finds the browser elsewhere and declares that, so the
     /// server is asked for one transition at a time and ends where the browser
     /// is, not where it passed through.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_density_changed_while_a_declaration_is_out_is_declared_by_the_answer() {
         let (uplink, wire) = test_uplink();
@@ -11578,6 +11665,7 @@ mod tests {
     /// A report that relabels the current pixels clears the browser's canvas.
     /// When the window already has the pixels the report names, no resize
     /// follows to repaint it, so the whole framebuffer is asked for instead.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_relabel_with_no_resize_to_send_asks_for_the_whole_framebuffer() {
         let (uplink, wire) = test_uplink();
@@ -11610,6 +11698,7 @@ mod tests {
 
     /// The resize a relabel sends is what repaints the canvas. Refused, it
     /// repaints nothing, and the refusal asks for the pixels as they are.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_refused_resize_after_a_relabel_asks_for_the_whole_framebuffer() {
         let (uplink, wire) = test_uplink();
@@ -11654,6 +11743,7 @@ mod tests {
     /// A session at a kept size declares the client's density with the kept size
     /// in pixels at it, and asks for nothing more once the server has settled on
     /// those pixels.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_kept_size_is_declared_at_the_clients_density() {
         let (uplink, wire) = test_uplink();
@@ -11691,6 +11781,7 @@ mod tests {
     /// A report naming a size the framebuffer does not have yet is the label for
     /// the rect about to arrive, not a resize of the current pixels; and when it
     /// already names what the window wants, nothing is asked again.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_scale_report_for_a_new_size_waits_for_its_rect() {
         let (uplink, wire) = test_uplink();
@@ -11735,6 +11826,7 @@ mod tests {
     /// longer held on it, and the desktop is generic RFB at 1x. A report that
     /// arrives after all is still the wire's word and is taken. Once settled
     /// either way, later updates change nothing.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn pixels_before_the_first_report_settle_the_request_as_unanswered() {
         let (uplink, wire) = test_uplink();
@@ -12788,6 +12880,7 @@ mod tests {
     async fn a_server_that_is_not_reading_is_still_read_from() {
         // Sixteen bytes of socket, and nobody reading the other end of it.
         let (sock, mut unread) = tokio::io::duplex(16);
+        #[cfg_attr(not(feature = "wlshare"), allow(unused_variables))]
         let (uplink, backlog, writer) = Uplink::plain(sock).queued();
         let writer = tokio::spawn(writer);
         let uplink: SharedUplink = Arc::new(Mutex::new(uplink));
@@ -12831,6 +12924,7 @@ mod tests {
         assert_eq!(sent[64 * 64], 3, "a FramebufferUpdateRequest follows the input");
         let mut rest = vec![0u8; 32 * 10 - 1];
         unread.read_exact(&mut rest).await.unwrap();
+        #[cfg(feature = "wlshare")]
         backlog.room_for_media().await;
         assert!(!writer.is_finished(), "the writer outlives everything queued so far");
     }
@@ -13114,18 +13208,20 @@ mod tests {
 
     /// One FramebufferUpdate of a `w`×`h` wlshare VP9 frame whose opening byte is
     /// `first`, coded at the dial, then a fence asking for `marker` back.
+    #[cfg(feature = "wlshare")]
     fn wlshare_vp9_update(w: u16, h: u16, first: u8, marker: &[u8]) -> Vec<u8> {
         wlshare_vp9_update_at(w, h, 60, first, marker)
     }
 
     /// [`wlshare_vp9_update`] with the frame said to be coded at `quality`.
+    #[cfg(feature = "wlshare")]
     fn wlshare_vp9_update_at(w: u16, h: u16, quality: u8, first: u8, marker: &[u8]) -> Vec<u8> {
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&1u16.to_be_bytes());
         for field in [0, 0, w, h] {
             msg.extend_from_slice(&field.to_be_bytes());
         }
-        msg.extend_from_slice(&ENCODING_WLSHARE_VP9.to_be_bytes());
+        msg.extend_from_slice(&ENCODING_VP9.to_be_bytes());
         msg.push(quality);
         let mut frame = vec![0u8; 100];
         frame[0] = first;
@@ -13138,6 +13234,7 @@ mod tests {
     /// An update of wlshare's tiles on a desktop `w` wide and at least 208 high: a
     /// PNG over the top 16 rows, a 320×192 region's H.264 stream started below it,
     /// its next frame and its end, and a fence asking an echo of `marker`.
+    #[cfg(feature = "wlshare")]
     fn wlshare_tiles_update(w: u16, marker: &[u8]) -> Vec<u8> {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let mut msg = vec![0u8, 0];
@@ -13146,19 +13243,19 @@ mod tests {
             for field in [x, y, w, h] {
                 msg.extend_from_slice(&field.to_be_bytes());
             }
-            msg.extend_from_slice(&ENCODING_WLSHARE_TILES.to_be_bytes());
+            msg.extend_from_slice(&ENCODING_TILES.to_be_bytes());
             msg.push(kind);
         };
-        rect(&mut msg, (0, 0, w, 16), WLSHARE_TILE_PNG);
+        rect(&mut msg, (0, 0, w, 16), wlshare_proto::tiles::KIND_PNG);
         msg.extend_from_slice(&3u32.to_be_bytes());
         msg.extend_from_slice(&[0x89, 0x50, 0x4e]);
-        for (kind, frame) in [(WLSHARE_TILE_START, KEYFRAME), (WLSHARE_TILE_FRAME, FRAME)] {
+        for (kind, frame) in [(wlshare_proto::tiles::KIND_START, KEYFRAME), (wlshare_proto::tiles::KIND_FRAME, FRAME)] {
             rect(&mut msg, (0, 16, 320, 192), kind);
             msg.push(2);
             msg.extend_from_slice(&(frame.len() as u32).to_be_bytes());
             msg.extend_from_slice(frame);
         }
-        rect(&mut msg, (0, 16, 320, 192), WLSHARE_TILE_END);
+        rect(&mut msg, (0, 16, 320, 192), wlshare_proto::tiles::KIND_END);
         msg.push(2);
         msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
         msg
@@ -13166,6 +13263,7 @@ mod tests {
 
     /// wlshare's tiles are read rectangle by rectangle and passed as they came, and the
     /// update's fence is echoed as a passed picture's is.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn wlshares_tiles_are_passed_rectangle_by_rectangle() {
         let (uplink, sent) = test_uplink();
@@ -13193,6 +13291,7 @@ mod tests {
 
     /// A session lists one of wlshare's pictures, and the other arriving is refused as
     /// any encoding not listed is: tiles in a VP9 session, VP9 in a tiles session.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn the_wlshare_picture_not_listed_is_refused() {
         for (listing, wire) in [
@@ -13211,6 +13310,7 @@ mod tests {
     /// The tiles wlshare sends of a desktop resized past the ceiling before the list
     /// without them reaches it are dropped while the picture is held, and refuse the
     /// desktop in a session that sized the remote.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn wlshares_tiles_past_the_ceiling_are_dropped_or_refused() {
         let (small, big) = ((64, 32), (5376, 2288));
@@ -13246,6 +13346,7 @@ mod tests {
 
     /// A read loop over a connection that stays open, so a held echo is not cut off by
     /// the end of the stream.
+    #[cfg(feature = "wlshare")]
     fn open_read_loop(wire: Vec<u8>, shared: Shared, sink: VideoSink) -> tokio::task::JoinHandle<()> {
         let (mut server, client) = tokio::io::duplex(1 << 16);
         tokio::spawn(async move {
@@ -13257,6 +13358,7 @@ mod tests {
 
     /// A VP9 frame that says it was coded off the 1–100 dial is a server that has
     /// lost its framing, and is refused before its frame is read.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_wlshare_frame_coded_off_the_dial_is_refused() {
         let (uplink, _sent) = test_uplink();
@@ -13273,6 +13375,7 @@ mod tests {
     /// held for what the browser's link makes of a frame beyond its distance:
     /// wlshare walks its quality by that round trip, and must see the browser's
     /// delivery in it.
+    #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
     async fn a_passed_frames_fence_is_held_for_the_browsers_delivery() {
         let (uplink, sent) = test_uplink();
@@ -13307,6 +13410,7 @@ mod tests {
     /// A link with a batch owed for `lag` beyond its distance from before the next
     /// frame is passed, as the paint window would publish it: what that frame's
     /// fence is held for.
+    #[cfg(feature = "wlshare")]
     async fn queued_for(lag: Duration) -> Arc<crate::feedback::LinkFeedback> {
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());
         feedback.baseline(0);
@@ -13318,6 +13422,7 @@ mod tests {
     /// A link with room — nothing owed, the last frame delivered at once — has its
     /// fence echoed at once: the hop to this gateway is then the whole round trip,
     /// as it is.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_passed_frames_fence_goes_at_once_on_a_link_with_room() {
         let (uplink, sent) = test_uplink();
@@ -13344,6 +13449,7 @@ mod tests {
     /// A browser that never acknowledges holds a fence no longer than the grace a
     /// window that is not drawing gets, so wlshare, which sends nothing until the
     /// echo, is not stopped by it.
+    #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
     async fn a_passed_frames_fence_is_held_no_longer_than_the_limit() {
         let (uplink, sent) = test_uplink();
@@ -13372,6 +13478,7 @@ mod tests {
     /// The limit runs from when the fence was queued, not from the loop's last turn:
     /// a server that keeps talking — here a Bell every 50 ms — turns the loop far more
     /// often than the limit, and must not hold the echo for as long as it talks.
+    #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
     async fn a_held_fence_goes_at_its_deadline_while_the_server_keeps_talking() {
         let (uplink, sent) = test_uplink();
@@ -13410,6 +13517,7 @@ mod tests {
     /// A resize past the ceiling takes the encoding off the list, so wlshare sends the
     /// desktop as ZRLE while it is held; a frame already on its way is dropped and its fence
     /// goes back at once, and a resize back within the ceiling lists the encoding again.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_desktop_past_the_ceiling_is_off_the_list_until_it_is_back_within() {
         let (small, big) = ((64, 32), (5376, 2288));
@@ -13455,6 +13563,7 @@ mod tests {
 
     /// Before anything is passed, a fence goes back at once and in order, as on any
     /// other session: there is no browser queue yet for it to report.
+    #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn a_fence_goes_back_at_once_while_nothing_is_passed() {
         let mut wire = server_fence(FENCE_REQUEST | FENCE_BLOCK_AFTER, b"marker");
@@ -13480,6 +13589,7 @@ mod tests {
 
     /// A held fence that asks for BlockAfter is honoured by holding the reading too:
     /// nothing behind it is read until it has gone back.
+    #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
     async fn a_held_block_after_fence_stops_the_reading_until_it_goes() {
         let (uplink, sent) = test_uplink();
