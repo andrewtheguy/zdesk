@@ -9,7 +9,7 @@
 - **Linux**，通过 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-CN.md)，这是我们自己为 wlroots 合成器编写的 VNC 服务器。
 - 其他 RDP 和 VNC 服务器，通过各协议的基础功能。
 
-Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的共享功能。网关提供一个显示桌面的网页，因此任何有浏览器的设备，无论是 Windows、macOS、Linux、iOS 还是 Android，同样无需安装客户端即可访问上述所有桌面。
+Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的共享功能。网关提供一个显示桌面的网页，因此任何有浏览器的设备，无论是 Windows、macOS、Linux、iOS 还是 Android，同样无需安装客户端即可访问上述所有桌面。你的桌面因此不局限于某一台设备或某个地点：只要浏览器能访问网关，就能使用你的机器。
 
 ```text
 浏览器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面

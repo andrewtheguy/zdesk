@@ -9,7 +9,7 @@
 - **Linux**，透過 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-TW.md)，這是我們自己為 wlroots 合成器撰寫的 VNC 伺服器。
 - 其他 RDP 和 VNC 伺服器，透過各協定的基本功能。
 
-Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建的共享功能即可。閘道提供一個顯示桌面的網頁，因此任何有瀏覽器的裝置，無論是 Windows、macOS、Linux、iOS 還是 Android，同樣不需要安裝用戶端就能存取上述所有桌面。
+Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建的共享功能即可。閘道提供一個顯示桌面的網頁，因此任何有瀏覽器的裝置，無論是 Windows、macOS、Linux、iOS 還是 Android，同樣不需要安裝用戶端就能存取上述所有桌面。你的桌面因此不侷限於某一台裝置或某個地點：只要瀏覽器能連到閘道，就能使用你的電腦。
 
 ```text
 瀏覽器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面

@@ -17,7 +17,8 @@ to your machines. It connects to:
 Windows and macOS need nothing installed on the host, only their own sharing
 switched on. The gateway serves one web page that shows the desktop, so anything
 with a browser, on Windows, macOS, Linux, iOS or Android, reaches every one of
-them with no client to install either.
+them with no client to install either. Your desktops are not tied to one device
+or place: wherever a browser can reach the gateway, you have your machines.
 
 ```text
 browser ── HTTPS or localhost ── zDesk ── RDP / VNC ── your desktops
