@@ -43,9 +43,11 @@ pub mod vnc_apple;
 pub mod vnc_apple_clipboard;
 pub mod vnc_apple_media;
 pub mod vnc_audio;
+#[cfg(feature = "wlshare")]
 pub mod vnc_camera;
 pub mod vnc_clipboard;
 pub mod vnc_encodings;
+#[cfg(feature = "wlshare")]
 pub mod vnc_mic;
 pub mod vnc_record;
 pub mod vnc_rsa_aes;

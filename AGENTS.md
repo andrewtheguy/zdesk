@@ -84,7 +84,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
   its hidden `serve-embedded` workers, on Unix and Windows alike, each worker's
   private endpoint a Unix socket or an owner-only named pipe behind
   `src/embedded/transport.rs`. Containers must be built through
-  `packaging/build-container-binary.sh`, with default features disabled, and must
+  `packaging/build-container-binary.sh`, with default features disabled (release
+  CI adds `wlshare` back through `ZDESK_CONTAINER_FEATURES`), and must
   never expose `tui`, `serve-embedded`, or `check-config --embedded`.
 - The Windows MSI ships the native binary, `tui` included. Build it with
   `packaging/build-windows-msi.ps1` on `windows-ci-build` through

@@ -2078,6 +2078,17 @@ impl ConfigFile {
                  which only a `wlshare` target is sent. Remove the key.",
                 target.name
             );
+            // A gateway built without the `wlshare` feature has nothing of
+            // wlshare's in it to speak to the subtype with. A plain `vnc` target
+            // still reads a wlshare server through the RFB baseline.
+            #[cfg(not(feature = "wlshare"))]
+            anyhow::ensure!(
+                target.subtype != Some(Subtype::Wlshare),
+                "target {:?} is subtype \"wlshare\", and this gateway was built without its \
+                 `wlshare` feature. Use a build with the feature, or make the target a plain \
+                 \"vnc\" one by removing the subtype.",
+                target.name
+            );
             // Which credentials a VNC target may carry is the subtype's to say:
             // an Apple subtype authenticates an account to a Mac and nothing else,
             // while a plain target carries an account for RSA-AES, the machine's
@@ -3542,6 +3553,7 @@ mod tests {
     /// The TUI reads a config file with no browser in front of it, and a session
     /// card reads the resolved plan: both say the picture and its quality, and of
     /// wlshare's VP9 its chroma and whether the walk runs.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_card_describes_the_picture() {
         assert_eq!(parse_target("video_quality = 60").unwrap().targets[0].render_summary(), "tiles q60");
@@ -3558,6 +3570,7 @@ mod tests {
     /// wlshare's VP9 follows the browser: 4:4:4 where its own decoder takes it, 4:2:0
     /// where it does not; and a target whose picture is tiles reads no chroma, at
     /// 4:2:0 for every browser.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_chroma_follows_the_target_and_the_browser() {
         use crate::vp9::Chroma;
@@ -4061,6 +4074,7 @@ mod tests {
     /// The opening size resolves the same way for every engine: a kept size is
     /// the configured one or the default, and only a session that follows the
     /// window opens at the client's screen.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_opening_size_is_the_kept_size_or_the_clients_screen() {
         let screen = HostDisplay { w: 1728, h: 1117, scale: 200, fit: false };
@@ -4103,6 +4117,7 @@ mod tests {
 
     /// A virtual display opens at the client's density, so the picker's size is
     /// one a 2x client's display can hold.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_size_a_retina_client_would_shrink_is_refused_on_a_virtual_display() {
         let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
@@ -4136,6 +4151,7 @@ mod tests {
 
     /// A plain target is shown at its server's own size, so a size there would
     /// never be stated either.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_size_is_refused_on_a_plain_vnc_target() {
         let plain = &ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets[0];
@@ -4151,6 +4167,7 @@ mod tests {
     /// everywhere else it would change nothing. The pipeline's passthrough keeps
     /// its row beside two: the browser composes the span once and shows a
     /// display of it.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn virtual_displays_are_one_unless_asked_and_only_where_they_are_created() {
         let one = ConfigFile::parse_fixture(&rdp_toml("")).unwrap().targets.remove(0);
@@ -4208,6 +4225,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// Which sizings a target takes: following a window where the window can drive
     /// it, and the default beside a configured size only there.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_sizing_is_refused_where_the_target_does_not_offer_it() {
         let window = Choices { size: Sizing::Window, ..Choices::default() };
@@ -4258,6 +4276,7 @@ vnc_password_ref = \"x\"")).unwrap();
     /// A Mac's virtual display is not configured under the smallest window
     /// Apple's own client allows, and a client's screen under it opens the
     /// display at it; any other target takes either as it is.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_mac_is_not_sized_under_its_own_clients_smallest_window() {
         let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
@@ -4378,6 +4397,7 @@ vnc_password_ref = \"x\"")).unwrap();
     /// none and `ard-high-performance` always carries its own, so neither Apple
     /// subtype offers it, and neither does a plain `vnc` target, which lists no
     /// extension to carry any.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn sound_is_offered_by_rdp_and_wlshare() {
         let target = |body: &str| {
@@ -4425,6 +4445,7 @@ vnc_password_ref = \"x\"")).unwrap();
     /// extensions, and refused on both Apple subtypes and on a plain `vnc` target,
     /// none of which speaks such an extension. Either stands on its own: a remote
     /// records with or without redirected sound.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn a_camera_and_a_microphone_are_offered_on_rdp_and_wlshare_alone() {
         let parse = |target: &str| {
@@ -4649,6 +4670,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// The pre-negotiation format follows the engine: CD quality is what RDP is
     /// asked for, 48 kHz stereo is what wlshare is asked for.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn the_audio_source_format_is_the_engines() {
         // The format is the protocol's, and is what the RDP client asks a host for.
@@ -4721,6 +4743,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// Lossless sound is a session's choice, on the two targets whose sound is
     /// one, and not a key of the file.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn lossless_sound_is_chosen_at_the_picker_where_there_is_sound_to_choose() {
         let wlshare = parse_audio_target("").unwrap().targets[0].clone();
@@ -4758,6 +4781,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
     /// The switch resolves into a `wlshare` target's plan, and the plan says so;
     /// turned off, wlshare holds its dial.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn render_adaptive_resolves_into_a_wlshare_plan() {
         for (key, adaptive) in [("render_adaptive = true", true), ("render_adaptive = false", false), ("", true)] {
@@ -4786,6 +4810,7 @@ vnc_password_ref = \"x\"")).unwrap();
     /// browser takes and held at the quality, with no walk whatever the key says,
     /// their codec H.264; one that names its VP9, or nothing, is sent
     /// the VP9.
+    #[cfg(feature = "wlshare")]
     #[test]
     fn wlshares_tiles_with_motion_are_a_choice_at_the_picker() {
         let tiles = Choices { passthrough: Some(Passthrough::WlshareTilesMotion), ..Choices::default() };

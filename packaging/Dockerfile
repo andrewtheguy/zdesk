@@ -2,14 +2,15 @@
 #
 # The build context starts as an extracted release tarball (see
 # build-tarball.sh), but its binary must be replaced with the output of
-# build-container-binary.sh. That binary is built with no default features, so
-# the image has the deployed gateway and never the managed-instance substrate.
-# The Docker build verifies that boundary below instead of trusting its context.
-# .github/workflows/release.yml wires this up; to do it by hand:
+# build-container-binary.sh. That binary is built with no default features but
+# `wlshare`, so the image has the deployed gateway and never the
+# managed-instance substrate. The Docker build verifies that boundary below
+# instead of trusting its context. .github/workflows/release.yml wires this up;
+# to do it by hand:
 #
 #   mkdir -p tmp/docker-context
 #   tar -xzf zdesk-0.0.145-linux-x86_64.tar.gz -C tmp/docker-context --strip-components=1
-#   bash packaging/build-container-binary.sh tmp/docker-context/bin/zdesk
+#   ZDESK_CONTAINER_FEATURES=wlshare bash packaging/build-container-binary.sh tmp/docker-context/bin/zdesk
 #   docker build -f packaging/Dockerfile --build-arg VERSION=0.0.145 tmp/docker-context
 #
 # The base must provide every glibc symbol the binary needs. Release CI builds

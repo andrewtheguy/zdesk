@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.472"
+version = "0.0.473"
 license = "MIT"
 edition = "2024"
 
@@ -31,9 +31,14 @@ edition = "2024"
 # Native builds include the local TUI control plane. Container artifacts
 # explicitly disable default features: a remotely deployed gateway must not
 # expose process supervision or its private worker surface.
-default = ["embedded-gateway"]
+default = ["embedded-gateway", "wlshare"]
 # The TUI's master password is the keychain's (src/keychain.rs), so the TUI
 # brings the credential stores; nothing else reads them.
+# `subtype = "wlshare"` targets: wlshare's private extensions, its passed
+# pictures, sound, camera and microphone. Without it a target of the subtype is
+# refused at startup, and nothing of wlshare is built or linked; a plain `vnc`
+# target still reads a wlshare server through the RFB baseline.
+wlshare = ["dep:wlshare-proto"]
 embedded-gateway = [
     "dep:crossterm",
     "dep:libc",
@@ -122,6 +127,11 @@ opus = { package = "opus-prebuilt", git = "https://github.com/andrewtheguy/libop
 # decodes with a decoder of its own. wlshare's own sound, FLAC or Opus, is
 # passed as it came and needs neither codec here (src/vnc_audio.rs).
 sound-flac = { git = "https://github.com/andrewtheguy/sound-flac", tag = "v0.0.9" }
+# wlshare's private extensions, both ends of them: the one crate wlshare builds
+# and parses their bytes with, so a passed picture, sound or device and the
+# bytes wlshare sends are the same layout by construction. `thiserror` alone
+# under it. Pinned at wlshare's release tag, behind the `wlshare` feature.
+wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "v0.0.90", optional = true }
 # 44100 -> 48000, because libopus accepts only 8/12/16/24/48 kHz and RDP offers
 # no 48 kHz format. Pure Rust, and it resamples deinterleaved channels — which is
 # the point: the naive interleaved interpolation blends left into right.
@@ -279,6 +289,10 @@ windows-sys = { version = "0.61", optional = true, features = [
 [[test]]
 name = "embedded_gateway_e2e"
 required-features = ["embedded-gateway"]
+
+[[test]]
+name = "wlshare_e2e"
+required-features = ["wlshare"]
 
 [[test]]
 name = "tui_control_plane_e2e"

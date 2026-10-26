@@ -13,11 +13,13 @@ use clap::{Parser, Subcommand};
 
 /// The optional cargo features this binary was built with, for `--help` and the log
 /// of a starting gateway: `embedded-gateway` decides whether it accepts `tui`, and
-/// nothing else about the binary says so. Not in `--version`, which packaging
-/// compares to the release's.
+/// `wlshare` whether it takes a `wlshare` target, and nothing else about the binary
+/// says so. Not in `--version`, which packaging compares to the release's.
 pub const FEATURES: &[&str] = &[
     #[cfg(feature = "embedded-gateway")]
     "embedded-gateway",
+    #[cfg(feature = "wlshare")]
+    "wlshare",
 ];
 
 /// [`FEATURES`] as a terminal and the log spell them.

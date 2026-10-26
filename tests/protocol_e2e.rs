@@ -1342,6 +1342,7 @@ fn mac_target(port: u16) -> TargetConfig {
 const MAC_CHOICES: &str = r#"{"size":"window","passthrough":"apple-media"}"#;
 
 /// A session started with nothing but the window sizing the desktop.
+#[cfg(feature = "wlshare")]
 const RESIZE: &str = r#"{"size":"window"}"#;
 
 /// A Standard session on the virtual display: the window sizing it, and no
@@ -1847,6 +1848,7 @@ async fn an_oversize_plain_vnc_desktop_is_shown() {
 /// stream encodes holds the session open without a picture: the browser is told,
 /// is sent nothing of the desktop, and is told again when it reattaches. The fake
 /// ignores the listing and is coded here, held all the same.
+#[cfg(feature = "wlshare")]
 #[tokio::test]
 async fn an_oversize_wlshare_desktop_holds_the_session_without_a_picture() {
     let (w, h) = (3842, 2);
@@ -1882,6 +1884,7 @@ async fn an_oversize_wlshare_desktop_holds_the_session_without_a_picture() {
 
 /// Read for half a second, failing on a binary frame of the desktop, an `error` or
 /// a close: long enough for the full update the fake server answers with at once.
+#[cfg(feature = "wlshare")]
 async fn expect_no_picture(ws: &mut Ws) {
     let quiet = tokio::time::timeout(Duration::from_millis(500), async {
         while let Some(msg) = ws.display_socket().next().await {
@@ -1904,6 +1907,7 @@ async fn expect_no_picture(ws: &mut Ws) {
 /// that answers past the ceiling ends the session with the ceiling's refusal. A
 /// `wlshare` target, since a plain one never follows a window; the fake ignores
 /// the listing and is coded here.
+#[cfg(feature = "wlshare")]
 #[tokio::test]
 async fn an_oversize_vnc_desktop_under_resize_is_refused() {
     let (w, h) = (3842, 2);

@@ -150,6 +150,8 @@ jobs:
 
       - name: Build feature-minimal container gateway (${{ matrix.target-note }})
         if: runner.os == 'Linux'
+        env:
+          ZDESK_CONTAINER_FEATURES: wlshare
         run: bash packaging/build-container-binary.sh "tmp/container-bin/zdesk-container-${{ matrix.target-note }}"
 
       - name: Upload artifact

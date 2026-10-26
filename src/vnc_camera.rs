@@ -3,9 +3,10 @@
 //!
 //! RFB carries nothing from a client but input and a clipboard, and no registered
 //! extension carries video that way, so this is one of wlshare's private ones, in
-//! the shape of the density and outputs extensions. Pseudo-encoding [`ENCODING`]
-//! (`WLSC`) and message type [`MSG_CAMERA`] are the whole of it, in both
-//! directions:
+//! the shape of the density and outputs extensions. Its bytes are
+//! [`wlshare_proto::camera`]'s, the crate wlshare builds and parses them with
+//! too: pseudo-encoding [`wlshare_proto::ENCODING_CAMERA`] (`WLSC`) and one
+//! message type, in both directions:
 //!
 //! - A session started with the camera offered ([`crate::config::Choices::camera`],
 //!   the picker's Camera tick) lists the pseudo-encoding in `SetEncodings`.
@@ -30,120 +31,39 @@ use std::sync::{Arc, Weak};
 
 use log::{info, warn};
 use tokio::sync::mpsc::{self, error::TrySendError};
+use wlshare_proto::camera::{self, MAX_SAMPLE};
 
 use crate::camera::{CameraBridge, CameraControl, CameraFormat, CameraSignal};
-
-/// The extension's pseudo-encoding, the ASCII bytes `WLSC`. Listed in
-/// `SetEncodings` on a generic target that carries a camera.
-pub const ENCODING: i32 = 0x574c_5343;
-/// The extension's one message type, used in both directions. Outside every
-/// registered RFB message type.
-pub const MSG_CAMERA: u8 = 0xE2;
-
-const CLIENT_PLUG: u8 = 0;
-const CLIENT_UNPLUG: u8 = 1;
-const CLIENT_SAMPLE: u8 = 2;
-
-const SERVER_AVAILABLE: u8 = 0;
-const SERVER_START: u8 = 1;
-const SERVER_STOP: u8 = 2;
-const SERVER_KEYFRAME: u8 = 3;
-
-/// A sample's flags, bit 0: the access unit is a keyframe.
-const SAMPLE_KEYFRAME: u8 = 1;
-
-/// Bytes of every server message after its type byte, before a start's format.
-pub const SERVER_HEADER_LEN: usize = 3;
-/// Bytes of a start's format, after the header.
-pub const START_FORMAT_LEN: usize = 12;
-
-/// The longest access unit wlshare accepts. A longer one would end the session
-/// there, so it is dropped here instead, and the gap it opens is the browser's to
-/// close with a keyframe.
-const MAX_SAMPLE: usize = 4 * 1024 * 1024;
 
 /// How many samples may wait for the engine's loop to write them. The loop sends
 /// them as fast as the socket takes them, so a full queue is a link slower than
 /// the camera, and what waits past that is already late.
 const SAMPLE_QUEUE: usize = 16;
 
-/// A server message, parsed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ServerCamera {
-    /// The server takes a camera: the answer to `SetEncodings`.
-    Available,
-    /// An application opened the camera, fed in this format.
-    Start(CameraFormat),
-    /// The last application closed it.
-    Stop,
-    /// The next sample must be a keyframe.
-    Keyframe,
-}
-
-/// How many bytes follow the header for the operation it names. An operation this
-/// client does not know is fatal: the messages share no length field, so one
-/// that cannot be measured leaves the stream at an offset nothing recovers from.
-pub fn body_len(header: [u8; SERVER_HEADER_LEN]) -> anyhow::Result<usize> {
-    match header[0] {
-        SERVER_START => Ok(START_FORMAT_LEN),
-        SERVER_AVAILABLE | SERVER_STOP | SERVER_KEYFRAME => Ok(0),
-        other => anyhow::bail!("wlshare camera operation {other} is not one this client knows"),
-    }
-}
-
-/// Parse a server message from its header and the [`body_len`] bytes after it.
-pub fn parse_server(header: [u8; SERVER_HEADER_LEN], body: &[u8]) -> anyhow::Result<ServerCamera> {
-    anyhow::ensure!(body.len() == body_len(header)?, "a wlshare camera message of the wrong length");
-    Ok(match header[0] {
-        SERVER_AVAILABLE => ServerCamera::Available,
-        SERVER_START => ServerCamera::Start(CameraFormat {
-            width: u32::from(u16::from_be_bytes([body[0], body[1]])),
-            height: u32::from(u16::from_be_bytes([body[2], body[3]])),
-            fps_numerator: u32::from_be_bytes([body[4], body[5], body[6], body[7]]),
-            fps_denominator: u32::from_be_bytes([body[8], body[9], body[10], body[11]]),
-        }),
-        SERVER_STOP => ServerCamera::Stop,
-        _ => ServerCamera::Keyframe,
-    })
-}
-
-/// The plug: `0xE2`, operation 0, two bytes of padding, `u16` width and height,
-/// `u32` frame-rate numerator and denominator.
-///
-/// `None` for a format the extension cannot describe: a geometry past its `u16`,
-/// or — as the RDP path's `Format::is_describable` refuses too — a picture with
-/// no area or a rate with either half zero, which wlshare takes as a client that
-/// does not speak the extension and ends the whole session over.
+/// The plug, or `None` for a format the extension cannot describe: a geometry
+/// past its `u16`, or — as the RDP path's `Format::is_describable` refuses too —
+/// a picture with no area or a rate with either half zero, which wlshare takes as
+/// a client that does not speak the extension and ends the whole session over.
 fn plug(format: CameraFormat) -> Option<[u8; 16]> {
     if format.width == 0 || format.height == 0 || format.fps_numerator == 0 || format.fps_denominator == 0 {
         return None;
     }
-    let width = u16::try_from(format.width).ok()?;
-    let height = u16::try_from(format.height).ok()?;
-    let mut msg = [0u8; 16];
-    msg[0] = MSG_CAMERA;
-    msg[1] = CLIENT_PLUG;
-    // msg[2..4]: padding
-    msg[4..6].copy_from_slice(&width.to_be_bytes());
-    msg[6..8].copy_from_slice(&height.to_be_bytes());
-    msg[8..12].copy_from_slice(&format.fps_numerator.to_be_bytes());
-    msg[12..16].copy_from_slice(&format.fps_denominator.to_be_bytes());
-    Some(msg)
+    Some(camera::plug(camera::CameraFormat {
+        width: u16::try_from(format.width).ok()?,
+        height: u16::try_from(format.height).ok()?,
+        fps_numerator: format.fps_numerator,
+        fps_denominator: format.fps_denominator,
+    }))
 }
 
-/// The unplug: `0xE2`, operation 1, two bytes of padding.
-fn unplug() -> [u8; 4] {
-    [MSG_CAMERA, CLIENT_UNPLUG, 0, 0]
-}
-
-/// One sample: `0xE2`, operation 2, a flags byte, a byte of padding, the `u32`
-/// length of the access unit, and the unit.
-fn sample(unit: &[u8], keyframe: bool) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(8 + unit.len());
-    msg.extend_from_slice(&[MSG_CAMERA, CLIENT_SAMPLE, if keyframe { SAMPLE_KEYFRAME } else { 0 }, 0]);
-    msg.extend_from_slice(&(unit.len() as u32).to_be_bytes());
-    msg.extend_from_slice(unit);
-    msg
+/// The format a start names, as the bridge carries it.
+pub fn bridge_format(format: camera::CameraFormat) -> CameraFormat {
+    CameraFormat {
+        width: u32::from(format.width),
+        height: u32::from(format.height),
+        fps_numerator: format.fps_numerator,
+        fps_denominator: format.fps_denominator,
+    }
 }
 
 /// Where the camera stands on one connection: whether the server has said it
@@ -188,13 +108,13 @@ impl Device {
     /// The browser unplugged its camera.
     pub fn unplug(&mut self) -> Option<Vec<u8>> {
         let was = self.plugged.take();
-        (self.announced && was.is_some()).then(|| unplug().to_vec())
+        (self.announced && was.is_some()).then(|| camera::unplug().to_vec())
     }
 
     /// One access unit, sent only on a plugged camera the server knows about. Its
     /// length was held to what wlshare accepts before it was queued.
     pub fn sample(&self, unit: &[u8], keyframe: bool) -> Option<Vec<u8>> {
-        (self.announced && self.plugged.is_some()).then(|| sample(unit, keyframe))
+        (self.announced && self.plugged.is_some()).then(|| camera::sample(keyframe, unit))
     }
 }
 
@@ -393,13 +313,12 @@ mod tests {
 
     #[test]
     fn client_messages_have_the_documented_layouts() {
-        assert_eq!(ENCODING, i32::from_be_bytes(*b"WLSC"));
         let bytes = plug(VGA).unwrap();
         assert_eq!(bytes, [0xE2, 0, 0, 0, 0x02, 0x80, 0x01, 0xE0, 0, 0, 0x75, 0x30, 0, 0, 0x03, 0xE9]);
         assert_eq!(decode(&bytes), Sent::Plug(VGA));
-        assert_eq!(decode(&unplug()), Sent::Unplug);
-        assert_eq!(decode(&sample(&[0, 0, 1, 0x65], true)), Sent::Sample { keyframe: true, unit: vec![0, 0, 1, 0x65] });
-        assert_eq!(decode(&sample(&[7], false)), Sent::Sample { keyframe: false, unit: vec![7] });
+        assert_eq!(decode(&camera::unplug()), Sent::Unplug);
+        assert_eq!(decode(&camera::sample(true, &[0, 0, 1, 0x65])), Sent::Sample { keyframe: true, unit: vec![0, 0, 1, 0x65] });
+        assert_eq!(decode(&camera::sample(false, &[7])), Sent::Sample { keyframe: false, unit: vec![7] });
         assert_eq!(plug(CameraFormat { width: 70_000, ..VGA }), None, "no geometry past a u16");
     }
 
@@ -420,19 +339,6 @@ mod tests {
         assert_eq!(decode(&device.plug(VGA).unwrap()), Sent::Plug(VGA));
         assert_eq!(device.plug(CameraFormat { fps_denominator: 0, ..QVGA }), None);
         assert_eq!(decode(&device.sample(&[1], true).unwrap()), Sent::Sample { keyframe: true, unit: vec![1] });
-    }
-
-    #[test]
-    fn server_messages_parse_and_an_unknown_one_is_fatal() {
-        assert_eq!(body_len([0, 0, 0]).unwrap(), 0);
-        assert_eq!(parse_server([0, 0, 0], &[]).unwrap(), ServerCamera::Available);
-        let format = [0x02, 0x80, 0x01, 0xE0, 0, 0, 0x75, 0x30, 0, 0, 0x03, 0xE9];
-        assert_eq!(body_len([1, 0, 0]).unwrap(), 12);
-        assert_eq!(parse_server([1, 0, 0], &format).unwrap(), ServerCamera::Start(VGA));
-        assert_eq!(parse_server([2, 0, 0], &[]).unwrap(), ServerCamera::Stop);
-        assert_eq!(parse_server([3, 0, 0], &[]).unwrap(), ServerCamera::Keyframe);
-        assert!(body_len([4, 0, 0]).is_err());
-        assert!(parse_server([1, 0, 0], &format[..4]).is_err());
     }
 
     /// A plug made before the server answers waits for the answer, and goes out
