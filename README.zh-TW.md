@@ -94,6 +94,10 @@ curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/download/v0.0.x/zdesk
 sudo apt install ./zdesk-linux-amd64.deb
 ```
 
+安裝後有兩種執行方式：作為獨立閘道（`zdesk serve`）執行，讀取你自己撰寫的設定；或使用控制平面（`zdesk tui`），這是一個終端機介面，在你使用的電腦上執行閘道。下面兩節分別說明。
+
+### 獨立閘道：`zdesk serve`
+
 用隨附的範例建立設定檔，並產生登入憑證：
 
 ```sh
@@ -142,6 +146,16 @@ docker run -d --name zdesk -p 52380:52380 \
   -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
+
+### 控制平面：`zdesk tui`
+
+在瀏覽器和金鑰圈都在本機的桌面上（macOS、Windows，或具備 GNOME Keyring 或 KWallet 的 Linux），原生安裝套件的控制平面可以改由它來執行閘道，每個閘道都有自己的設定，不需要上面的任何步驟：
+
+```sh
+zdesk tui
+```
+
+它只監聽回送位址，位於 <http://zdesk.localhost:52380>。按 `n` 建立執行個體，按 `e` 在其設定中新增目標，按 `p` 加密目標的密碼，按 `s` 啟動執行個體，按 `o` 在瀏覽器中開啟它。[本機執行個體](docs/guide.zh-TW.md#本機執行個體)列出了所有按鍵。容器映像檔不包含控制平面。
 
 [安裝 zDesk](docs/install.zh-TW.md) 涵蓋所有平台、升級和解除安裝。
 

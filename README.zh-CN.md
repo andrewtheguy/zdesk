@@ -94,6 +94,10 @@ curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/download/v0.0.x/zdesk
 sudo apt install ./zdesk-linux-amd64.deb
 ```
 
+安装后有两种运行方式：作为独立网关（`zdesk serve`）运行，读取你自己编写的配置；或使用控制面（`zdesk tui`），这是一个终端界面，在你使用的机器上运行网关。下面两节分别介绍。
+
+### 独立网关：`zdesk serve`
+
 用附带的示例创建配置，并生成登录凭据：
 
 ```sh
@@ -142,6 +146,16 @@ docker run -d --name zdesk -p 52380:52380 \
   -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
+
+### 控制面：`zdesk tui`
+
+在浏览器和密钥环都在本机的桌面上（macOS、Windows，或带有 GNOME Keyring 或 KWallet 的 Linux），原生软件包的控制面可以改为由它来运行网关，每个网关都有自己的配置，无需上面的任何步骤：
+
+```sh
+zdesk tui
+```
+
+它只监听回环地址，位于 <http://zdesk.localhost:52380>。按 `n` 创建实例，按 `e` 在其配置中添加目标，按 `p` 加密目标的密码，按 `s` 启动实例，按 `o` 在浏览器中打开它。[本地实例](docs/guide.zh-CN.md#本地实例)列出了所有按键。容器镜像不包含控制面。
 
 [安装 zDesk](docs/install.zh-CN.md) 涵盖所有平台、升级和卸载。
 

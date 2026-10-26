@@ -182,6 +182,12 @@ curl -fsSLO https://github.com/andrewtheguy/zdesk/releases/download/v0.0.x/zdesk
 sudo apt install ./zdesk-linux-amd64.deb
 ```
 
+The package then runs either a served gateway, `zdesk serve`, from a config
+you write, or the control plane, `zdesk tui`, a terminal interface that runs
+gateways on the machine you use. The two sections below set up each.
+
+### Served gateway: `zdesk serve`
+
 Create the config from the shipped example and generate a login:
 
 ```sh
@@ -241,6 +247,23 @@ docker run -d --name zdesk -p 52380:52380 \
   -v ./secrets:/run/secrets:ro \
   ghcr.io/andrewtheguy/zdesk:v0.0.x
 ```
+
+### Control plane: `zdesk tui`
+
+On a desktop with a browser and a keychain on the same machine (macOS, Windows,
+or Linux with GNOME Keyring or KWallet), the native packages' control plane
+runs gateways instead, each with its own config, and none of the steps above
+are needed:
+
+```sh
+zdesk tui
+```
+
+It listens on loopback only, at <http://zdesk.localhost:52380>. Press `n` to
+create an instance, `e` to add a target to its config, `p` to encrypt the
+target's password, `s` to start the instance and `o` to open it in the browser.
+[Local instances](docs/guide.md#local-instances) lists every key. The container
+image has no control plane.
 
 [Installing zDesk](docs/install.md) covers every platform, upgrades and
 removal.
