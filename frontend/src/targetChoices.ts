@@ -428,7 +428,7 @@ function pictureOptions(
       value: "wlshare-tiles-adaptive",
       label: "Adaptive tiles, passed through",
       note: abilities.appleH264
-        ? "wlshare's tiles fitted to this browser's link: video only where the desktop moves, and each still part as the smaller of a lossy WebP and an exact PNG. Fewer bytes than the tiles with motion; not lossless."
+        ? "wlshare's tiles fitted to this browser's link: video only where the desktop moves, and what is still as lossy WebP. Fewer bytes than the tiles with motion; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.appleH264,
     },

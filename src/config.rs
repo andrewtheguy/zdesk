@@ -217,7 +217,7 @@ pub struct RenderPlan {
     /// passed as it comes. Set only with [`Self::wlshare`]. With [`Self::adaptive`]
     /// they are its adaptive tiles ([`Passthrough::WlshareTilesAdaptive`]): the dial
     /// walks on the browser's lag as the VP9's does, the regions following it and
-    /// each still the smaller of a PNG and a lossy WebP at it, never owed exact.
+    /// every still a lossy WebP at it, never owed exact.
     /// Without it they are its tiles with motion ([`Passthrough::WlshareTilesMotion`]):
     /// the regions held at [`Self::quality`] and every still exact.
     pub wlshare_tiles: bool,
@@ -339,9 +339,8 @@ pub enum Passthrough {
     /// bytes. Its dial is held, whatever `render_adaptive` says.
     WlshareTilesMotion,
     /// wlshare's adaptive tiles: its tiles with motion with the dial walked on the
-    /// browser's lag as the VP9's is, the regions following it, and each still the
-    /// smaller of a PNG and a lossy WebP at the dial, which nothing makes exact
-    /// later. Offered and chosen as its tiles with motion are: a fraction of the
+    /// browser's lag as the VP9's is, the regions following it, and every still a
+    /// lossy WebP at the dial, which nothing makes exact later. Offered and chosen as its tiles with motion are: a fraction of the
     /// VP9's encoder time for a link that is not always wide, where a picture that
     /// ends exact matters less than one that keeps up. It walks whatever
     /// `render_adaptive` says.
