@@ -22,14 +22,14 @@ Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的�
 
 ## 演示
 
-在 [zDesk 网站](https://zdesk.dev/zh-CN#demo)观看演示：
+在 [zDesk 网站](https://zdesk.dev/zh-CN/demo)观看演示：
 
-- [Windows -> 带一个远程虚拟显示器的 Mac](https://zdesk.dev/zh-CN#windows-to-mac-one-display)
-- [Windows -> 带两个远程虚拟显示器的 Mac](https://zdesk.dev/zh-CN#windows-to-mac-two-displays)：两个远程虚拟显示器分别显示在不同的浏览器标签页中，窗口可以在两个标签页之间直接跨显示器拖动。
-- [iOS -> Windows](https://zdesk.dev/zh-CN#ios-to-windows)：iOS 上的 Safari 连接 Windows 自带的远程桌面，双指左右滑动即可水平滚动。
-- [iOS -> Mac](https://zdesk.dev/zh-CN#ios-to-mac)：iOS 上的 Safari 连接 Mac 的高性能模式屏幕共享，支持水平滚动，并显示网络吞吐量指示。
-- [Mac -> Windows，Retina/HiDPI 密度并带声音](https://zdesk.dev/zh-CN#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度显示 Windows 自带的远程桌面，并在浏览器中播放远程的声音。
-- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度并带声音](https://zdesk.dev/zh-CN#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度显示 Sway 上的 wlshare，带远程的声音，进入和退出沉浸式全屏时远程桌面会随浏览器调整大小。
+- [Windows -> 带一个远程虚拟显示器的 Mac](https://zdesk.dev/zh-CN/demo#windows-to-mac-one-display)
+- [Windows -> 带两个远程虚拟显示器的 Mac](https://zdesk.dev/zh-CN/demo#windows-to-mac-two-displays)：两个远程虚拟显示器分别显示在不同的浏览器标签页中，窗口可以在两个标签页之间直接跨显示器拖动。
+- [iOS -> Windows](https://zdesk.dev/zh-CN/demo#ios-to-windows)：iOS 上的 Safari 连接 Windows 自带的远程桌面，双指左右滑动即可水平滚动。
+- [iOS -> Mac](https://zdesk.dev/zh-CN/demo#ios-to-mac)：iOS 上的 Safari 连接 Mac 的高性能模式屏幕共享，支持水平滚动，并显示网络吞吐量指示。
+- [Mac -> Windows，Retina/HiDPI 密度并带声音](https://zdesk.dev/zh-CN/demo#mac-to-windows)：以 Mac 的 Retina/HiDPI 密度显示 Windows 自带的远程桌面，并在浏览器中播放远程的声音。
+- [Mac -> Linux（Sway 上的 wlshare），Retina/HiDPI 密度并带声音](https://zdesk.dev/zh-CN/demo#mac-to-linux)：以 Mac 的 Retina/HiDPI 密度显示 Sway 上的 wlshare，带远程的声音，进入和退出沉浸式全屏时远程桌面会随浏览器调整大小。
 
 ## 功能
 
