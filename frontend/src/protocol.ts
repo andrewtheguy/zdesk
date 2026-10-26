@@ -482,12 +482,14 @@ export interface StandardMsg {
 
 // A rectangle of the desktop in the tiles the gateway codes, a row's run of 64x64
 // tiles as one image: a JPEG of tiles still changing, which the gateway sends again
-// as PNG once they are still, or a PNG of the exact pixels. Each replaces what the
+// as PNG once they are still, or a PNG of the exact pixels; or, in wlshare's tiles
+// passed through, a lossy WebP while wlshare's link is behind. Each replaces what the
+
 // canvas held there and depends on no other, so they are drawn in wire order and may
 // be decoded in any. See `TileUnit` in src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png";
+  format: "jpeg" | "png" | "webp";
   x: number;
   y: number;
   w: number;
@@ -541,7 +543,8 @@ const OP_TILE = 0x06;
 const TILE_HEADER_LEN = 14;
 // A TILE record's format byte. Any other means a gateway newer than this client,
 // and the batch is dropped rather than guessed at.
-const TILE_FORMATS = { 1: "jpeg", 2: "png" } as const;
+const TILE_FORMATS = { 1: "jpeg", 2: "png", 3: "webp" } as const;
+
 const OP_REGION = 0x07;
 const REGION_HEADER_LEN = 15;
 // A REGION record's one flag: its stream's decoder can start here. Any other bit
@@ -692,9 +695,10 @@ function decodeTile(
     return null;
   }
   const format = view.getUint8(at + 1);
-  if (format !== 1 && format !== 2) {
+  if (format !== 1 && format !== 2 && format !== 3) {
     return null;
   }
+
   const field = (i: number) => view.getUint16(at + 2 + 2 * i, true);
   const len = view.getUint32(at + 10, true);
   const start = at + TILE_HEADER_LEN;

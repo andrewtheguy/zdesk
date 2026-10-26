@@ -2879,11 +2879,14 @@ impl Listing {
     }
 }
 
-/// `encodings` with wlshare's tiles encoding ahead of them, and beside it the dial
-/// its regions are held at, from the plan: the same `WLQ` the VP9 is asked at.
+/// `encodings` with wlshare's tiles encoding ahead of them, and beside it what
+/// the picture is to be, from the plan: the dial as the ceiling, the same `WLQ`
+/// the VP9 is asked at, and `WLSD` for a plan that holds the dial rather than
+/// walking it, as the VP9's list says it, so `render_adaptive` means on the
+/// tiles what it means on the VP9.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles_motion(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let mut listed = wlshare_proto::tiles::encodings(plan.quality);
+    let mut listed = wlshare_proto::tiles::TilesPicture { quality: plan.quality, adaptive: plan.adaptive }.encodings();
     listed.extend_from_slice(encodings);
     listed
 }
@@ -6221,7 +6224,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             reader.read_exact(&mut header[1..used]).await?;
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
-                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
+                TileHeader::Png { len } | TileHeader::Webp { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
                 TileHeader::End { .. } => 0,
             };
             let mut body = vec![0u8; len];
@@ -6236,7 +6239,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                     sink.pass_region_end(stream).await?;
                     return Ok(RectEffect::NOTHING);
                 }
-                TileHeader::Png { .. } => sink.pass_tile(x, y, w, h, body).await?,
+                TileHeader::Png { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body).await?,
+                TileHeader::Webp { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Webp, body).await?,
                 TileHeader::Start { stream, .. } => sink.pass_region(stream, x, y, w, h, true, body).await?,
                 TileHeader::Frame { stream, .. } => sink.pass_region(stream, x, y, w, h, false, body).await?,
             }
@@ -9316,8 +9320,11 @@ mod tests {
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
         let tiles = RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles_motion: true, chroma: crate::vp9::Chroma::Yuv420 };
         let lists = Listing::new(rest.clone(), tiles);
-        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_DENSITY]);
+        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "held: WLSD beside the dial");
         assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
+        let walked = Listing::new(rest.clone(), RenderPlan { adaptive: true, ..tiles });
+        assert_eq!(walked.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_DENSITY], "walked: no WLSD");
+
         let vp9 = Listing::new(rest.clone(), RenderPlan { wlshare_tiles_motion: false, ..tiles });
         assert_eq!(vp9.listed((1280, 800))[0], ENCODING_VP9);
         assert_eq!(vp9.listed((7680, 4320)), rest, "the VP9 past the ceiling");

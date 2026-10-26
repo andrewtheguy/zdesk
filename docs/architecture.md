@@ -545,7 +545,10 @@ it. Its tiles with motion, exact PNG tiles where the desktop is still and a
 hardware encoder where it has one and libx264 otherwise, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
-alone, which its regions are held at: they select no chroma, 4:2:0 for every
+and the walk as the VP9 is, the regions following the dial and what is still
+going out as lossy WebP while the link is behind, exact once it has room, or
+with `WLSD` the dial held and every still exact: they select no chroma, 4:2:0 for every
+
 browser, and take no walk. A server that ignores the listing is sent as tiles
 from its ZRLE. Do not transcode a passed frame, pass one at a chroma other than
 the plan's, ask wlshare for the plan with a client message, or add a key that
