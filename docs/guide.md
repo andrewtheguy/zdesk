@@ -174,8 +174,9 @@ password_ref = "workstation"
 The two tables are printed for you to paste, never typed:
 
 ```sh
-zdesk password master -c zdesk.toml     # once per config: prints [master]
-zdesk password encrypt -c zdesk.toml    # prints one value for [passwords]
+zdesk password master create -c zdesk.toml   # once: writes the master password file, prints [master]
+zdesk password master show -c zdesk.toml     # each further config: prints [master] under it
+zdesk password encrypt -c zdesk.toml         # prints one value for [passwords]
 ```
 
 ```toml
@@ -205,7 +206,10 @@ Every other value is AES-256-GCM under a key derived from your **master password
 and the config's own salt. A served gateway reads it from a file named by
 `[server].master_password_file`: a container secret, a systemd credential, or
 a file only the gateway's account can read. The file holds the master password
-alone; a trailing newline is ignored. The TUI keeps its own in the keychain
+alone; a trailing newline is ignored. `password master create` writes it,
+readable by its user alone, and refuses to replace one that exists unless given
+`--force`, after which every value encrypted under the old one stops opening;
+`password master show` prints a `[master]` block under the one already there. The TUI keeps its own in the keychain
 (the macOS Keychain, Windows Credential Manager, or a Linux desktop's Secret
 Service: GNOME Keyring, KWallet), generated the first time it needs one, so
 you never type it. Nothing but the TUI reads the keychain.
@@ -214,7 +218,7 @@ you never type it. Nothing but the TUI reads the keychain.
 |---|---|
 | `zdesk serve` | `[server].master_password_file`; refused without it when a target names an encrypted value, never asked |
 | `zdesk tui` | the keychain; generated and kept there when it has none; refused when the keychain will not answer, never asked |
-| `zdesk password` | `[server].master_password_file`, else asked |
+| `zdesk password` | `[server].master_password_file`, else asked; `password master create` asks twice and writes that file |
 
 A local instance has no `[server]` block, so its master password always comes
 from the keychain.

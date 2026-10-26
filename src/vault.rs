@@ -60,7 +60,7 @@ const TAG_LEN: usize = 16;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MasterSection {
-    /// 32 random bytes, base64, printed by `zdesk password master`.
+    /// 32 random bytes, base64, printed by `zdesk password master show` or `create`.
     pub salt: String,
     /// HMAC-SHA256 of a fixed message under the derived key, base64.
     pub check: String,
@@ -112,6 +112,40 @@ impl MasterPassword {
         let password = password.strip_suffix('\r').unwrap_or(password);
         Self::new(password.to_owned())
             .with_context(|| format!("in the master password file {}", path.display()))
+    }
+
+    /// Keep this master password in a file at `path`, readable by this user
+    /// alone: `0600` on Unix, and on Windows the directory's permissions, which
+    /// the setup makes this account's. A file already there is refused unless
+    /// `replace`, since it holds the master password some config was encrypted
+    /// under; a replacement is written beside it and renamed over it, so a run
+    /// stopped half way leaves the old one whole.
+    pub fn write_file(&self, path: &std::path::Path, replace: bool) -> anyhow::Result<()> {
+        let written = if replace {
+            let mut temporary = path.as_os_str().to_owned();
+            temporary.push(format!(".{}.new", std::process::id()));
+            let temporary = PathBuf::from(temporary);
+            let result = self
+                .write_new(&temporary)
+                .and_then(|()| std::fs::rename(&temporary, path));
+            if result.is_err() {
+                let _ = std::fs::remove_file(&temporary);
+            }
+            result
+        } else {
+            self.write_new(path)
+        };
+        written.with_context(|| format!("cannot write the master password file {}", path.display()))
+    }
+
+    fn write_new(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(path)?;
+        std::io::Write::write_all(&mut file, self.0.as_bytes())?;
+        file.sync_all()
     }
 
     pub fn as_str(&self) -> &str {
@@ -311,7 +345,7 @@ pub fn master_of(path: &Path) -> anyhow::Result<MasterSection> {
         .with_context(|| format!("{} is not valid TOML", path.display()))?;
     let section = only.master.with_context(|| {
         format!(
-            "{} has no [master] block — paste the one `zdesk password master` prints",
+            "{} has no [master] block — paste the one `zdesk password master show` or `create` prints",
             path.display()
         )
     })?;
@@ -419,6 +453,32 @@ mod tests {
         assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word ");
         std::fs::write(&path, "\n").unwrap();
         assert!(MasterPassword::read_file(&path).is_err(), "an empty password is refused");
+    }
+
+    #[test]
+    fn a_master_file_is_private_and_replaced_only_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let private = |path: &Path| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let mode = std::fs::metadata(path).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600);
+            }
+            #[cfg(not(unix))]
+            let _ = path;
+        };
+        master("pass word").write_file(&path, false).unwrap();
+        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word");
+        private(&path);
+        assert!(master("another").write_file(&path, false).is_err());
+        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word");
+
+        master("another").write_file(&path, true).unwrap();
+        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "another");
+        private(&path);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary is left");
     }
 
     #[test]

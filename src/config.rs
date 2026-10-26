@@ -2177,7 +2177,7 @@ impl ConfigFile {
         }
         anyhow::ensure!(
             self.passwords.values().all(String::is_empty) || self.master.is_some(),
-            "[passwords] has no [master] block to open it — `zdesk password master` prints one"
+            "[passwords] has no [master] block to open it — `zdesk password master show` or `create` prints one"
         );
         for target in &self.targets {
             for (key, name) in [
@@ -2212,7 +2212,7 @@ impl ConfigFile {
         let section = self
             .master
             .as_ref()
-            .context("the config has no [master] block — `zdesk password master` prints one")?;
+            .context("the config has no [master] block — `zdesk password master show` or `create` prints one")?;
         Key::derive(master, section)
     }
 

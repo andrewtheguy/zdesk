@@ -66,7 +66,8 @@ password_ref = "workstation"
 這兩個表格由指令輸出供你貼上，從不手動輸入：
 
 ```sh
-zdesk password master -c zdesk.toml     # 每個設定一次：輸出 [master]
+zdesk password master create -c zdesk.toml   # 一次：寫入主密碼檔案，輸出 [master]
+zdesk password master show -c zdesk.toml     # 之後每個設定：輸出該主密碼下的 [master]
 zdesk password encrypt -c zdesk.toml    # 輸出 [passwords] 的一個值
 ```
 
@@ -83,13 +84,13 @@ workstation = "$ZD;1;AES-256-GCM;…"
 
 值也可以留空，`workstation = ""`，作為尚未設定之密碼的預留位置：在貼上真實的值之前，目標以空白密碼回應；如果 `[passwords]` 中的值全是這樣的預留位置，設定就不需要 `[master]` 或主密碼。
 
-其他所有值都用 AES-256-GCM 加密，金鑰由你的**主密碼**和設定自己的 salt 衍生。提供服務的閘道從 `[server].master_password_file` 指定的檔案讀取主密碼：可以是容器的 secret、systemd 的 credential，或只有閘道帳號能讀取的檔案。該檔案只包含主密碼；結尾的換行會被忽略。TUI 把自己的主密碼儲存在鑰匙圈中（macOS 鑰匙圈、Windows 認證管理員，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），第一次需要時產生，因此你從不需要輸入。除了 TUI 以外，沒有任何東西會讀取鑰匙圈。
+其他所有值都用 AES-256-GCM 加密，金鑰由你的**主密碼**和設定自己的 salt 衍生。提供服務的閘道從 `[server].master_password_file` 指定的檔案讀取主密碼：可以是容器的 secret、systemd 的 credential，或只有閘道帳號能讀取的檔案。該檔案只包含主密碼；結尾的換行會被忽略。`password master create` 寫入該檔案，只有其使用者能讀取；檔案已存在時拒絕取代，除非指定 `--force`，取代後用舊主密碼加密的每個值都無法再開啟。`password master show` 輸出既有主密碼下的 `[master]` 區塊。TUI 把自己的主密碼儲存在鑰匙圈中（macOS 鑰匙圈、Windows 認證管理員，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），第一次需要時產生，因此你從不需要輸入。除了 TUI 以外，沒有任何東西會讀取鑰匙圈。
 
 | 啟動方式 | 主密碼來源 |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`；目標參照加密值而未設定它時拒絕啟動，從不詢問 |
 | `zdesk tui` | 鑰匙圈；沒有時產生並儲存在那裡；鑰匙圈無回應時拒絕啟動，從不詢問 |
-| `zdesk password` | `[server].master_password_file`，否則詢問 |
+| `zdesk password` | `[server].master_password_file`，否則詢問；`password master create` 詢問兩次並寫入該檔案 |
 
 本機執行個體沒有 `[server]` 區塊，因此其主密碼一律來自鑰匙圈。
 

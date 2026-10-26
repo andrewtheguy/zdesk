@@ -118,8 +118,9 @@ pub enum Commands {
     /// to paste there. A target names one with password_ref or vnc_password_ref.
     ///
     /// The master password is the config's [server].master_password_file when
-    /// it names one, else asked for here. The TUI writes its instances' configs
-    /// itself (p), under the keychain's master password.
+    /// it names one, else asked for here; `password master create` writes that
+    /// file. The TUI writes its instances' configs itself (p), under the
+    /// keychain's master password.
     Password {
         #[command(subcommand)]
         action: PasswordAction,
@@ -128,15 +129,12 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum PasswordAction {
-    /// Print a new [master] block, to paste into a config before its
-    /// [passwords]. A served gateway reads the master password from the file
-    /// its [server].master_password_file names
+    /// Make the master password, or print a [master] block under it, to paste
+    /// into a config before its [passwords]. A served gateway reads the master
+    /// password from the file its [server].master_password_file names
     Master {
-        /// A config whose [server].master_password_file holds the master
-        /// password; nothing in it is changed (default: the installed global
-        /// config, when there is one)
-        #[arg(short, long)]
-        config: Option<PathBuf>,
+        #[command(subcommand)]
+        action: MasterAction,
     },
     /// Print a password encrypted under the config's [master], to paste under
     /// its [passwords] as NAME = "…", NAME being what a target's password_ref
@@ -150,11 +148,40 @@ pub enum PasswordAction {
     },
 }
 
+#[derive(Subcommand)]
+pub enum MasterAction {
+    /// Print a new [master] block under the master password already in the
+    /// config's [server].master_password_file, for another config made under
+    /// the same one
+    Show {
+        /// A config whose [server].master_password_file holds the master
+        /// password; nothing in it is changed (default: the installed global
+        /// config)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+    /// Ask for a new master password (twice on a terminal; one line when
+    /// piped), write it to the config's [server].master_password_file,
+    /// readable by this user alone, and print the [master] block under it. A
+    /// config naming no such file gets the block alone
+    Create {
+        /// A config whose [server].master_password_file is to hold the master
+        /// password; nothing in the config is changed (default: the installed
+        /// global config, when there is one)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Replace a master password file that already exists. Every value
+        /// encrypted under the master password it held stops opening
+        #[arg(long)]
+        force: bool,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{features_line, Cli, Commands, FEATURES};
+    use super::{features_line, Cli, Commands, MasterAction, PasswordAction, FEATURES};
 
     #[test]
     fn help_names_the_features_and_version_does_not() {
@@ -290,6 +317,24 @@ mod tests {
             Cli::try_parse_from(["zdesk", "tui", "--web-root", "/web"]).is_err(),
             "the SPA is in the binary; there is no web root to name"
         );
+    }
+
+    /// `password master` is two commands, and only `create` replaces a file,
+    /// when told to.
+    #[test]
+    fn password_master_shows_or_creates_and_forces_only_on_request() {
+        assert!(Cli::try_parse_from(["zdesk", "password", "master"]).is_err(), "show or create");
+        let master = |args: &[&str]| {
+            let cli = Cli::try_parse_from([&["zdesk", "password", "master"], args].concat()).unwrap();
+            let Commands::Password { action: PasswordAction::Master { action } } = cli.command else {
+                panic!("expected password master");
+            };
+            action
+        };
+        assert!(matches!(master(&["show", "-c", "z.toml"]), MasterAction::Show { config: Some(_) }));
+        assert!(matches!(master(&["create"]), MasterAction::Create { config: None, force: false }));
+        assert!(matches!(master(&["create", "--force"]), MasterAction::Create { force: true, .. }));
+        assert!(Cli::try_parse_from(["zdesk", "password", "master", "show", "--force"]).is_err());
     }
 
     #[cfg(feature = "embedded-gateway")]
