@@ -6225,7 +6225,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
                 TileHeader::Png { len } | TileHeader::Webp { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
-                TileHeader::End { .. } | TileHeader::Copy { .. } => 0,
+                TileHeader::End { .. } | TileHeader::Copy { .. } | TileHeader::Cached { .. } | TileHeader::Store { .. } => 0,
             };
             let mut body = vec![0u8; len];
             reader.read_exact(&mut body).await?;
@@ -6251,6 +6251,19 @@ async fn read_rect<R: AsyncRead + Unpin>(
                         size.1
                     );
                     sink.pass_copy(sx, sy, x, y, w, h).await?
+                }
+                // A tile kept in the page's cache is one tile on the grid; one drawn
+                // from it is one tile, anywhere. The slot the parser held to the cache.
+                TileHeader::Cached { slot } | TileHeader::Store { slot } => {
+                    let store = matches!(header, TileHeader::Store { .. });
+                    let tile = wlshare_proto::tiles::TILE;
+                    anyhow::ensure!(
+                        (w, h) == (tile, tile) && (!store || (x % tile == 0 && y % tile == 0)),
+                        "server sent a tiles {} of {w}x{h}+{x}+{y}, not one {tile}x{tile} tile{}",
+                        if store { "store" } else { "cached draw" },
+                        if store { " on the grid" } else { "" }
+                    );
+                    sink.pass_cache(store, slot, x, y).await?
                 }
             }
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
@@ -13305,19 +13318,20 @@ mod tests {
 
     /// An update of wlshare's tiles on a desktop `w` wide and at least 208 high: a
     /// PNG over the top 16 rows, a 320×192 region's H.264 stream started below it,
-    /// its next frame and its end, the 160 rows from row 48 copied up to row 16, and a
-    /// fence asking an echo of `marker`.
+    /// its next frame and its end, the 160 rows from row 48 copied up to row 16, the
+    /// top-left tile kept in cache slot 5 and drawn from it again, and a fence asking
+    /// an echo of `marker`.
     #[cfg(feature = "wlshare")]
     fn wlshare_tiles_update(w: u16, marker: &[u8]) -> Vec<u8> {
-        wlshare_tiles_update_copying(w, (0, 48), marker)
+        wlshare_tiles_update_copying(w, (0, 48), (0, 0, 64, 64), marker)
     }
 
-    /// [`wlshare_tiles_update`] with the copy from `from`.
+    /// [`wlshare_tiles_update`] with the copy from `from`, and the store of `stored`.
     #[cfg(feature = "wlshare")]
-    fn wlshare_tiles_update_copying(w: u16, from: (u16, u16), marker: &[u8]) -> Vec<u8> {
+    fn wlshare_tiles_update_copying(w: u16, from: (u16, u16), stored: (u16, u16, u16, u16), marker: &[u8]) -> Vec<u8> {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let mut msg = vec![0u8, 0];
-        msg.extend_from_slice(&5u16.to_be_bytes());
+        msg.extend_from_slice(&7u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
             for field in [x, y, w, h] {
                 msg.extend_from_slice(&field.to_be_bytes());
@@ -13339,6 +13353,10 @@ mod tests {
         rect(&mut msg, (0, 16, w.min(320), 160), wlshare_proto::tiles::KIND_COPY);
         msg.extend_from_slice(&from.0.to_be_bytes());
         msg.extend_from_slice(&from.1.to_be_bytes());
+        rect(&mut msg, stored, wlshare_proto::tiles::KIND_STORE);
+        msg.extend_from_slice(&5u16.to_be_bytes());
+        rect(&mut msg, (0, 0, 64, 64), wlshare_proto::tiles::KIND_CACHED);
+        msg.extend_from_slice(&5u16.to_be_bytes());
         msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
         msg
     }
@@ -13361,6 +13379,8 @@ mod tests {
         assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if !unit.keyframe));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
         assert!(matches!(rx.recv().await, Some(ServerMsg::Copy(unit)) if unit == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::Cache(unit)) if unit == crate::protocol::CacheUnit { store: true, slot: 5, x: 0, y: 0 }));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::Cache(unit)) if unit == crate::protocol::CacheUnit { store: false, slot: 5, x: 0, y: 0 }));
         let echo = client_fence(0, b"t1");
         tokio::time::timeout(Duration::from_secs(2), async {
             while written(&sent) != echo {
@@ -13381,9 +13401,25 @@ mod tests {
         let (sink, _rx) = sized_sink((320, 208)).await;
         let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
         shared.passthrough = Some(test_tiles_listing());
-        let wire = wlshare_tiles_update_copying(320, (0, 49), b"t1");
+        let wire = wlshare_tiles_update_copying(320, (0, 49), (0, 0, 64, 64), b"t1");
         let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
         assert!(format!("{err:#}").contains("not inside the 320x208 desktop"), "{err:#}");
+    }
+
+    /// A store that is not one 64×64 tile on the grid is fatal: the page's cache keeps
+    /// tiles and nothing else, and wlshare sends nothing else.
+    #[cfg(feature = "wlshare")]
+    #[tokio::test]
+    async fn a_tiles_store_that_is_not_one_tile_on_the_grid_is_fatal() {
+        for stored in [(0, 0, 64, 32), (16, 0, 64, 64)] {
+            let (uplink, _sent) = test_uplink();
+            let (sink, _rx) = sized_sink((320, 208)).await;
+            let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
+            shared.passthrough = Some(test_tiles_listing());
+            let wire = wlshare_tiles_update_copying(320, (0, 48), stored, b"t1");
+            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
+            assert!(format!("{err:#}").contains("not one 64x64 tile on the grid"), "{err:#}");
+        }
     }
 
     /// A session lists one of wlshare's pictures, and the other arriving is refused as

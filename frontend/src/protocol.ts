@@ -529,13 +529,27 @@ export interface CopyMsg {
   h: number;
 }
 
+// The page's cache of tiles, in wlshare's tiles: with `store`, the `CACHE_TILE`-square
+// tile the canvas holds at `(x, y)`, as the records before it left it, kept in
+// `slot`, over whatever the slot held; without it, the tile `slot` keeps drawn at
+// `(x, y)` in its turn. wlshare keeps the record of the cache, and the page only what
+// it is told to. See `CacheUnit` in src/protocol.rs.
+export interface CacheMsg {
+  kind: "cache";
+  store: boolean;
+  slot: number;
+  x: number;
+  y: number;
+}
+
 export type BatchRecord =
   | VideoMsg
   | GraphicsMsg
   | StandardMsg
   | TileMsg
   | RegionMsg
-  | CopyMsg;
+  | CopyMsg
+  | CacheMsg;
 
 // Why a desktop has no picture: see `oversize`.
 export type HoldCause = "size";
@@ -568,6 +582,14 @@ const REGION_HEADER_LEN = 15;
 const REGION_KEYFRAME = 0x01;
 const OP_COPY = 0x08;
 const COPY_LEN = 13;
+const OP_CACHED = 0x09;
+const OP_STORE = 0x0a;
+const CACHE_LEN = 7;
+// The slots of the page's cache of tiles, and a cached tile's side: wlshare's
+// `wlshare_proto::tiles::CACHE_SLOTS` and `TILE`, which the gateway holds a record's
+// slot to. 4096 tiles of 64×64 is 64 MiB of pixels.
+export const CACHE_SLOTS = 4096;
+export const CACHE_TILE = 64;
 // A VIDEO record's flags: a decoder that has seen nothing before it can start here;
 // the unit is one strip of the picture, its number in two bits, and whether it is the
 // last of its frame. Any other bit means a gateway newer than this client, and
@@ -653,6 +675,9 @@ function decodeRecord(
       return decodeRegion(view, buf, at);
     case OP_COPY:
       return decodeCopy(view, buf, at);
+    case OP_CACHED:
+    case OP_STORE:
+      return decodeCache(view, buf, at);
     default:
       return decodeVideo(view, buf, at);
   }
@@ -791,6 +816,32 @@ function decodeCopy(
     return null;
   }
   return { record: { kind: "copy", sx, sy, x, y, w, h }, next: at + COPY_LEN };
+}
+
+function decodeCache(
+  view: DataView,
+  buf: ArrayBuffer,
+  at: number,
+): { record: CacheMsg; next: number } | null {
+  if (at + CACHE_LEN > buf.byteLength) {
+    return null;
+  }
+  const field = (i: number) => view.getUint16(at + 1 + 2 * i, true);
+  const [slot, x, y] = [0, 1, 2].map(field);
+  // A slot past the cache is one the gateway never sends.
+  if (slot >= CACHE_SLOTS) {
+    return null;
+  }
+  return {
+    record: {
+      kind: "cache",
+      store: view.getUint8(at) === OP_STORE,
+      slot,
+      x,
+      y,
+    },
+    next: at + CACHE_LEN,
+  };
 }
 
 function decodeVideo(

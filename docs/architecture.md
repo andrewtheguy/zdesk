@@ -1158,9 +1158,11 @@ still as a lossy WebP instead, never made exact. It is Motion, which this gatewa
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of six kinds: a PNG of it, a lossy WebP
-of it, a region stream's first frame, its next, its end, or a copy of what the
-page holds elsewhere, a scroll or a window moved.
+Every rectangle of an update is one of eight kinds: a PNG of it, a lossy WebP
+of it, a region stream's first frame, its next, its end, a copy of what the
+page holds elsewhere, a scroll or a window moved, a tile of it kept in the
+page's cache of tiles, or a tile drawn from that cache, a window switched back
+to or a page scrolled back.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
@@ -1184,9 +1186,14 @@ Nothing is coded here.
   resize, refused in one started with it. A desktop within it is what holds every
   region to it, so wlshare splits or drops none for its size.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
-  `pass_region_end`, `pass_copy`). A PNG or a WebP becomes a `TILE` record, painted as
+  `pass_region_end`, `pass_copy`, `pass_cache`). A PNG or a WebP becomes a `TILE` record, painted as
   `image/png` or `image/webp`, a copy a `COPY` record, its source held to the
-  desktop as its rectangle is, a region's frame a `REGION`
+  desktop as its rectangle is, a tile stored in the page's cache a `STORE`
+  record and one drawn from it a `CACHED` record, each held to one 64×64 tile
+  and a store to the tile grid, the slot to the cache's 4096 by the parser
+  (wlshare keeps the record of what each slot holds, and the page an
+  `OffscreenCanvas` of the 4096 tiles, 64 MiB, made at the first store and let
+  go with the attachment), a region's frame a `REGION`
   record, behind a `regionFormat` for the first of its stream, whose
   configuration is `avc1.` and the profile, constraints and level its own
   sequence parameter set names (`src/h264.rs`); its end becomes a
@@ -2478,6 +2485,8 @@ STANDARD op 0x05: u16 x | u16 y | u16 w | u16 h | u32 len | body[len]
 TILE     op 0x06: u8 format | u16 x | u16 y | u16 w | u16 h | u32 len | image[len]
 REGION   op 0x07: u8 stream | u8 flags | u16 x | u16 y | u16 w | u16 h | u32 len | payload[len]
 COPY     op 0x08: u16 sx | u16 sy | u16 x | u16 y | u16 w | u16 h
+CACHED   op 0x09: u16 slot | u16 x | u16 y
+STORE    op 0x0A: u16 slot | u16 x | u16 y
 ```
 
 One frame carries every record ready at once, so a backlog does not cost one
@@ -2503,7 +2512,14 @@ picture is drawn at its rectangle, cut to it, in its turn among the tiles, and a
 until the tiles after it draw over it. A `COPY` record draws at its rectangle,
 in its turn, what the canvas holds at `(sx, sy)`, the same size, the canvas drawn
 onto itself, so the two may overlap; an empty rectangle is rejected. wlshare
-copies from no region while it streams and onto none. A `tilesStart` ends every region
+copies from no region while it streams and onto none. A `STORE` record keeps
+the 64×64 tile the canvas holds at `(x, y)`, as the records before it left it,
+in slot `slot` of the page's cache of 4096 tiles, over whatever the slot held,
+and a `CACHED` record draws the tile slot `slot` keeps at `(x, y)` in its turn;
+a slot past the cache is rejected, and a draw from a slot nothing was stored
+in drops the batch, since the page and wlshare's record of the cache disagree.
+The cache outlives a `tilesStart`, whose slots wlshare only writes over, and
+ends with the attachment. A `tilesStart` ends every region
 ([wlshare's tiles with motion, passed through](#wlshares-tiles-with-motion-passed-through)). A session's records are `VIDEO` where its picture is a
 passed stream. Where its target passes an RDP host's
 [graphics pipeline](#rdps-graphics-pipeline-passed-through), a `GRAPHICS` record

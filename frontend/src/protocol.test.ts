@@ -234,6 +234,75 @@ test("a region record is its stream, its flags, where its rectangle is, then its
   assert.equal(decodeBatchFrame(one.slice(0, 8 + 10).buffer), null);
 });
 
+test("a cache record is its slot and its place, a store or a cached draw by its op", () => {
+  // Transcribed from `CacheUnit::write_record` in src/protocol.rs: op 0x0a for a
+  // store and 0x09 for a cached draw, then slot, x and y as u16, little-endian.
+  const frame = (op: number, slot: number) =>
+    new Uint8Array([
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0x09,
+      0x00,
+      0x00,
+      0x00,
+      op,
+      slot & 0xff,
+      slot >> 8,
+      0x04,
+      0x03,
+      0x06,
+      0x05,
+      // A tile after it, which a cache record must not run into.
+      0x06,
+      0x02,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x08,
+      0x00,
+      0x08,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x89,
+    ]).buffer;
+  const stored = decodeBatchFrame(frame(0x0a, 0x0102));
+  assert.deepEqual(stored?.[0], {
+    kind: "cache",
+    store: true,
+    slot: 0x0102,
+    x: 0x0304,
+    y: 0x0506,
+  });
+  assert.equal(stored?.[1]?.kind, "tile");
+  const drawn = decodeBatchFrame(frame(0x09, 4095));
+  assert.deepEqual(drawn?.[0], {
+    kind: "cache",
+    store: false,
+    slot: 4095,
+    x: 0x0304,
+    y: 0x0506,
+  });
+  assert.equal(
+    decodeBatchFrame(frame(0x09, 4096)),
+    null,
+    "a slot past the cache",
+  );
+  const one = new Uint8Array(frame(0x0a, 7).slice(0, 8 + 7));
+  one[2] = 0x01;
+  assert.equal(decodeBatchFrame(one.buffer)?.length, 1);
+  assert.equal(
+    decodeBatchFrame(one.slice(0, one.byteLength - 1).buffer),
+    null,
+    "cut short",
+  );
+});
+
 test("a copy record is where its source is, then its rectangle, and nothing after", () => {
   // Transcribed from `CopyUnit::write_record` in src/protocol.rs: op 0x08, then sx,
   // sy, x, y, w and h as u16, little-endian.
