@@ -72,27 +72,26 @@ fn entry() -> anyhow::Result<keyring_core::Entry> {
     keyring_core::Entry::new(SERVICE, ACCOUNT).context("cannot name the keychain entry")
 }
 
-/// Install the store once per process.
+/// Install the store, once it installs: a store that would not install — a
+/// Secret Service not yet up — is tried again by the next caller, so the TUI's
+/// read at start does not decide for the rest of the run.
 ///
 /// Under test, or [`mocked`], it is keyring-core's in-memory mock, never the
 /// machine's own store: a locked keychain or Secret Service answers a write with an
 /// unlock dialog, which hangs an unattended run, and a test has no business in the
 /// developer's store.
 fn init_store() -> anyhow::Result<()> {
-    static INSTALLED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-    INSTALLED
-        .get_or_init(|| {
-            if mocked().map_err(|error| error.to_string())? {
-                keyring_core::set_default_store(
-                    keyring_core::mock::Store::new().map_err(|error| error.to_string())?,
-                );
-                Ok(())
-            } else {
-                native_store()
-            }
-        })
-        .clone()
-        .map_err(|error| anyhow::anyhow!("no keychain: {error}"))
+    static INSTALLED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    let mut installed = INSTALLED.lock().unwrap();
+    if !*installed {
+        if mocked()? {
+            keyring_core::set_default_store(keyring_core::mock::Store::new().context("no mock keychain")?);
+        } else {
+            native_store().map_err(|error| anyhow::anyhow!("no keychain: {error}"))?;
+        }
+        *installed = true;
+    }
+    Ok(())
 }
 
 fn native_store() -> Result<(), String> {

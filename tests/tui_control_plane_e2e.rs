@@ -28,8 +28,9 @@ async fn instances_start_stop_and_share_the_master_port() {
         Supervisor::open(root.path().to_path_buf(), env!("CARGO_BIN_EXE_zdesk").into())
             .await
             .unwrap();
-    let access = Access::open();
-    let router = SharedPort::bind(free_port(), supervisor.routes(), access.clone()).await.unwrap();
+    let port = free_port();
+    let access = Access::open(port);
+    let router = SharedPort::bind(port, supervisor.routes(), access.clone()).await.unwrap();
     supervisor.start("one", None).await.unwrap();
     supervisor.start("two", None).await.unwrap();
 

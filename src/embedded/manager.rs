@@ -27,7 +27,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 
-use super::access::{Access, PinState, login_cookie, pin_page, pin_problem, LOGIN_COOKIE, MAX_WRONG};
+use super::access::{Access, LOGIN_COOKIE_PREFIX, MAX_WRONG, PinState, pin_page, pin_problem};
 use super::{Handshake, transport};
 use crate::config::{
     Audience, ConfigFile, DEFAULT_BRANDING, DEFAULT_SIZE, Protocol, TargetConfig,
@@ -113,7 +113,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let keychain = master.get().map(|_| ());
     let binary = std::env::current_exe().context("cannot locate the zdesk executable")?;
     let mut supervisor = Supervisor::open(options.instances_dir.clone(), binary).await?;
-    let access = Access::open();
+    let access = Access::open(options.port);
     let router = SharedPort::bind(options.port, supervisor.routes(), access.clone()).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -1972,7 +1972,15 @@ async fn route_connection(
     let parsed = parse_request(&request)?;
     let host = hostname(&parsed.host);
 
-    let landing = host == MASTER_HOST || matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]");
+    // A cookie set on a bare loopback name would be sent to every server on the
+    // machine reached by that name, whatever its port: this master's login is
+    // set only under its own name.
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
+        let location = format!("http://{MASTER_HOST}:{public_port}{}", parsed.target);
+        write_response(&mut client, "307 Temporary Redirect", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
+        return Ok(());
+    }
+    let landing = host == MASTER_HOST;
     let instance = if landing {
         None
     } else {
@@ -1994,7 +2002,7 @@ async fn route_connection(
     if let Some(name) = &instance
         && let Some(code) = parsed.target.strip_prefix(HANDOFF_PATH)
     {
-        let cookie = access.take_handoff(code, name).map(|login| login_cookie(&login));
+        let cookie = access.take_handoff(code, name).map(|login| access.set_cookie(&login));
         let mut headers = vec![("Location", "/")];
         if let Some(cookie) = &cookie {
             headers.push(("Set-Cookie", cookie.as_str()));
@@ -2097,7 +2105,7 @@ async fn ask_for_pin(
         .unwrap_or("");
     match access.log_in(entry) {
         Ok(login) => {
-            let cookie = login_cookie(&login);
+            let cookie = access.set_cookie(&login);
             // Back to where the form was served, as a GET. A target that starts
             // `//` would be read as another host's address.
             let location = if parsed.target.starts_with("//") { "/" } else { parsed.target.as_str() };
@@ -2142,8 +2150,8 @@ async fn read_body(stream: &mut tokio::net::TcpStream, request: &[u8], length: u
 /// only zDesk cookie, and closing the connection after one response.
 ///
 /// The token is the master's to present, never the browser's. The browser's
-/// cookies go through except the master's login, which the worker has no use
-/// for, and any `zdesk_session`, which on this host can only be a served
+/// cookies go through except the logins of this master and of any other on
+/// another port, which the worker has no use for, and any `zdesk_session`, which on this host can only be a served
 /// gateway's on the same `<label>.zdesk.localhost` — a cookie ignores the port —
 /// or a stale one.
 ///
@@ -2166,7 +2174,7 @@ fn forwarded(request: &[u8], parsed: &ParsedRequest, token: &str) -> anyhow::Res
             cookies.extend(line.split_once(':').into_iter().flat_map(|(_, value)| value.split(';')).map(str::trim).filter(
                 |pair| {
                     let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
-                    !pair.is_empty() && key != LOGIN_COOKIE && key != crate::auth::COOKIE_NAME
+                    !pair.is_empty() && !key.starts_with(LOGIN_COOKIE_PREFIX) && key != crate::auth::COOKIE_NAME
                 },
             ));
             continue;
@@ -2585,12 +2593,12 @@ mod tests {
     /// request is an upgrade.
     #[test]
     fn a_forwarded_request_carries_the_token_and_not_the_browsers_logins() {
-        let request = b"POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: keep-alive\r\nCookie: zdesk_login=mine; theme=dark\r\nCookie: zdesk_session=served\r\nContent-Length: 2\r\n\r\nhi";
+        let request = b"POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: keep-alive\r\nCookie: zdesk_login_52380=mine; zdesk_login_52381=theirs; theme=dark\r\nCookie: zdesk_session=served\r\nContent-Length: 2\r\n\r\nhi";
         let parsed = parse_request(request).unwrap();
         let given = String::from_utf8(forwarded(request, &parsed, "worker-token").unwrap()).unwrap();
         assert!(given.starts_with("POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\n"), "{given}");
         assert!(given.contains("\r\nCookie: theme=dark; zdesk_session=worker-token\r\n"), "{given}");
-        assert!(!given.contains("mine") && !given.contains("served"), "{given}");
+        assert!(!given.contains("mine") && !given.contains("theirs") && !given.contains("served"), "{given}");
         assert!(!given.contains("keep-alive"), "{given}");
         assert!(given.contains("\r\nConnection: close\r\n"), "{given}");
         assert!(given.ends_with("\r\n\r\nhi"), "the body read with the head follows it: {given}");
@@ -2675,9 +2683,10 @@ mod tests {
                 },
             ),
         ]);
-        let access = Access::open();
-        let login = format!("{LOGIN_COOKIE}={}", access.log_in(&pin_of(&access)).unwrap());
-        let router = SharedPort::bind(free_port(), routes, access).await.unwrap();
+        let port = free_port();
+        let access = Access::open(port);
+        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let router = SharedPort::bind(port, routes, access).await.unwrap();
 
         let first_response = request(router.port(), "one.zdesk.localhost", Some(&login)).await;
         let second_response = request(router.port(), "two.zdesk.localhost", Some(&login)).await;
@@ -2704,7 +2713,8 @@ mod tests {
                 }),
             },
         );
-        let router = SharedPort::bind(free_port(), routes, Access::open()).await.unwrap();
+        let port = free_port();
+        let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
         for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
             let response = request(router.port(), host, Some("zdesk_session=launch-token")).await;
             assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host}: {response}");
@@ -2714,14 +2724,32 @@ mod tests {
         }
     }
 
+    /// A bare loopback name is sent to `zdesk.localhost`, keeping the path, and
+    /// never shown the PIN form: a login set there would reach every local server.
+    #[tokio::test]
+    async fn a_bare_loopback_name_is_sent_to_the_masters_own() {
+        let port = free_port();
+        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
+        for host in ["localhost", "127.0.0.1", "[::1]"] {
+            let response = send(port, &format!("GET /__zdesk/open/work?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n")).await;
+            assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{host}: {response}");
+            assert!(
+                response.contains(&format!("Location: http://zdesk.localhost:{port}/__zdesk/open/work?x=1\r\n")),
+                "{host}: {response}"
+            );
+            assert!(!response.contains("Set-Cookie") && !response.contains("name=\"pin\""), "{host}: {response}");
+        }
+        drop(router);
+    }
+
     /// The PIN form's post logs the browser in on its own origin and sends it
     /// back where it was; a post from another origin is not taken, and does not
     /// count against the PIN.
     #[tokio::test]
     async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
-        let access = Access::open();
-        let router = SharedPort::bind(free_port(), RouteTable::default(), access.clone()).await.unwrap();
-        let port = router.port();
+        let port = free_port();
+        let access = Access::open(port);
+        let _router = SharedPort::bind(port, RouteTable::default(), access.clone()).await.unwrap();
         let pin = pin_of(&access);
         let post = |origin: String, pin: String| {
             let body = format!("pin={pin}");
@@ -2747,7 +2775,7 @@ mod tests {
             .lines()
             .find_map(|line| line.strip_prefix("Set-Cookie: "))
             .expect("a login cookie");
-        assert!(cookie.starts_with(&format!("{LOGIN_COOKIE}=")) && cookie.contains("HttpOnly"), "{cookie}");
+        assert!(cookie.starts_with(&format!("zdesk_login_{port}=")) && cookie.contains("HttpOnly"), "{cookie}");
         let login = cookie.split(';').next().unwrap();
 
         let response = request(port, "zdesk.localhost", Some(login)).await;
@@ -2772,10 +2800,10 @@ mod tests {
                 }),
             },
         );
-        let access = Access::open();
-        let login = format!("{LOGIN_COOKIE}={}", access.log_in(&pin_of(&access)).unwrap());
-        let router = SharedPort::bind(free_port(), routes, access).await.unwrap();
-        let port = router.port();
+        let port = free_port();
+        let access = Access::open(port);
+        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let _router = SharedPort::bind(port, routes, access).await.unwrap();
 
         let landing = request(port, "zdesk.localhost", Some(&login)).await;
         assert!(landing.contains(&format!("href=\"{OPEN_PATH}one\"")), "{landing}");
@@ -2886,7 +2914,7 @@ mod tests {
             Err(error) => panic!("cannot hold the v6 half of {port}: {error}"),
         };
 
-        let Err(error) = SharedPort::bind(port, RouteTable::default(), Access::open()).await else {
+        let Err(error) = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await else {
             panic!("the v6 half of this port is already served");
         };
         let text = format!("{error:#}");
@@ -2896,7 +2924,7 @@ mod tests {
         // And the refusal took nothing: the v4 half it bound on the way through is
         // released, so a retry after stopping the other master works.
         drop(squatter);
-        SharedPort::bind(port, RouteTable::default(), Access::open())
+        SharedPort::bind(port, RouteTable::default(), Access::open(port))
             .await
             .expect("the refused attempt must not have kept a socket");
     }
@@ -2905,7 +2933,7 @@ mod tests {
     /// kernel choose it — including the one the tests take.
     #[tokio::test]
     async fn an_ephemeral_port_is_not_something_the_control_plane_can_be_asked_for() {
-        let Err(error) = SharedPort::bind(0, RouteTable::default(), Access::open()).await else {
+        let Err(error) = SharedPort::bind(0, RouteTable::default(), Access::open(0)).await else {
             panic!("port 0 is a control plane nobody can be told how to reach");
         };
         assert!(format!("{error:#}").contains("a browser can be told"), "{error:#}");

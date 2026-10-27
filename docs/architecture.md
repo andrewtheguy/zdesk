@@ -3799,7 +3799,9 @@ a new draw, but it never gets in. An entry that is not six digits cannot be the
 PIN and is not counted.
 
 A right entry is a login: 32 random bytes the master keeps in memory, sent back
-as a host-only HttpOnly `zdesk_login` cookie. The PIN guards only new logins. A
+as a host-only HttpOnly `SameSite=Strict` cookie named for the master's port,
+`zdesk_login_<port>`, so two control planes on one machine keep separate logins.
+The PIN guards only new logins. A
 login outlives the PIN's expiry, a new draw and a withdrawal, and every
 instance's restarts. Logins are kept in the master's memory only, so quitting
 the TUI is the only way to log out. A login reaches another origin through a
@@ -3809,9 +3811,19 @@ origin. That route mints a one-time code bound to the instance, good for 30
 seconds and spent by its first use. The instance origin exchanges the code at
 `/__zdesk/handoff` for the same login under its own cookie.
 
+A cookie is scoped by host and ignores the port, so the master sets its login
+only on `zdesk.localhost` and the instance subdomains. It answers `localhost`,
+`127.0.0.1` and `[::1]` with a redirect to `zdesk.localhost`, keeping the path,
+because a login set on a bare loopback name would be sent to every server the
+browser reaches by that name, every local development server among them. What
+remains is anything else serving `zdesk.localhost` or one of its subdomains on
+another port: a browser that navigates there itself sends it the login. Another
+site cannot send the browser there with it, since the cookie is `SameSite=Strict`.
+No browser offers a cookie bound to a port.
+
 A browser never holds a worker's token. The master adds it, as the
 `zdesk_session` cookie, to each request it forwards. It strips the browser's
-`zdesk_login` and any `zdesk_session`: on these hosts that can only be stale,
+`zdesk_login_*` cookies, this master's and any other's, and any `zdesk_session`: on these hosts that can only be stale,
 or a served gateway's on the same `<label>.zdesk.localhost`, since a cookie
 ignores the port. The TUI sets no `zdesk_session` of its own, so it does not
 log a served gateway's browser out. A browser therefore has two ways in: a

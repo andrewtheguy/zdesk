@@ -4,7 +4,8 @@
 //! The master draws a six-digit PIN when it starts and shows it in the TUI's
 //! access panel, so the boundary is whoever can see the terminal the TUI runs in,
 //! not the machine. A browser that enters it gets a login: a random ID the master
-//! keeps in memory and hands back as the host-only [`LOGIN_COOKIE`]. The PIN
+//! keeps in memory and hands back as a host-only cookie named for the master's
+//! port, `zdesk_login_<port>`. The PIN
 //! guards only new logins. A login outlives the PIN it was made with — its
 //! expiry, a new draw, a withdrawal — and every restart of every instance, and
 //! ends only with the master, so quitting the TUI is the one way to log out.
@@ -19,11 +20,22 @@
 //! one-time code for that instance, and the instance's origin exchanges it for the
 //! same login under its own host-only cookie.
 //!
+//! A cookie is scoped by host and ignores the port, so where the login is set
+//! decides who else is sent it. The master sets it only on `zdesk.localhost` and
+//! its instance subdomains, never on `localhost` or a numeric loopback, which every
+//! local development server shares: it answers those names with a redirect to
+//! `zdesk.localhost`. The name carries the port, so two control planes on one
+//! machine keep separate logins rather than overwriting each other's. What remains
+//! is anything else serving `zdesk.localhost` or one of its subdomains on another
+//! port, which a browser navigating there itself — never another site sending it,
+//! since the cookie is `SameSite=Strict` — would send the login to. No browser
+//! offers a cookie bound to a port.
+//!
 //! The browser never holds a worker's token: the master adds it to each request
 //! it forwards. So a browser presents one of two credentials anywhere — this PIN
 //! on the TUI's port, or a served gateway's username and password — and the TUI
 //! sets no `zdesk_session` cookie to collide with a served gateway's login on a
-//! shared `<label>.zdesk.localhost`, since a cookie ignores the port.
+//! shared `<label>.zdesk.localhost`.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -34,9 +46,10 @@ use tokio::time::Instant;
 
 use crate::auth::secrets_match;
 
-/// The master's login cookie, on the landing origin and on each instance origin
-/// a login has reached. Never `zdesk_session`, which is a served gateway's.
-pub const LOGIN_COOKIE: &str = "zdesk_login";
+/// The start of the master's login cookie's name, which ends in its port: on the
+/// landing origin and on each instance origin a login has reached. Never
+/// `zdesk_session`, which is a served gateway's.
+pub const LOGIN_COOKIE_PREFIX: &str = "zdesk_login_";
 /// How long a PIN logs browsers in after it is drawn.
 pub const PIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// Wrong entries a PIN takes before it is withdrawn.
@@ -48,7 +61,11 @@ const HANDOFF_LIFETIME: Duration = Duration::from_secs(30);
 /// The PIN, the logins it has made and the handoffs in flight, shared by the TUI
 /// and the router.
 #[derive(Clone)]
-pub struct Access(Arc<Mutex<State>>);
+pub struct Access {
+    state: Arc<Mutex<State>>,
+    /// The login cookie's name, for this master's port.
+    cookie: Arc<str>,
+}
 
 struct State {
     pin: Pin,
@@ -126,18 +143,31 @@ impl Refusal {
 }
 
 impl Access {
-    /// A control plane's access, opened with its first PIN drawn and nobody
-    /// logged in.
-    pub fn open() -> Self {
-        Self(Arc::new(Mutex::new(State {
-            pin: Pin::draw(),
-            logins: Vec::new(),
-            handoffs: Vec::new(),
-        })))
+    /// The access of the control plane on `port`, opened with its first PIN drawn
+    /// and nobody logged in.
+    pub fn open(port: u16) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                pin: Pin::draw(),
+                logins: Vec::new(),
+                handoffs: Vec::new(),
+            })),
+            cookie: format!("{LOGIN_COOKIE_PREFIX}{port}").into(),
+        }
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.0.lock().unwrap()
+        self.state.lock().unwrap()
+    }
+
+    /// The login cookie's name.
+    pub fn cookie_name(&self) -> &str {
+        &self.cookie
+    }
+
+    /// The `Set-Cookie` value for `login` on the origin it is sent from.
+    pub fn set_cookie(&self, login: &str) -> String {
+        format!("{}={login}; HttpOnly; SameSite=Strict; Path=/", self.cookie)
     }
 
     /// Replace the PIN with a new one whose time starts now. Logins already made
@@ -191,7 +221,7 @@ impl Access {
     /// The login a request's `Cookie` header carries, if it is one this master made.
     pub fn login_in(&self, cookie: Option<&str>) -> Option<String> {
         let state = self.state();
-        cookie_values(cookie, LOGIN_COOKIE).find_map(|presented| {
+        cookie_values(cookie, &self.cookie).find_map(|presented| {
             state
                 .logins
                 .iter()
@@ -248,11 +278,6 @@ pub fn cookie_values<'a>(cookie: Option<&'a str>, name: &'a str) -> impl Iterato
         })
 }
 
-/// The `Set-Cookie` value for a login on the origin it is sent from.
-pub fn login_cookie(login: &str) -> String {
-    format!("{LOGIN_COOKIE}={login}; HttpOnly; SameSite=Strict; Path=/")
-}
-
 /// The page that asks for the PIN, with what went wrong last if anything did. Its
 /// form posts back to the address it was served at, which the master takes as the
 /// entry and then redirects to.
@@ -290,16 +315,22 @@ mod tests {
 
     #[test]
     fn a_pin_is_six_digits_and_logs_a_browser_in() {
-        let access = Access::open();
+        let access = Access::open(52380);
         let pin = digits(&access);
         assert_eq!(pin.len(), 6);
         assert!(pin.bytes().all(|byte| byte.is_ascii_digit()), "{pin}");
 
         let login = access.log_in(&pin).unwrap();
-        let cookie = format!("other=1; {LOGIN_COOKIE}={login}");
+        let cookie = format!("other=1; zdesk_login_52380={login}");
         assert_eq!(access.login_in(Some(&cookie)).as_deref(), Some(login.as_str()));
-        assert_eq!(access.login_in(Some(&format!("{LOGIN_COOKIE}=forged"))), None);
+        assert_eq!(access.login_in(Some("zdesk_login_52380=forged")), None);
         assert_eq!(access.login_in(Some(&format!("zdesk_session={login}"))), None, "a served gateway's cookie is not a login");
+        assert_eq!(
+            access.login_in(Some(&format!("zdesk_login_52381={login}"))),
+            None,
+            "the login of the control plane on another port is that one's"
+        );
+        assert_eq!(access.set_cookie(&login), format!("zdesk_login_52380={login}; HttpOnly; SameSite=Strict; Path=/"));
         assert_eq!(access.login_in(None), None);
     }
 
@@ -308,7 +339,7 @@ mod tests {
     /// it costs nothing.
     #[test]
     fn wrong_entries_withdraw_the_pin_until_a_new_one_is_drawn() {
-        let access = Access::open();
+        let access = Access::open(52380);
         let pin = digits(&access);
         assert_eq!(access.log_in("12345"), Err(Refusal::NotSixDigits));
         assert_eq!(access.log_in("abcdef"), Err(Refusal::NotSixDigits));
@@ -328,9 +359,9 @@ mod tests {
     /// in after the PIN expires, is drawn again or is withdrawn.
     #[tokio::test(start_paused = true)]
     async fn a_login_outlives_its_pin() {
-        let access = Access::open();
+        let access = Access::open(52380);
         let login = access.log_in(&digits(&access)).unwrap();
-        let cookie = format!("{LOGIN_COOKIE}={login}");
+        let cookie = format!("zdesk_login_52380={login}");
 
         let PinState::Open { minutes_left, .. } = access.pin() else { unreachable!() };
         assert_eq!(minutes_left, PIN_LIFETIME.as_secs() / 60);
@@ -359,7 +390,7 @@ mod tests {
     /// and not after its time.
     #[tokio::test(start_paused = true)]
     async fn a_handoff_is_spent_once_and_only_on_its_instance() {
-        let access = Access::open();
+        let access = Access::open(52380);
         let login = access.log_in(&digits(&access)).unwrap();
 
         let code = access.hand_off(&login, "work");
