@@ -62,6 +62,68 @@ end it once they stop. What the Mac does with a gesture it is sent that way, and
 whether the phases alone make the horizontal axis feel right, are still to be
 tested, on a physical Mac.
 
+### A passkey as the login, the TUI first
+
+A passkey as the way into a gateway, registered once and presented in place of
+a password. A served gateway is where it is needed most, since that is the
+login reached from outside the machine; the TUI's control plane is where it
+starts, for reasons that are several:
+
+- The feature is alpha. The TUI is a single-user desktop tool, so its first
+  version can be rough without exposing a gateway anyone else reaches.
+- The TUI has local storage to keep the public keys in — the owner-only
+  instances directory — where a containerized gateway may have no writable
+  place that outlives it.
+- The TUI has the one-ID-over-many-subdomains layout a served gateway does not:
+  `zdesk.localhost` and `<instance>.zdesk.localhost` share a port, so it is
+  the only place that scoping is exercised.
+- Passkeys are flaky enough to lock someone out, and a lockout is recoverable
+  at the TUI, whose terminal is in front of the person, where on a gateway it
+  is a remote machine nobody can log in to.
+
+On the TUI it also closes a gap: the master hands the selected worker's session
+cookie to whoever asks on the loopback port, so its boundary is the machine
+rather than the user
+([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)).
+A passkey checked by the master before it seeds any instance's cookie moves
+the boundary to the account whose authenticator holds it.
+
+One passkey covers every instance because of how WebAuthn scopes a credential,
+not through any wildcard: a credential is bound to a relying-party ID, a bare
+domain with no scheme or port, and a page may use an ID equal to its own host or
+to a parent of it that is not a public suffix. The ID `zdesk.localhost` is
+therefore usable from the landing page and from every
+`<instance>.zdesk.localhost`, as long as both the registration and every login
+name it explicitly — the browser's default is the page's own host, which on a
+subdomain finds nothing. Plain `http` is enough on loopback, since browsers treat
+`localhost` and its subdomains as a secure context. Checked on 2026-10-27 with a
+small relying party on the shared port: a passkey registered on
+`zdesk.localhost` logged in from two levels of subdomain in Chrome and Safari,
+and Chromium's virtual authenticator (`WebAuthn.addVirtualAuthenticator` over
+CDP) drives the same ceremonies headless, so the behaviour can be held by a
+Playwright spec under the usual rules.
+
+What the master would do: serve the registration and login ceremonies on the
+landing page and on any instance origin, verify an assertion itself — the
+challenge it issued, an origin of `http://zdesk.localhost:<port>` or one of its
+subdomains, the ID's hash in the authenticator data, and the signature against
+the stored public key — and only then seed the worker's token. The public keys
+would live in an owner-only file beside the instance folders, so a control
+plane started with `--instances-dir` has its own, and the first registration
+would be opened from the TUI's keyboard rather than from the page, so enrolling
+takes the terminal the TUI runs in, and a passkey that stopped working would be
+removed from the same keyboard, which is the recovery from a lockout. Which bits of that belong in the settings
+file of [A settings file for the TUI](#a-settings-file-for-the-tui), if any, is
+decided when both exist.
+
+A served gateway follows once the TUI's version has settled. Its ID would be
+the operator's host name, and the secure context WebAuthn requires is the HTTPS
+it already needs from its reverse proxy ([The client](guide.md#the-client)).
+What has to be answered first is where a gateway keeps the public keys when it
+runs in a container, and how an operator locked out by a failed passkey gets
+back in from outside the machine; its password login stays as the way to enrol
+the first passkey, and as that way back in, until something better exists.
+
 ## Under consideration
 
 ### Verifying an RDP host's certificate
