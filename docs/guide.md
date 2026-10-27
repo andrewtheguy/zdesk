@@ -543,7 +543,8 @@ is serving. Open <http://zdesk.localhost:52380>; each running instance is at
 `http://<instance>.zdesk.localhost:52380`. It answers only those names at its
 own port. `localhost`, `127.0.0.1` and `[::1]` at that port are redirected to
 `zdesk.localhost`. Any other host or port is refused, so a tunnel or port
-forward to it does not reach the TUI.
+forward that arrives under another name or port does not reach the TUI. One that
+arrives as `zdesk.localhost` at this port, or rewrites the host to it, does.
 
 | Key | Action |
 |---|---|

@@ -217,7 +217,7 @@ vnc_password_ref = "workstation-vnc"
 zdesk tui
 ```
 
-它只监听回环地址，默认端口为 52380，`--port` 或 `ZDESK_TUI_PORT` 可以更改；端口已被其他程序占用时拒绝启动。打开 <http://zdesk.localhost:52380>；每个运行中的实例位于 `http://<instance>.zdesk.localhost:52380`。它只响应这些名称，且只在自己的端口上响应。该端口上的 `localhost`、`127.0.0.1` 和 `[::1]` 会被重定向到 `zdesk.localhost`。其他主机名或端口一律拒绝，因此经隧道或端口转发到达的请求进不了 TUI。
+它只监听回环地址，默认端口为 52380，`--port` 或 `ZDESK_TUI_PORT` 可以更改；端口已被其他程序占用时拒绝启动。打开 <http://zdesk.localhost:52380>；每个运行中的实例位于 `http://<instance>.zdesk.localhost:52380`。它只响应这些名称，且只在自己的端口上响应。该端口上的 `localhost`、`127.0.0.1` 和 `[::1]` 会被重定向到 `zdesk.localhost`。其他主机名或端口一律拒绝，因此以其他主机名或端口到达的隧道或端口转发进不了 TUI；但以该端口上的 `zdesk.localhost` 到达、或把主机名改写成它的隧道或转发，仍然可以进入。
 
 | 按键 | 操作 |
 |---|---|

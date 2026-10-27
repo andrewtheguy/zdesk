@@ -217,7 +217,7 @@ vnc_password_ref = "workstation-vnc"
 zdesk tui
 ```
 
-它只監聽回送位址，預設連接埠為 52380，可以用 `--port` 或 `ZDESK_TUI_PORT` 變更；連接埠已被其他程式占用時拒絕啟動。開啟 <http://zdesk.localhost:52380>；每個執行中的執行個體位於 `http://<instance>.zdesk.localhost:52380`。它只回應這些名稱，而且只在自己的連接埠上回應。該連接埠上的 `localhost`、`127.0.0.1` 和 `[::1]` 會被重新導向到 `zdesk.localhost`。其他主機名稱或連接埠一律拒絕，因此經由通道或連接埠轉送到達的要求進不了 TUI。
+它只監聽回送位址，預設連接埠為 52380，可以用 `--port` 或 `ZDESK_TUI_PORT` 變更；連接埠已被其他程式占用時拒絕啟動。開啟 <http://zdesk.localhost:52380>；每個執行中的執行個體位於 `http://<instance>.zdesk.localhost:52380`。它只回應這些名稱，而且只在自己的連接埠上回應。該連接埠上的 `localhost`、`127.0.0.1` 和 `[::1]` 會被重新導向到 `zdesk.localhost`。其他主機名稱或連接埠一律拒絕，因此以其他主機名稱或連接埠到達的通道或連接埠轉送進不了 TUI；但以該連接埠上的 `zdesk.localhost` 到達、或把主機名稱改寫成它的通道或轉送，仍然可以進入。
 
 | 按鍵 | 操作 |
 |---|---|
