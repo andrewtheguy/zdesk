@@ -1590,7 +1590,7 @@ impl SessionManager {
                 }
             }
         };
-        // The adaptive walk, when the plan asked for one. The audio socket drives
+        // The walk, for every stream with a rate to move. The audio socket drives
         // it with its pings ([`AudioLink`]), the pump with how long its sends
         // wait, and it publishes through the signals the encoder reads; see
         // [`crate::audio::AudioWalk`]. Where the encoder is wlshare's, what it

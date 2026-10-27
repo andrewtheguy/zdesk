@@ -621,10 +621,12 @@ pub struct EncodedAudio<S> {
     /// Whether the packets are the remote's own, passed as they came, rather
     /// than coded here: what the session card says of the stream.
     pub passthrough: bool,
-    /// `Some` exactly when the plan is adaptive: what the walk publishes
+    /// `Some` exactly when the stream has a rate to move, as every Opus stream
+    /// coded here or by a remote told its rate does: what the walk publishes
     /// through ([`AudioWalk`]), and the encoder's source of truth for the rate
     /// it should be at and what to drop. A passed stream's encoder is the
-    /// remote's, which the walk tells itself.
+    /// remote's, which the walk tells itself. `None` for FLAC, and for a
+    /// passed stream with no rate to move.
     pub signals: Option<Arc<AudioSignals>>,
     /// Raised by a passed stream when units the remote coded were dropped
     /// before the batch it yields next. The sender takes it down and tells the
@@ -744,10 +746,10 @@ pub struct AudioWalk {
 impl AudioWalk {
     /// A walk from `ceiling` bits per second, the plan's rate, already
     /// validated by [`crate::config`]; `signals` is the [`EncodedAudio`]'s,
-    /// which an adaptive plan has, and `remote` the bridge of a remote that
-    /// codes its own Opus.
+    /// which every stream with a rate to move has, and `remote` the bridge of
+    /// a remote that codes its own Opus.
     pub fn new(ceiling: i32, signals: Arc<AudioSignals>, remote: Option<Arc<AudioBridge>>) -> Self {
-        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0), true), signals, remote }
+        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)), signals, remote }
     }
 
     /// Whether to write a ping now, taken as written at `now` when it is.
@@ -1313,7 +1315,7 @@ mod tests {
     }
 
     /// The plan every walk test runs on.
-    fn adaptive_plan() -> AudioPlan {
+    fn walk_plan() -> AudioPlan {
         AudioPlan { bitrate_bps: 96_000 }
     }
 
@@ -1514,9 +1516,9 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
-        let signals = encoded.signals.clone().expect("an adaptive plan has signals");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
+        let signals = encoded.signals.clone().expect("an opus stream has signals");
         let mut stream = Box::pin(encoded.packets);
 
         // Not behind: silence is content like any other.
@@ -1547,9 +1549,9 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
-        let signals = encoded.signals.clone().expect("an adaptive plan has signals");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
+        let signals = encoded.signals.clone().expect("an opus stream has signals");
         let mut stream = Box::pin(encoded.packets);
 
         signals.set_skipping(true);
@@ -1592,8 +1594,8 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
         let signals = encoded.signals.clone().expect("signals");
         let mut stream = Box::pin(encoded.packets);
 
