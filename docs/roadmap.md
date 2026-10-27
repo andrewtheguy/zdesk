@@ -227,6 +227,12 @@ keeps a credential or seeds the worker's token, checking:
 - The user-present flag on every ceremony, and the user-verified flag too,
   with `userVerification: "required"` asked for. A passkey stands in for the
   PIN, so the authenticator must check its holder.
+- On a registration, a discoverable credential: the master asks for one with
+  `authenticatorSelection.residentKey: "required"`, so the passkey can be found
+  without a username. It also asks for the `credProps` extension and refuses a
+  registration whose `rk` is not `true`. The browser reports that, and nothing
+  signs it. A login asks with an empty `allowCredentials`, so the authenticator
+  offers every passkey it holds for the ID and returns its user handle.
 - On a login, a credential ID the stored file holds and a user handle equal to
   the one it was registered with. The signature is then checked against that
   credential's stored public key.

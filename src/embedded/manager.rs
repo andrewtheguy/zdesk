@@ -868,15 +868,17 @@ fn key_lines() -> Vec<String> {
 }
 
 /// The key bar under the list, in the order the bindings are listed, as much of
-/// it as fits `width`. What does not fit goes from the end of the instance keys,
-/// so the keys page and quitting stay named on the narrowest terminal.
+/// it as fits `width`. What does not fit goes from the end of the instance keys
+/// first, so the keys page and quitting stay named on a narrow terminal, and then
+/// from the front of the rest, so quitting is the last key named.
 fn list_bar(width: u16) -> Vec<(String, &'static str)> {
     let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
-    while bar_width(&shown) > width as usize {
-        let Some(last) = shown.iter().rposition(|binding| binding.group != Group::ControlPlane) else {
-            break;
-        };
-        shown.remove(last);
+    while bar_width(&shown) > width as usize && !shown.is_empty() {
+        let drop = shown
+            .iter()
+            .rposition(|binding| binding.group != Group::ControlPlane)
+            .unwrap_or(0);
+        shown.remove(drop);
     }
     shown
         .iter()
@@ -2216,6 +2218,13 @@ mod tests {
         for (key, label) in list_bar(80) {
             assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
         }
+
+        // Too narrow for the keys page and quitting together, the screen still
+        // names quitting.
+        assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
+        let frame = render((10, 24), &options, 52380, &instances, 0, &View::List, "").unwrap();
+        let frame = String::from_utf8(frame).unwrap();
+        assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
     }
 
     /// The specs page answers from the config the instance would start on, and
