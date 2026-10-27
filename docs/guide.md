@@ -553,6 +553,7 @@ is serving. Open <http://zdesk.localhost:52380>; each running instance is at
 | `o` | open a running one in the browser |
 | Enter | show its settings |
 | `R` | rescan the instances directory |
+| `?` | list every key |
 | `q`, Esc | stop every instance and quit |
 
 Each immediate subdirectory of the instances root is one instance:
@@ -576,6 +577,6 @@ The private files and worker endpoints protect credentials from other local
 users, but the shared loopback listener does not authenticate the OS user: any
 account on the machine can open the landing page and drive a running instance.
 Do not run `zdesk tui` on a machine shared with users who must not reach those
-desktops.
+desktops. The TUI's access panel, above the instance list, says so too.
 
 See [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane).
