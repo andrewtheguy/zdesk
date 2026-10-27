@@ -3784,8 +3784,8 @@ on either of them, because a browser picks the family and a master left holding
 for a port — an ephemeral one is a control plane nobody can be told how to
 reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 
-The boundary is whoever can see the TUI's terminal, not the machine
-(`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
+The boundary is whoever can see the TUI's terminal, not the machine, with one
+accepted gap set out below (`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
 clock time it expires, ten minutes on, and the minutes left. `P` draws a new
 one and starts its time again.
@@ -3828,11 +3828,22 @@ A cookie is scoped by host and ignores the port, so the master sets its login
 only on `zdesk.localhost` and the instance subdomains. It answers `localhost`,
 `127.0.0.1` and `[::1]` with a redirect to `zdesk.localhost`, keeping the path,
 because a login set on a bare loopback name would be sent to every server the
-browser reaches by that name, every local development server among them. What
-remains is anything else serving `zdesk.localhost` or one of its subdomains on
-another port: a browser that navigates there itself sends it the login. Another
-site cannot send the browser there with it, since the cookie is `SameSite=Strict`.
-No browser offers a cookie bound to a port.
+browser reaches by that name, every local development server among them.
+
+What remains, and is accepted, is anything else serving `zdesk.localhost` or one
+of its subdomains on another port. `SameSite=Strict` does not stop it: it keeps
+the cookie off a navigation another site starts, but the page a listener on
+`zdesk.localhost:<other port>` serves is same-site with the master, so its next
+request to itself carries every cookie of that host, the login among them. Any
+site can send the browser there. Another local user who runs such a listener and
+gets a link followed therefore takes the login, and can replay it to the master
+past the PIN. No browser offers a cookie bound to a port, and a replayed cookie
+is indistinguishable from the browser's. A host nobody else can name, drawn per
+run, such as `<random>.zdesk.localhost` with each instance under it, would close
+the gap at the cost of the TUI's stable addresses, and was not taken. So the PIN
+keeps out whoever cannot see the terminal, but not another account on the machine
+that sets out to take a login: do not run the TUI on a machine shared with users
+who must not reach its desktops.
 
 A browser never holds a worker's token. The master adds it, as the
 `zdesk_session` cookie, to each request it forwards. It strips the browser's

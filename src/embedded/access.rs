@@ -25,11 +25,17 @@
 //! its instance subdomains, never on `localhost` or a numeric loopback, which every
 //! local development server shares: it answers those names with a redirect to
 //! `zdesk.localhost`. The name carries the port, so two control planes on one
-//! machine keep separate logins rather than overwriting each other's. What remains
-//! is anything else serving `zdesk.localhost` or one of its subdomains on another
-//! port, which a browser navigating there itself — never another site sending it,
-//! since the cookie is `SameSite=Strict` — would send the login to. No browser
-//! offers a cookie bound to a port.
+//! machine keep separate logins rather than overwriting each other's.
+//!
+//! What remains, and is accepted, is anything else serving `zdesk.localhost` or
+//! one of its subdomains on another port. `SameSite=Strict` does not stop it: it
+//! keeps the cookie off a navigation another site starts, but the page such a
+//! listener serves is same-site with the master, so its next request to itself
+//! carries every cookie of the host, this login among them. Any site can send the
+//! browser there, so another local user who runs such a listener and gets a link
+//! followed takes the login and can replay it past the PIN. No browser offers a
+//! cookie bound to a port; a host nobody else can name, drawn per run, would close
+//! it at the cost of the TUI's stable addresses.
 //!
 //! The browser never holds a worker's token: the master adds it to each request
 //! it forwards. So a browser presents one of two credentials anywhere — this PIN
