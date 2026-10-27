@@ -237,7 +237,8 @@ export type ControlMsg =
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
       // "apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9" or
-      // "wlshare-tiles-motion" — or null for a desktop the gateway encodes.
+      // "wlshare-tiles-motion", "wlshare-tiles-adaptive" — or null for a desktop
+      // the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
       // started with at the picker (experimental). The offer alone — enabling is
@@ -483,7 +484,7 @@ export interface StandardMsg {
 // A rectangle of the desktop in the tiles the gateway codes, a row's run of 64x64
 // tiles as one image: a JPEG of tiles still changing, which the gateway sends again
 // as PNG once they are still, or a PNG of the exact pixels; or, in wlshare's tiles
-// passed through, a lossy WebP while wlshare's link is behind. Each replaces what the
+// passed through, a lossy WebP of wlshare's adaptive tiles. Each replaces what the
 
 // canvas held there and depends on no other, so they are drawn in wire order and may
 // be decoded in any. See `TileUnit` in src/protocol.rs for the contract.

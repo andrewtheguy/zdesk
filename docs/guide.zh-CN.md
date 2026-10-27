@@ -9,7 +9,7 @@
 客户端就是网关提供的页面，编译在网关的二进制文件中。它需要：
 
 - **安全上下文。** 网关只使用纯 HTTP，没有 TLS 监听器，因此需要通过回环地址（`localhost`、`127.0.0.1`、`[::1]`、任何 `.localhost` 名称）或终止 TLS 的反向代理访问。通过纯 `http://` 访问局域网地址会被拒绝，页面会说明原因。
-- **WebCodecs**，用于远程以视频形式发送的画面：`VideoDecoder` 用于 wlshare 的 VP9、高性能模式 Mac 的 HEVC 或 H.264，以及 RDP 主机的 H.264。没有它时，客户端本身仍然可以启动，网关的图块、标准模式 Mac 的 Adaptive 画面以及不含 H.264 的 RDP 管道在任何浏览器中都能工作。页面会事先询问浏览器的解码器能否解码 Mac 的 HEVC、RDP 主机的 H.264 和 wlshare 的 VP9：解码器拒绝前两者时，选择器将其置灰并说明原因；解码器拒绝 VP9 时，选择器将 `wlshare` 目标的 Video 置灰，仍可使用 Tiles with motion，其运动区域是 H.264，具备 `VideoDecoder` 的浏览器即被视为能够解码。Mac 的 H.264 不事先询问：它提供给所有具备 `VideoDecoder` 的浏览器，没有时置灰，解码器不接受它时会在会话中通过解码器的错误说明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；没有它的浏览器（Safari 16.4 到 18）不播放声音，更新的 Safari 的 `AudioDecoder` 无法解码 FLAC，可以播放 Opus 和 Mac 的声音。
+- **WebCodecs**，用于远程以视频形式发送的画面：`VideoDecoder` 用于 wlshare 的 VP9、高性能模式 Mac 的 HEVC 或 H.264，以及 RDP 主机的 H.264。没有它时，客户端本身仍然可以启动，网关的图块、标准模式 Mac 的 Adaptive 画面以及不含 H.264 的 RDP 管道在任何浏览器中都能工作。页面会事先询问浏览器的解码器能否解码 Mac 的 HEVC、RDP 主机的 H.264 和 wlshare 的 VP9：解码器拒绝前两者时，选择器将其置灰并说明原因；解码器拒绝 VP9 时，选择器将 `wlshare` 目标的 Video 置灰，仍可使用它的两种图块，其运动区域是 H.264，具备 `VideoDecoder` 的浏览器即被视为能够解码。Mac 的 H.264 不事先询问：它提供给所有具备 `VideoDecoder` 的浏览器，没有时置灰，解码器不接受它时会在会话中通过解码器的错误说明。`AudioDecoder` 播放 Opus、Mac 的 AAC-ELD 和 FLAC；没有它的浏览器（Safari 16.4 到 18）不播放声音，更新的 Safari 的 `AudioDecoder` 无法解码 FLAC，可以播放 Opus 和 Mac 的声音。
 
 桌面使用时，请在 Chrome 或 Edge 中把页面安装为应用。应用窗口会把普通标签页自己保留的组合键（⌘W、⌘T、⌘N 等）交给页面。在标签页中，**Menu → Immersive full screen** 也能做到这一点，并且还能拿到窗口通常拿不到的按键，例如 Super 键和 Alt+Tab。
 
@@ -34,14 +34,14 @@ defaults write -g NSConvolutionOverride1 -float 1
 | `rdp` | 是 | 关、Opus 或 FLAC | 图形管道，始终直通 | 高质量或自适应 H.264 |
 | `rdp` 且 `egfx = false` | 否 | 关、Opus 或 FLAC | — | — |
 | `vnc` | 否 | 无 | — | — |
-| `vnc`，`wlshare` | 是 | 关、Opus 或 FLAC | 其 VP9，或其带运动视频的图块，始终直通 | — |
+| `vnc`，`wlshare` | 是 | 关、Opus 或 FLAC | 其 VP9、其带运动视频的图块，或其按链路调整的图块，始终直通 | — |
 | `vnc`，`ard` | 否 | 无 | Mac 的 Adaptive 画面直通（beta），或不直通：网关对 Mac Full 质量编码的图块 | — |
 | `vnc`，`ard` 且 `virtual_display` | 是 | 无 | 同 `ard` | — |
 | `vnc`，`ard-high-performance` | 是 | 始终传输 | Mac 的 HEVC，或其 H.264（beta），始终直通 | — |
 
 - **尺寸（Size）。** 桌面要么保持一个固定尺寸，即目标的 `size = "1920x1080"`，未设置时为 1440×900；要么跟随窗口：要求远程按窗口的尺寸和浏览器的像素密度渲染，而不是在客户端缩放。固定尺寸同样跟随浏览器的密度。手机只提供固定尺寸。普通 `vnc` 目标以及使用 Mac 物理显示器的 `ard` 按远程自身的尺寸显示，不接受 `size`。
 - **声音（Sound）。** Opus，或无损的 FLAC。不带声音启动的会话不向远程请求声音，因此主机会继续在原来的地方播放。会话中的 Mute 和 Unmute 只改变本浏览器是否收听。手机、平板和 Safari 以静音启动。没有 `AudioDecoder` 的浏览器会把 Sound 置灰；Safari 的 `AudioDecoder` 无法解码 FLAC，会把 FLAC 置灰，因此在那里勾选 Sound 即使用 Opus。在高性能模式 Mac 上，这类浏览器中菜单的 Audio 按钮显示 *Audio not supported*，无法解码 Mac 的 AAC-ELD 的浏览器中则显示 *AAC-ELD not supported*。
-- **直通（Passthrough）。** 把远程自己的流原样发送给浏览器，而不是由网关编码成图块。高性能模式 Mac 的画面始终直通，可以选择的是哪一路流：其 HEVC，浏览器无法接收时置灰；或其 H.264（beta），它提供给所有具备 `VideoDecoder` 的浏览器，页面中不需要 HEVC 解码器。在启用管道的 `rdp` 目标上，这不是一个选项：选择器会说明它始终直通，没有可勾选的框，无法合成管道的浏览器不能启动该目标。直通的 RDP 管道会跟随浏览器的链路：浏览器跟不上时，Windows 主机会绘制更少的帧，在 Adaptive 下还会更粗糙。Mac 直通的流则不会：Mac 按自己的速率发送，静止画面很少，运动时很多。在 `ard` 目标上，Picture 组为 *Apple's Adaptive (beta), passed through*（默认）或 *Gateway adaptive, settles to lossless*。Apple's Adaptive 是 Mac 自己的 8×8 图块，由本页面解码：每个变化区域先来一遍粗略的，随后是它的细化；在任何链路上精度都相同，较慢的链路只是更新更少，并在画面静止后才得到细化；它永远达不到无损。以它启动的会话在浏览器回来时会重新开始而不是恢复，与直通的 RDP 管道一样。Gateway adaptive 是 Mac 的无损 Full 质量，由网关解压后按 `video_quality` 以图块发送，与它发送任何 VNC 服务器的桌面一样：区域变化时用 JPEG，稳定后变为精确，适配链路，并在浏览器回来时恢复。在 Combined Display（见下文）下 Apple's Adaptive 会被置灰，因为 Combined Display 同样是网关的图块。在 `wlshare` 目标上，Picture 组为 *Video, passed through*（默认），即 wlshare 对整个桌面编码的 VP9；或 *Tiles with motion, passed through*，即 wlshare 自己的图块，适用于局域网：见 [wlshare](#wlshare-vnc-subtype--wlshare)。
+- **直通（Passthrough）。** 把远程自己的流原样发送给浏览器，而不是由网关编码成图块。高性能模式 Mac 的画面始终直通，可以选择的是哪一路流：其 HEVC，浏览器无法接收时置灰；或其 H.264（beta），它提供给所有具备 `VideoDecoder` 的浏览器，页面中不需要 HEVC 解码器。在启用管道的 `rdp` 目标上，这不是一个选项：选择器会说明它始终直通，没有可勾选的框，无法合成管道的浏览器不能启动该目标。直通的 RDP 管道会跟随浏览器的链路：浏览器跟不上时，Windows 主机会绘制更少的帧，在 Adaptive 下还会更粗糙。Mac 直通的流则不会：Mac 按自己的速率发送，静止画面很少，运动时很多。在 `ard` 目标上，Picture 组为 *Apple's Adaptive (beta), passed through*（默认）或 *Gateway adaptive, settles to lossless*。Apple's Adaptive 是 Mac 自己的 8×8 图块，由本页面解码：每个变化区域先来一遍粗略的，随后是它的细化；在任何链路上精度都相同，较慢的链路只是更新更少，并在画面静止后才得到细化；它永远达不到无损。以它启动的会话在浏览器回来时会重新开始而不是恢复，与直通的 RDP 管道一样。Gateway adaptive 是 Mac 的无损 Full 质量，由网关解压后按 `video_quality` 以图块发送，与它发送任何 VNC 服务器的桌面一样：区域变化时用 JPEG，稳定后变为精确，适配链路，并在浏览器回来时恢复。在 Combined Display（见下文）下 Apple's Adaptive 会被置灰，因为 Combined Display 同样是网关的图块。在 `wlshare` 目标上，Picture 组为 *Video, passed through*（默认），即 wlshare 对整个桌面编码的 VP9；*Tiles with motion, passed through*，即 wlshare 自己的图块，适用于局域网；或 *Adaptive tiles, passed through*，即按链路调整的同一种图块：见 [wlshare](#wlshare-vnc-subtype--wlshare)。
 - **显示器（Displays）。** 在共享 Mac 物理屏幕的 `ard` 目标上：*One at a time*（beta，默认）从主屏幕开始，在显示器菜单中提供其他屏幕，画面采用上面选择的方式；*Combined*（alpha）同时显示所有屏幕，相当于 Apple 查看器的 Combined Display，不提供单个屏幕。Combined Display 向 Mac 请求 Full 质量，由网关解码、合成并按 `video_quality` 以图块发送，与网关编码的任何画面一样跟随浏览器的链路。在 1x 浏览器上，2x 屏幕由网关缩小为 1x，因此只占用其自身像素四分之一的链路；2x 浏览器收到 Mac 原生的像素，1x 屏幕由浏览器自己放大绘制。仅屏幕共享的标准模式提供。见 [A passed stream and the browser's link](architecture.md#a-passed-stream-and-the-browsers-link)。
 - **图形（Graphics）。** RDP 主机如何绘制其管道。*High quality*（默认）使用管道中除 H.264 以外的编码，适用于局域网：慢速链路只会得到更少的帧，而不会更粗糙。*Adaptive*（alpha）是主机按浏览器链路调整的 H.264：慢速链路更粗糙，快速链路更精细。其下，*H.264 full screen*（默认）用 H.264 绘制整个桌面，*H.264 region* 只对像视频那样运动的部分使用 H.264，其余部分按 High quality 的方式绘制，文字因此保持清晰，但自适应较少。在 `VideoDecoder` 无法解码主机 H.264 的浏览器中，Adaptive 会被置灰。要让主机无损绘制，见[精确画面](#精确画面)。
 - **摄像头（Camera）** 和 **麦克风（Microphone）**（实验性）。在 `rdp` 或 `wlshare` 目标上，这两个勾选项向远程提供本浏览器的设备：两者都在整个会话中提供，远程有程序使用时才打开。见[摄像头和麦克风](#摄像头和麦克风)。
@@ -179,7 +179,7 @@ password_ref = "wayland"
 
 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-CN.md) 是本项目自己的 VNC 服务器，面向基于 wlroots 的 Wayland 桌面。这个子类型让网关列出 wlshare 的私有 RFB 扩展：它的 VP9 流，原样直通并随浏览器链路自适应；像素密度；输出列表；声音；以及在勾选后启动的会话中，作为桌面上 PipeWire 设备的浏览器摄像头和麦克风。不设置子类型时，同一服务器按任何 VNC 服务器的方式读取。
 
-- **画面（Picture）。** 选择器的 Picture 组为 *Video, passed through*（默认）：wlshare 对整个桌面编码的 VP9，按浏览器的链路调整。或 *Tiles with motion, passed through*：静止的部分为精确的 PNG，每个运动区域有自己的一路视频流，使用主机硬件编码器或 libx264 编码的 H.264，停下后再精确地重发。图块适用于带宽充裕的链路：wlshare 花在图块上的时间只是 VP9 的一小部分，最终画面是精确的，代价是数倍的字节数，大面积运动时达每秒数十 Mbit。`render_adaptive` 开启时（默认），图块与 VP9 一样随链路调整：运动区域的质量从 `video_quality` 逐步下调，链路跟不上时静止部分先以有损 WebP 发送，链路有余量后再精确地重发，因此在带宽并非一直充裕的链路上也能节省时间；关闭时，运动区域固定按 `video_quality` 编码，每个静止部分都是精确的。
+- **画面（Picture）。** 选择器的 Picture 组为 *Video, passed through*（默认）：wlshare 对整个桌面编码的 VP9，按浏览器的链路调整。或 *Tiles with motion, passed through*：静止的部分为精确的 PNG，每个运动区域有自己的一路视频流，使用主机硬件编码器或 libx264 编码的 H.264，停下后再精确地重发。图块适用于带宽充裕的链路：wlshare 花在图块上的时间只是 VP9 的一小部分，最终画面是精确的，代价是数倍的字节数，大面积运动时达每秒数十 Mbit。或 *Adaptive tiles, passed through*：同一种图块与 VP9 一样随链路调整，运动区域的质量从 `video_quality` 逐步下调，静止部分以有损 WebP 发送，不会再精确地重发，因此在带宽并非一直充裕的链路上也能节省时间。`render_adaptive` 只调整 VP9。
 
 - **Beta：** 恰好有两个输出（显示器或无头输出）的桌面会列出 *All Displays* 并从它开始：第一个留在此处，第二个在同一浏览器的新标签页中打开 `/display/2`，有自己的指针和键盘，与有两个虚拟显示器的 `rdp` 目标一样。`virtual_displays = 2` 请求 wlshare 提供两个，就像请求 Windows 主机或 Mac 那样：在 sway 上，wlshare 会让合成器创建第二个无头输出，以两个启动的会话在请求一个（默认）时保持一个；在其他合成器上，输出就是合成器已有的那些。
 

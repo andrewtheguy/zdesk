@@ -453,7 +453,7 @@ pub mod batch {
     pub const TILE_JPEG: u8 = 0x01;
     /// A `TILE` record's image is a PNG.
     pub const TILE_PNG: u8 = 0x02;
-    /// A `TILE` record's image is a lossy WebP: wlshare's, while its link is behind.
+    /// A `TILE` record's image is a lossy WebP: a still of wlshare's adaptive tiles.
     pub const TILE_WEBP: u8 = 0x03;
 
 

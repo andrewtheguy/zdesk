@@ -270,8 +270,8 @@ site_passwd = ""
 # Passthrough sends the remote's own stream to the browser as it came: an
 # "ard-high-performance" Mac's HEVC, for a LAN, where it is a choice greyed for a
 # browser that cannot take it, or its H.264 (beta), greyed for a browser without
-# `VideoDecoder`; a "wlshare" target's VP9, or its
-# tiles with motion; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
+# `VideoDecoder`; a "wlshare" target's VP9, its tiles
+# with motion, or its adaptive tiles; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
 # pipeline for the page to compose, which is no choice: with `egfx` on every
 # session passes it, and a browser that cannot compose it cannot start the
 # target. Each is described with its target below. An owning browser that comes
@@ -605,7 +605,7 @@ password_ref = "example"
 # changed tile of few colours sent exactly as PNG and any other as JPEG, sent again
 # exactly as PNG once it has stopped changing. Tiles go as fast as the browser
 # paints them, and a change the link would take too long to carry comes first as a
-# coarse JPEG that sharpens to the exact picture once it is still. A `wlshare` target's picture is wlshare's own, passed through: its VP9, or its tiles with motion, chosen at the picker.
+# coarse JPEG that sharpens to the exact picture once it is still. A `wlshare` target's picture is wlshare's own, passed through: its VP9, its tiles with motion, or its adaptive tiles, chosen at the picker.
 # A passed Mac media stream or RDP graphics pipeline keeps the remote's own quality,
 # so the keys are refused on "ard-high-performance", but for `video_quality` on an
 # "ard" target, which is the quality of the gateway's tiles of the Mac's Full
@@ -626,6 +626,7 @@ password_ref = "example"
 # The configured quality remains the ceiling, and a desktop that has gone quiet is
 # sharpened back at it. Refused on every other target: tiles have no walk, and
 # nor have wlshare's tiles with motion, chosen at the picker, which hold their
-# regions at `video_quality` whatever this says.
+# regions at `video_quality` whatever this says; its adaptive tiles walk
+# whatever it says.
 #render_adaptive = true
 

@@ -199,7 +199,7 @@ test("wlshare's tiles with motion say what is drawn where once a region has move
   // The regions' H.264, announced from the stream's own parameter set.
   assert.equal(
     videoLabel({ decode: "", tiles: true, regions: "avc1.64001f" }, null),
-    "Tiles with motion: H.264 regions where the desktop moves (avc1.64001f), PNG tiles where it is still · passthrough from the remote · decoded by the browser's native decoder",
+    "Tiles: H.264 regions where the desktop moves (avc1.64001f), still tiles where it is still · passthrough from the remote · decoded by the browser's native decoder",
   );
 });
 

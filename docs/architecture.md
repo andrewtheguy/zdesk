@@ -535,9 +535,10 @@ since neither end keeps an older layout. That version is also what
 leaves the extensions alone is no reason to move the pin; one that changes
 them is a new version and a new tag.
 
-A `wlshare` target lists one of wlshare's two pictures for every browser,
+A `wlshare` target lists one of wlshare's three pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
-(`Passthrough::WlshareVp9`, `Passthrough::WlshareTilesMotion`), and passes its
+(`Passthrough::WlshareVp9`, `Passthrough::WlshareTilesMotion`,
+`Passthrough::WlshareTilesAdaptive`), and passes its
 frames untouched. Its VP9, *Video*, is the picture of a session that names
 none, listed with the plan's dial, walk and chroma as pseudo-encodings beside
 it. Its tiles with motion, exact PNG tiles where the desktop is still and a
@@ -545,10 +546,11 @@ it. Its tiles with motion, exact PNG tiles where the desktop is still and a
 hardware encoder where it has one and libx264 otherwise, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
-and the walk as the VP9 is, the regions following the dial and what is still
-going out as lossy WebP while the link is behind, exact once it has room, or
-with `WLSD` the dial held and every still exact: they select no chroma, 4:2:0 for every
-browser. A server that ignores the listing is sent as tiles
+and `WLSD`, every region held at it and every still exact. Its adaptive
+tiles are the same tiles listed with the dial alone, so that wlshare walks it
+as it walks the VP9, the regions following it and every still a lossy WebP at
+it, never made exact: the tiles' encoder time for a link that is not always
+wide. Neither selects a chroma, 4:2:0 for every browser. A server that ignores the listing is sent as tiles
 from its ZRLE. Do not transcode a passed frame, pass one at a chroma other than
 the plan's, ask wlshare for the plan with a client message, or add a key that
 selects the picture, or a key or a choice that selects its chroma. See
@@ -875,8 +877,9 @@ A target's picture keys are per target, and every one has a default:
 - `render_adaptive` (on unless a target writes `false`), a `wlshare` target's
   alone, lets wlshare's VP9 walk its quality on the browser's link — see
   [wlshare's stream, passed through](#wlshares-stream-passed-through). It does
-  not reach a session started with wlshare's tiles with motion, whose moving
-  regions are held at `video_quality` — see
+  not reach a session started with wlshare's tiles, whose walk is the picker's:
+  held at `video_quality` for its tiles with motion, walked for its adaptive
+  tiles — see
   [wlshare's tiles with motion, passed through](#wlshares-tiles-with-motion-passed-through).
 
 There is no chroma key: wlshare's chroma follows the browser
@@ -889,7 +892,7 @@ such a target. Which passed streams follow the browser's link, and how, is in
 [A passed stream and the browser's link](#a-passed-stream-and-the-browsers-link).
 
 The engines never see the config keys. They and the session's choices collapse
-to one `RenderPlan` (`quality`, `adaptive`, `wlshare`, `wlshare_tiles_motion`,
+to one `RenderPlan` (`quality`, `adaptive`, `wlshare`, `wlshare_tiles`,
 `apple_media`, `apple_h264`, `hevc_instead`, `apple_standard`, `apple_combined`,
 `rdp_graphics`, `rdp_h264`, `chroma`) at the config boundary in
 `TargetConfig::render_plan`, which reaches the coder through the engine-agnostic
@@ -1144,14 +1147,14 @@ listing sends.
 #### wlshare's tiles with motion, passed through
 
 wlshare has a second picture encoding, `WLST` (`0x574c5354`), which a `wlshare`
-session started with its tiles with motion, chosen at the picker as *Tiles with
-motion* against its VP9, lists in place of `WLSV`: the desktop as exact PNG
-tiles where it is still, and a video stream of its own, 4:2:0, for each region
-that moves, at most four at once — H.264, by the wlshare host's hardware
-encoder where it has one and libx264 otherwise — and every tile a stream
-carried sent again as PNG once it is still,
-so the picture ends exact; while wlshare's link is behind, a still may go out
-first as a lossy WebP, sent exact once it has room. It is Motion, which this gateway removed because here
+session started with its tiles, chosen at the picker as *Tiles with motion* or
+*Adaptive tiles* against its VP9, lists in place of `WLSV`. Both are a video
+stream of its own, 4:2:0, for each region that moves, at most four at once —
+H.264, by the wlshare host's hardware encoder where it has one and libx264
+otherwise — and stills where the desktop is still. Its tiles with motion
+send the stills as exact PNG, and every tile a stream carried again as PNG
+once it is still, so the picture ends exact; its adaptive tiles send every
+still as a lossy WebP instead, never made exact. It is Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
@@ -1160,11 +1163,12 @@ of it, a region stream's first frame, its next, or its end.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
-  `WLQ` plus `video_quality`, the ceiling, as the VP9 is. With the target's
-  `render_adaptive` on, the plan's `adaptive`, wlshare walks the regions' dial
-  down from it on the browser's lag and sends what is still as lossy WebP while
-  the link is behind; off, `WLSD` beside it holds every region's stream at the
-  dial and every still is exact. There is no `WLSS`, since every region is 4:2:0
+  `WLQ` plus `video_quality`, the ceiling, as the VP9 is. For its tiles with
+  motion `WLSD` beside it holds every region's stream at the dial and every
+  still is exact; for its adaptive tiles, the plan's `adaptive`, wlshare walks
+  the regions' dial down from it on the browser's lag and sends every still as
+  a lossy WebP at the dial, again at the ceiling once the link has room.
+  `render_adaptive` reaches neither. There is no `WLSS`, since every region is 4:2:0
   for every browser. Every region is H.264, which wlshare codes with its host's
   hardware encoder where it found one at its startup, the GPU's fixed-function
   block, and with libx264 otherwise; a wlshare with neither does not start, and
@@ -2024,7 +2028,8 @@ six, the Mac's HEVC and H.264 in one row:
 | Passed stream | Who adapts it | What it hears of the browser's link | Target keys that reach it |
 |---|---|---|---|
 | wlshare's VP9 (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: quality, then frame rate | Each fence echo is held for the queue ahead of the frame on the browser's link (`VideoSink::fence_hold`) | `video_quality` as its ceiling (`WLQ`); `render_adaptive = false` holds it at the dial (`WLSD`) |
-| wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at the dial | Each fence echo is held as the VP9's is, and nothing adapts to it | `video_quality` as what the regions are held at (`WLQ`); `render_adaptive` reaches nothing of it |
+| wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at the dial | Each fence echo is held as the VP9's is, and nothing adapts to it | `video_quality` as what the regions are held at (`WLQ`, `WLSD`); `render_adaptive` reaches nothing of it |
+| wlshare's adaptive tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`, as its VP9's: the regions' dial and the stills' WebP | Each fence echo is held as the VP9's is | `video_quality` as its ceiling (`WLQ`); `render_adaptive` reaches nothing of it |
 | An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; with Adaptive, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; with Adaptive, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more | None: always on, and `video_quality` and `render_adaptive` reach nothing of it |
 | A High Performance Mac's HEVC or H.264 (beta), always passed | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway | None: the video keys are refused on the target |
 | A Standard Mac's Adaptive picture (passed where chosen) | The Mac: how many updates it sends, and whether it refines them while the screen moves | Its connection, read as the page paints, through a small receive buffer | None: `render_adaptive` is refused on the target, and `video_quality` reaches its tiles alone |
@@ -2324,8 +2329,9 @@ and `GET /api/targets` carries it:
   Full quality, which settle to lossless and which `connect` names as no
   passthrough at all. A `wlshare` target's Picture group is Video, passed
   through, wlshare's VP9, which `connect` names as `wlshare-vp9` and which a
-  session that names none is sent, taken first, and Tiles with motion, passed
-  through, `wlshare-tiles-motion`.
+  session that names none is sent, taken first, Tiles with motion, passed
+  through, `wlshare-tiles-motion`, and Adaptive tiles, passed through,
+  `wlshare-tiles-adaptive`.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that

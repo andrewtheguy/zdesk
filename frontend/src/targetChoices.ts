@@ -68,7 +68,8 @@ export type Passthrough =
   | "apple-h264"
   | "apple-adaptive"
   | "wlshare-vp9"
-  | "wlshare-tiles-motion";
+  | "wlshare-tiles-motion"
+  | "wlshare-tiles-adaptive";
 
 /** One entry of GET /api/targets. */
 export interface TargetInfo {
@@ -343,7 +344,7 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
 
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
-  "This browser decodes neither of wlshare's pictures, its VP9 or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser decodes none of wlshare's pictures, its VP9 or the H.264 of its tiles. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -420,6 +421,14 @@ function pictureOptions(
       label: "Tiles with motion, passed through",
       note: abilities.appleH264
         ? "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. Several times the bytes. For a LAN."
+        : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
+      disabled: !abilities.appleH264,
+    },
+    "wlshare-tiles-adaptive": {
+      value: "wlshare-tiles-adaptive",
+      label: "Adaptive tiles, passed through",
+      note: abilities.appleH264
+        ? "wlshare's tiles fitted to this browser's link: video only where the desktop moves, and what is still as lossy WebP. Fewer bytes than the tiles with motion; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.appleH264,
     },

@@ -4181,8 +4181,8 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wlshare-proto"
-version = "2.0.0"
-source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v2#18dd1583be01c0b5c2e538590407107c4cc289e2"
+version = "3.0.0"
+source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v3#1905d01909586e6c73369c0b1f4054ab1995960b"
 dependencies = [
  "thiserror",
 ]
@@ -4319,7 +4319,7 @@ dependencies = [
 
 [[package]]
 name = "zdesk"
-version = "0.0.475"
+version = "0.0.476"
 dependencies = [
  "aes",
  "aes-gcm",

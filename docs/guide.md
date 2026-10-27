@@ -25,7 +25,7 @@ It needs:
   anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
   the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
   the reason, where the decoder refuses them, and where it refuses the VP9 it
-  greys a `wlshare` target's Video, leaving its Tiles with motion, whose
+  greys a `wlshare` target's Video, leaving its two tiles, whose
   moving regions are H.264, which a browser with `VideoDecoder` is taken to
   decode. The Mac's H.264 is not
   asked about: it is offered to every browser with `VideoDecoder` and greyed
@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, or its tiles with motion, always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its adaptive tiles, always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -119,8 +119,9 @@ config key.
   and resumed when the browser comes back. Apple's Adaptive is greyed under
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
-  VP9 of the whole desktop, or *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN: see [wlshare](#wlshare-vnc-subtype--wlshare).
+  VP9 of the whole desktop, *Tiles with motion, passed through*, wlshare's
+  own tiles, for a LAN, or *Adaptive tiles, passed through*, the same tiles
+  fitted to the link: see [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
   time* (beta), the default, starts on the main screen and offers the others in the
   display menu, in the picture chosen above; *Combined* (alpha) shows every
@@ -450,12 +451,11 @@ server is read as any VNC server is.
   stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
   tiles are for a link with room to spare: wlshare
   spends a fraction of the VP9's time on them and the picture ends exact, for several times the
-  bytes — tens of Mbit/s while something large moves. With `render_adaptive`
-  on, the default, they follow the link as the VP9 does, the regions' dial
-  walking down from `video_quality` and what is still going out as lossy
-  WebP while the link is behind, exact again once it has room, so the time is
-  saved on a link that is not always wide too; off, the regions are held at
-  `video_quality` and every still is exact.
+  bytes — tens of Mbit/s while something large moves. Or *Adaptive tiles,
+  passed through*: the same tiles following the link as the VP9 does, the
+  regions' dial walking down from `video_quality` and what is still going out
+  as lossy WebP, never made exact, so the time is saved on a link that is not
+  always wide too. `render_adaptive` walks the VP9 alone.
 
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
