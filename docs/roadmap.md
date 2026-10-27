@@ -199,27 +199,45 @@ not through any wildcard. A credential is bound to a relying-party ID: a bare
 domain with no scheme or port. A page may use an ID equal to its own host, or
 to a parent of that host that is not a public suffix. The ID `zdesk.localhost`
 therefore works from the landing page and from every
-`<instance>.zdesk.localhost`, provided both the registration and every login
-name it explicitly. The browser's default ID is the page's own host, and on a
-subdomain that default finds no credential. Plain `http` is enough on loopback,
-because browsers treat `localhost` and its subdomains as a secure context. This
-was checked on 2026-10-27 with a small relying party on the shared port. A
-passkey registered on `zdesk.localhost` logged in from two levels of subdomain
-in Chrome and Safari. Chromium's virtual authenticator
+`<instance>.zdesk.localhost`, provided both ceremonies name it explicitly:
+`rp.id` in `navigator.credentials.create()` and `rpId` in
+`navigator.credentials.get()`. Left out, either one defaults to the page's own
+host, so a passkey registered on a subdomain is scoped to that subdomain alone,
+and a login from a subdomain finds none of the ones registered on
+`zdesk.localhost`. Plain `http` is enough on loopback in Chrome and Safari,
+which treat `localhost` and its subdomains as a secure context. Other browsers
+have not been checked, and one that does not do the same needs HTTPS for
+WebAuthn. This was checked on 2026-10-27 with a small relying party on the
+shared port. A passkey registered on `zdesk.localhost` logged in from two
+levels of subdomain in Chrome and Safari. Chromium's virtual authenticator
 (`WebAuthn.addVirtualAuthenticator` over CDP) drives the same ceremonies
 headless, so a Playwright spec can hold the behaviour under the usual rules.
 
 The master would serve the registration and login ceremonies on the landing
-page and on any instance origin, and verify each assertion itself before it
-seeds the worker's token. It would check the challenge it issued, an origin of
-`http://zdesk.localhost:<port>` or one of its subdomains, the ID's hash in the
-authenticator data, and the signature against the stored public key. The public
-keys would live in an owner-only file beside the instance folders, so a control
-plane started with `--instances-dir` has its own. Only a browser already logged
-in with the PIN could register a passkey. The TUI would list the registered
-passkeys, with a key that removes one. Which of these settings belong in the
-file described in [A settings file for the TUI](#a-settings-file-for-the-tui),
-if any, is decided when both exist.
+page and on any instance origin. It would verify each ceremony itself before it
+keeps a credential or seeds the worker's token, checking:
+
+- `type` in the client data: `webauthn.create` for a registration and
+  `webauthn.get` for a login.
+- The challenge: one the master issued for this ceremony, at least 128 random
+  bits, expiring after a few minutes, and consumed by its first use, whether
+  that use succeeded or not.
+- An origin of `http://zdesk.localhost:<port>` or one of its subdomains, and
+  the ID's hash in the authenticator data.
+- The user-present flag on every ceremony, and the user-verified flag too,
+  with `userVerification: "required"` asked for. A passkey stands in for the
+  PIN, so the authenticator must check its holder.
+- On a login, a credential ID the stored file holds and a user handle equal to
+  the one it was registered with. The signature is then checked against that
+  credential's stored public key.
+
+The public keys would live in an owner-only file beside the instance folders,
+so a control plane started with `--instances-dir` has its own. Only a browser
+already logged in with the PIN could register a passkey. The TUI would list the
+registered passkeys, with a key that removes one. Which of these settings belong
+in the file described in
+[A settings file for the TUI](#a-settings-file-for-the-tui), if any, is decided
+when both exist.
 
 A served gateway would follow the TUI. Its ID would be the operator's host
 name. WebAuthn requires a secure context, and the HTTPS that the gateway
