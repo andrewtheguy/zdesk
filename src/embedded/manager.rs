@@ -1970,7 +1970,14 @@ async fn route_connection(
         return Ok(());
     };
     let parsed = parse_request(&request)?;
-    let host = hostname(&parsed.host);
+
+    // The master answers only the names it gives out, at its own port, as a
+    // development server's allowed hosts do: a tunnel or forward that reaches the
+    // port under any other host is refused before anything is read.
+    let Some(host) = host_at(&parsed.host, public_port) else {
+        write_response(&mut client, "403 Forbidden", "text/plain; charset=utf-8", "blocked host\n", &[]).await?;
+        return Ok(());
+    };
 
     // A cookie set on a bare loopback name would be sent to every server on the
     // machine reached by that name, whatever its port: this master's login is
@@ -1991,7 +1998,7 @@ async fn route_connection(
                 return Ok(());
             }
             None => {
-                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk host\n", &[]).await?;
+                write_response(&mut client, "403 Forbidden", "text/plain; charset=utf-8", "blocked host\n", &[]).await?;
                 return Ok(());
             }
         }
@@ -2372,17 +2379,22 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
     })
 }
 
-fn hostname(host: &str) -> String {
+/// A `Host` header's name, lowercased, when the header names `port`; a browser
+/// leaves the port out only for 80.
+fn host_at(host: &str, port: u16) -> Option<String> {
     let lowercase = host.trim().to_ascii_lowercase();
-    if lowercase.starts_with('[') {
-        return lowercase
-            .find(']')
-            .map_or(lowercase.clone(), |end| lowercase[..=end].to_owned());
-    }
-    match lowercase.rsplit_once(':') {
-        Some((name, port)) if port.bytes().all(|byte| byte.is_ascii_digit()) => name.to_owned(),
-        _ => lowercase,
-    }
+    let split = if lowercase.starts_with('[') {
+        lowercase.find(']')? + 1
+    } else {
+        lowercase.rfind(':').unwrap_or(lowercase.len())
+    };
+    let (name, rest) = lowercase.split_at(split);
+    let given = match rest.strip_prefix(':') {
+        Some(digits) => digits.parse::<u16>().ok()?,
+        None if rest.is_empty() => 80,
+        None => return None,
+    };
+    (given == port).then(|| name.to_owned())
 }
 
 async fn write_response(
@@ -2649,7 +2661,7 @@ mod tests {
             b"GET /api/targets?q=1 HTTP/1.1\r\nHost: Work.zdesk.localhost:52380\r\nCookie: other=1; zdesk_session=secret\r\n\r\n",
         )
         .unwrap();
-        assert_eq!(hostname(&parsed.host), "work.zdesk.localhost");
+        assert_eq!(host_at(&parsed.host, 52380).as_deref(), Some("work.zdesk.localhost"));
         assert_eq!(parsed.target, "/api/targets?q=1");
         assert_eq!(parsed.method, "GET");
         assert!(!parsed.upgrade);
@@ -2822,6 +2834,37 @@ mod tests {
                 "{host}: {response}"
             );
             assert!(!response.contains("Set-Cookie"), "{host}: {response}");
+        }
+        drop(router);
+    }
+
+    #[test]
+    fn a_host_counts_only_at_the_masters_port() {
+        assert_eq!(host_at("[::1]:52380", 52380).as_deref(), Some("[::1]"));
+        assert_eq!(host_at("zdesk.localhost", 80).as_deref(), Some("zdesk.localhost"));
+        for other in ["zdesk.localhost", "zdesk.localhost:8080", "zdesk.localhost:x", "[::1]x", "::1"] {
+            assert_eq!(host_at(other, 52380), None, "{other}");
+        }
+    }
+
+    /// Only `zdesk.localhost` and its subdomains at the master's own port are
+    /// answered, so a tunnel or a forward to another port is refused outright.
+    #[tokio::test]
+    async fn any_other_host_or_port_is_blocked() {
+        let port = free_port();
+        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
+        for host in [
+            "example.trycloudflare.com".to_owned(),
+            format!("zdesk.localhost.example.com:{port}"),
+            format!("evil.localhost:{port}"),
+            "zdesk.localhost".to_owned(),
+            format!("zdesk.localhost:{}", port.wrapping_add(1)),
+            "work.zdesk.localhost:8080".to_owned(),
+            "localhost:8080".to_owned(),
+        ] {
+            let response = send(port, &format!("GET /api/auth/status HTTP/1.1\r\nHost: {host}\r\n\r\n")).await;
+            assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host}: {response}");
+            assert!(!response.contains("Set-Cookie") && !response.contains("Location"), "{host}: {response}");
         }
         drop(router);
     }
