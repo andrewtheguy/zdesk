@@ -3895,7 +3895,7 @@ the TUI and so their stdin. The master presents the token for a logged-in
 browser, as described above. Raw connection proxying preserves both ordinary
 HTTP and WebSocket upgrades without another gateway protocol implementation.
 
-The entire substrate is behind the default `embedded-gateway` Cargo feature:
+The entire substrate is behind the default `tui` Cargo feature:
 the module, token authentication, config audience, CLI commands, and their
 `check-config --embedded` validation mode compile out together. Native packages
 retain it. Container artifacts are built separately with
@@ -4008,7 +4008,7 @@ Where the master password comes from is each audience's:
   name, and a config whose `[master]` the keychain's master password does not
   open was made under another account's: the TUI says so, and its passwords are
   set again with `p` after the two tables are removed.
-- The keychain comes with the `embedded-gateway` Cargo feature, since only the
+- The keychain comes with the `tui` Cargo feature, since only the
   TUI reads it; a container build, which has neither, links no credential
   store.
 

@@ -31,7 +31,7 @@ edition = "2024"
 # Native builds include the local TUI control plane. Container artifacts
 # explicitly disable default features: a remotely deployed gateway must not
 # expose process supervision or its private worker surface.
-default = ["embedded-gateway", "wlshare"]
+default = ["tui", "wlshare"]
 # The TUI's master password is the keychain's (src/keychain.rs), so the TUI
 # brings the credential stores; nothing else reads them.
 # `subtype = "wlshare"` targets: wlshare's private extensions, its passed
@@ -39,7 +39,7 @@ default = ["embedded-gateway", "wlshare"]
 # refused at startup, and nothing of wlshare is built or linked; a plain `vnc`
 # target still reads a wlshare server through the RFB baseline.
 wlshare = ["dep:wlshare-proto"]
-embedded-gateway = [
+tui = [
     "dep:crossterm",
     "dep:jiff",
     "dep:libc",
@@ -245,7 +245,7 @@ argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
 # comments and layout, which a round trip through `toml` would not.
 toml_edit = "0.25"
 # The OS credential store the TUI keeps its master password in (src/keychain.rs),
-# behind `embedded-gateway`: the Keychain on macOS, Credential Manager on Windows,
+# behind `tui`: the Keychain on macOS, Credential Manager on Windows,
 # and the Secret Service on Linux, spoken over zbus so no build needs libdbus.
 keyring-core = { version = "1", optional = true }
 
@@ -293,7 +293,7 @@ windows-sys = { version = "0.61", optional = true, features = [
 
 [[test]]
 name = "embedded_gateway_e2e"
-required-features = ["embedded-gateway"]
+required-features = ["tui"]
 
 [[test]]
 name = "wlshare_e2e"
@@ -301,7 +301,7 @@ required-features = ["wlshare"]
 
 [[test]]
 name = "tui_control_plane_e2e"
-required-features = ["embedded-gateway"]
+required-features = ["tui"]
 
 # What drives a real RDP host is run on demand, as an example, and never by a
 # test run: `cargo run --example <probe> -- <case>`, a host from the operator's

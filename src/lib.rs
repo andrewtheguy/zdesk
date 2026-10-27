@@ -11,7 +11,7 @@ pub mod camera;
 pub mod combined;
 pub mod cli;
 pub mod config;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub mod embedded;
 pub mod encode;
 pub mod engine;
@@ -19,7 +19,7 @@ pub mod error;
 pub mod feedback;
 pub mod h264;
 pub mod hevc_wasm;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub mod keychain;
 pub mod keymap;
 pub mod mic;

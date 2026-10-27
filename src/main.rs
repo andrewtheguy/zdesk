@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             )?;
             serve(config).await?;
         }
-        #[cfg(feature = "embedded-gateway")]
+        #[cfg(feature = "tui")]
         Commands::Tui { port, instances_dir } => {
             anyhow::ensure!(port != 0, "--port must be between 1 and 65535");
             zdesk::embedded::run_tui(zdesk::embedded::TuiOptions {
@@ -64,13 +64,13 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
-        #[cfg(feature = "embedded-gateway")]
+        #[cfg(feature = "tui")]
         Commands::ServeEmbedded { instance_dir } => {
             serve_embedded(&zdesk::embedded::Instance::new(instance_dir)).await?;
         }
         Commands::CheckConfig {
             config,
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             embedded,
         } => {
             // The message is the product here: an instance manager can run this for
@@ -78,13 +78,13 @@ async fn main() -> anyhow::Result<()> {
             // file. `{:#}` keeps the whole `anyhow` chain, which
             // is what names the target the complaint is about.
             let text = zdesk::config::read_candidate(config.as_deref())?;
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             let result = if embedded {
                 zdesk::embedded::check(&text)
             } else {
                 zdesk::config::check(&text)
             };
-            #[cfg(not(feature = "embedded-gateway"))]
+            #[cfg(not(feature = "tui"))]
             let result = zdesk::config::check(&text);
             if let Err(e) = result {
                 eprintln!("{e:#}");
@@ -229,7 +229,7 @@ fn master_file_exists(file: &std::path::Path) -> anyhow::Result<bool> {
 /// end of our stdin closing, which happens however the parent ended — see
 /// [`zdesk::embedded::parent_closed`]. The signal handler is for a run started by
 /// hand, and the server arm only completes by failing.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 async fn serve_embedded(instance: &zdesk::embedded::Instance) -> anyhow::Result<()> {
     // The parent writes the key line the moment this process starts, so this wait
     // is short; it is read before anything else reads stdin.
@@ -358,7 +358,7 @@ async fn serve(config: AppConfig) -> anyhow::Result<()> {
             path.display()
         ),
         // Only `resolve_embedded` names a pipe, and `serve-embedded` serves it.
-        #[cfg(all(feature = "embedded-gateway", windows))]
+        #[cfg(all(feature = "tui", windows))]
         ListenAddr::Pipe(name) => anyhow::bail!("{name} is an embedded worker's private pipe"),
     }
 

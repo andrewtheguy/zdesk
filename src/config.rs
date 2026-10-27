@@ -15,7 +15,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::PcmFormat;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use crate::auth::EmbeddedToken;
 use crate::auth::{GatewayAuth, SitePasswd};
 use crate::protocol::HostDisplay;
@@ -1485,7 +1485,7 @@ pub enum ListenAddr {
     Unix(PathBuf),
     /// A managed worker's named pipe on Windows, where there are no Unix sockets.
     /// Never read from a config: `src/embedded/transport.rs` names it at launch.
-    #[cfg(all(feature = "embedded-gateway", windows))]
+    #[cfg(all(feature = "tui", windows))]
     Pipe(String),
 }
 
@@ -1496,7 +1496,7 @@ impl std::fmt::Display for ListenAddr {
         match self {
             Self::Tcp(addr) => f.write_str(addr),
             Self::Unix(path) => write!(f, "{UNIX_LISTEN_PREFIX}{}", path.display()),
-            #[cfg(all(feature = "embedded-gateway", windows))]
+            #[cfg(all(feature = "tui", windows))]
             Self::Pipe(name) => write!(f, "pipe:{name}"),
         }
     }
@@ -1739,7 +1739,7 @@ pub enum Audience {
     /// `zdesk serve`: a browser's gateway.
     Served,
     /// `zdesk serve-embedded`: a managed local instance.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     Embedded,
 }
 
@@ -1890,7 +1890,7 @@ impl ConfigFile {
                 ),
             }
         }
-        #[cfg(feature = "embedded-gateway")]
+        #[cfg(feature = "tui")]
         if audience == Audience::Embedded {
             // Refused rather than ignored, and named as a whole block rather than
             // key by key: every one of them is a decision the launcher has already
@@ -1910,7 +1910,7 @@ impl ConfigFile {
                 "config has no [[targets]] — at least one target profile is required"
             );
         }
-        #[cfg(not(feature = "embedded-gateway"))]
+        #[cfg(not(feature = "tui"))]
         {
             let _ = audience;
             anyhow::ensure!(
@@ -2306,7 +2306,7 @@ impl ConfigFile {
     ///
     /// `state_dir` is the instance directory, where `[meter]` keeps its database, and
     /// `data_dir` is where `[hevc_wasm]` finds its archive; see [`data_dir`].
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     pub fn resolve_embedded(
         self,
         token: EmbeddedToken,

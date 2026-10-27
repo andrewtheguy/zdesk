@@ -30,9 +30,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use base64::Engine as _;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use rand::RngExt as _;
 
 /// Name of the auth session cookie.
@@ -108,7 +108,7 @@ pub enum GatewayAuth {
     /// this gateway, which presents it for its logged-in browsers as the same
     /// `zdesk_session` cookie a login would have set. `/api/auth/login` and `/api/auth/logout` refuse on such a
     /// gateway: there is nothing to log in to and nothing to end.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     Token(EmbeddedToken),
 }
 
@@ -118,7 +118,7 @@ impl GatewayAuth {
     pub fn login(&self) -> Option<&SitePasswd> {
         match self {
             Self::Login(site_passwd) => Some(site_passwd),
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             Self::Token(_) => None,
         }
     }
@@ -128,7 +128,7 @@ impl GatewayAuth {
     pub fn authenticates(&self, sessions: &AuthSessions, presented: &str) -> bool {
         match self {
             Self::Login(_) => sessions.validate(presented),
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             Self::Token(expected) => expected.matches(presented),
         }
     }
@@ -143,20 +143,20 @@ impl GatewayAuth {
 /// this one, and gone when this one exits. There is also nobody to be slow for —
 /// bcrypt's cost exists to make guessing a *human's* password expensive, and 32
 /// random bytes are not guessable at any cost.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 #[derive(Clone)]
 pub struct EmbeddedToken(String);
 
 // Manual Debug so a config dump — which carries the whole `GatewayAuth` — cannot
 // print the one secret that would let anything drive the remote.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 impl std::fmt::Debug for EmbeddedToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("EmbeddedToken(…)")
     }
 }
 
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 impl EmbeddedToken {
     /// How many random bytes the token carries.
     const BYTES: usize = 32;
@@ -191,7 +191,7 @@ impl EmbeddedToken {
 /// router, which reads it out of a cookie before proxying
 /// ([`crate::embedded::manager`]) and never holds the token type at all. One
 /// comparison, so there is no second copy to be the one that compares with `==`.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub fn secrets_match(expected: &str, presented: &str) -> bool {
     let expected = expected.as_bytes();
     let presented = presented.as_bytes();
@@ -333,7 +333,7 @@ mod tests {
     /// A minted token matches itself and nothing else, including the near misses a
     /// hand-rolled constant-time compare could get wrong: a prefix, an extension,
     /// and the empty string.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn an_embedded_token_matches_only_itself() {
         let token = EmbeddedToken::generate();
@@ -346,7 +346,7 @@ mod tests {
 
     /// Two launches never share a secret, and the encoding is URL-safe base64 so
     /// the value can sit in a header untouched.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn embedded_tokens_are_fresh_and_header_safe() {
         let (a, b) = (EmbeddedToken::generate(), EmbeddedToken::generate());
@@ -364,7 +364,7 @@ mod tests {
 
     /// The one secret that would drive the remote must not be printable by
     /// accident: `AppConfig` derives Debug and carries this.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn an_embedded_token_is_not_in_its_debug_output() {
         let token = EmbeddedToken::generate();

@@ -12,12 +12,12 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 /// The optional cargo features this binary was built with, for `--help` and the log
-/// of a starting gateway: `embedded-gateway` decides whether it accepts `tui`, and
+/// of a starting gateway: the `tui` feature decides whether it accepts `tui`, and
 /// `wlshare` whether it takes a `wlshare` target, and nothing else about the binary
 /// says so. Not in `--version`, which packaging compares to the release's.
 pub const FEATURES: &[&str] = &[
-    #[cfg(feature = "embedded-gateway")]
-    "embedded-gateway",
+    #[cfg(feature = "tui")]
+    "tui",
     #[cfg(feature = "wlshare")]
     "wlshare",
 ];
@@ -60,7 +60,7 @@ pub enum Commands {
     /// Run the local multi-instance control plane. The TUI supervises one gateway
     /// process per instance and serves every instance through one loopback port at
     /// <instance>.zdesk.localhost.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     Tui {
         /// Loopback port shared by zdesk.localhost and every instance
         /// subdomain (default: 52380, the same port `serve` listens on — they
@@ -85,7 +85,7 @@ pub enum Commands {
     /// Not for interactive use. It serves the one client it was started by, reads
     /// only <instance-dir>/zdesk.toml, and stops when its stdin closes — which
     /// is how it dies with its manager.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[command(hide = true)]
     ServeEmbedded {
         /// The managed instance directory. Nothing outside it is read.
@@ -104,7 +104,7 @@ pub enum Commands {
         config: Option<PathBuf>,
         /// Apply managed-instance rules instead of a served gateway's: no
         /// [server] block, and no targets configured yet is not an error
-        #[cfg(feature = "embedded-gateway")]
+        #[cfg(feature = "tui")]
         #[arg(long)]
         embedded: bool,
     },
@@ -190,7 +190,7 @@ mod tests {
         let mut command = Cli::command();
         let help = command.render_help().to_string();
         assert!(help.trim_end().ends_with(&format!("Features: {}", features_line())), "{help}");
-        assert_eq!(FEATURES.contains(&"embedded-gateway"), cfg!(feature = "embedded-gateway"));
+        assert_eq!(FEATURES.contains(&"tui"), cfg!(feature = "tui"));
         assert_eq!(
             command.render_version(),
             format!("zdesk {}\n", env!("CARGO_PKG_VERSION"))
@@ -247,7 +247,7 @@ mod tests {
     /// The managed worker takes the one path only its supervisor knows — the
     /// instance it owns — and nothing else: the endpoint and secret are the
     /// gateway's to decide, and the SPA is in the binary.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn serve_embedded_takes_the_one_path_the_launcher_knows() {
         let cli = Cli::try_parse_from(["zdesk", "serve-embedded", "--instance-dir", "/i"])
@@ -280,7 +280,7 @@ mod tests {
     /// The shared port is `serve`'s: a default in the binary, an override on the
     /// command line or in the environment, and never a port the kernel picked —
     /// a browser is told this number.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn the_tui_port_defaults_and_refuses_an_ephemeral_one() {
         let cli = Cli::try_parse_from(["zdesk", "tui"]).expect("the port has a default");
@@ -294,7 +294,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn tui_takes_its_port_and_instances_dir() {
         let cli = Cli::try_parse_from([
@@ -339,7 +339,7 @@ mod tests {
         assert!(Cli::try_parse_from(["zdesk", "password", "master", "show", "--force"]).is_err());
     }
 
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
     fn check_config_reads_stdin_by_default_and_takes_an_audience() {
         let cli = Cli::try_parse_from(["zdesk", "check-config"]).unwrap();
@@ -359,7 +359,7 @@ mod tests {
         assert!(embedded);
     }
 
-    #[cfg(not(feature = "embedded-gateway"))]
+    #[cfg(not(feature = "tui"))]
     #[test]
     fn embedded_cli_is_absent_without_the_feature() {
         assert!(Cli::try_parse_from(["zdesk", "serve-embedded"]).is_err());

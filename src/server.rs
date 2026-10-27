@@ -11,7 +11,7 @@ use axum::{
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use crate::auth::GatewayAuth;
 use crate::{
     auth::{self, AuthSessions},
@@ -246,7 +246,7 @@ pub fn router_with_sessions(
     // `status` is the exception, and registering it either way is the point: the
     // page asks the same question on both, and there it answers yes because the
     // control plane adds the launch token to every request it forwards.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     let auth_routes = match config.auth {
         GatewayAuth::Login(_) => Router::new()
             .route("/auth/login", post(login_handler))
@@ -256,7 +256,7 @@ pub fn router_with_sessions(
             .route("/auth/logout", post(no_login_handler)),
     }
     .route("/auth/status", get(status_handler));
-    #[cfg(not(feature = "embedded-gateway"))]
+    #[cfg(not(feature = "tui"))]
     let auth_routes = Router::new()
         .route("/auth/login", post(login_handler))
         .route("/auth/logout", post(logout_handler))
@@ -631,7 +631,7 @@ async fn logo_handler(State(state): State<AppState>) -> ApiResult<impl IntoRespo
 /// for a routing mistake; a 403 says the request was understood and is not allowed
 /// here — which is the truth, and it is the same answer whatever credentials are
 /// offered, since an embedded gateway holds none to check them against.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 async fn no_login_handler() -> AppError {
     AppError::Forbidden
 }

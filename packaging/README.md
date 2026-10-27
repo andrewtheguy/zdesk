@@ -3,7 +3,7 @@
 Native packages are the release install contract. Linux ships both `.deb` and
 `.rpm`; macOS ships `.pkg`. The distro-agnostic tarball is the layout input
 for native package and container builds, and no release asset. Containers replace its native binary
-with a build that excludes the `embedded-gateway` default feature.
+with a build that excludes the `tui` default feature.
 
 Every artifact carries one gateway binary with the web client compiled into it
 (`src/assets.rs` embeds the bundle from Cargo's private output directory at build

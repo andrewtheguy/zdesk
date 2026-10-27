@@ -3,7 +3,7 @@
 //! One entry per OS account — service `zdesk`, account `master` — opens every
 //! local instance's config (see [`crate::vault`]): the Keychain on macOS,
 //! Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on
-//! Linux. Only the TUI reads it, so it is part of `embedded-gateway`: a served
+//! Linux. Only the TUI reads it, so it is part of `tui`: a served
 //! gateway and `zdesk password` take theirs from a file or the terminal.
 //!
 //! A store can be there and still not answer: Credential Manager refuses a network
