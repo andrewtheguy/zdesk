@@ -1887,7 +1887,7 @@ mod tests {
         assert!(page.contains("192.168.1.20:3389"), "the standard port is filled in: {page}");
         assert!(page.contains("account password [passwords].win11"), "{page}");
         assert!(
-            page.contains("opus ≤320 kbit/s, adaptive down to 32 kbit/s"),
+            page.contains("opus ≤192 kbit/s, adaptive down to 24 kbit/s"),
             "an unset switch is named with the one rate, walk included: {page}"
         );
         assert!(
