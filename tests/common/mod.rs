@@ -333,12 +333,24 @@ pub struct BatchRegion {
     pub payload: Vec<u8>,
 }
 
+/// A `COPY` record: what the page holds at `(sx, sy)`, drawn at the rectangle.
+#[allow(dead_code)]
+pub struct BatchCopy {
+    pub sx: u16,
+    pub sy: u16,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
 /// One picture record of a batch frame.
 #[allow(dead_code)]
 pub enum BatchRecord {
     Video(BatchUnit),
     Tile(BatchTile),
     Region(BatchRegion),
+    Copy(BatchCopy),
 }
 
 /// The acknowledgment a browser's painter sends once it has drawn the batch `frame`,
@@ -422,6 +434,12 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                 }));
                 at = start + len;
             }
+            batch::OP_COPY => {
+                let copy = BatchCopy { sx: le(1), sy: le(3), x: le(5), y: le(7), w: le(9), h: le(11) };
+                assert!(copy.w > 0 && copy.h > 0, "an empty copy");
+                records.push(BatchRecord::Copy(copy));
+                at += batch::COPY_LEN;
+            }
             op => panic!("unknown record op {op}"),
         }
     }
@@ -439,6 +457,7 @@ pub fn batch_units(frame: &[u8]) -> Vec<BatchUnit> {
             BatchRecord::Video(unit) => unit,
             BatchRecord::Tile(tile) => panic!("a tile at ({}, {}) in a passed stream's batch", tile.x, tile.y),
             BatchRecord::Region(region) => panic!("region {}'s unit in a passed stream's batch", region.stream),
+            BatchRecord::Copy(copy) => panic!("a copy to ({}, {}) in a passed stream's batch", copy.x, copy.y),
         })
         .collect()
 }

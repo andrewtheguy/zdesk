@@ -45,7 +45,10 @@ test("a graphics record is its commands, whole, among the records around it", ()
   ]).buffer;
   const records = decodeBatchFrame(frame);
   assert.deepEqual(
-    records?.map((record) => [record.kind, [...record.data]]),
+    records?.map((record) => [
+      record.kind,
+      "data" in record ? [...record.data] : [],
+    ]),
     [
       ["graphics", [0xaa, 0xbb, 0xcc]],
       ["graphics", [0xdd]],
@@ -229,6 +232,71 @@ test("a region record is its stream, its flags, where its rectangle is, then its
   assert.equal(decodeBatchFrame(one.buffer)?.length, 1);
   assert.equal(decodeBatchFrame(one.slice(0, one.byteLength - 1).buffer), null);
   assert.equal(decodeBatchFrame(one.slice(0, 8 + 10).buffer), null);
+});
+
+test("a copy record is where its source is, then its rectangle, and nothing after", () => {
+  // Transcribed from `CopyUnit::write_record` in src/protocol.rs: op 0x08, then sx,
+  // sy, x, y, w and h as u16, little-endian.
+  const frame = (w: number) =>
+    new Uint8Array([
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0x09,
+      0x00,
+      0x00,
+      0x00,
+      0x08,
+      0x02,
+      0x01,
+      0x04,
+      0x03,
+      0x06,
+      0x05,
+      0x08,
+      0x07,
+      w & 0xff,
+      w >> 8,
+      0x0c,
+      0x0b,
+      // A tile after it, which a copy must not run into.
+      0x06,
+      0x02,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x08,
+      0x00,
+      0x08,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x89,
+    ]).buffer;
+  const records = decodeBatchFrame(frame(0x090a));
+  assert.deepEqual(records?.[0], {
+    kind: "copy",
+    sx: 0x0102,
+    sy: 0x0304,
+    x: 0x0506,
+    y: 0x0708,
+    w: 0x090a,
+    h: 0x0b0c,
+  });
+  assert.equal(records?.[1]?.kind, "tile");
+  assert.equal(decodeBatchFrame(frame(0)), null, "an empty rectangle");
+  const one = new Uint8Array(frame(0x090a).slice(0, 8 + 13));
+  one[2] = 0x01;
+  assert.equal(decodeBatchFrame(one.buffer)?.length, 1);
+  assert.equal(
+    decodeBatchFrame(one.slice(0, one.byteLength - 1).buffer),
+    null,
+    "cut short",
+  );
 });
 
 test("a video record's flags say a keyframe, and which strip of its picture it is", () => {

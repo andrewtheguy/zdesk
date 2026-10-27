@@ -112,6 +112,7 @@ fn check_tile_frame(frame: &[u8], coverage: &mut common::Coverage) {
             common::BatchRecord::Tile(tile) => coverage.add(&tile),
             common::BatchRecord::Video(_) => panic!("a plain target was sent a stream"),
             common::BatchRecord::Region(_) => panic!("a plain target was sent a region"),
+            common::BatchRecord::Copy(_) => panic!("a plain target was sent a copy"),
         }
     }
 }

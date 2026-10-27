@@ -1158,8 +1158,9 @@ still as a lossy WebP instead, never made exact. It is Motion, which this gatewa
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of five kinds: a PNG of it, a lossy WebP
-of it, a region stream's first frame, its next, or its end.
+Every rectangle of an update is one of six kinds: a PNG of it, a lossy WebP
+of it, a region stream's first frame, its next, its end, or a copy of what the
+page holds elsewhere, a scroll or a window moved.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
@@ -1183,8 +1184,9 @@ Nothing is coded here.
   resize, refused in one started with it. A desktop within it is what holds every
   region to it, so wlshare splits or drops none for its size.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
-  `pass_region_end`). A PNG or a WebP becomes a `TILE` record, painted as
-  `image/png` or `image/webp`, a region's frame a `REGION`
+  `pass_region_end`, `pass_copy`). A PNG or a WebP becomes a `TILE` record, painted as
+  `image/png` or `image/webp`, a copy a `COPY` record, its source held to the
+  desktop as its rectangle is, a region's frame a `REGION`
   record, behind a `regionFormat` for the first of its stream, whose
   configuration is `avc1.` and the profile, constraints and level its own
   sequence parameter set names (`src/h264.rs`); its end becomes a
@@ -2475,6 +2477,7 @@ GRAPHICS op 0x04: u32 len | message[len]
 STANDARD op 0x05: u16 x | u16 y | u16 w | u16 h | u32 len | body[len]
 TILE     op 0x06: u8 format | u16 x | u16 y | u16 w | u16 h | u32 len | image[len]
 REGION   op 0x07: u8 stream | u8 flags | u16 x | u16 y | u16 w | u16 h | u32 len | payload[len]
+COPY     op 0x08: u16 sx | u16 sy | u16 x | u16 y | u16 w | u16 h
 ```
 
 One frame carries every record ready at once, so a backlog does not cost one
@@ -2497,7 +2500,10 @@ rectangle and one with no payload. A `regionFormat` (`stream`, `decode`, `engine
 comes ahead of a stream's first unit and builds its decoder, the unit's decoded
 picture is drawn at its rectangle, cut to it, in its turn among the tiles, and a
 `regionEnd` (`stream`, `engine`) says the stream is over, its last picture staying
-until the tiles after it draw over it; a `tilesStart` ends every region
+until the tiles after it draw over it. A `COPY` record draws at its rectangle,
+in its turn, what the canvas holds at `(sx, sy)`, the same size, the canvas drawn
+onto itself, so the two may overlap; an empty rectangle is rejected. wlshare
+copies from no region while it streams and onto none. A `tilesStart` ends every region
 ([wlshare's tiles with motion, passed through](#wlshares-tiles-with-motion-passed-through)). A session's records are `VIDEO` where its picture is a
 passed stream. Where its target passes an RDP host's
 [graphics pipeline](#rdps-graphics-pipeline-passed-through), a `GRAPHICS` record

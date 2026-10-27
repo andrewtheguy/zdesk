@@ -400,6 +400,7 @@ pub enum ClientMsg {
 /// 0x05 STANDARD  u16 x | u16 y | u16 w | u16 h | u32 len | body[len]
 /// 0x06 TILE      u8 format | u16 x | u16 y | u16 w | u16 h | u32 len | image[len]
 /// 0x07 REGION    u8 stream | u8 flags | u16 x | u16 y | u16 w | u16 h | u32 len | payload[len]
+/// 0x08 COPY      u16 sx | u16 sy | u16 x | u16 y | u16 w | u16 h
 /// ```
 ///
 /// A `VIDEO` record's flags are `0x01` for a keyframe and, for a picture sent in strips, `0x02`
@@ -427,6 +428,10 @@ pub enum ClientMsg {
 /// [`batch::REGION_KEYFRAME`] and nothing else, and a receiver rejects any other bit,
 /// an empty rectangle and one with no payload.
 ///
+/// A `COPY` record draws at its rectangle what the canvas holds at `(sx, sy)`, the
+/// same size, as wlshare's tiles sent it — see [`CopyUnit`]. A receiver rejects an
+/// empty rectangle.
+///
 /// Receivers reject nonzero flags. The record count makes truncation detectable.
 pub mod batch {
     pub const FRAME_KIND: u8 = 0x02;
@@ -437,6 +442,7 @@ pub mod batch {
     pub const OP_STANDARD: u8 = 0x05;
     pub const OP_TILE: u8 = 0x06;
     pub const OP_REGION: u8 = 0x07;
+    pub const OP_COPY: u8 = 0x08;
 
     /// Bytes a `VIDEO` record costs besides its payload.
     pub const VIDEO_HEADER_LEN: usize = 10;
@@ -461,6 +467,9 @@ pub mod batch {
     pub const REGION_HEADER_LEN: usize = 15;
     /// A `REGION` record's flag: its stream's decoder can start here.
     pub const REGION_KEYFRAME: u8 = 0x01;
+
+    /// Bytes a `COPY` record costs, all of it.
+    pub const COPY_LEN: usize = 13;
 
     /// A `VIDEO` record's flag: a decoder that has seen nothing before this can start here.
     pub const VIDEO_KEYFRAME: u8 = 0x01;
@@ -1000,6 +1009,40 @@ impl RegionUnit {
     }
 }
 
+/// What the canvas holds elsewhere, drawn at a rectangle of wlshare's tiles
+/// ([`ServerMsg::TilesStart`] on a `wlshare` target that asks for them): a scroll, or
+/// a window moved, carried as a `COPY` record inside a [`batch`] frame, as wlshare
+/// sent it.
+///
+/// The contract every client implements:
+///
+/// - The `w`×`h` at `(sx, sy)` is drawn at `(x, y)` in its turn among the records
+///   around it, as the canvas holds it once every record before it is drawn. The two
+///   may overlap: the source is read whole before any of it is drawn, as a canvas
+///   drawn onto itself is.
+/// - wlshare reads no rectangle a moving region's stream is drawing, and draws on
+///   none, so the region's picture is never the source or the target of a copy while
+///   it streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyUnit {
+    pub sx: u16,
+    pub sy: u16,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
+impl CopyUnit {
+    /// Append this copy as a `COPY` record, [`batch::COPY_LEN`] bytes.
+    pub fn write_record(&self, out: &mut Vec<u8>) {
+        out.push(batch::OP_COPY);
+        for value in [self.sx, self.sy, self.x, self.y, self.w, self.h] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+}
+
 /// Largest cursor edge a client is asked to draw. Real pointers are 32x32 or
 /// 64x64; a shape past this is dropped rather than sent, because a CSS cursor
 /// that big is ignored by the browser and would leave no pointer at all.
@@ -1199,6 +1242,9 @@ pub enum ServerMsg {
     /// its [`ServerMsg::RegionFormat`] said. A binary
     /// record like [`ServerMsg::Video`], ordered the same way.
     Region(RegionUnit),
+    /// What the canvas holds elsewhere drawn at a rectangle of wlshare's tiles. A
+    /// binary record like [`ServerMsg::Video`], ordered the same way.
+    Copy(CopyUnit),
     /// Build the decoder for moving region `stream` of wlshare's tiles with this
     /// configuration: ahead of the stream's first [`ServerMsg::Region`], and of the
     /// first of a new stream on an id that was ended. `engine` is the engine that
@@ -1656,6 +1702,7 @@ impl ServerMsg {
                 | ServerMsg::Tile(_)
                 | ServerMsg::TilesStart { .. }
                 | ServerMsg::Region(_)
+                | ServerMsg::Copy(_)
                 | ServerMsg::RegionFormat { .. }
                 | ServerMsg::RegionEnd { .. }
                 | ServerMsg::VideoFormat { .. }
@@ -1684,6 +1731,7 @@ impl ServerMsg {
             | ServerMsg::Standard(_)
             | ServerMsg::Tile(_)
             | ServerMsg::Region(_)
+            | ServerMsg::Copy(_)
             | ServerMsg::Audio(_)
             | ServerMsg::AudioGap => {
                 return None;
@@ -2592,6 +2640,16 @@ mod tests {
         RegionUnit { keyframe: false, ..unit.clone() }.write_record(&mut delta);
         assert_eq!(delta[2], 0);
         assert!((ServerMsg::Region(unit)).text_frame().is_none(), "a region's unit has no standalone frame");
+    }
+
+    #[test]
+    fn copy_record_layout_is_op_le_source_and_rect() {
+        let unit = CopyUnit { sx: 0x0102, sy: 0x0304, x: 0x0506, y: 0x0708, w: 0x090A, h: 0x0B0C };
+        let mut out = Vec::new();
+        unit.write_record(&mut out);
+        assert_eq!(out.len(), batch::COPY_LEN);
+        assert_eq!(out, [batch::OP_COPY, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0A, 0x09, 0x0C, 0x0B]);
+        assert!(ServerMsg::Copy(unit).is_display() && ServerMsg::Copy(unit).text_frame().is_none(), "a copy is a display's record and has no standalone frame");
     }
 
     /// A region's format and end name their stream and are stamped with their engine,
