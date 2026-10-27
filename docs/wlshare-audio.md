@@ -127,6 +127,10 @@ announces late is still taken.
   ([Audio frames](architecture.md#audio-frames)). A new listener's walk starts
   from the ceiling. Silence is not shed, since a passed stream has no samples
   here to tell it by.
+- While the walk is at 64 kbit/s or under, the units are held until a frame to
+  the browser carries 60 ms of them, three, rather than sent as each arrives:
+  a frame's WebSocket and TLS framing is about 30 bytes, half again a unit at
+  the floor ([Audio frames](architecture.md#audio-frames)).
 - A listener that falls behind the queue loses its oldest units, as one of PCM
   does, but these were coded: the pump sends a gap frame
   ([Audio frames](architecture.md#audio-frames)) ahead of the next batch, and

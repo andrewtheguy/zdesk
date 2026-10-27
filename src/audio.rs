@@ -46,6 +46,31 @@ use crate::opus_stream::{OpusStream, OPUS_CODEC};
 /// retained interval from the same fixed depth.
 pub const AUDIO_QUEUE_DEPTH: usize = 16;
 
+/// The rate, in bits per second, at or under which a passed stream's units are
+/// held for a batch of [`BATCH_HOLD`] rather than sent as each arrives.
+///
+/// Every batch is a WebSocket message of its own in a TLS record of its own,
+/// about 30 bytes of framing: nothing beside a unit of 20 ms at the ceiling,
+/// but half again a 60-byte unit at 24 kbit/s, so wlshare's sound sent a unit
+/// a message cost the link 36 kbit/s at that floor where an RDP host's, nine
+/// packets a message, cost 25. On sound-opus's simulation of this path (its
+/// `docs/walk.md`), holding units to 60 ms while the walk is at 64 kbit/s or
+/// under has wlshare's sound lose 7 to 9 s of a minute on a link carrying
+/// 28 kbit/s of it rather than 13 to 18, as an RDP host's does, and changes nothing
+/// above it; 48 kbit/s measured the same and 96 began to hold where a link
+/// had merely narrowed. The rate is the walk's, not the units' sizes: held
+/// until they came to so many bytes, a paused desktop's few-byte units of
+/// silence would be held at every rate, and the browser, which plays from
+/// when sound arrives, would keep that delay.
+const BATCH_BELOW_BPS: i32 = 64_000;
+
+/// How much of a passed stream's sound a batch holds while the walk is at
+/// [`BATCH_BELOW_BPS`] or under, and the longest the first unit of it waits:
+/// three units of 20 ms. Under the floor and just over it, 40 ms cut what
+/// wlshare lost by 21% for 48 ms more delay, 100 ms by 39% for 162; this by
+/// 30% for 77.
+const BATCH_HOLD: Duration = Duration::from_millis(60);
+
 /// Linear PCM parameters: the only kind of audio this path carries.
 ///
 /// PCM because it is the one [RDPSND audio format](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/30a6cc00-31c4-4e15-9aa4-95a5c5074697)
@@ -366,7 +391,9 @@ impl AudioListener {
     /// Everything the client has to be told about a passed stream, and a live-only
     /// stream of its units, each already a packet: no encoder and no silence to
     /// shed, since what arrives is what the remote coded. Every unit already
-    /// queued when one is read goes in the same batch.
+    /// queued when one is read goes in the same batch, and while the walk is
+    /// at [`BATCH_BELOW_BPS`] or under, the batch is held until it holds
+    /// [`BATCH_HOLD`] of sound or its first unit has waited that long.
     ///
     /// `plan` is a remote's that codes Opus at a rate it can be told
     /// (wlshare's), and `None` for a stream with no rate to move. A plan gets
@@ -381,30 +408,39 @@ impl AudioListener {
     pub fn into_passed(self, format: PassedFormat, plan: Option<AudioPlan>) -> EncodedAudio<impl Stream<Item = Vec<Bytes>>> {
         let signals = plan.map(|plan| Arc::new(AudioSignals::new(plan.bitrate_bps)));
         let gap = Arc::new(AtomicBool::new(false));
+        let unit_length = Duration::from_micros(u64::from(format.packet_frames) * 1_000_000 / u64::from(format.sample_rate));
         // The flag, and whether units were lost after the batch last yielded,
-        // which is a gap before the next one rather than before that one.
-        let state = (self.waves, Arc::clone(&gap), false);
-        let stream = futures_util::stream::unfold(state, |(mut units, gap, mut lost)| async move {
+        // which is a gap before the next one rather than before that one; and
+        // the walk, whose rate says whether a batch is held.
+        let state = (self.waves, Arc::clone(&gap), false, signals.clone());
+        let stream = futures_util::stream::unfold(state, move |(mut units, gap, lost, signals)| async move {
             if lost {
                 gap.store(true, Ordering::Relaxed);
-                lost = false;
             }
             loop {
                 match units.recv().await {
                     Ok(unit) => {
                         let mut batch = vec![unit];
-                        loop {
-                            match units.try_recv() {
-                                Ok(unit) => batch.push(unit),
-                                Err(broadcast::error::TryRecvError::Lagged(dropped)) => {
-                                    debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
-                                    lost = true;
-                                    break;
+                        let mut lost = queued(&mut units, &mut batch);
+                        if signals.as_ref().is_some_and(|signals| signals.desired_bps() <= BATCH_BELOW_BPS) {
+                            let until = tokio::time::Instant::now() + BATCH_HOLD;
+                            while !lost && unit_length * (batch.len() as u32) < BATCH_HOLD {
+                                match tokio::time::timeout_at(until, units.recv()).await {
+                                    Ok(Ok(unit)) => {
+                                        batch.push(unit);
+                                        lost = queued(&mut units, &mut batch);
+                                    }
+                                    Ok(Err(broadcast::error::RecvError::Lagged(dropped))) => {
+                                        debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
+                                        lost = true;
+                                    }
+                                    // Held long enough, or the stream is over:
+                                    // what is held goes, and the next read ends it.
+                                    Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => break,
                                 }
-                                Err(_) => break,
                             }
                         }
-                        return Some((batch, (units, gap, lost)));
+                        return Some((batch, (units, gap, lost, signals)));
                     }
                     // As for PCM, skipping forward is the point; unlike PCM,
                     // what was skipped was coded, and the client is told.
@@ -426,6 +462,21 @@ impl AudioListener {
             signals,
             gap,
             packets: stream,
+        }
+    }
+}
+
+/// Every unit already queued, onto `batch`: `true` if the queue lagged, the
+/// units it dropped coming after the batch.
+fn queued(units: &mut broadcast::Receiver<Bytes>, batch: &mut Vec<Bytes>) -> bool {
+    loop {
+        match units.try_recv() {
+            Ok(unit) => batch.push(unit),
+            Err(broadcast::error::TryRecvError::Lagged(dropped)) => {
+                debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
+                return true;
+            }
+            Err(_) => return false,
         }
     }
 }
@@ -893,6 +944,47 @@ mod tests {
         bridge.ask_rate(lower);
         assert!(asked.has_changed().unwrap());
         assert_eq!(*asked.borrow_and_update(), Some(lower));
+    }
+
+    /// While the walk is at [`BATCH_BELOW_BPS`] or under, a passed stream's
+    /// units go in batches of [`BATCH_HOLD`]: what is queued at once, units
+    /// arriving within the hold as they come, and what arrived by its end;
+    /// over it, each as it comes, as a stream with no walk always is.
+    #[tokio::test(start_paused = true)]
+    async fn a_passed_stream_batches_its_units_while_the_walk_is_low() {
+        let bridge = Arc::new(AudioBridge::new());
+        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
+        let signals = passed.signals.clone().expect("a plan walks");
+        let mut stream = Box::pin(passed.packets);
+        let unit = |n: u8| Bytes::from(vec![n]);
+
+        bridge.unit(vec![1]);
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(1)], "at the ceiling, as it comes");
+
+        signals.set_desired_bps(BATCH_BELOW_BPS);
+        for n in 2..5 {
+            bridge.unit(vec![n]);
+        }
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(2), unit(3), unit(4)], "a hold's worth queued goes at once");
+        assert_eq!(start.elapsed(), Duration::ZERO);
+
+        let later = Arc::clone(&bridge);
+        tokio::spawn(async move {
+            for n in 5..7 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                later.unit(vec![n]);
+            }
+        });
+        bridge.unit(vec![4]);
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(4), unit(5), unit(6)], "units arriving in the hold join it");
+        assert_eq!(start.elapsed(), Duration::from_millis(40));
+
+        bridge.unit(vec![7]);
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(7)], "what arrived by the hold's end goes");
+        assert_eq!(start.elapsed(), BATCH_HOLD);
     }
 
     /// A passed stream that fell behind the queue says so: the units it lost

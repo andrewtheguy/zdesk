@@ -2599,6 +2599,13 @@ u8 kind = 0x03 | u8 flags | u16 packet count
 repeated: u16 packet length | packet bytes
 ```
 
+A frame is what the pump had when it sent: an RDP host's wave buffer, nine or
+ten packets, or a passed stream's units already queued. Those a passed stream
+whose rate walks are held, while the walk is at 64 kbit/s or under, until a
+frame carries 60 ms of them: a frame costs about 30 bytes of WebSocket and TLS
+framing, nothing beside a unit at the ceiling and half again one at the floor
+(`BATCH_BELOW_BPS` in `src/audio.rs`).
+
 The one flag is bit 0, a gap, on a frame of no packets. The gateway sends it
 when a listener fell behind a passed stream and units the remote had coded were
 dropped: the next packet does not follow the last one sent, so the player resets
