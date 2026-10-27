@@ -91,6 +91,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use crate::{
+    audio::AudioLink,
     camera::{CameraFormat, CameraSignal},
     config::Decoders,
     feedback::LinkFeedback,
@@ -882,11 +883,14 @@ pub async fn audio_handler(
     })
 }
 
-/// The audio socket: one task, because there is nothing inbound to do.
+/// The audio socket: a format and its packets out, and nothing in but pongs and
+/// the browser's close.
 ///
-/// It still reads `ws_rx`, because that is the only way pongs and the browser's close
-/// frame arrive, but it acts on neither beyond keeping the heartbeat alive and noticing
-/// the end. Everything else is a one-way stream of the format and its packets.
+/// Two tasks, because the pongs are the walk's signal ([`AudioLink`]): the
+/// writer ([`audio_outbound`]) writes a ping ahead of a batch when the walk
+/// wants one, and this one reads the pongs as they come and hears a ping still
+/// out when it is overdue — while a write is blocked too, which is when the
+/// link is furthest behind. It also keeps the heartbeat, and notices the end.
 async fn audio(
     socket: WebSocket,
     sessions: Arc<SessionManager>,
@@ -903,70 +907,49 @@ async fn audio(
 
     info!("ws: an audio socket attached");
 
-    let (mut ws_tx, mut ws_rx) = metered(socket, Arc::clone(&sessions), throughput, Socket::Audio);
-    let (audio_id, mut packets, mut evicted) =
-        (attachment.id, attachment.packets, attachment.evicted);
+    let (ws_tx, mut ws_rx) = metered(socket, Arc::clone(&sessions), throughput, Socket::Audio);
+    let (audio_id, link) = (attachment.id, attachment.link);
     // The same encoder the session socket uses, so the two cannot disagree about a
     // frame layout, and so `Totals` keeps reporting audio bytes where the field
     // measurement already reads them. Its batching simply never sees a unit.
-    let mut wire = Wire::default();
-    let mut heartbeat = interval(heartbeat_timings.interval);
-    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let wire = Arc::new(Mutex::new(Wire::default()));
+    let mut outbound = tokio::spawn(audio_outbound(
+        ws_tx,
+        attachment.packets,
+        attachment.evicted,
+        Arc::clone(&link),
+        Arc::clone(&wire),
+        heartbeat_timings.interval,
+    ));
+    let mut heartbeat_check = interval(heartbeat_timings.interval);
+    heartbeat_check.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut last_heartbeat = Instant::now();
 
     loop {
+        let overdue = link.next_tick().map(Instant::from_std);
         tokio::select! {
-            // Biased, and eviction first: a takeover has to stop this browser hearing
-            // the session *now*, not after however much sound is still queued for it.
-            biased;
-            _ = &mut evicted => {
-                info!("ws: audio socket evicted");
-                let _ = ws_tx
-                    .send(Message::Close(Some(CloseFrame {
-                        code: CLOSE_EVICTED,
-                        reason: "session taken over".into(),
-                    })))
-                    .await;
-                break;
-            }
-            msg = packets.recv() => {
-                // `None` cannot happen while the slot holds the sender, so it means the
-                // session dropped this socket without evicting it — end quietly.
-                let Some(msg) = msg else { break };
-                // No run collection: every audio message is its own frame regardless,
-                // so batching would only add latency to the one thing that cannot
-                // absorb any.
-                let frames = match wire.encode(vec![msg]) {
-                    Ok(frames) => frames,
-                    Err(e) => {
-                        warn!("ws: audio wire failed: {e}");
-                        break;
-                    }
-                };
-                for frame in frames {
-                    let frame = match frame {
-                        WireFrame::Audio(bytes) => Message::Binary(bytes.into()),
-                        WireFrame::Text(json) => Message::Text(json.into()),
-                        WireFrame::Batch { .. } => {
-                            warn!("ws: screen batch reached the audio socket");
-                            continue;
-                        }
-                    };
-                    if ws_tx.send(frame).await.is_err() {
-                        return finish(&sessions, audio_id, &wire);
-                    }
+            res = &mut outbound => {
+                if let Err(e) = res {
+                    warn!("ws: audio outbound task failed: {e}");
                 }
+                break;
             }
             frame = ws_rx.next() => {
                 match frame {
-                    Some(Ok(Message::Pong(_))) => last_heartbeat = Instant::now(),
+                    Some(Ok(Message::Pong(payload))) => {
+                        last_heartbeat = Instant::now();
+                        link.pong(&payload, last_heartbeat.into_std());
+                    }
                     Some(Ok(_)) => {}
                     // A close frame or a dead socket. Nothing here is inbound, so
                     // anything else the browser sends is ignored rather than refused.
                     Some(Err(_)) | None => break,
                 }
             }
-            _ = heartbeat.tick() => {
+            () = async { tokio::time::sleep_until(overdue.unwrap()).await }, if overdue.is_some() => {
+                link.tick(Instant::now().into_std());
+            }
+            _ = heartbeat_check.tick() => {
                 // A browser that vanished without a FIN would otherwise leave its slot
                 // registered, and the next `connect` would arm a pump into a socket
                 // nobody reads — the exact stall this endpoint exists to remove, for a
@@ -982,18 +965,98 @@ async fn audio(
                     );
                     break;
                 }
+            }
+        }
+    }
+    // A writer still blocked on a socket this end is done with has nothing left
+    // to deliver.
+    outbound.abort();
+    sessions.detach_audio(audio_id);
+    info!("ws: audio totals: {}", wire.lock().unwrap().totals);
+}
+
+/// The audio socket's outbound half: the packets the session sends it, each
+/// batch behind a ping when the walk wants one, a ping at once when the walk
+/// skips with no batch to write one ahead of, and the heartbeat's. Ends when
+/// the packets do, when the browser is gone, or on an eviction, which is owed
+/// a close frame.
+async fn audio_outbound<S>(
+    mut ws_tx: S,
+    mut packets: mpsc::Receiver<ServerMsg>,
+    mut evicted: tokio::sync::oneshot::Receiver<()>,
+    link: Arc<AudioLink>,
+    wire: Arc<Mutex<Wire>>,
+    heartbeat_interval: Duration,
+) where
+    S: futures_util::Sink<Message> + Unpin,
+{
+    let mut heartbeat = interval(heartbeat_interval);
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            // Biased, and eviction first: a takeover has to stop this browser hearing
+            // the session *now*, not after however much sound is still queued for it.
+            biased;
+            _ = &mut evicted => {
+                info!("ws: audio socket evicted");
+                let _ = ws_tx
+                    .send(Message::Close(Some(CloseFrame {
+                        code: CLOSE_EVICTED,
+                        reason: "session taken over".into(),
+                    })))
+                    .await;
+                return;
+            }
+            msg = packets.recv() => {
+                // `None` cannot happen while the slot holds the sender, so it means the
+                // session dropped this socket without evicting it — end quietly.
+                let Some(msg) = msg else { return };
+                // Ahead of the batch, so its pong is back once everything written
+                // before it has crossed: how long the newest sound waits.
+                let ping = if matches!(msg, ServerMsg::Audio(_)) { link.ping(Instant::now().into_std()) } else { None };
+                // No run collection: every audio message is its own frame regardless,
+                // so batching would only add latency to the one thing that cannot
+                // absorb any.
+                let frames = match wire.lock().unwrap().encode(vec![msg]) {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        warn!("ws: audio wire failed: {e}");
+                        return;
+                    }
+                };
+                if let Some(payload) = ping
+                    && ws_tx.send(Message::Ping(payload.to_vec().into())).await.is_err()
+                {
+                    return;
+                }
+                for frame in frames {
+                    let frame = match frame {
+                        WireFrame::Audio(bytes) => Message::Binary(bytes.into()),
+                        WireFrame::Text(json) => Message::Text(json.into()),
+                        WireFrame::Batch { .. } => {
+                            warn!("ws: screen batch reached the audio socket");
+                            continue;
+                        }
+                    };
+                    if ws_tx.send(frame).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            () = link.wanted() => {
+                if let Some(payload) = link.ping(Instant::now().into_std())
+                    && ws_tx.send(Message::Ping(payload.to_vec().into())).await.is_err()
+                {
+                    return;
+                }
+            }
+            _ = heartbeat.tick() => {
                 if ws_tx.send(Message::Ping(Vec::new().into())).await.is_err() {
-                    break;
+                    return;
                 }
             }
         }
     }
-    finish(&sessions, audio_id, &wire);
-}
-
-fn finish(sessions: &Arc<SessionManager>, audio_id: u64, wire: &Wire) {
-    sessions.detach_audio(audio_id);
-    info!("ws: audio totals: {}", wire.totals);
 }
 
 pub async fn camera_handler(
@@ -2779,6 +2842,75 @@ mod tests {
         assert!(
             !input_rx.is_closed(),
             "an audio socket timing out must not take the desktop with it"
+        );
+
+        drop(client);
+        server.abort();
+    }
+
+    /// A batch of sound reaches the browser behind a ping of the walk's own, which
+    /// carries its number where the heartbeat's carry nothing, so its pong is the
+    /// walk's to hear.
+    #[tokio::test]
+    async fn a_batch_of_sound_is_written_behind_the_walks_ping() {
+        let (engine_tx, mut engine_rx) = mpsc::unbounded_channel();
+        let sessions = Arc::new(SessionManager::with_test_spawner(
+            vec![fake_target()],
+            move |_target, _choices, input_rx, frame_tx, audio, _camera| {
+                engine_tx.send((input_rx, frame_tx, audio)).unwrap();
+            },
+        ));
+        let token = sessions.claim(false, None, "login").unwrap();
+        let mut att = sessions.attach(&token, None, Decoders::ALL).await.unwrap();
+        assert!(matches!(
+            att.events.recv().await,
+            Some(AttachEvent::Msg(ServerMsg::Picker { .. }))
+        ));
+        let sound = crate::config::Choices { audio: crate::config::Sound::Opus, ..Default::default() };
+        sessions.connect(att.id, "fake", None, sound).await.unwrap();
+        let (_input_rx, _frame_tx, bridge) = engine_rx.recv().await.unwrap();
+        let bridge = bridge.expect("a session with sound is given a bridge");
+
+        let served = Arc::clone(&sessions);
+        let app = Router::new().route(
+            "/ws/audio",
+            any(move |ws: WebSocketUpgrade| {
+                let sessions = Arc::clone(&served);
+                let token = token.clone();
+                async move {
+                    ws.on_upgrade(move |socket| audio(socket, sessions, Some(token), HEARTBEAT_TIMINGS, Arc::default()))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/audio"))
+            .await
+            .unwrap();
+        expect_listeners(&bridge, 1).await;
+        // A wave buffer as an RDP host hands one over: about 186 ms of sound,
+        // nine packets.
+        bridge.wave(vec![0x10; 8192 * 4]);
+        let mut before = None;
+        let sound = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match client.next().await.unwrap().unwrap() {
+                    ClientFrame::Binary(sound) => return sound,
+                    ClientFrame::Ping(payload) if payload.is_empty() => {}
+                    frame => before = Some(frame),
+                }
+            }
+        })
+        .await
+        .expect("a batch of sound");
+        assert!(!sound.is_empty());
+        assert!(
+            matches!(&before, Some(ClientFrame::Ping(payload)) if payload.len() == 8),
+            "written behind the walk's ping, not {before:?}"
         );
 
         drop(client);

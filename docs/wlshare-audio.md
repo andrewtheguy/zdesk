@@ -121,12 +121,13 @@ announces late is still taken.
 - The Opus bitrate is the gateway's one rate, 192 kbit/s, named to wlshare with
   the enable, and the walk that would move an encoder
   here — sound-opus's, the crate wlshare codes with too — moves wlshare's
-  instead. The pump that feeds `/ws/audio` measures how
-  long its sends block, as for any target, and each rate the walk arrives at
+  instead. The walk hears how late
+  `/ws/audio`'s pings come back, as for any target, and each rate it arrives at
   goes through the bridge to the VNC engine, which sends it as a set-bitrate
   ([Audio frames](architecture.md#audio-frames)). A new listener's walk starts
   from the ceiling. Silence is not shed, since a passed stream has no samples
-  here to tell it by.
+  here to tell it by; while the walk skips, units are dropped as they come and
+  the pump sends a gap frame before the next.
 - While the walk is at 64 kbit/s or under, the units are held until a frame to
   the browser carries 60 ms of them, three, rather than sent as each arrives:
   a frame's WebSocket and TLS framing is about 30 bytes, half again a unit at

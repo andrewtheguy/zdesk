@@ -161,18 +161,19 @@ impl Protocol {
 /// What an Opus encoder is built from. In bits per second because that is
 /// libopus's unit.
 ///
-/// Every Opus stream walks its bitrate on the audio socket's own backpressure;
-/// there is no key to hold it. A send that blocks means the previous packets
-/// are still unwritten, and sustained blocking walks the bitrate down toward
-/// the floor; a clear stretch walks it back up to [`Self::bitrate_bps`]. The
-/// walk is sound-opus's (`sound_opus::walk`), shared with wlshare, and so is its
-/// floor, fixed there where a lower rate stops being the same sound. While
-/// behind, wave buffers that are pure silence are shed instead of queued —
-/// silence is the one content whose loss is free, and dropping it is how the
-/// client catches up without a trimmed or resampled note anywhere (see
+/// Every Opus stream walks its bitrate on the audio socket's lag, how late a
+/// ping written ahead of a batch comes back; there is no key to hold it. A
+/// link that lags walks the bitrate down toward the floor; a clear stretch
+/// walks it back up to [`Self::bitrate_bps`]. The walk is sound-opus's
+/// (`sound_opus::walk`), shared with wlshare, and so is its floor, fixed there
+/// where a lower rate stops being the same sound. While behind, wave buffers
+/// that are pure silence are shed instead of queued — silence is the one
+/// content whose loss is free, and dropping it is how the client catches up
+/// without a trimmed or resampled note anywhere — and a lag too long to drain
+/// that way is skipped, whatever the sound, until it has drained (see
 /// [`crate::audio`]). On a `wlshare` target the walk is the same and the
 /// encoder is wlshare's, told each rate the walk arrives at; its packets are
-/// passed, so no silence is shed.
+/// passed, so no silence is shed, and skipped units leave a gap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioPlan {
     /// The Opus target bitrate — the average the encoder holds to, and the
