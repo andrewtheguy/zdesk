@@ -84,12 +84,12 @@ workstation = "$ZD;1;AES-256-GCM;…"
 
 值也可以留空，`workstation = ""`，作为尚未设置的密码的占位符：在粘贴真实的值之前，目标使用空密码应答；如果 `[passwords]` 中的值全是这样的占位符，配置就不需要 `[master]` 或主密码。
 
-其他所有值都用 AES-256-GCM 加密，密钥由你的**主密码**和配置自己的 salt 派生。提供服务的网关从 `[server].master_password_file` 指定的文件读取主密码：可以是容器的 secret、systemd 的 credential，或只有网关账户能读的文件。该文件只包含主密码；末尾的换行会被忽略。`password master create` 写入该文件，只有其用户能读取；文件已存在时拒绝替换，除非给出 `--force`，替换后用旧主密码加密的每个值都无法再打开。`password master show` 输出已有主密码下的 `[master]` 块。TUI 把自己的主密码保存在钥匙串中（macOS 钥匙串、Windows 凭据管理器，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），首次需要时生成，因此你从不需要输入。除 TUI 外没有任何东西读取钥匙串。
+其他所有值都用 AES-256-GCM 加密，密钥由你的**主密码**和配置自己的 salt 派生。提供服务的网关从 `[server].master_password_file` 指定的文件读取主密码：可以是容器的 secret、systemd 的 credential，或只有网关账户能读的文件。该文件只包含主密码；末尾的换行会被忽略。`password master create` 写入该文件，只有其用户能读取；文件已存在时拒绝替换，除非给出 `--force`，替换后用旧主密码加密的每个值都无法再打开。`password master show` 输出已有主密码下的 `[master]` 块。TUI 把自己的主密码保存在钥匙串中（macOS 钥匙串、Windows 凭据管理器，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），在 TUI 启动时读取一次，没有时在那时生成，因此你从不需要输入。除 TUI 外没有任何东西读取钥匙串。
 
 | 启动方式 | 主密码来源 |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`；目标引用加密值而未设置它时拒绝启动，从不询问 |
-| `zdesk tui` | 钥匙串；没有时生成并保存在那里；钥匙串无响应时拒绝启动，从不询问 |
+| `zdesk tui` | 钥匙串，在 TUI 启动时读取；没有时生成并保存在那里；钥匙串无响应时拒绝启动，从不询问 |
 | `zdesk password` | `[server].master_password_file`，否则询问；`password master create` 询问两次并写入该文件 |
 
 本地实例没有 `[server]` 块，因此其主密码总是来自钥匙串。
@@ -230,12 +230,16 @@ zdesk tui
 | `o` | 在浏览器中打开运行中的实例 |
 | Enter | 显示其设置 |
 | `R` | 重新扫描实例目录 |
+| `P` | 重新生成登录 PIN，并重新开始计时 |
+| `?` | 列出所有按键 |
 | `q`、Esc | 停止所有实例并退出 |
 
 实例根目录下的每个直接子目录就是一个实例：Linux 上为 `~/.local/share/zdesk/instances`（或 `$XDG_DATA_HOME/zdesk/instances`），macOS 上为 `~/Library/Application Support/zdesk/instances`，Windows 上为 `%LOCALAPPDATA%\zdesk\instances`；`--instances-dir` 可以指定其他目录。根目录只有你的账户能访问，因为配置中包含凭据。实例的配置与网关的配置有相同的 `[branding]` 和 `[[targets]]`，但没有 `[server]` 块：TUI 占用端口，并把每个子域名代理到该实例私有的 Unix 套接字或命名管道。
 
 引用了加密密码的配置需要主密码才能启动（见[目标密码](#目标密码)）。TUI 从钥匙串中获取主密码，首次时在那里生成，然后只把每个 worker 自己配置的密钥交给它。从另一个账户的钥匙串复制来的实例配置在本账户下打不开：删除其 `[master]` 和 `[passwords]`，再用 `p` 重新设置每个密码。
 
-私有文件和 worker 端点可以防止其他本地用户拿到凭据，但共享的回环监听器不验证操作系统用户：机器上的任何账户都可以打开首页并操作运行中的实例。不要在与不应访问这些桌面的用户共享的机器上运行 `zdesk tui`。
+浏览器用 PIN 登录。TUI 实例列表上方的访问面板显示一个六位数 PIN 及其过期的时刻，即生成后十分钟。没有登录的浏览器会看到输入 PIN 的表单，首页和每个实例上都是如此。`P` 重新生成 PIN 并重新开始计时。输错五次后 PIN 被撤销，在用 `P` 生成新的 PIN 之前，所有输入都会被拒绝。PIN 只保护新的登录。已经登录的浏览器在 PIN 过期或重新生成后、在其实例重启后都保持登录。只有退出 TUI 才会让它退出登录。在首页的登录通过页面上的链接到达每个实例，`o` 也经由首页打开实例。
+
+PIN 能挡住看不到 TUI 终端的人，但有一个缺口：cookie 不区分端口，机器上的其他账户如果在另一个端口以 `zdesk.localhost` 提供页面，并让你打开指向它的链接，就能拿到已登录浏览器的登录。不要在与不应访问这些桌面的用户共享的机器上运行 `zdesk tui`。私有文件和 worker 端点可以防止其他本地用户拿到凭据。浏览器从不持有 worker 的令牌：TUI 代替已登录的浏览器出示它。浏览器进入网关只有两种方式：这个 PIN，或独立运行的网关的用户名和密码。
 
 见 [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)。

@@ -8,10 +8,10 @@
 //! and there is no login to offer — see [`crate::config::Audience::Embedded`].
 //!
 //! The SPA it serves is the same browser client as `zdesk serve`. The token below
-//! stands in for the login: the master listener seeds it with an `HttpOnly` response
-//! cookie before proxying the browser to the child, so the page authenticates itself
-//! the way any logged-in browser does and the manager needs no session protocol of
-//! its own.
+//! is the master's credential to this process, never a browser's: a browser logs in
+//! to the master with the TUI's PIN ([`access`]), and the master adds the token to
+//! each request it forwards here, in the `zdesk_session` cookie the gateway reads
+//! on any request, so the manager needs no session protocol of its own.
 //!
 //! Two pipes carry the whole arrangement, in opposite directions, and neither one
 //! carries the other's job:
@@ -46,6 +46,8 @@ use crate::config::{Audience, ConfigFile};
 use crate::vault::Key;
 
 #[doc(hidden)]
+pub mod access;
+#[doc(hidden)]
 pub mod manager;
 #[cfg(windows)]
 mod owner_only;
@@ -65,8 +67,8 @@ pub struct Handshake {
     /// The private endpoint the control plane proxies to: the Unix socket's path,
     /// or the named pipe's name on Windows.
     pub endpoint: String,
-    /// The token the master listener seeds in the browser's `zdesk_session`
-    /// cookie, which then carries it to every request and `/ws` upgrade.
+    /// The token the master listener adds, as the `zdesk_session` cookie, to
+    /// every request and `/ws` upgrade it forwards for a logged-in browser.
     pub token: String,
 }
 

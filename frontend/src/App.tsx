@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { standAlone } from "./displayTab.ts";
 import { gatewayFetch, gatewayUrl } from "./gateway.ts";
 import { gatewayConfig } from "./gatewayConfig.ts";
+import Instances from "./Instances.tsx";
 import Login from "./Login.tsx";
+import PinLogin from "./PinLogin.tsx";
 import RemoteDesktop from "./RemoteDesktop.tsx";
 import { MUTED_KEY, SESSION_KEY } from "./useRemoteDesktop.ts";
 
@@ -24,13 +26,42 @@ if (TAB_DISPLAY !== null) {
   standAlone([SESSION_KEY, MUTED_KEY]);
 }
 
-// Gate the desktop behind the web login. The desktop is only mounted
-// once authenticated — mounting it claims the session slot, which must not
-// happen before the login succeeds.
-type AuthState = "checking" | "unauthenticated" | "authenticated";
+// Gate the desktop behind the login. The desktop is only mounted once
+// authenticated — mounting it claims the session slot, which must not happen
+// before the login succeeds.
+//
+// Which login is the gateway's to say, on /api/auth/status: a served gateway's
+// username and password, or, behind the TUI's control plane, the PIN its access
+// panel shows. The control plane's own origin is its landing page, the list of
+// its instances, rather than a desktop.
+type Gate =
+  | { kind: "checking" }
+  | { kind: "password" }
+  | { kind: "pin"; problem: string | null }
+  | { kind: "instances" }
+  | { kind: "desktop" };
+
+type AuthStatus = {
+  authenticated: boolean;
+  /** "pin" behind the TUI's control plane; absent on a served gateway. */
+  login?: "pin";
+  /** Whether this is the control plane's own origin. */
+  landing?: boolean;
+  /** Why no PIN can log anyone in right now, if so. */
+  problem?: string | null;
+};
+
+function gateOf(status: AuthStatus): Gate {
+  if (status.authenticated) {
+    return status.landing ? { kind: "instances" } : { kind: "desktop" };
+  }
+  return status.login === "pin"
+    ? { kind: "pin", problem: status.problem ?? null }
+    : { kind: "password" };
+}
 
 export default function App() {
-  const [authState, setAuthState] = useState<AuthState>("checking");
+  const [gate, setGate] = useState<Gate>({ kind: "checking" });
   // Deployment branding (login screen, interstitials, tab title). Defaults to
   // "zDesk" and stays there until GET /api/config answers — a public route,
   // so it resolves before login.
@@ -61,53 +92,48 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  // Asked on load, and again whenever the answer may have changed: after a
+  // logout, and on a 401 mid-session, when a restart wiped the in-memory
+  // logins — which, behind the TUI, is the control plane asking for the PIN
+  // where the instance's gateway had been answering.
+  const check = useCallback(() => {
+    setGate({ kind: "checking" });
     gatewayFetch("/api/auth/status")
-      .then((res) => res.json() as Promise<{ authenticated: boolean }>)
-      .then(({ authenticated }) => {
-        if (!cancelled) {
-          setAuthState(authenticated ? "authenticated" : "unauthenticated");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAuthState("unauthenticated");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((res) => res.json() as Promise<AuthStatus>)
+      .then((status) => setGate(gateOf(status)))
+      .catch(() => setGate({ kind: "password" }));
   }, []);
+
+  useEffect(check, [check]);
 
   // Log out: end this browser's login. The slot token goes too, so
   // the next login claims fresh instead of silently reattaching.
   const logout = useCallback(() => {
     sessionStorage.removeItem(SESSION_KEY);
-    void gatewayFetch("/api/auth/logout", { method: "POST" }).finally(() =>
-      setAuthState("unauthenticated"),
-    );
-  }, []);
+    void gatewayFetch("/api/auth/logout", { method: "POST" }).finally(check);
+  }, [check]);
 
-  // The server answered 401 mid-session (expired session or a restart wiped
-  // the in-memory store): back to the login screen.
-  const unauthorized = useCallback(() => setAuthState("unauthenticated"), []);
-
-  if (authState !== "authenticated") {
-    return (
-      <Login
-        checking={authState === "checking"}
-        branding={branding}
-        onLogin={() => setAuthState("authenticated")}
-      />
-    );
+  switch (gate.kind) {
+    case "checking":
+    case "password":
+      return (
+        <Login
+          checking={gate.kind === "checking"}
+          branding={branding}
+          onLogin={() => setGate({ kind: "desktop" })}
+        />
+      );
+    case "pin":
+      return <PinLogin branding={branding} problem={gate.problem} />;
+    case "instances":
+      return <Instances onUnauthorized={check} />;
   }
   return (
     <RemoteDesktop
       branding={branding}
       tabDisplay={TAB_DISPLAY}
       onLogout={logout}
-      onUnauthorized={unauthorized}
+      onUnauthorized={check}
     />
   );
 }

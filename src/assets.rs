@@ -71,10 +71,7 @@ pub fn serve(decoder: Option<&HevcDecoder>, request: &Request) -> Response {
             quoted(&file.sha256),
         )
     } else {
-        let file = match Frontend::get(path) {
-            Some(file) if !path.is_empty() => file,
-            _ => index(),
-        };
+        let file = bundle_file(path);
         let (content_type, etag) = (content_type(&file), etag(&file));
         (Body::from(file.data), content_type, etag)
     };
@@ -89,6 +86,43 @@ pub fn serve(decoder: Option<&HevcDecoder>, request: &Request) -> Response {
         (ISOLATED, [(header::CONTENT_TYPE, content_type), (header::ETAG, etag)], body).into_response()
     }
 }
+
+/// The bundle's file at `path`, without its leading `/`: the document for any
+/// path that is not a file, so the page's own routes resolve.
+fn bundle_file(path: &str) -> EmbeddedFile {
+    match Frontend::get(path) {
+        Some(file) if !path.is_empty() => file,
+        _ => index(),
+    }
+}
+
+/// A file of the bundle as the TUI's control plane serves it, to a browser that
+/// has not yet logged in to it: the same file, type and validator [`serve`]
+/// answers the same path with, for a router that writes its own responses.
+#[cfg(feature = "embedded-gateway")]
+pub struct Asset {
+    pub data: std::borrow::Cow<'static, [u8]>,
+    pub content_type: HeaderValue,
+    pub etag: HeaderValue,
+}
+
+/// The bundle's file for a request path, `/` and all.
+#[cfg(feature = "embedded-gateway")]
+pub fn asset(path: &str) -> Asset {
+    let file = bundle_file(path.trim_start_matches('/'));
+    Asset {
+        content_type: content_type(&file),
+        etag: etag(&file),
+        data: file.data,
+    }
+}
+
+/// The isolation headers, by name, for a router that writes its own responses.
+#[cfg(feature = "embedded-gateway")]
+pub const ISOLATION: [(&str, &str); 2] = [
+    ("Cross-Origin-Opener-Policy", "same-origin"),
+    ("Cross-Origin-Embedder-Policy", "require-corp"),
+];
 
 /// The headers that make the page cross-origin isolated, for its threads.
 const ISOLATED: [(header::HeaderName, HeaderValue); 2] = [

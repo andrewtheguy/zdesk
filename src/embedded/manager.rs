@@ -27,6 +27,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 
+use super::access::{Access, LOGIN_COOKIE_PREFIX, MAX_WRONG, PinState, pin_problem};
 use super::{Handshake, transport};
 use crate::config::{
     Audience, ConfigFile, DEFAULT_BRANDING, DEFAULT_SIZE, Protocol, TargetConfig,
@@ -107,9 +108,13 @@ pub fn default_instances_dir() -> anyhow::Result<PathBuf> {
 
 /// Run the terminal UI and its shared-port router until `q` or a shutdown signal.
 pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
+    let mocked = crate::keychain::mocked()?;
+    let mut master = Master::default();
+    let keychain = master.get().map(|_| ());
     let binary = std::env::current_exe().context("cannot locate the zdesk executable")?;
     let mut supervisor = Supervisor::open(options.instances_dir.clone(), binary).await?;
-    let router = SharedPort::bind(options.port, supervisor.routes()).await?;
+    let access = Access::open(options.port);
+    let router = SharedPort::bind(options.port, supervisor.routes(), access.clone()).await?;
 
     let mut terminal = TerminalSession::enter()?;
     let mut screen = Screen::default();
@@ -119,18 +124,21 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
     let mut view = View::List;
-    let mut master = Master::default();
-    let mut message = format!(
-        "control plane listening on http://{MASTER_HOST}:{}",
-        router.port()
-    );
+    let mut message = match keychain {
+        Err(error) => format!("{error:#}; an instance whose config names passwords cannot start until it answers"),
+        Ok(()) if mocked => format!(
+            "{}=mock: passwords set now open only until the TUI quits",
+            crate::keychain::MOCK_ENV
+        ),
+        Ok(()) => format!("control plane listening on http://{MASTER_HOST}:{}", router.port()),
+    };
 
     loop {
         let instances = supervisor.instances();
         selected = selected.min(instances.len().saturating_sub(1));
         let size = terminal::size().context("cannot read terminal size")?;
         screen.draw(
-            render(size, &options, router.port(), &instances, selected, &view, &message)?,
+            render(size, &options, &access.pin(), &instances, selected, &view, &message)?,
             &mut std::io::stdout().lock(),
         )?;
 
@@ -207,6 +215,13 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     Action::Up => selected = selected.saturating_sub(1),
                     Action::Down => {
                         selected = (selected + 1).min(instances.len().saturating_sub(1));
+                    }
+                    Action::NewPin => {
+                        access.draw();
+                        message = match access.pin() {
+                            PinState::Open { expires_at, .. } => format!("drew a new PIN; it expires at {expires_at}"),
+                            _ => "drew a new PIN".to_owned(),
+                        };
                     }
                     Action::Keys => {
                         view = View::Page {
@@ -292,7 +307,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     }
                     Action::Open => {
                         if let Some(instance) = instances.get(selected) {
-                            let url = instance_url(&instance.name, router.port());
+                            let url = open_url(&instance.name, router.port());
                             message = if instance.status != InstanceStatus::Running {
                                 format!("{} is {}; s starts it", instance.name, instance.status.label())
                             } else {
@@ -355,7 +370,10 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
 /// as Chrome's and Slack's Safe Storage keys are, so nobody types or knows it
 /// and every instance opens under the same one. Never asked for at the terminal,
 /// and never `[server].master_password_file`: an instance has no `[server]`
-/// block. Read from the keychain once per run.
+/// block. Read from the keychain once per run, when the TUI starts and before
+/// it takes the screen, so a keychain that asks the user with a system prompt
+/// asks then rather than at the first start of an instance; a read that failed
+/// is tried again by the next thing that needs it.
 #[derive(Default)]
 struct Master(Option<MasterPassword>);
 
@@ -383,28 +401,24 @@ impl Master {
     /// both find the keychain empty and each keep a master the other's save
     /// replaces. The keychain has no create-if-absent, so a file beside the
     /// account's default instances directory stands in, whichever directory
-    /// either was given. Under test the store is the process's own mock, and the
-    /// tests serialize themselves.
+    /// either was given. On the mock store, under test or `ZDESK_KEYCHAIN=mock`,
+    /// the store is the process's own and there is nothing to share.
     fn lock() -> anyhow::Result<Option<std::fs::File>> {
-        #[cfg(test)]
-        {
-            Ok(None)
+        if crate::keychain::mocked()? {
+            return Ok(None);
         }
-        #[cfg(not(test))]
-        {
-            let instances = default_instances_dir()?;
-            let root = instances.parent().context("the instances directory has no parent")?;
-            std::fs::create_dir_all(root).with_context(|| format!("cannot create {}", root.display()))?;
-            let path = root.join("master.lock");
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(&path)
-                .with_context(|| format!("cannot open {}", path.display()))?;
-            file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
-            Ok(Some(file))
-        }
+        let instances = default_instances_dir()?;
+        let root = instances.parent().context("the instances directory has no parent")?;
+        std::fs::create_dir_all(root).with_context(|| format!("cannot create {}", root.display()))?;
+        let path = root.join("master.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
+        Ok(Some(file))
     }
 
     /// The key a start of the instance whose config is at `path` hands its worker:
@@ -523,10 +537,17 @@ fn editor_command(editor: &str, path: &Path) -> Command {
     command
 }
 
-/// The instance's origin on the shared port. Its `/` seeds the login cookie, so
-/// a browser sent here lands in the SPA already signed in.
+/// The instance's origin on the shared port. A browser without a login there is
+/// asked for the PIN.
 fn instance_url(name: &str, port: u16) -> String {
     format!("http://{name}.{MASTER_HOST}:{port}")
+}
+
+/// What `o` opens: the landing origin's link to the instance, so one login on the
+/// landing origin reaches every instance, and a browser without one enters the PIN
+/// once there and is then sent on.
+fn open_url(name: &str, port: u16) -> String {
+    format!("http://{MASTER_HOST}:{port}{OPEN_PATH}{name}")
 }
 
 /// Hands `url` to the desktop's default browser without waiting for it: some
@@ -677,6 +698,7 @@ enum Action {
     New,
     StartAll,
     Rescan,
+    NewPin,
     Keys,
     Quit,
 }
@@ -816,6 +838,14 @@ const BINDINGS: &[Binding] = &[
         bar: false,
     },
     Binding {
+        action: Action::NewPin,
+        codes: &[KeyCode::Char('P')],
+        label: "new PIN",
+        about: "draw a new login PIN, its time started again; logged-in browsers stay in",
+        group: Group::ControlPlane,
+        bar: false,
+    },
+    Binding {
         action: Action::Keys,
         codes: &[KeyCode::Char('?')],
         label: "keys",
@@ -896,10 +926,24 @@ fn bar_width(bindings: &[&Binding]) -> usize {
     pairs + 2 * bindings.len().saturating_sub(1)
 }
 
-/// Who can reach a running instance through the shared port, for the access
-/// panel. Anyone on the machine can today; the PIN login of the roadmap's
-/// "A PIN as the TUI's login" is what this panel is for.
-const ACCESS_TODAY: &str = "no login — anyone on this machine can open a running instance";
+/// The access panel's line: the PIN a browser logs in with, or why none can.
+fn access_line(pin: &PinState) -> (String, Color) {
+    match pin {
+        PinState::Open {
+            digits,
+            expires_at,
+            minutes_left,
+        } => (
+            format!("PIN {digits} · expires {expires_at}, {minutes_left} min left · P draws a new one"),
+            Color::Green,
+        ),
+        PinState::Expired => ("PIN expired · P draws a new one".to_owned(), Color::Yellow),
+        PinState::Withdrawn => (
+            format!("PIN withdrawn after {MAX_WRONG} wrong entries · P draws a new one"),
+            Color::Red,
+        ),
+    }
+}
 
 /// The rows above the list: the title, the instances directory, a blank row,
 /// the access panel's three, a blank row and the column headings.
@@ -910,13 +954,14 @@ const LIST_BOTTOM: u16 = 4;
 fn render(
     size: (u16, u16),
     options: &TuiOptions,
-    port: u16,
+    pin: &PinState,
     instances: &[InstanceInfo],
     selected: usize,
     view: &View,
     message: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let (width, height) = size;
+    let port = options.port;
     let mut frame = Vec::new();
     queue!(frame, MoveTo(0, 0), Clear(ClearType::All))?;
     if let View::Page { title, lines, offset } = view {
@@ -939,7 +984,8 @@ fn render(
         Some(Color::DarkGrey),
         false,
     )?;
-    panel(&mut frame, 3, width, "access", ACCESS_TODAY, Color::Yellow)?;
+    let (access, color) = access_line(pin);
+    panel(&mut frame, 3, width, "access", &access, color)?;
     line(
         &mut frame,
         LIST_TOP - 1,
@@ -1868,7 +1914,7 @@ impl SharedPort {
     /// family, so a master left holding `[::1]:port` from an earlier run would keep
     /// answering and keep routing to *its* instance workers, and which one a page
     /// reached would be the resolver's choice.
-    pub async fn bind(port: u16, routes: RouteTable) -> anyhow::Result<Self> {
+    pub async fn bind(port: u16, routes: RouteTable, access: Access) -> anyhow::Result<Self> {
         anyhow::ensure!(port != 0, "the control plane needs a port a browser can be told");
         let addrs = [
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
@@ -1882,14 +1928,16 @@ impl SharedPort {
             let listener = tokio::net::TcpListener::from_std(listener)
                 .context("cannot hand the control-plane listener to the runtime")?;
             let routes = routes.clone();
+            let access = access.clone();
             tasks.push(tokio::spawn(async move {
                 loop {
                     let Ok((stream, _peer)) = listener.accept().await else {
                         break;
                     };
                     let routes = routes.clone();
+                    let access = access.clone();
                     tokio::spawn(async move {
-                        let _ = route_connection(stream, routes, port).await;
+                        let _ = route_connection(stream, routes, access, port).await;
                     });
                 }
             }));
@@ -1913,6 +1961,7 @@ impl Drop for SharedPort {
 async fn route_connection(
     mut client: tokio::net::TcpStream,
     routes: RouteTable,
+    access: Access,
     public_port: u16,
 ) -> anyhow::Result<()> {
     client.set_nodelay(true)?;
@@ -1923,22 +1972,117 @@ async fn route_connection(
     let parsed = parse_request(&request)?;
     let host = hostname(&parsed.host);
 
-    if host == MASTER_HOST || matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
-        let snapshot = routes.inner.read().await.clone();
-        let body = landing_page(public_port, &snapshot);
-        write_response(&mut client, "200 OK", "text/html; charset=utf-8", &body, &[]).await?;
+    // A cookie set on a bare loopback name would be sent to every server on the
+    // machine reached by that name, whatever its port: this master's login is
+    // set only under its own name.
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
+        let location = format!("http://{MASTER_HOST}:{public_port}{}", parsed.target);
+        write_response(&mut client, "307 Temporary Redirect", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
+        return Ok(());
+    }
+    let landing = host == MASTER_HOST;
+    let instance = if landing {
+        None
+    } else {
+        match host.strip_suffix(&format!(".{MASTER_HOST}")) {
+            Some(name) if valid_instance_name(name).is_ok() => Some(name.to_owned()),
+            Some(_) => {
+                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
+                return Ok(());
+            }
+            None => {
+                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk host\n", &[]).await?;
+                return Ok(());
+            }
+        }
+    };
+
+    // A handoff brings a login to this origin, so it is taken before the origin
+    // asks for one. A code that is not good sends the browser to the page, which
+    // asks for the PIN.
+    if let Some(name) = &instance
+        && let Some(code) = parsed.target.strip_prefix(HANDOFF_PATH)
+    {
+        let cookie = access.take_handoff(code, name).map(|login| access.set_cookie(&login));
+        let mut headers = vec![("Location", "/")];
+        if let Some(cookie) = &cookie {
+            headers.push(("Set-Cookie", cookie.as_str()));
+        }
+        write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &headers).await?;
         return Ok(());
     }
 
-    let Some(name) = host.strip_suffix(&format!(".{MASTER_HOST}")) else {
-        write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk host\n", &[]).await?;
-        return Ok(());
-    };
-    if valid_instance_name(name).is_err() {
-        write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
-        return Ok(());
+    let login = access.login_in(parsed.cookie.as_deref());
+    let path = parsed.target.split('?').next().unwrap_or_default();
+
+    // The master answers its own questions on the landing origin always, and on
+    // an instance origin until the browser has logged in there: from then on, the
+    // origin is its worker's.
+    if path == PIN_PATH {
+        return log_in(client, &access, &parsed, &request).await;
     }
-    let published = routes.inner.read().await.get(name).cloned();
+    if landing || login.is_none() {
+        match (parsed.method.as_str(), path) {
+            ("GET", "/api/auth/status") => {
+                let status = serde_json::json!({
+                    "authenticated": login.is_some(),
+                    "login": "pin",
+                    "landing": landing,
+                    "problem": pin_problem(&access.pin()),
+                });
+                return write_json(&mut client, "200 OK", &status, &[]).await;
+            }
+            // An instance's own branding is its worker's to say, once the browser
+            // can reach it.
+            ("GET", "/api/config") => {
+                let config = serde_json::json!({ "branding": DEFAULT_BRANDING, "logo": false, "throughput": false });
+                return write_json(&mut client, "200 OK", &config, &[]).await;
+            }
+            _ => {}
+        }
+    }
+
+    let Some(login) = login else {
+        // The page and the questions above, and nothing else until the PIN is
+        // entered: the page is what asks for it.
+        if is_api(path) {
+            return write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": "not logged in" }), &[]).await;
+        }
+        return write_bundle(&mut client, &parsed, path).await;
+    };
+
+    let Some(name) = instance else {
+        if let Some(name) = path.strip_prefix(OPEN_PATH) {
+            if !routes.inner.read().await.contains_key(name) {
+                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
+                return Ok(());
+            }
+            let code = access.hand_off(&login, name);
+            let location = format!("http://{name}.{MASTER_HOST}:{public_port}{HANDOFF_PATH}{code}");
+            write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
+            return Ok(());
+        }
+        if parsed.method == "GET" && path == "/api/instances" {
+            let snapshot = routes.inner.read().await.clone();
+            let instances: Vec<_> = snapshot
+                .iter()
+                .map(|(name, instance)| {
+                    serde_json::json!({
+                        "name": name,
+                        "state": instance.status.label(),
+                        "open": (instance.status == InstanceStatus::Running).then(|| format!("{OPEN_PATH}{name}")),
+                    })
+                })
+                .collect();
+            return write_json(&mut client, "200 OK", &serde_json::Value::from(instances), &[]).await;
+        }
+        if is_api(path) {
+            return write_json(&mut client, "404 Not Found", &serde_json::json!({ "error": "not found" }), &[]).await;
+        }
+        return write_bundle(&mut client, &parsed, path).await;
+    };
+
+    let published = routes.inner.read().await.get(&name).cloned();
     let Some(published) = published else {
         write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
         return Ok(());
@@ -1951,35 +2095,6 @@ async fn route_connection(
         write_response(&mut client, "503 Service Unavailable", "text/plain; charset=utf-8", &body, &[]).await?;
         return Ok(());
     };
-
-    // Whoever asks is handed the token, and that is the threat model rather than a
-    // gap in it: the boundary this control plane draws is the machine, not the
-    // user. The listener is bound to `127.0.0.1` and `::1` alone, so nothing off
-    // the machine can ask; the token stands in for a login the embedded gateway
-    // does not have, and seeding it here is what lets one page load carry it to
-    // `/api/*` and to every WebSocket upgrade, which a header cannot reach from
-    // inside a document. What follows is that **any local user may drive any
-    // instance** — including one who could not open the worker's owner-only
-    // endpoint directly. This is a single-user desktop tool: do not run
-    // `zdesk tui` on a machine you share with people you would not give the
-    // desktops to. A launch nonce would not change that, only make it a step
-    // longer: the page it authenticates has to keep something the next request
-    // presents, and the redirect is where that something is handed over.
-    if !cookie_has_token(parsed.cookie.as_deref(), &target.token) {
-        let cookie = format!(
-            "zdesk_session={}; HttpOnly; SameSite=Strict; Path=/",
-            target.token
-        );
-        write_response(
-            &mut client,
-            "307 Temporary Redirect",
-            "text/plain; charset=utf-8",
-            "",
-            &[("Location", parsed.target.as_str()), ("Set-Cookie", cookie.as_str())],
-        )
-        .await?;
-        return Ok(());
-    }
 
     let mut gateway = match transport::connect(&target.endpoint).await {
         Ok(stream) => stream,
@@ -1995,15 +2110,189 @@ async fn route_connection(
             return Ok(());
         }
     };
-    gateway.write_all(&request).await?;
+    gateway.write_all(&forwarded(&request, &parsed, &target.token)?).await?;
     tokio::io::copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
 
+/// The landing origin's link to an instance: `/__zdesk/open/<name>` hands the
+/// browser's login to that instance's origin.
+const OPEN_PATH: &str = "/__zdesk/open/";
+/// Where an instance origin takes a handoff code: `/__zdesk/handoff?code=<code>`.
+const HANDOFF_PATH: &str = "/__zdesk/handoff?code=";
+/// Where the page posts the PIN, on any origin.
+const PIN_PATH: &str = "/api/auth/pin";
+/// The most a PIN entry's body may be. It holds six digits and a field name.
+const MAX_LOGIN_BODY: usize = 1024;
+
+/// Whether a path is the gateway's API or a socket rather than the page.
+fn is_api(path: &str) -> bool {
+    path.starts_with("/api/") || path == "/ws" || path.starts_with("/ws/")
+}
+
+/// The page's PIN entry.
+#[derive(serde::Deserialize)]
+struct PinEntry {
+    pin: String,
+}
+
+/// `POST /api/auth/pin` with `{"pin": "123456"}`: a login cookie for this origin,
+/// or what was wrong with the entry.
+///
+/// A post is taken only with its own origin's `Origin`, which a browser always
+/// sends on one: otherwise any page on the web could post wrong entries until the
+/// PIN is withdrawn. A local process can claim any origin, as it can post at all,
+/// and then it can only use up the PIN's tries, not get in.
+async fn log_in(
+    mut client: tokio::net::TcpStream,
+    access: &Access,
+    parsed: &ParsedRequest,
+    request: &[u8],
+) -> anyhow::Result<()> {
+    if parsed.method != "POST" {
+        return write_json(&mut client, "405 Method Not Allowed", &serde_json::json!({ "error": "post the PIN" }), &[]).await;
+    }
+    if parsed.origin.as_deref() != Some(format!("http://{}", parsed.host).as_str()) {
+        let refusal = serde_json::json!({ "error": "a PIN is taken only from its own origin's page" });
+        return write_json(&mut client, "403 Forbidden", &refusal, &[]).await;
+    }
+    let body = read_body(&mut client, request, parsed.content_length).await?;
+    let Ok(entry) = serde_json::from_slice::<PinEntry>(&body) else {
+        let refusal = serde_json::json!({ "error": "the body is not {\"pin\": \"…\"}" });
+        return write_json(&mut client, "400 Bad Request", &refusal, &[]).await;
+    };
+    match access.log_in(&entry.pin) {
+        Ok(login) => {
+            let cookie = access.set_cookie(&login);
+            write_json(&mut client, "200 OK", &serde_json::json!({ "ok": true }), &[("Set-Cookie", cookie.as_str())]).await
+        }
+        Err(refusal) => {
+            write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": refusal.message() }), &[]).await
+        }
+    }
+}
+
+/// The bundle's file for `path`, as a gateway serves it: the page for any path
+/// that is not a file, isolated, with its validator.
+async fn write_bundle(stream: &mut tokio::net::TcpStream, parsed: &ParsedRequest, path: &str) -> anyhow::Result<()> {
+    if parsed.method != "GET" {
+        write_response(stream, "405 Method Not Allowed", "text/plain; charset=utf-8", "", &[]).await?;
+        return Ok(());
+    }
+    // The software HEVC decoder is a worker's, and the page with it never loads
+    // before a login; the document here would read as having found it.
+    if path.starts_with("/hevc/") {
+        write_response(stream, "404 Not Found", "text/plain; charset=utf-8", "", &[]).await?;
+        return Ok(());
+    }
+    let asset = crate::assets::asset(path);
+    let etag = asset.etag.to_str().context("an embedded file's validator is ASCII")?;
+    let content_type = asset.content_type.to_str().context("an embedded file's type is ASCII")?;
+    let mut headers = crate::assets::ISOLATION.to_vec();
+    headers.push(("ETag", etag));
+    if parsed.if_none_match.as_deref() == Some(etag) {
+        write_response(stream, "304 Not Modified", content_type, "", &headers).await?;
+    } else {
+        write_response(stream, "200 OK", content_type, &*asset.data, &headers).await?;
+    }
+    Ok(())
+}
+
+async fn write_json(
+    stream: &mut tokio::net::TcpStream,
+    status: &str,
+    body: &serde_json::Value,
+    extra: &[(&str, &str)],
+) -> anyhow::Result<()> {
+    write_response(stream, status, "application/json", body.to_string(), extra).await?;
+    Ok(())
+}
+
+/// A request's body of `length` bytes, the part already read with its head first.
+async fn read_body(stream: &mut tokio::net::TcpStream, request: &[u8], length: usize) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(length <= MAX_LOGIN_BODY, "a login body exceeds {MAX_LOGIN_BODY} bytes");
+    let start = head_end(request)? + 4;
+    let mut body = request[start..].to_vec();
+    tokio::time::timeout(REQUEST_HEAD_TIMEOUT, async {
+        let mut chunk = [0u8; 1024];
+        while body.len() < length {
+            let read = stream.read(&mut chunk).await?;
+            anyhow::ensure!(read > 0, "the login body ended early");
+            body.extend_from_slice(&chunk[..read]);
+        }
+        Ok(())
+    })
+    .await
+    .context("the login body did not arrive within 10 seconds")??;
+    body.truncate(length);
+    Ok(body)
+}
+
+/// The request head as the worker is given it: with the worker's token as its
+/// only zDesk cookie, and closing the connection after one response.
+///
+/// The token is the master's to present, never the browser's. The browser's
+/// cookies go through except the logins of this master and of any other on
+/// another port, which the worker has no use for, and any `zdesk_session`, which on this host can only be a served
+/// gateway's on the same `<label>.zdesk.localhost` — a cookie ignores the port —
+/// or a stale one.
+///
+/// One response per connection, because the master reads only the first request
+/// on a connection before handing the rest to the worker. A browser keeping the
+/// connection would send its next request past the master: a handoff to this
+/// origin among them, which the worker does not know. A WebSocket upgrade keeps
+/// its `Connection` header; it is one request and then the socket.
+fn forwarded(request: &[u8], parsed: &ParsedRequest, token: &str) -> anyhow::Result<Vec<u8>> {
+    let end = head_end(request)?;
+    let head = std::str::from_utf8(&request[..end]).context("HTTP headers are not UTF-8")?;
+    let mut lines = head.split("\r\n");
+    let mut out = String::with_capacity(head.len() + 128);
+    out.push_str(lines.next().context("missing HTTP request line")?);
+    out.push_str("\r\n");
+    let mut cookies = Vec::new();
+    for line in lines {
+        let name = line.split_once(':').map_or(line, |(name, _)| name).trim();
+        if name.eq_ignore_ascii_case("cookie") {
+            cookies.extend(line.split_once(':').into_iter().flat_map(|(_, value)| value.split(';')).map(str::trim).filter(
+                |pair| {
+                    let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
+                    !pair.is_empty() && !key.starts_with(LOGIN_COOKIE_PREFIX) && key != crate::auth::COOKIE_NAME
+                },
+            ));
+            continue;
+        }
+        if !parsed.upgrade
+            && ["connection", "keep-alive", "proxy-connection"]
+                .iter()
+                .any(|hop| name.eq_ignore_ascii_case(hop))
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+    let session = format!("{}={token}", crate::auth::COOKIE_NAME);
+    cookies.push(&session);
+    out.push_str(&format!("Cookie: {}\r\n", cookies.join("; ")));
+    if !parsed.upgrade {
+        out.push_str("Connection: close\r\n");
+    }
+    out.push_str("\r\n");
+    let mut bytes = out.into_bytes();
+    bytes.extend_from_slice(&request[end + 4..]);
+    Ok(bytes)
+}
+
 struct ParsedRequest {
+    method: String,
     host: String,
     target: String,
     cookie: Option<String>,
+    origin: Option<String>,
+    content_length: usize,
+    if_none_match: Option<String>,
+    /// Whether it asks to upgrade the connection, as a WebSocket does.
+    upgrade: bool,
 }
 
 async fn read_request_head(stream: &mut tokio::net::TcpStream) -> anyhow::Result<Option<Vec<u8>>> {
@@ -2026,16 +2315,21 @@ async fn read_request_head(stream: &mut tokio::net::TcpStream) -> anyhow::Result
     .context("request headers did not arrive within 10 seconds")?
 }
 
-fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
-    let end = request
+/// Where the head's closing blank line starts.
+fn head_end(request: &[u8]) -> anyhow::Result<usize> {
+    request
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
-        .context("incomplete HTTP request headers")?;
+        .context("incomplete HTTP request headers")
+}
+
+fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
+    let end = head_end(request)?;
     let head = std::str::from_utf8(&request[..end]).context("HTTP headers are not UTF-8")?;
     let mut lines = head.split("\r\n");
     let request_line = lines.next().context("missing HTTP request line")?;
     let mut pieces = request_line.split_whitespace();
-    let _method = pieces.next().context("missing HTTP method")?;
+    let method = pieces.next().context("missing HTTP method")?.to_owned();
     let target = pieces.next().context("missing HTTP request target")?.to_owned();
     let version = pieces.next().context("missing HTTP version")?;
     anyhow::ensure!(version.starts_with("HTTP/"), "invalid HTTP version");
@@ -2043,20 +2337,38 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
 
     let mut host = None;
     let mut cookies = Vec::new();
+    let mut origin = None;
+    let mut content_length = 0;
+    let mut if_none_match = None;
+    let mut upgrade = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             anyhow::bail!("malformed HTTP header");
         };
+        let value = value.trim();
         if name.eq_ignore_ascii_case("host") {
-            host = Some(value.trim().to_owned());
+            host = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("cookie") {
-            cookies.push(value.trim());
+            cookies.push(value);
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("content-length") {
+            content_length = value.parse().context("invalid Content-Length")?;
+        } else if name.eq_ignore_ascii_case("if-none-match") {
+            if_none_match = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("upgrade") {
+            upgrade = true;
         }
     }
     Ok(ParsedRequest {
+        method,
         host: host.context("request has no Host header")?,
         target,
         cookie: (!cookies.is_empty()).then(|| cookies.join("; ")),
+        origin,
+        content_length,
+        if_none_match,
+        upgrade,
     })
 }
 
@@ -2073,29 +2385,14 @@ fn hostname(host: &str) -> String {
     }
 }
 
-/// Whether the request already carries this instance's launch token.
-///
-/// The value is folded rather than compared, through the one comparison the
-/// gateway itself uses on the same secret: `==` on a token stops at the first
-/// wrong byte, and this runs on a loopback port where the timing is not buried
-/// under a network.
-fn cookie_has_token(cookie: Option<&str>, expected: &str) -> bool {
-    cookie.is_some_and(|cookies| {
-        cookies.split(';').any(|pair| {
-            pair.trim().split_once('=').is_some_and(|(name, value)| {
-                name == "zdesk_session" && crate::auth::secrets_match(expected, value)
-            })
-        })
-    })
-}
-
 async fn write_response(
     stream: &mut tokio::net::TcpStream,
     status: &str,
     content_type: &str,
-    body: &str,
+    body: impl AsRef<[u8]>,
     extra: &[(&str, &str)],
 ) -> std::io::Result<()> {
+    let body = body.as_ref();
     let mut head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
         body.len()
@@ -2108,28 +2405,8 @@ async fn write_response(
     }
     head.push_str("\r\n");
     stream.write_all(head.as_bytes()).await?;
-    stream.write_all(body.as_bytes()).await?;
+    stream.write_all(body).await?;
     stream.shutdown().await
-}
-
-fn landing_page(port: u16, instances: &BTreeMap<String, PublishedInstance>) -> String {
-    let mut rows = String::new();
-    for (name, instance) in instances {
-        let state = instance.status.label();
-        if instance.status == InstanceStatus::Running {
-            rows.push_str(&format!(
-                "<li><a href=\"http://{name}.{MASTER_HOST}:{port}/\">{name}</a> <span>{state}</span></li>"
-            ));
-        } else {
-            rows.push_str(&format!("<li>{name} <span>{state}</span></li>"));
-        }
-    }
-    if rows.is_empty() {
-        rows.push_str("<li>No instances. Press <kbd>n</kbd> in the TUI to create one.</li>");
-    }
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"2\"><meta name=\"viewport\" content=\"width=device-width\"><title>zDesk instances</title><style>body{{font:16px system-ui;max-width:720px;margin:4rem auto;padding:0 1rem;background:#101014;color:#eee}}a{{color:#85b7ff}}span{{color:#999;margin-left:.5rem}}li{{margin:.8rem 0}}</style></head><body><h1>zDesk instances</h1><p>Start and stop gateways in the terminal control plane.</p><ul>{rows}</ul></body></html>"
-    )
 }
 
 #[cfg(test)]
@@ -2210,9 +2487,15 @@ mod tests {
             dir: PathBuf::from("/instances/work"),
             detail: None,
         }];
-        let frame = render((80, 24), &options, 52380, &instances, 0, &View::List, "started work").unwrap();
+        let pin = PinState::Open {
+            digits: "123456".to_owned(),
+            expires_at: "14:32".to_owned(),
+            minutes_left: 10,
+        };
+        let frame = render((80, 24), &options, &pin, &instances, 0, &View::List, "started work").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains(ACCESS_TODAY), "{frame}");
+        assert!(frame.contains(&access_line(&pin).0), "{frame}");
+        assert!(frame.contains("PIN 123456 · expires 14:32, 10 min left"), "{frame}");
         assert!(frame.contains("┌ access "), "{frame}");
         assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
         for (key, label) in list_bar(80) {
@@ -2222,7 +2505,7 @@ mod tests {
         // Too narrow for the keys page and quitting together, the screen still
         // names quitting.
         assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
-        let frame = render((10, 24), &options, 52380, &instances, 0, &View::List, "").unwrap();
+        let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
     }
@@ -2368,8 +2651,33 @@ mod tests {
         .unwrap();
         assert_eq!(hostname(&parsed.host), "work.zdesk.localhost");
         assert_eq!(parsed.target, "/api/targets?q=1");
-        assert!(cookie_has_token(parsed.cookie.as_deref(), "secret"));
-        assert!(!cookie_has_token(parsed.cookie.as_deref(), "other"));
+        assert_eq!(parsed.method, "GET");
+        assert!(!parsed.upgrade);
+        assert_eq!(parsed.cookie.as_deref(), Some("other=1; zdesk_session=secret"));
+    }
+
+    /// The worker is given its token by the master, in place of whatever zDesk
+    /// cookies the browser sent, and one response per connection unless the
+    /// request is an upgrade.
+    #[test]
+    fn a_forwarded_request_carries_the_token_and_not_the_browsers_logins() {
+        let request = b"POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: keep-alive\r\nCookie: zdesk_login_52380=mine; zdesk_login_52381=theirs; theme=dark\r\nCookie: zdesk_session=served\r\nContent-Length: 2\r\n\r\nhi";
+        let parsed = parse_request(request).unwrap();
+        let given = String::from_utf8(forwarded(request, &parsed, "worker-token").unwrap()).unwrap();
+        assert!(given.starts_with("POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\n"), "{given}");
+        assert!(given.contains("\r\nCookie: theme=dark; zdesk_session=worker-token\r\n"), "{given}");
+        assert!(!given.contains("mine") && !given.contains("theirs") && !given.contains("served"), "{given}");
+        assert!(!given.contains("keep-alive"), "{given}");
+        assert!(given.contains("\r\nConnection: close\r\n"), "{given}");
+        assert!(given.ends_with("\r\n\r\nhi"), "the body read with the head follows it: {given}");
+
+        let upgrade = b"GET /ws HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        let parsed = parse_request(upgrade).unwrap();
+        assert!(parsed.upgrade);
+        let given = String::from_utf8(forwarded(upgrade, &parsed, "worker-token").unwrap()).unwrap();
+        assert!(given.contains("\r\nConnection: Upgrade\r\n"), "{given}");
+        assert!(!given.contains("Connection: close"), "{given}");
+        assert!(given.contains("\r\nCookie: zdesk_session=worker-token\r\n"), "{given}");
     }
 
     #[test]
@@ -2443,28 +2751,26 @@ mod tests {
                 },
             ),
         ]);
-        let router = SharedPort::bind(free_port(), routes).await.unwrap();
+        let port = free_port();
+        let access = Access::open(port);
+        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let router = SharedPort::bind(port, routes, access).await.unwrap();
 
-        let first_response = request(
-            router.port(),
-            "one.zdesk.localhost",
-            Some("zdesk_session=token-one"),
-        )
-        .await;
-        let second_response = request(
-            router.port(),
-            "two.zdesk.localhost",
-            Some("zdesk_session=token-two"),
-        )
-        .await;
-        assert!(first_response.ends_with("one"), "{first_response}");
-        assert!(second_response.ends_with("two"), "{second_response}");
+        let first_response = request(router.port(), "one.zdesk.localhost", Some(&login)).await;
+        let second_response = request(router.port(), "two.zdesk.localhost", Some(&login)).await;
+        assert_eq!(body_of(&first_response).lines().next(), Some("one"), "{first_response}");
+        assert_eq!(body_of(&second_response).lines().next(), Some("two"), "{second_response}");
+        assert!(first_response.contains("zdesk_session=token-one"), "the worker got its own token: {first_response}");
+        assert!(second_response.contains("zdesk_session=token-two"), "{second_response}");
         first.1.await.unwrap();
         second.1.await.unwrap();
     }
 
+    /// A browser without a login is served the page on every origin, which asks
+    /// it for the PIN, and nothing of any instance: no API, and never a worker's
+    /// token.
     #[tokio::test]
-    async fn the_router_seeds_the_launch_cookie_before_proxying() {
+    async fn a_browser_without_a_login_is_asked_for_the_pin() {
         let routes = RouteTable::default();
         routes.inner.write().await.insert(
             "one".to_owned(),
@@ -2476,11 +2782,157 @@ mod tests {
                 }),
             },
         );
-        let router = SharedPort::bind(free_port(), routes).await.unwrap();
-        let response = request(router.port(), "one.zdesk.localhost", None).await;
-        assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{response}");
-        assert!(response.contains("Set-Cookie: zdesk_session=launch-token;"), "{response}");
-        assert!(response.contains("Location: /"), "{response}");
+        let port = free_port();
+        let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
+        for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
+            let page = request(port, host, Some("zdesk_session=launch-token")).await;
+            assert!(page.starts_with("HTTP/1.1 200 OK"), "{host}: {page}");
+            assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{host}: {page}");
+            assert!(page.contains("<div id=\"root\">"), "the bundle's document: {host}: {page}");
+            assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {host}: {page}");
+            assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{host}: {page}");
+
+            let status = get(port, host, "/api/auth/status", None).await;
+            let landing = host == "zdesk.localhost";
+            assert!(
+                body_of(&status).starts_with(&format!(
+                    "{{\"authenticated\":false,\"landing\":{landing},\"login\":\"pin\",\"problem\":null}}"
+                )),
+                "{host}: {status}"
+            );
+            for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+                let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
+                assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
+            }
+        }
+        drop(router);
+    }
+
+    /// A bare loopback name is sent to `zdesk.localhost`, keeping the path, and
+    /// never shown the PIN form: a login set there would reach every local server.
+    #[tokio::test]
+    async fn a_bare_loopback_name_is_sent_to_the_masters_own() {
+        let port = free_port();
+        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
+        for host in ["localhost", "127.0.0.1", "[::1]"] {
+            let response = send(port, &format!("GET /__zdesk/open/work?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n")).await;
+            assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{host}: {response}");
+            assert!(
+                response.contains(&format!("Location: http://zdesk.localhost:{port}/__zdesk/open/work?x=1\r\n")),
+                "{host}: {response}"
+            );
+            assert!(!response.contains("Set-Cookie"), "{host}: {response}");
+        }
+        drop(router);
+    }
+
+    /// The page's PIN logs the browser in on its own origin; a post from another
+    /// origin is not taken, and does not count against the PIN.
+    #[tokio::test]
+    async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
+        let port = free_port();
+        let access = Access::open(port);
+        let _router = SharedPort::bind(port, RouteTable::default(), access.clone()).await.unwrap();
+        let pin = pin_of(&access);
+        let post = |origin: String, pin: String| {
+            let body = format!("{{\"pin\":\"{pin}\"}}");
+            format!(
+                "POST {PIN_PATH} HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+
+        let response = send(port, &post("http://evil.example".to_owned(), "000000".to_owned())).await;
+        assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
+        assert!(response.contains("its own origin"), "{response}");
+
+        let wrong = if pin == "000000" { "000001" } else { "000000" };
+        let response = send(port, &post(format!("http://zdesk.localhost:{port}"), wrong.to_owned())).await;
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{response}");
+        assert!(response.contains(&format!("{} more wrong entries", MAX_WRONG - 1)), "only this one counted: {response}");
+
+        let response = send(port, &post(format!("http://zdesk.localhost:{port}"), pin)).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        let cookie = response
+            .lines()
+            .find_map(|line| line.strip_prefix("Set-Cookie: "))
+            .expect("a login cookie");
+        assert!(cookie.starts_with(&format!("zdesk_login_{port}=")) && cookie.contains("HttpOnly"), "{cookie}");
+        let login = cookie.split(';').next().unwrap();
+
+        let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
+        assert!(body_of(&status).starts_with("{\"authenticated\":true,\"landing\":true,"), "{status}");
+        let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
+        assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{instances}");
+    }
+
+    /// The landing page's link to an instance carries the login there through a
+    /// one-time code, and the instance origin's request reaches its worker with
+    /// the worker's token.
+    #[tokio::test]
+    async fn a_login_reaches_an_instance_through_a_handoff() {
+        let routes = RouteTable::default();
+        let worker = fake_gateway("one").await;
+        routes.inner.write().await.insert(
+            "one".to_owned(),
+            PublishedInstance {
+                status: InstanceStatus::Running,
+                target: Some(RouteTarget {
+                    endpoint: worker.0.clone(),
+                    token: "token-one".to_owned(),
+                }),
+            },
+        );
+        let port = free_port();
+        let access = Access::open(port);
+        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let _router = SharedPort::bind(port, routes, access).await.unwrap();
+
+        let listed = get(port, "zdesk.localhost", "/api/instances", Some(&login)).await;
+        assert_eq!(
+            body_of(&listed),
+            format!("[{{\"name\":\"one\",\"open\":\"{OPEN_PATH}one\",\"state\":\"running\"}}]"),
+            "{listed}"
+        );
+
+        let opened = send(
+            port,
+            &format!("GET {OPEN_PATH}one HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nCookie: {login}\r\n\r\n"),
+        )
+        .await;
+        assert!(opened.starts_with("HTTP/1.1 303 See Other"), "{opened}");
+        let location = opened
+            .lines()
+            .find_map(|line| line.strip_prefix("Location: "))
+            .expect("a redirect");
+        let prefix = format!("http://one.zdesk.localhost:{port}{HANDOFF_PATH}");
+        let code = location.strip_prefix(&prefix).unwrap_or_else(|| panic!("{location}"));
+
+        let handoff = format!("GET {HANDOFF_PATH}{code} HTTP/1.1\r\nHost: one.zdesk.localhost:{port}\r\n\r\n");
+        let taken = send(port, &handoff).await;
+        assert!(taken.starts_with("HTTP/1.1 303 See Other"), "{taken}");
+        assert!(taken.contains("Location: /\r\n"), "{taken}");
+        assert!(taken.contains(&format!("Set-Cookie: {login};")), "the same login, on this origin: {taken}");
+        let again = send(port, &handoff).await;
+        assert!(!again.contains("Set-Cookie"), "a code is spent once: {again}");
+
+        let reached = request(port, "one.zdesk.localhost", Some(&login)).await;
+        let seen = body_of(&reached);
+        assert_eq!(seen.lines().next(), Some("one"), "{reached}");
+        assert!(seen.contains("Cookie: zdesk_session=token-one\r\n"), "{seen}");
+        assert!(seen.contains("Connection: close\r\n"), "{seen}");
+        worker.1.await.unwrap();
+    }
+
+    fn pin_of(access: &Access) -> String {
+        let PinState::Open { digits, .. } = access.pin() else {
+            panic!("a new PIN is open");
+        };
+        digits
+    }
+
+    fn body_of(response: &str) -> &str {
+        response.split_once("\r\n\r\n").map_or("", |(_, body)| body)
     }
 
     /// A port nothing is listening on, found by taking one and letting it go —
@@ -2549,7 +3001,7 @@ mod tests {
             Err(error) => panic!("cannot hold the v6 half of {port}: {error}"),
         };
 
-        let Err(error) = SharedPort::bind(port, RouteTable::default()).await else {
+        let Err(error) = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await else {
             panic!("the v6 half of this port is already served");
         };
         let text = format!("{error:#}");
@@ -2559,7 +3011,7 @@ mod tests {
         // And the refusal took nothing: the v4 half it bound on the way through is
         // released, so a retry after stopping the other master works.
         drop(squatter);
-        SharedPort::bind(port, RouteTable::default())
+        SharedPort::bind(port, RouteTable::default(), Access::open(port))
             .await
             .expect("the refused attempt must not have kept a socket");
     }
@@ -2568,14 +3020,15 @@ mod tests {
     /// kernel choose it — including the one the tests take.
     #[tokio::test]
     async fn an_ephemeral_port_is_not_something_the_control_plane_can_be_asked_for() {
-        let Err(error) = SharedPort::bind(0, RouteTable::default()).await else {
+        let Err(error) = SharedPort::bind(0, RouteTable::default(), Access::open(0)).await else {
             panic!("port 0 is a control plane nobody can be told how to reach");
         };
         assert!(format!("{error:#}").contains("a browser can be told"), "{error:#}");
     }
 
-    /// A worker's endpoint answering one request with `body`, over the transport
-    /// a real worker listens on.
+    /// A worker's endpoint answering one request with `body` and, on the next
+    /// lines, the request head it was given, over the transport a real worker
+    /// listens on.
     async fn fake_gateway(
         body: &'static str,
     ) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
@@ -2595,6 +3048,7 @@ mod tests {
                     break;
                 }
             }
+            let body = format!("{body}\n{}", String::from_utf8_lossy(&request));
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
@@ -2605,17 +3059,19 @@ mod tests {
     }
 
     async fn request(port: u16, host: &str, cookie: Option<&str>) -> String {
+        get(port, host, "/", cookie).await
+    }
+
+    async fn get(port: u16, host: &str, path: &str, cookie: Option<&str>) -> String {
+        let cookie = cookie.map_or(String::new(), |cookie| format!("Cookie: {cookie}\r\n"));
+        send(port, &format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n")).await
+    }
+
+    async fn send(port: u16, raw: &str) -> String {
         let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .await
             .unwrap();
-        let cookie = cookie.map_or(String::new(), |cookie| format!("Cookie: {cookie}\r\n"));
-        stream
-            .write_all(
-                format!("GET / HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n")
-                    .as_bytes(),
-            )
-            .await
-            .unwrap();
+        stream.write_all(raw.as_bytes()).await.unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).await.unwrap();
         response

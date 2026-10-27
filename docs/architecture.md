@@ -3784,12 +3784,83 @@ on either of them, because a browser picks the family and a master left holding
 for a port — an ephemeral one is a control plane nobody can be told how to
 reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 
-The loopback boundary is the machine, not the OS account. The master gives any
-local caller the selected worker's session cookie before proxying it, so any
-local user can list and drive every running instance. The owner-only instance
-directories and worker endpoints protect the configs and the private transport;
-they do not authenticate the public loopback surface. Do not run the TUI on a
-machine shared with users who must not reach its desktops.
+The boundary is whoever can see the TUI's terminal, not the machine, with one
+accepted gap set out below (`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
+random source when it starts and shows it in the TUI's access panel, with the
+clock time it expires, ten minutes on, and the minutes left. `P` draws a new
+one and starts its time again.
+
+The page that asks for the PIN is the SPA, the one bundle compiled into the
+binary, which the master serves itself to a browser without a login on the
+landing origin and on every instance origin, isolated as a gateway serves it
+(`assets::asset`). The master answers that page's `GET /api/auth/status` with
+`"login": "pin"`, whether this is the landing origin, and why no PIN can log
+anyone in when none can, and its `GET /api/config` with the default branding.
+Every other `/api/*` and `/ws*` is a 401 until the browser logs in. The page
+shows its PIN form (`frontend/src/PinLogin.tsx`) for that status and posts the
+entry to `POST /api/auth/pin` as `{"pin": "…"}`. The master compares it in
+constant time, and on a right one sets the login cookie and the page reloads.
+On an instance origin the reload is then the worker's page. On the landing
+origin the page shows the instances (`frontend/src/Instances.tsx`), which
+`GET /api/instances` lists, each running one with its `/__zdesk/open/<name>`
+link. The PIN post is taken only with its own origin's `Origin`, so a page
+elsewhere on the web cannot spend the PIN's tries. After
+five wrong entries the PIN is withdrawn, and every entry is refused until a new
+one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
+each PIN the person at the terminal chooses to draw. A local process can force
+a new draw, but it never gets in. An entry that is not six digits cannot be the
+PIN and is not counted.
+
+A right entry is a login: 32 random bytes the master keeps in memory, sent back
+as a host-only HttpOnly `SameSite=Strict` cookie named for the master's port,
+`zdesk_login_<port>`, so two control planes on one machine keep separate logins.
+The PIN guards only new logins. A
+login outlives the PIN's expiry, a new draw and a withdrawal, and every
+instance's restarts. Logins are kept in the master's memory only, so quitting
+the TUI is the only way to log out. A login reaches another origin through a
+handoff, not a cookie shared across subdomains. The landing page's link to an
+instance, and the TUI's `o`, go through `/__zdesk/open/<name>` on the landing
+origin. That route mints a one-time code bound to the instance, good for 30
+seconds and spent by its first use. The instance origin exchanges the code at
+`/__zdesk/handoff` for the same login under its own cookie.
+
+A cookie is scoped by host and ignores the port, so the master sets its login
+only on `zdesk.localhost` and the instance subdomains. It answers `localhost`,
+`127.0.0.1` and `[::1]` with a redirect to `zdesk.localhost`, keeping the path,
+because a login set on a bare loopback name would be sent to every server the
+browser reaches by that name, every local development server among them.
+
+What remains, and is accepted, is anything else serving `zdesk.localhost` or one
+of its subdomains on another port. `SameSite=Strict` does not stop it: it keeps
+the cookie off a navigation another site starts, but the page a listener on
+`zdesk.localhost:<other port>` serves is same-site with the master, so its next
+request to itself carries every cookie of that host, the login among them. Any
+site can send the browser there. Another local user who runs such a listener and
+gets a link followed therefore takes the login, and can replay it to the master
+past the PIN. No browser offers a cookie bound to a port, and a replayed cookie
+is indistinguishable from the browser's. A host nobody else can name, drawn per
+run, such as `<random>.zdesk.localhost` with each instance under it, would close
+the gap at the cost of the TUI's stable addresses, and was not taken. So the PIN
+keeps out whoever cannot see the terminal, but not another account on the machine
+that sets out to take a login: do not run the TUI on a machine shared with users
+who must not reach its desktops.
+
+A browser never holds a worker's token. The master adds it, as the
+`zdesk_session` cookie, to each request it forwards. It strips the browser's
+`zdesk_login_*` cookies, this master's and any other's, and any `zdesk_session`: on these hosts that can only be stale,
+or a served gateway's on the same `<label>.zdesk.localhost`, since a cookie
+ignores the port. The TUI sets no `zdesk_session` of its own, so it does not
+log a served gateway's browser out. A browser therefore has two ways in: a
+served gateway's username and password, and this PIN.
+
+The master reads only the first request of a connection before handing the
+rest to the worker. So it asks the worker to close each connection after one
+response, by rewriting the request's `Connection` to `close`. Every request
+then reaches the master, which checks its login, and a handoff to an origin the
+browser already has a connection to is still the master's to take. A WebSocket
+upgrade keeps its `Connection` header: it is one request, and then the socket.
+The owner-only instance directories and worker endpoints protect the configs
+and the private transport from other OS accounts.
 
 Each hidden worker reads one line from stdin first — the key to its config's
 `[passwords]`, or an empty line for a config that names none or only placeholders (see
@@ -3813,10 +3884,9 @@ together. The instance directories get the equivalent of `0700`: a protected
 DACL naming the user and `SYSTEM`, inherited by the configs in them. A worker
 runs with a hidden console of its own, so the TUI's Ctrl+C and window close
 never reach it directly; closing the window still stops every worker, by ending
-the TUI and so their stdin. The master seeds the token as a host-only HttpOnly
-`zdesk_session` cookie before proxying the browser to the child. Raw connection
-proxying preserves both ordinary HTTP and WebSocket upgrades without another
-gateway protocol implementation.
+the TUI and so their stdin. The master presents the token for a logged-in
+browser, as described above. Raw connection proxying preserves both ordinary
+HTTP and WebSocket upgrades without another gateway protocol implementation.
 
 The entire substrate is behind the default `embedded-gateway` Cargo feature:
 the module, token authentication, config audience, CLI commands, and their
@@ -3916,8 +3986,15 @@ Where the master password comes from is each audience's:
   over zbus, so no build needs libdbus), and when the keychain keeps none
   generates one (32 random bytes) and keeps it there, as Chrome's and Slack's
   Safe Storage keys are made: nobody types it, and every instance opens under
-  the same one. It never asks at its terminal; a keychain that will not answer
-  is reported as the start's error. It then derives each instance's key and
+  the same one. It reads the keychain once, when it starts and before it takes
+  the screen, so a keychain that asks with a system prompt asks then. It never
+  asks at its terminal. A keychain that will not answer is reported on the
+  status line and as the error of each start that needs it, and is asked again
+  then. `ZDESK_KEYCHAIN=mock` puts the TUI on keyring-core's in-memory store
+  instead, as `cargo test` always is, for an end-to-end test or a QA run on a
+  machine whose keychain would prompt: the master password is generated at
+  start and gone at exit, and the account's store is never touched. It then
+  derives each instance's key and
   writes it as the worker's first stdin line. A worker holds the key that opens
   its own config and nothing that opens another's, and never reads the keychain
   itself. An instance config has no `[server]` block, so there is no file to
