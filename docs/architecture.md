@@ -3788,10 +3788,23 @@ The boundary is whoever can see the TUI's terminal, not the machine
 (`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
 clock time it expires, ten minutes on, and the minutes left. `P` draws a new
-one and starts its time again. A browser without a login gets a PIN form on
-the landing origin and on every instance origin, and the master compares the
-entry in constant time. A form post is taken only with its own origin's
-`Origin`, so a page elsewhere on the web cannot spend the PIN's tries. After
+one and starts its time again.
+
+The page that asks for the PIN is the SPA, the one bundle compiled into the
+binary, which the master serves itself to a browser without a login on the
+landing origin and on every instance origin, isolated as a gateway serves it
+(`assets::asset`). The master answers that page's `GET /api/auth/status` with
+`"login": "pin"`, whether this is the landing origin, and why no PIN can log
+anyone in when none can, and its `GET /api/config` with the default branding.
+Every other `/api/*` and `/ws*` is a 401 until the browser logs in. The page
+shows its PIN form (`frontend/src/PinLogin.tsx`) for that status and posts the
+entry to `POST /api/auth/pin` as `{"pin": "…"}`. The master compares it in
+constant time, and on a right one sets the login cookie and the page reloads.
+On an instance origin the reload is then the worker's page. On the landing
+origin the page shows the instances (`frontend/src/Instances.tsx`), which
+`GET /api/instances` lists, each running one with its `/__zdesk/open/<name>`
+link. The PIN post is taken only with its own origin's `Origin`, so a page
+elsewhere on the web cannot spend the PIN's tries. After
 five wrong entries the PIN is withdrawn, and every entry is refused until a new
 one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
 each PIN the person at the terminal chooses to draw. A local process can force

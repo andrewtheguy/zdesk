@@ -387,6 +387,89 @@ body {
   font-size: 0.8rem;
 }
 
+/* The TUI control plane's PIN: six digits, large enough to read back while
+   typing them off the terminal. */
+.pin-hint {
+  margin: 0 0 0.75rem;
+  text-align: center;
+}
+
+.login-form input.pin-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.8rem;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  text-align: center;
+}
+
+/* The control plane's landing page: its instances, each a link while it runs. */
+.instances {
+  width: min(420px, 85vw);
+}
+
+.instances h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.instances .login-hint {
+  display: block;
+  margin: 0 0 1rem;
+  text-align: center;
+}
+
+.instances-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+
+.instances-list:empty {
+  display: none;
+}
+
+.instances-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+}
+
+.instances-list li + li {
+  border-top: 1px solid #30363d;
+}
+
+.instances-list a {
+  color: #4a9eff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.instances-list a:hover {
+  text-decoration: underline;
+}
+
+.instances-name {
+  color: #e6edf3;
+}
+
+.instances-state {
+  color: #8b949e;
+  font-size: 0.85rem;
+}
+
+.instances-state.is-running {
+  color: #3fb950;
+}
+
+.instances-state.is-failed {
+  color: #f85149;
+}
+
 /* The build, spelled the same way the login screen spells it, wherever a
    session is already stopped to look at something: the picker, the ☰ drawer and
    the Help card. Whoever is asked which version they are on is rarely at the

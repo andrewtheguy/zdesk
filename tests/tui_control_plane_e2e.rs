@@ -34,8 +34,8 @@ async fn instances_start_stop_and_share_the_master_port() {
     supervisor.start("one", None).await.unwrap();
     supervisor.start("two", None).await.unwrap();
 
-    let refused = request(router.port(), "one", "/api/config", None).await;
-    assert!(refused.starts_with("HTTP/1.1 403 Forbidden"), "{refused}");
+    let refused = request(router.port(), "one", "/api/targets", None).await;
+    assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{refused}");
     let PinState::Open { digits, .. } = access.pin() else {
         panic!("a new control plane has an open PIN");
     };
@@ -45,9 +45,9 @@ async fn instances_start_stop_and_share_the_master_port() {
     assert!(one.contains("\"branding\":\"one\""), "{one}");
     assert!(two.contains("\"branding\":\"two\""), "{two}");
 
-    let landing = request_master(router.port(), &login).await;
-    assert!(landing.contains("/__zdesk/open/one"), "{landing}");
-    assert!(landing.contains("/__zdesk/open/two"), "{landing}");
+    let landing = request_master(router.port(), "/api/instances", &login).await;
+    assert!(landing.contains("\"open\":\"/__zdesk/open/one\""), "{landing}");
+    assert!(landing.contains("\"open\":\"/__zdesk/open/two\""), "{landing}");
 
     // A restarted worker has a new token, which the master presents for the
     // browser: the login stands, whatever happened to the PIN since.
@@ -82,19 +82,19 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Enter `pin` in the landing page's form, as a browser posts it, and return the
-/// login cookie it sets.
+/// Enter `pin` on the landing page, as its page posts it, and return the login
+/// cookie it sets.
 async fn log_in(port: u16, pin: &str) -> String {
-    let body = format!("pin={pin}");
+    let body = format!("{{\"pin\":\"{pin}\"}}");
     let response = raw_request(
         port,
         &format!(
-            "POST / HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: http://zdesk.localhost:{port}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "POST /api/auth/pin HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: http://zdesk.localhost:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         ),
     )
     .await;
-    assert!(response.starts_with("HTTP/1.1 303 See Other"), "{response}");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     response
         .lines()
         .find_map(|line| {
@@ -116,11 +116,11 @@ async fn request(port: u16, instance: &str, path: &str, cookie: Option<&str>) ->
     .await
 }
 
-async fn request_master(port: u16, cookie: &str) -> String {
+async fn request_master(port: u16, path: &str, cookie: &str) -> String {
     raw_request(
         port,
         &format!(
-            "GET / HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n"
         ),
     )
     .await

@@ -278,17 +278,7 @@ pub fn cookie_values<'a>(cookie: Option<&'a str>, name: &'a str) -> impl Iterato
         })
 }
 
-/// The page that asks for the PIN, with what went wrong last if anything did. Its
-/// form posts back to the address it was served at, which the master takes as the
-/// entry and then redirects to.
-pub fn pin_page(problem: Option<&str>) -> String {
-    let problem = problem.map_or(String::new(), |text| format!("<p class=\"problem\" role=\"alert\">{text}</p>"));
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>zDesk login</title><style>body{{font:16px system-ui;max-width:420px;margin:4rem auto;padding:0 1rem;background:#101014;color:#eee}}input{{font:32px ui-monospace,monospace;letter-spacing:.3em;text-indent:.3em;text-align:center;width:11ch;padding:.4rem .6rem;background:#1c1c22;color:#eee;border:1px solid #444;border-radius:4px}}button{{font:18px system-ui;margin-left:.6rem;padding:.7rem 1.2rem;vertical-align:top}}.problem{{color:#ff8a80}}p{{color:#bbb}}</style></head><body><h1>zDesk</h1><p>Enter the PIN shown in the access panel of the zDesk TUI.</p>{problem}<form method=\"post\"><label for=\"pin\">PIN</label><br><input id=\"pin\" name=\"pin\" inputmode=\"numeric\" autocomplete=\"one-time-code\" pattern=\"[0-9]{{6}}\" maxlength=\"6\" required autofocus><button type=\"submit\">Log in</button></form></body></html>"
-    )
-}
-
-/// What the PIN page says before any entry, when no entry could succeed.
+/// What the page's PIN form says before any entry, when no entry could succeed.
 pub fn pin_problem(state: &PinState) -> Option<String> {
     match state {
         PinState::Open { .. } => None,

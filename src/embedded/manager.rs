@@ -27,7 +27,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 
-use super::access::{Access, LOGIN_COOKIE_PREFIX, MAX_WRONG, PinState, pin_page, pin_problem};
+use super::access::{Access, LOGIN_COOKIE_PREFIX, MAX_WRONG, PinState, pin_problem};
 use super::{Handshake, transport};
 use crate::config::{
     Audience, ConfigFile, DEFAULT_BRANDING, DEFAULT_SIZE, Protocol, TargetConfig,
@@ -1998,7 +1998,8 @@ async fn route_connection(
     };
 
     // A handoff brings a login to this origin, so it is taken before the origin
-    // asks for one. A code that is not good sends the browser to the PIN form.
+    // asks for one. A code that is not good sends the browser to the page, which
+    // asks for the PIN.
     if let Some(name) = &instance
         && let Some(code) = parsed.target.strip_prefix(HANDOFF_PATH)
     {
@@ -2011,12 +2012,47 @@ async fn route_connection(
         return Ok(());
     }
 
-    let Some(login) = access.login_in(parsed.cookie.as_deref()) else {
-        return ask_for_pin(client, &access, &parsed, &request).await;
+    let login = access.login_in(parsed.cookie.as_deref());
+    let path = parsed.target.split('?').next().unwrap_or_default();
+
+    // The master answers its own questions on the landing origin always, and on
+    // an instance origin until the browser has logged in there: from then on, the
+    // origin is its worker's.
+    if path == PIN_PATH {
+        return log_in(client, &access, &parsed, &request).await;
+    }
+    if landing || login.is_none() {
+        match (parsed.method.as_str(), path) {
+            ("GET", "/api/auth/status") => {
+                let status = serde_json::json!({
+                    "authenticated": login.is_some(),
+                    "login": "pin",
+                    "landing": landing,
+                    "problem": pin_problem(&access.pin()),
+                });
+                return write_json(&mut client, "200 OK", &status, &[]).await;
+            }
+            // An instance's own branding is its worker's to say, once the browser
+            // can reach it.
+            ("GET", "/api/config") => {
+                let config = serde_json::json!({ "branding": DEFAULT_BRANDING, "logo": false, "throughput": false });
+                return write_json(&mut client, "200 OK", &config, &[]).await;
+            }
+            _ => {}
+        }
+    }
+
+    let Some(login) = login else {
+        // The page and the questions above, and nothing else until the PIN is
+        // entered: the page is what asks for it.
+        if is_api(path) {
+            return write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": "not logged in" }), &[]).await;
+        }
+        return write_bundle(&mut client, &parsed, path).await;
     };
 
     let Some(name) = instance else {
-        if let Some(name) = parsed.target.strip_prefix(OPEN_PATH) {
+        if let Some(name) = path.strip_prefix(OPEN_PATH) {
             if !routes.inner.read().await.contains_key(name) {
                 write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
                 return Ok(());
@@ -2026,10 +2062,24 @@ async fn route_connection(
             write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
             return Ok(());
         }
-        let snapshot = routes.inner.read().await.clone();
-        let body = landing_page(&snapshot);
-        write_response(&mut client, "200 OK", "text/html; charset=utf-8", &body, &[]).await?;
-        return Ok(());
+        if parsed.method == "GET" && path == "/api/instances" {
+            let snapshot = routes.inner.read().await.clone();
+            let instances: Vec<_> = snapshot
+                .iter()
+                .map(|(name, instance)| {
+                    serde_json::json!({
+                        "name": name,
+                        "state": instance.status.label(),
+                        "open": (instance.status == InstanceStatus::Running).then(|| format!("{OPEN_PATH}{name}")),
+                    })
+                })
+                .collect();
+            return write_json(&mut client, "200 OK", &serde_json::Value::from(instances), &[]).await;
+        }
+        if is_api(path) {
+            return write_json(&mut client, "404 Not Found", &serde_json::json!({ "error": "not found" }), &[]).await;
+        }
+        return write_bundle(&mut client, &parsed, path).await;
     };
 
     let published = routes.inner.read().await.get(&name).cloned();
@@ -2070,59 +2120,91 @@ async fn route_connection(
 const OPEN_PATH: &str = "/__zdesk/open/";
 /// Where an instance origin takes a handoff code: `/__zdesk/handoff?code=<code>`.
 const HANDOFF_PATH: &str = "/__zdesk/handoff?code=";
-/// The most a PIN form's body may be. It holds six digits and a field name.
+/// Where the page posts the PIN, on any origin.
+const PIN_PATH: &str = "/api/auth/pin";
+/// The most a PIN entry's body may be. It holds six digits and a field name.
 const MAX_LOGIN_BODY: usize = 1024;
 
-/// Answer a browser with no login: the PIN form, or for the form's own post, the
-/// entry's outcome.
+/// Whether a path is the gateway's API or a socket rather than the page.
+fn is_api(path: &str) -> bool {
+    path.starts_with("/api/") || path == "/ws" || path.starts_with("/ws/")
+}
+
+/// The page's PIN entry.
+#[derive(serde::Deserialize)]
+struct PinEntry {
+    pin: String,
+}
+
+/// `POST /api/auth/pin` with `{"pin": "123456"}`: a login cookie for this origin,
+/// or what was wrong with the entry.
 ///
 /// A post is taken only with its own origin's `Origin`, which a browser always
 /// sends on one: otherwise any page on the web could post wrong entries until the
 /// PIN is withdrawn. A local process can claim any origin, as it can post at all,
 /// and then it can only use up the PIN's tries, not get in.
-async fn ask_for_pin(
+async fn log_in(
     mut client: tokio::net::TcpStream,
     access: &Access,
     parsed: &ParsedRequest,
     request: &[u8],
 ) -> anyhow::Result<()> {
     if parsed.method != "POST" {
-        let page = pin_page(pin_problem(&access.pin()).as_deref());
-        write_response(&mut client, "403 Forbidden", "text/html; charset=utf-8", &page, &[]).await?;
-        return Ok(());
+        return write_json(&mut client, "405 Method Not Allowed", &serde_json::json!({ "error": "post the PIN" }), &[]).await;
     }
     if parsed.origin.as_deref() != Some(format!("http://{}", parsed.host).as_str()) {
-        write_response(&mut client, "403 Forbidden", "text/plain; charset=utf-8", "a PIN is taken only from its own origin's form\n", &[]).await?;
-        return Ok(());
+        let refusal = serde_json::json!({ "error": "a PIN is taken only from its own origin's page" });
+        return write_json(&mut client, "403 Forbidden", &refusal, &[]).await;
     }
     let body = read_body(&mut client, request, parsed.content_length).await?;
-    let entry = std::str::from_utf8(&body)
-        .ok()
-        .and_then(|body| {
-            body.split('&')
-                .find_map(|field| field.strip_prefix("pin="))
-        })
-        .unwrap_or("");
-    match access.log_in(entry) {
+    let Ok(entry) = serde_json::from_slice::<PinEntry>(&body) else {
+        let refusal = serde_json::json!({ "error": "the body is not {\"pin\": \"…\"}" });
+        return write_json(&mut client, "400 Bad Request", &refusal, &[]).await;
+    };
+    match access.log_in(&entry.pin) {
         Ok(login) => {
             let cookie = access.set_cookie(&login);
-            // Back to where the form was served, as a GET. A target that starts
-            // `//` would be read as another host's address.
-            let location = if parsed.target.starts_with("//") { "/" } else { parsed.target.as_str() };
-            write_response(
-                &mut client,
-                "303 See Other",
-                "text/plain; charset=utf-8",
-                "",
-                &[("Location", location), ("Set-Cookie", cookie.as_str())],
-            )
-            .await?;
+            write_json(&mut client, "200 OK", &serde_json::json!({ "ok": true }), &[("Set-Cookie", cookie.as_str())]).await
         }
         Err(refusal) => {
-            let page = pin_page(Some(&refusal.message()));
-            write_response(&mut client, "403 Forbidden", "text/html; charset=utf-8", &page, &[]).await?;
+            write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": refusal.message() }), &[]).await
         }
     }
+}
+
+/// The bundle's file for `path`, as a gateway serves it: the page for any path
+/// that is not a file, isolated, with its validator.
+async fn write_bundle(stream: &mut tokio::net::TcpStream, parsed: &ParsedRequest, path: &str) -> anyhow::Result<()> {
+    if parsed.method != "GET" {
+        write_response(stream, "405 Method Not Allowed", "text/plain; charset=utf-8", "", &[]).await?;
+        return Ok(());
+    }
+    // The software HEVC decoder is a worker's, and the page with it never loads
+    // before a login; the document here would read as having found it.
+    if path.starts_with("/hevc/") {
+        write_response(stream, "404 Not Found", "text/plain; charset=utf-8", "", &[]).await?;
+        return Ok(());
+    }
+    let asset = crate::assets::asset(path);
+    let etag = asset.etag.to_str().context("an embedded file's validator is ASCII")?;
+    let content_type = asset.content_type.to_str().context("an embedded file's type is ASCII")?;
+    let mut headers = crate::assets::ISOLATION.to_vec();
+    headers.push(("ETag", etag));
+    if parsed.if_none_match.as_deref() == Some(etag) {
+        write_response(stream, "304 Not Modified", content_type, "", &headers).await?;
+    } else {
+        write_response(stream, "200 OK", content_type, &*asset.data, &headers).await?;
+    }
+    Ok(())
+}
+
+async fn write_json(
+    stream: &mut tokio::net::TcpStream,
+    status: &str,
+    body: &serde_json::Value,
+    extra: &[(&str, &str)],
+) -> anyhow::Result<()> {
+    write_response(stream, status, "application/json", body.to_string(), extra).await?;
     Ok(())
 }
 
@@ -2208,6 +2290,7 @@ struct ParsedRequest {
     cookie: Option<String>,
     origin: Option<String>,
     content_length: usize,
+    if_none_match: Option<String>,
     /// Whether it asks to upgrade the connection, as a WebSocket does.
     upgrade: bool,
 }
@@ -2256,6 +2339,7 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
     let mut cookies = Vec::new();
     let mut origin = None;
     let mut content_length = 0;
+    let mut if_none_match = None;
     let mut upgrade = false;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
@@ -2270,6 +2354,8 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
             origin = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("content-length") {
             content_length = value.parse().context("invalid Content-Length")?;
+        } else if name.eq_ignore_ascii_case("if-none-match") {
+            if_none_match = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("upgrade") {
             upgrade = true;
         }
@@ -2281,6 +2367,7 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
         cookie: (!cookies.is_empty()).then(|| cookies.join("; ")),
         origin,
         content_length,
+        if_none_match,
         upgrade,
     })
 }
@@ -2302,9 +2389,10 @@ async fn write_response(
     stream: &mut tokio::net::TcpStream,
     status: &str,
     content_type: &str,
-    body: &str,
+    body: impl AsRef<[u8]>,
     extra: &[(&str, &str)],
 ) -> std::io::Result<()> {
+    let body = body.as_ref();
     let mut head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
         body.len()
@@ -2317,28 +2405,8 @@ async fn write_response(
     }
     head.push_str("\r\n");
     stream.write_all(head.as_bytes()).await?;
-    stream.write_all(body.as_bytes()).await?;
+    stream.write_all(body).await?;
     stream.shutdown().await
-}
-
-fn landing_page(instances: &BTreeMap<String, PublishedInstance>) -> String {
-    let mut rows = String::new();
-    for (name, instance) in instances {
-        let state = instance.status.label();
-        if instance.status == InstanceStatus::Running {
-            rows.push_str(&format!(
-                "<li><a href=\"{OPEN_PATH}{name}\">{name}</a> <span>{state}</span></li>"
-            ));
-        } else {
-            rows.push_str(&format!("<li>{name} <span>{state}</span></li>"));
-        }
-    }
-    if rows.is_empty() {
-        rows.push_str("<li>No instances. Press <kbd>n</kbd> in the TUI to create one.</li>");
-    }
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"2\"><meta name=\"viewport\" content=\"width=device-width\"><title>zDesk instances</title><style>body{{font:16px system-ui;max-width:720px;margin:4rem auto;padding:0 1rem;background:#101014;color:#eee}}a{{color:#85b7ff}}span{{color:#999;margin-left:.5rem}}li{{margin:.8rem 0}}</style></head><body><h1>zDesk instances</h1><p>Start and stop gateways in the terminal control plane.</p><ul>{rows}</ul></body></html>"
-    )
 }
 
 #[cfg(test)]
@@ -2698,8 +2766,9 @@ mod tests {
         second.1.await.unwrap();
     }
 
-    /// A browser without a login is asked for the PIN on every origin, and is
-    /// never handed a worker's token.
+    /// A browser without a login is served the page on every origin, which asks
+    /// it for the PIN, and nothing of any instance: no API, and never a worker's
+    /// token.
     #[tokio::test]
     async fn a_browser_without_a_login_is_asked_for_the_pin() {
         let routes = RouteTable::default();
@@ -2716,12 +2785,27 @@ mod tests {
         let port = free_port();
         let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
         for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
-            let response = request(router.port(), host, Some("zdesk_session=launch-token")).await;
-            assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host}: {response}");
-            assert!(response.contains("name=\"pin\""), "{host}: {response}");
-            assert!(!response.contains("launch-token"), "{host}: {response}");
-            assert!(!response.contains("Set-Cookie"), "{host}: {response}");
+            let page = request(port, host, Some("zdesk_session=launch-token")).await;
+            assert!(page.starts_with("HTTP/1.1 200 OK"), "{host}: {page}");
+            assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{host}: {page}");
+            assert!(page.contains("<div id=\"root\">"), "the bundle's document: {host}: {page}");
+            assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {host}: {page}");
+            assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{host}: {page}");
+
+            let status = get(port, host, "/api/auth/status", None).await;
+            let landing = host == "zdesk.localhost";
+            assert!(
+                body_of(&status).starts_with(&format!(
+                    "{{\"authenticated\":false,\"landing\":{landing},\"login\":\"pin\",\"problem\":null}}"
+                )),
+                "{host}: {status}"
+            );
+            for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+                let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
+                assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
+            }
         }
+        drop(router);
     }
 
     /// A bare loopback name is sent to `zdesk.localhost`, keeping the path, and
@@ -2737,14 +2821,13 @@ mod tests {
                 response.contains(&format!("Location: http://zdesk.localhost:{port}/__zdesk/open/work?x=1\r\n")),
                 "{host}: {response}"
             );
-            assert!(!response.contains("Set-Cookie") && !response.contains("name=\"pin\""), "{host}: {response}");
+            assert!(!response.contains("Set-Cookie"), "{host}: {response}");
         }
         drop(router);
     }
 
-    /// The PIN form's post logs the browser in on its own origin and sends it
-    /// back where it was; a post from another origin is not taken, and does not
-    /// count against the PIN.
+    /// The page's PIN logs the browser in on its own origin; a post from another
+    /// origin is not taken, and does not count against the PIN.
     #[tokio::test]
     async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
         let port = free_port();
@@ -2752,9 +2835,9 @@ mod tests {
         let _router = SharedPort::bind(port, RouteTable::default(), access.clone()).await.unwrap();
         let pin = pin_of(&access);
         let post = |origin: String, pin: String| {
-            let body = format!("pin={pin}");
+            let body = format!("{{\"pin\":\"{pin}\"}}");
             format!(
-                "POST /somewhere?x=1 HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: {origin}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "POST {PIN_PATH} HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
         };
@@ -2765,12 +2848,11 @@ mod tests {
 
         let wrong = if pin == "000000" { "000001" } else { "000000" };
         let response = send(port, &post(format!("http://zdesk.localhost:{port}"), wrong.to_owned())).await;
-        assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{response}");
         assert!(response.contains(&format!("{} more wrong entries", MAX_WRONG - 1)), "only this one counted: {response}");
 
         let response = send(port, &post(format!("http://zdesk.localhost:{port}"), pin)).await;
-        assert!(response.starts_with("HTTP/1.1 303 See Other"), "{response}");
-        assert!(response.contains("Location: /somewhere?x=1\r\n"), "{response}");
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
         let cookie = response
             .lines()
             .find_map(|line| line.strip_prefix("Set-Cookie: "))
@@ -2778,9 +2860,10 @@ mod tests {
         assert!(cookie.starts_with(&format!("zdesk_login_{port}=")) && cookie.contains("HttpOnly"), "{cookie}");
         let login = cookie.split(';').next().unwrap();
 
-        let response = request(port, "zdesk.localhost", Some(login)).await;
-        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-        assert!(response.contains("zDesk instances"), "{response}");
+        let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
+        assert!(body_of(&status).starts_with("{\"authenticated\":true,\"landing\":true,"), "{status}");
+        let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
+        assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{instances}");
     }
 
     /// The landing page's link to an instance carries the login there through a
@@ -2805,8 +2888,12 @@ mod tests {
         let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
         let _router = SharedPort::bind(port, routes, access).await.unwrap();
 
-        let landing = request(port, "zdesk.localhost", Some(&login)).await;
-        assert!(landing.contains(&format!("href=\"{OPEN_PATH}one\"")), "{landing}");
+        let listed = get(port, "zdesk.localhost", "/api/instances", Some(&login)).await;
+        assert_eq!(
+            body_of(&listed),
+            format!("[{{\"name\":\"one\",\"open\":\"{OPEN_PATH}one\",\"state\":\"running\"}}]"),
+            "{listed}"
+        );
 
         let opened = send(
             port,
@@ -2972,8 +3059,12 @@ mod tests {
     }
 
     async fn request(port: u16, host: &str, cookie: Option<&str>) -> String {
+        get(port, host, "/", cookie).await
+    }
+
+    async fn get(port: u16, host: &str, path: &str, cookie: Option<&str>) -> String {
         let cookie = cookie.map_or(String::new(), |cookie| format!("Cookie: {cookie}\r\n"));
-        send(port, &format!("GET / HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n")).await
+        send(port, &format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n")).await
     }
 
     async fn send(port: u16, raw: &str) -> String {
