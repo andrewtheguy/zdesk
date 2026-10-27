@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.480"
+version = "0.0.481"
 license = "MIT"
 edition = "2024"
 
