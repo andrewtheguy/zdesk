@@ -21,6 +21,9 @@ import { createEgfxVideo, drawnAsCoded, type EgfxVideo } from "./egfxVideo.ts";
 import type { PlanesPicture } from "./planesPicture.ts";
 import {
   type BatchRecord,
+  CACHE_SLOTS,
+  CACHE_TILE,
+  type CacheMsg,
   type CopyMsg,
   decodeBatchFrame,
   type GraphicsMsg,
@@ -207,6 +210,12 @@ export function createFramePainter(options: {
   decoding?: PageDecoding;
   /** How long a region's decoder outlives its stream (regionStreams.ts): injectable for a test. */
   regionRetireMs?: number;
+  /**
+   * Where the cache of wlshare's tiles is kept: the 2D context of a canvas
+   * `CACHE_TILE` × `CACHE_SLOTS` pixels square, 64 MiB, made on the first tile
+   * stored. Injectable for a test, which has no OffscreenCanvas.
+   */
+  makeCache?: () => PaintContext | null;
 }): FramePainter {
   // Which attachment the decoder belongs to. `clear()` is the attachment boundary and
   // is not queued behind draws — an eviction closes the socket from under whatever
@@ -262,6 +271,27 @@ export function createFramePainter(options: {
   const releaseRegions = () => {
     regions?.close();
     regions = null;
+  };
+
+  // The cache of wlshare's tiles: `CACHE_SLOTS` tiles in a grid `CACHE_SIDE` wide
+  // on one canvas, each slot's place its number along the grid, and which slots
+  // hold a tile. wlshare keeps the record of it and only ever draws from a slot
+  // it stored since its picture last started over, so a `tilesStart` leaves the
+  // slots as they are, to be written over; the attachment's end lets the canvas go.
+  const CACHE_SIDE = Math.ceil(Math.sqrt(CACHE_SLOTS));
+  const makeCache =
+    options.makeCache ??
+    (() =>
+      new OffscreenCanvas(
+        CACHE_SIDE * CACHE_TILE,
+        CACHE_SIDE * CACHE_TILE,
+      ).getContext("2d"));
+  let cache: PaintContext | null = null;
+  const cacheHeld = new Uint8Array(CACHE_SLOTS);
+
+  const releaseCache = () => {
+    cache = null;
+    cacheHeld.fill(0);
   };
 
   // The desktop's size in pixels, from the last resize: what a Mac's own
@@ -717,6 +747,57 @@ export function createFramePainter(options: {
     painted();
   };
 
+  // A tile kept in the cache, from the canvas as the records before it left it, or
+  // drawn from it in its turn, in wlshare's tiles. A draw from a slot nothing was
+  // stored in is a gateway and a page that disagree about the cache, which no
+  // later record mends: the batch is dropped as a malformed one is.
+  const paintCache = (record: CacheMsg, born: number) => {
+    const ctx = options.context();
+    if (generation !== born || !tiles || !ctx) {
+      return;
+    }
+    const { slot, x, y } = record;
+    const sx = (slot % CACHE_SIDE) * CACHE_TILE;
+    const sy = Math.floor(slot / CACHE_SIDE) * CACHE_TILE;
+    if (record.store) {
+      cache ??= makeCache();
+      if (!cache) {
+        return;
+      }
+      cache.drawImage(
+        ctx.canvas,
+        x,
+        y,
+        CACHE_TILE,
+        CACHE_TILE,
+        sx,
+        sy,
+        CACHE_TILE,
+        CACHE_TILE,
+      );
+      cacheHeld[slot] = 1;
+      return;
+    }
+    if (!cache || !cacheHeld[slot]) {
+      dropMalformed();
+      return;
+    }
+    ctx.drawImage(
+      cache.canvas,
+      sx,
+      sy,
+      CACHE_TILE,
+      CACHE_TILE,
+      x,
+      y,
+      CACHE_TILE,
+      CACHE_TILE,
+    );
+    // The desktop's own canvas is the picture again.
+    hidePlanes();
+    painted();
+  };
+
   // One unit's picture. Null when there is nothing to draw — a decoder that dropped
   // the unit has said so itself. A run of the pipeline has no picture of its own: it
   // is composed in its turn. A region's unit with no picture of tiles is of one that
@@ -966,6 +1047,9 @@ export function createFramePainter(options: {
       case "copy":
         paintCopy(record, born);
         return;
+      case "cache":
+        paintCache(record, born);
+        return;
       case "region":
         showRegion(record, await decoding, born);
         return;
@@ -996,6 +1080,7 @@ export function createFramePainter(options: {
     clear() {
       generation += 1;
       releaseVideo();
+      releaseCache();
       // The next attachment names its own part, ahead of any run, and its own
       // size, ahead of any picture.
       graphicsPart = null;

@@ -1953,7 +1953,9 @@ type TilesRecord =
       keyframe: boolean;
       payload: number[];
     }
-  | { copy: [number, number, number, number, number, number] };
+  | { copy: [number, number, number, number, number, number] }
+  | { store: [number, number, number] }
+  | { cached: [number, number, number] };
 
 function regionsFrame(records: TilesRecord[]): ArrayBuffer {
   const bytes: number[] = [];
@@ -1972,6 +1974,12 @@ function regionsFrame(records: TilesRecord[]): ArrayBuffer {
     } else if ("copy" in record) {
       bytes.push(0x08);
       record.copy.forEach(u16);
+    } else if ("store" in record) {
+      bytes.push(0x0a);
+      record.store.forEach(u16);
+    } else if ("cached" in record) {
+      bytes.push(0x09);
+      record.cached.forEach(u16);
     } else {
       bytes.push(0x07, record.region, record.keyframe ? 0x01 : 0x00);
       record.at.forEach(u16);
@@ -1982,12 +1990,25 @@ function regionsFrame(records: TilesRecord[]): ArrayBuffer {
   return new Uint8Array(bytes).buffer;
 }
 
-/** A desktop's context that records each draw's source, place and clip. */
+/**
+ * A desktop's context that records each draw's source, place and clip, and the
+ * cache of tiles beside it, which records what is stored where.
+ */
 function regionContext() {
   const draws: string[] = [];
   let clip = "";
   const saved: string[] = [];
   const canvas = { canvas: true };
+  const atlas = { atlas: true };
+  const cache = {
+    canvas: atlas,
+    drawImage(source: unknown, ...args: number[]) {
+      assert.equal(source, canvas, "a store is of the desktop's canvas");
+      const [sx, sy, sw, sh, dx, dy, dw, dh] = args;
+      assert.deepEqual([sw, sh, dw, dh], [64, 64, 64, 64]);
+      draws.push(`store ${sx},${sy} at ${dx},${dy}`);
+    },
+  };
   const ctx = {
     canvas,
     save() {
@@ -2010,16 +2031,31 @@ function regionContext() {
         draws.push(`copy ${sx},${sy} ${sw}x${sh} to ${dx},${dy}${clip}`);
         return;
       }
+      if (source === atlas) {
+        // A tile of the cache, drawn at its size.
+        const [sx, sy, sw, sh, dx, dy, dw, dh] = args;
+        assert.deepEqual([sw, sh, dw, dh], [64, 64, 64, 64]);
+        draws.push(`cached ${sx},${sy} to ${dx},${dy}${clip}`);
+        return;
+      }
       // Drawn whole at its place: the clip is what cuts it.
       assert.equal(args.length, 2);
       const what = source.tag === undefined ? "frame" : `tile${source.tag}`;
       draws.push(`${what} ${args[0]},${args[1]}${clip}`);
     },
   };
-  return { ctx: ctx as unknown as CanvasRenderingContext2D, draws };
+  return {
+    ctx: ctx as unknown as CanvasRenderingContext2D,
+    cache: cache as unknown as CanvasRenderingContext2D,
+    draws,
+  };
 }
 
-function regionPainter(ctx: CanvasRenderingContext2D, regionRetireMs = 0) {
+function regionPainter(
+  ctx: CanvasRenderingContext2D,
+  regionRetireMs = 0,
+  cache?: CanvasRenderingContext2D,
+) {
   return createFramePainter({
     context: () => ctx,
     onVideoError: (error) => {
@@ -2029,8 +2065,58 @@ function regionPainter(ctx: CanvasRenderingContext2D, regionRetireMs = 0) {
       videoKeyframeAsks.push(reason);
     },
     regionRetireMs,
+    makeCache: () => {
+      if (!cache) {
+        throw new Error("a painter with no cache stored a tile");
+      }
+      return cache;
+    },
   });
 }
+
+test("wlshare's cache of tiles keeps what it is told to and draws it where it is told, in its turn, and only while the picture is tiles", async () => {
+  const { ctx, cache, draws } = regionContext();
+  const p = regionPainter(ctx, 0, cache);
+  await p.draw(regionsFrame([{ store: [5, 0, 0] }, { cached: [5, 64, 0] }]));
+  assert.deepEqual(draws, [], "a store or a draw before the tiles' start");
+  p.startTiles();
+  // Slot 5 is the sixth tile of the atlas's first row; slot 4095 the last of its
+  // 64th. A store reads the canvas as the records before it left it, and a cached
+  // draw after a tile decodes still waits its turn.
+  decodeDelay.set(1, 20);
+  await p.draw(
+    regionsFrame([
+      { tile: [0, 0, 64, 64], image: [1] },
+      { store: [5, 0, 0] },
+      { cached: [5, 64, 0] },
+      { store: [4095, 64, 0] },
+      { cached: [4095, 128, 64] },
+    ]),
+  );
+  assert.deepEqual(draws, [
+    "tile1 0,0",
+    "store 0,0 at 320,0",
+    "cached 320,0 to 64,0",
+    "store 64,0 at 4032,4032",
+    "cached 4032,4032 to 128,64",
+  ]);
+  assert.deepEqual(videoKeyframeAsks, []);
+  // The picture starting over leaves the slots: wlshare draws only from what it
+  // stored since, and writes the rest over.
+  p.startTiles();
+  await p.draw(regionsFrame([{ cached: [5, 0, 64] }]));
+  assert.equal(draws.at(-1), "cached 320,0 to 0,64");
+  // A draw from a slot nothing was stored in is a batch the page cannot draw.
+  await p.draw(regionsFrame([{ cached: [6, 0, 64] }]));
+  assert.equal(draws.length, 6);
+  assert.deepEqual(videoKeyframeAsks, ["a malformed batch was dropped"]);
+  // The attachment's end lets the cache go: the next starts empty.
+  p.clear();
+  p.startTiles();
+  await p.draw(regionsFrame([{ cached: [5, 0, 0] }]));
+  assert.equal(draws.length, 6);
+  assert.equal(videoKeyframeAsks.length, 2);
+});
 
 const REGION = "avc1.64001F";
 const waited = (ms: number) =>

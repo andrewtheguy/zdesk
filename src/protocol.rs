@@ -432,6 +432,11 @@ pub enum ClientMsg {
 /// same size, as wlshare's tiles sent it — see [`CopyUnit`]. A receiver rejects an
 /// empty rectangle.
 ///
+/// A `STORE` record keeps the 64×64 tile the canvas holds at `(x, y)` in slot `slot`
+/// of the page's cache of tiles, and a `CACHED` record draws the tile slot `slot`
+/// keeps at `(x, y)`, as wlshare's tiles sent them — see [`CacheUnit`]. A receiver
+/// rejects a slot past [`CACHE_SLOTS`].
+///
 /// Receivers reject nonzero flags. The record count makes truncation detectable.
 pub mod batch {
     pub const FRAME_KIND: u8 = 0x02;
@@ -443,6 +448,8 @@ pub mod batch {
     pub const OP_TILE: u8 = 0x06;
     pub const OP_REGION: u8 = 0x07;
     pub const OP_COPY: u8 = 0x08;
+    pub const OP_CACHED: u8 = 0x09;
+    pub const OP_STORE: u8 = 0x0A;
 
     /// Bytes a `VIDEO` record costs besides its payload.
     pub const VIDEO_HEADER_LEN: usize = 10;
@@ -470,6 +477,15 @@ pub mod batch {
 
     /// Bytes a `COPY` record costs, all of it.
     pub const COPY_LEN: usize = 13;
+
+    /// Bytes a `CACHED` or a `STORE` record is.
+    pub const CACHE_LEN: usize = 7;
+    /// The slots of the page's cache of tiles, numbered from 0: wlshare's
+    /// `wlshare_proto::tiles::CACHE_SLOTS`, which is what the daemon keeps its
+    /// record of, 64 MiB of pixels on the page.
+    pub const CACHE_SLOTS: u16 = 4096;
+    /// A cached tile's side: wlshare's `wlshare_proto::tiles::TILE`.
+    pub const TILE: u16 = 64;
 
     /// A `VIDEO` record's flag: a decoder that has seen nothing before this can start here.
     pub const VIDEO_KEYFRAME: u8 = 0x01;
@@ -1043,6 +1059,32 @@ impl CopyUnit {
     }
 }
 
+/// The page's cache of tiles, as wlshare's tiles use it: a `STORE` keeps the
+/// [`batch::TILE`]-square tile the canvas holds at `(x, y)`, as the records before
+/// it left it, in slot `slot` of [`batch::CACHE_SLOTS`], over whatever the slot
+/// held; a `CACHED` draws the tile slot `slot` keeps at `(x, y)`, in its turn among
+/// the records around it. wlshare keeps the record of the cache and the page only
+/// what it is told to, so the two agree; what a cached draw is owed, wlshare keeps
+/// track of. Drawing from a slot nothing was stored in is the page's to refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheUnit {
+    /// A `STORE`; otherwise a `CACHED`.
+    pub store: bool,
+    pub slot: u16,
+    pub x: u16,
+    pub y: u16,
+}
+
+impl CacheUnit {
+    /// Append this as a `STORE` or a `CACHED` record, [`batch::CACHE_LEN`] bytes.
+    pub fn write_record(&self, out: &mut Vec<u8>) {
+        out.push(if self.store { batch::OP_STORE } else { batch::OP_CACHED });
+        for value in [self.slot, self.x, self.y] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+}
+
 /// Largest cursor edge a client is asked to draw. Real pointers are 32x32 or
 /// 64x64; a shape past this is dropped rather than sent, because a CSS cursor
 /// that big is ignored by the browser and would leave no pointer at all.
@@ -1245,6 +1287,9 @@ pub enum ServerMsg {
     /// What the canvas holds elsewhere drawn at a rectangle of wlshare's tiles. A
     /// binary record like [`ServerMsg::Video`], ordered the same way.
     Copy(CopyUnit),
+    /// A tile of wlshare's tiles kept in the page's cache, or drawn from it. A
+    /// binary record like [`ServerMsg::Video`], ordered the same way.
+    Cache(CacheUnit),
     /// Build the decoder for moving region `stream` of wlshare's tiles with this
     /// configuration: ahead of the stream's first [`ServerMsg::Region`], and of the
     /// first of a new stream on an id that was ended. `engine` is the engine that
@@ -1703,6 +1748,7 @@ impl ServerMsg {
                 | ServerMsg::TilesStart { .. }
                 | ServerMsg::Region(_)
                 | ServerMsg::Copy(_)
+                | ServerMsg::Cache(_)
                 | ServerMsg::RegionFormat { .. }
                 | ServerMsg::RegionEnd { .. }
                 | ServerMsg::VideoFormat { .. }
@@ -1732,6 +1778,7 @@ impl ServerMsg {
             | ServerMsg::Tile(_)
             | ServerMsg::Region(_)
             | ServerMsg::Copy(_)
+            | ServerMsg::Cache(_)
             | ServerMsg::Audio(_)
             | ServerMsg::AudioGap => {
                 return None;
@@ -2650,6 +2697,19 @@ mod tests {
         assert_eq!(out.len(), batch::COPY_LEN);
         assert_eq!(out, [batch::OP_COPY, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0A, 0x09, 0x0C, 0x0B]);
         assert!(ServerMsg::Copy(unit).is_display() && ServerMsg::Copy(unit).text_frame().is_none(), "a copy is a display's record and has no standalone frame");
+    }
+
+    #[test]
+    fn cache_record_layout_is_op_le_slot_and_place() {
+        let store = CacheUnit { store: true, slot: 0x0102, x: 0x0304, y: 0x0506 };
+        let mut out = Vec::new();
+        store.write_record(&mut out);
+        assert_eq!(out.len(), batch::CACHE_LEN);
+        assert_eq!(out, [batch::OP_STORE, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05]);
+        let mut out = Vec::new();
+        CacheUnit { store: false, ..store }.write_record(&mut out);
+        assert_eq!(out, [batch::OP_CACHED, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05]);
+        assert!(ServerMsg::Cache(store).is_display() && ServerMsg::Cache(store).text_frame().is_none(), "a cache's record is a display's and has no standalone frame");
     }
 
     /// A region's format and end name their stream and are stamped with their engine,

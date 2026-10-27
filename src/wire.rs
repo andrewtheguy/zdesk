@@ -2,7 +2,7 @@
 //! messages flush the pending batch to preserve ordering against the records
 //! around them, and batches are bounded.
 
-use crate::protocol::{self, CopyUnit, GraphicsUnit, Held, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit, WireFrame, batch};
+use crate::protocol::{self, CacheUnit, CopyUnit, GraphicsUnit, Held, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit, WireFrame, batch};
 
 /// Record bytes per batch, below client WebSocket limits and large enough to
 /// amortize per-frame overhead.
@@ -79,6 +79,7 @@ impl Wire {
                     ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
                     ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
                     ServerMsg::Copy(unit) => self.push(Record::Copy(unit), &mut frames)?,
+                    ServerMsg::Cache(unit) => self.push(Record::Cache(unit), &mut frames)?,
                     // A frame's last run is its batch's last record: the browser
                     // shows a batch once it has drawn all of it, and acknowledges
                     // it then, which is this frame's acknowledgement to the host.
@@ -171,9 +172,15 @@ impl Wire {
                     unit.write_record(&mut frame);
                     unit.held
                 }
-                // A copy of what the browser holds is a tile it draws, of no image.
+                // A copy of what the browser holds is a tile it draws, of no image,
+                // and so is a tile kept in its cache or drawn from it.
                 Record::Copy(unit) => {
                     self.totals.tile(batch::COPY_LEN);
+                    unit.write_record(&mut frame);
+                    Held::default()
+                }
+                Record::Cache(unit) => {
+                    self.totals.tile(batch::CACHE_LEN);
                     unit.write_record(&mut frame);
                     Held::default()
                 }
@@ -194,6 +201,7 @@ enum Record {
     Tile(TileUnit),
     Region(RegionUnit),
     Copy(CopyUnit),
+    Cache(CacheUnit),
 }
 
 impl Record {
@@ -205,6 +213,7 @@ impl Record {
             Record::Tile(unit) => unit.record_len(),
             Record::Region(unit) => unit.record_len(),
             Record::Copy(_) => batch::COPY_LEN,
+            Record::Cache(_) => batch::CACHE_LEN,
         }
     }
 }
