@@ -116,7 +116,11 @@ finds for itself and not for the one it is told of, unless the client also offer
 UDP (the last case below). Measured against a Windows 11
 host without a GPU, with the pipeline passed and one full-screen moving picture at
 1280×800, which over a LAN is about 34 frames a second at 114 KB each in RemoteFX
-Progressive, and about 32 a second at 9 KB each where H.264 is taken:
+Progressive, and about 32 a second at 9 KB each where H.264 is taken. The picture
+is `tests/rdp_motion.ps1`'s animation, not a video: bands of flat colour sliding
+and changing hue under a sweeping square, every pixel changing each frame, so
+no tile is skipped, but each is flat colour rather than a video's texture.
+Neither figure is what a video costs; a real one is the last case below:
 
 - **Told, nothing changes.** A client that took the detection of [MS-RDPBCGR
   section 2.2.14](https://github.com/andrewtheguy/ms-rdp-specs/blob/main/MS-RDPBCGR.pdf)
@@ -253,6 +257,19 @@ Progressive, and about 32 a second at 9 KB each where H.264 is taken:
   tables. Behind a page on 27 Mbit/s, with the socket read as it came, it sent
   12 frames a second of 282 KB, still every tile whole, a third of a second
   behind the desktop.
+- **A real video, over a LAN.** `windows-ent-sandbox` at 1920×980, a video
+  full screen in place of the animation: the first 150 s of the clip
+  wlshare's captures play (`Multicolored_Explosions-4k.webm`), scaled to the
+  desktop as H.264 so the host's CPU went on its encoder, and played looped by
+  ffplay (`tests/rdp_video.ps1`), 60 s a run, taking neither the detection nor
+  UDP (2026-10-27). With H.264 refused the host drew 38.7 frames a second of
+  51 KB, 15.9 Mbit/s, every first pass at the stage of quality 50, refined to
+  75, and about 2% to full. With H.264 by region it was still Progressive
+  almost whole: 13.7 Mbit/s, of which H.264 was 0.7, its regions at 33 and
+  41. Preferring H.264 for the whole desktop, it drew 37.8 frames a second of
+  9.7 KB, 2.9 Mbit/s, in AVC444v2 luma views alone, about 70% of its regions
+  at 38 and the rest at 30 and 22. Every run was a median 11 to 47 ms behind
+  the desktop.
 
 The detector's and the link probe's earlier defects are fixed: the
 connect-time count includes each payload's header, malformed requests are

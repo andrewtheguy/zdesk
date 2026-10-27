@@ -13,7 +13,8 @@
 //!
 //! [`MOTION_ENV`] names a script run with `start` once the desktop is up and
 //! `stop` at the end, to put the same moving picture on the host each time:
-//! `tests/rdp_motion.ps1` is one. Without it, play something there first.
+//! `tests/rdp_motion.ps1` is one, and `tests/rdp_video.ps1` plays the video
+//! `ZDESK_UAT_VIDEO` names. Without it, play something there first.
 //!
 //! - [`PAGE_ENV`] is a page on a link of that many kbit/s behind a gateway: each
 //!   frame is said to be composed when the bytes passed so far would have crossed
@@ -40,6 +41,8 @@
 //!   2.2.1.3.8) and turns down every offer of it the host makes (2.2.15), so the
 //!   session stays on TCP: whether a host draws differently for a client that
 //!   offers UDP, apart from using it. `RUST_LOG=info` shows the offers.
+//! - [`SIZE_ENV`], `WIDTHxHEIGHT`, is the desktop asked for, 1280x800 without
+//!   it.
 //! - [`PACED_ENV`] set to `0` is a session that does not show the host the page's
 //!   pace, as one drawn High quality: the socket is read as it comes, and the
 //!   detection answered with what this connection measures.
@@ -79,6 +82,7 @@ const RUN_ENV: &str = "ZDESK_UAT_LINK_SECS";
 const THROTTLE_ENV: &str = "ZDESK_UAT_THROTTLE";
 const ACK_DELAY_ENV: &str = "ZDESK_UAT_ACK_DELAY_MS";
 const PAGE_ENV: &str = "ZDESK_UAT_PAGE_KBPS";
+const SIZE_ENV: &str = "ZDESK_UAT_SIZE";
 
 const SIZE: (u32, u32) = (1280, 800);
 
@@ -424,6 +428,10 @@ async fn a_real_host_draws_for_a_slow_client() {
     let multitransport =
         matches!(std::env::var(MULTITRANSPORT_ENV).as_deref(), Ok(v) if !matches!(v, "" | "0" | "false"));
     let paced = !matches!(std::env::var(PACED_ENV).as_deref(), Ok("0" | "false"));
+    let size = std::env::var(SIZE_ENV).ok().map_or(SIZE, |said| {
+        let (width, height) = said.split_once('x').expect("a size as WIDTHxHEIGHT");
+        (width.parse().expect("a width"), height.parse().expect("a height"))
+    });
     let run = Duration::from_secs(std::env::var(RUN_ENV).ok().and_then(|v| v.parse().ok()).unwrap_or(60));
     let ack_delay = Duration::from_millis(std::env::var(ACK_DELAY_ENV).ok().and_then(|v| v.parse().ok()).unwrap_or(0));
     let throttled = std::env::var(THROTTLE_ENV).ok().map(|said| {
@@ -434,7 +442,9 @@ async fn a_real_host_draws_for_a_slow_client() {
         (kbps, Duration::from_millis(delay), buffer_kb as u32, (lift > 0).then(|| Duration::from_secs(lift)))
     });
     println!(
-        "rdp_link_probe: {name}, h264 {h264:?}, autodetect {autodetect}, udp offered {multitransport}, paced {paced}, throttle {throttled:?}, acks held {ack_delay:?}, {}s",
+        "rdp_link_probe: {name}, {}x{}, h264 {h264:?}, autodetect {autodetect}, udp offered {multitransport}, paced {paced}, throttle {throttled:?}, acks held {ack_delay:?}, {}s",
+        size.0,
+        size.1,
         run.as_secs()
     );
     let (host, port) = match throttled {
@@ -452,8 +462,8 @@ async fn a_real_host_draws_for_a_slow_client() {
         username: target.username.clone(),
         password: target.password.clone(),
         domain: target.domain.clone(),
-        width: SIZE.0,
-        height: SIZE.1,
+        width: size.0,
+        height: size.1,
         scale_percent: 0,
         monitors: 1,
         placement: zdesk::config::Placement::Right,
