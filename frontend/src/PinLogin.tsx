@@ -2,11 +2,11 @@ import { type FormEvent, useState } from "react";
 import { AppVersion } from "./AppVersion.tsx";
 import { gatewayFetch } from "./gateway.ts";
 
-// The TUI control plane's login gate: the PIN its access panel shows. POST
-// /api/auth/pin sets the login cookie for this origin, and the page then
-// reloads, because what answers this origin once a browser is in is no longer
-// the control plane: an instance's own gateway serves its page from then on,
-// and the landing page's link to an instance goes on to it.
+// The TUI control plane's login gate: the PIN its access panel shows, entered
+// on the landing origin. POST /api/auth/pin sets the login cookie for it and
+// every instance origin, and the page then reloads: on the landing page that is
+// the list of instances, and where an instance origin sent the browser for the
+// PIN, the reload sends it back there.
 export default function PinLogin({
   branding,
   problem,

@@ -38,7 +38,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_GRACE: Duration = Duration::from_millis(1500);
 const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST_HEAD: usize = 64 * 1024;
-const MASTER_HOST: &str = "zdesk.localhost";
+pub(super) const MASTER_HOST: &str = "zdesk.localhost";
 /// The binary's version, so the header answers what `--version` would without
 /// leaving the TUI. Every instance is a worker of this same binary.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -307,7 +307,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     }
                     Action::Open => {
                         if let Some(instance) = instances.get(selected) {
-                            let url = open_url(&instance.name, router.port());
+                            let url = instance_url(&instance.name, router.port());
                             message = if instance.status != InstanceStatus::Running {
                                 format!("{} is {}; s starts it", instance.name, instance.status.label())
                             } else {
@@ -538,16 +538,9 @@ fn editor_command(editor: &str, path: &Path) -> Command {
 }
 
 /// The instance's origin on the shared port. A browser without a login there is
-/// asked for the PIN.
+/// sent to the landing origin for the PIN, and then back.
 fn instance_url(name: &str, port: u16) -> String {
     format!("http://{name}.{MASTER_HOST}:{port}")
-}
-
-/// What `o` opens: the landing origin's link to the instance, so one login on the
-/// landing origin reaches every instance, and a browser without one enters the PIN
-/// once there and is then sent on.
-fn open_url(name: &str, port: u16) -> String {
-    format!("http://{MASTER_HOST}:{port}{OPEN_PATH}{name}")
 }
 
 /// Hands `url` to the desktop's default browser without waiting for it: some
@@ -926,28 +919,105 @@ fn bar_width(bindings: &[&Binding]) -> usize {
     pairs + 2 * bindings.len().saturating_sub(1)
 }
 
-/// The access panel's line: the PIN a browser logs in with, or why none can.
-fn access_line(pin: &PinState) -> (String, Color) {
-    match pin {
+/// A run of text in its colour and weight, as a row of the screen is drawn.
+type Run = (String, Option<Color>, bool);
+
+/// The digits in a font three pixels wide and five tall, a row of pixels to a
+/// string, so the PIN reads at a glance in a terminal's small type.
+const PIN_FONT: [[&str; 5]; 10] = [
+    ["###", "#.#", "#.#", "#.#", "###"],
+    ["##.", ".#.", ".#.", ".#.", "###"],
+    ["###", "..#", "###", "#..", "###"],
+    ["###", "..#", "###", "..#", "###"],
+    ["#.#", "#.#", "###", "..#", "..#"],
+    ["###", "#..", "###", "..#", "###"],
+    ["###", "#..", "###", "#.#", "###"],
+    ["###", "..#", "..#", "..#", "..#"],
+    ["###", "#.#", "###", "#.#", "###"],
+    ["###", "#.#", "###", "..#", "###"],
+];
+
+/// `digits` in [`PIN_FONT`], drawn in half blocks two rows of pixels to a row
+/// of the screen: three rows, a column between digits, and three between the
+/// halves of a six-digit PIN.
+fn big_digits(digits: &str) -> [String; 3] {
+    let mut rows: [String; 3] = Default::default();
+    for (index, glyph) in digits.chars().filter_map(|digit| digit.to_digit(10)).enumerate() {
+        let glyph = &PIN_FONT[glyph as usize];
+        for (row, text) in rows.iter_mut().enumerate() {
+            if index > 0 {
+                text.push_str(if index == 3 { "   " } else { " " });
+            }
+            let upper = glyph[2 * row].as_bytes();
+            let lower = glyph.get(2 * row + 1).map(|pixels| pixels.as_bytes());
+            for column in 0..3 {
+                let up = upper[column] == b'#';
+                let down = lower.is_some_and(|pixels| pixels[column] == b'#');
+                text.push(match (up, down) {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    (false, false) => ' ',
+                });
+            }
+        }
+    }
+    rows
+}
+
+/// A six-digit PIN as it is read out: two groups of three.
+fn grouped(digits: &str) -> String {
+    match digits.split_at_checked(3) {
+        Some((first, second)) => format!("{first} {second}"),
+        None => digits.to_owned(),
+    }
+}
+
+/// The access panel's three rows, `inner` columns wide: the PIN a browser logs
+/// in with, in digits three rows tall beside what it is when they fit, or why no
+/// PIN can log anyone in.
+fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
+    let hint = ("P draws a new one".to_owned(), Some(Color::DarkGrey), false);
+    let (heading, color, detail) = match pin {
         PinState::Open {
             digits,
             expires_at,
             minutes_left,
         } => (
-            format!("PIN {digits} · expires {expires_at}, {minutes_left} min left · P draws a new one"),
+            format!("PIN {}", grouped(digits)),
             Color::Green,
+            format!("expires {expires_at} · {minutes_left} min left"),
         ),
-        PinState::Expired => ("PIN expired · P draws a new one".to_owned(), Color::Yellow),
+        PinState::Expired => (
+            "PIN expired".to_owned(),
+            Color::Yellow,
+            "no browser can log in".to_owned(),
+        ),
         PinState::Withdrawn => (
-            format!("PIN withdrawn after {MAX_WRONG} wrong entries · P draws a new one"),
+            format!("PIN withdrawn after {MAX_WRONG} wrong entries"),
             Color::Red,
+            "no browser can log in".to_owned(),
         ),
+    };
+    let text = [(heading, Some(color), true), (detail, None, false), hint];
+    let PinState::Open { digits, .. } = pin else {
+        return text.map(|run| vec![run]);
+    };
+    let big = big_digits(digits);
+    let gap = "   ";
+    if inner < big[0].chars().count() + gap.len() + text[0].0.chars().count() {
+        return text.map(|run| vec![run]);
     }
+    let mut rows = big.into_iter().zip(text);
+    std::array::from_fn(|_| {
+        let (digits, run) = rows.next().expect("three rows of each");
+        vec![(digits, Some(Color::Green), true), (gap.to_owned(), None, false), run]
+    })
 }
 
 /// The rows above the list: the title, the instances directory, a blank row,
-/// the access panel's three, a blank row and the column headings.
-const LIST_TOP: u16 = 8;
+/// the access panel's five, a blank row and the column headings.
+const LIST_TOP: u16 = 10;
 /// The rows below it: a blank row, the rule, the message and the key bar.
 const LIST_BOTTOM: u16 = 4;
 
@@ -984,8 +1054,8 @@ fn render(
         Some(Color::DarkGrey),
         false,
     )?;
-    let (access, color) = access_line(pin);
-    panel(&mut frame, 3, width, "access", &access, color)?;
+    let access = access_rows(pin, panel_inner(width));
+    panel(&mut frame, 3, width, "access", &access)?;
     line(
         &mut frame,
         LIST_TOP - 1,
@@ -1068,29 +1138,47 @@ fn render_page(
 
 /// A boxed one-line panel across the screen, three rows from `top`, with its
 /// title in the top border. Too narrow for a box, it is the text alone.
-fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, text: &str, color: Color) -> std::io::Result<()> {
-    let inner = (width as usize).saturating_sub(4);
+/// The columns inside a panel's borders on a screen `width` wide.
+fn panel_inner(width: u16) -> usize {
+    (width as usize).saturating_sub(4)
+}
+
+/// A box from row `top`, its title in the top border and `rows` inside, each
+/// cut to fit. Too narrow for the border, the rows alone.
+fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, rows: &[Vec<Run>]) -> std::io::Result<()> {
+    let inner = panel_inner(width);
     let border = 4 + title.chars().count();
-    if inner == 0 || border >= width as usize {
-        return line(frame, top + 1, width, text, Some(color), false);
+    let bordered = inner > 0 && border < width as usize;
+    if bordered {
+        let top_border = format!("┌ {title} {}┐", "─".repeat(width as usize - border));
+        line(frame, top, width, &top_border, Some(Color::DarkGrey), false)?;
     }
-    let top_border = format!("┌ {title} {}┐", "─".repeat(width as usize - border));
-    line(frame, top, width, &top_border, Some(Color::DarkGrey), false)?;
-    let clipped: String = text.chars().take(inner).collect();
-    let padding = " ".repeat(inner - clipped.chars().count());
-    spans(
-        frame,
-        top + 1,
-        width,
-        &[
-            ("│ ", Some(Color::DarkGrey), false),
-            (&clipped, Some(color), false),
-            (&padding, None, false),
-            (" │", Some(Color::DarkGrey), false),
-        ],
-    )?;
-    let bottom = format!("└{}┘", "─".repeat(width as usize - 2));
-    line(frame, top + 2, width, &bottom, Some(Color::DarkGrey), false)
+    for (index, row) in rows.iter().enumerate() {
+        let at = top + 1 + index as u16;
+        let runs: Vec<_> = row.iter().map(|(text, color, bold)| (text.as_str(), *color, *bold)).collect();
+        if !bordered {
+            spans(frame, at, width, &runs)?;
+            continue;
+        }
+        let mut left = inner;
+        let mut cut = Vec::new();
+        for (text, color, bold) in runs {
+            let clipped: String = text.chars().take(left).collect();
+            left -= clipped.chars().count();
+            cut.push((clipped, color, bold));
+        }
+        let padding = " ".repeat(left);
+        let mut boxed = vec![("│ ", Some(Color::DarkGrey), false)];
+        boxed.extend(cut.iter().map(|(text, color, bold)| (text.as_str(), *color, *bold)));
+        boxed.push((&padding, None, false));
+        boxed.push((" │", Some(Color::DarkGrey), false));
+        spans(frame, at, width, &boxed)?;
+    }
+    if bordered {
+        let bottom = format!("└{}┘", "─".repeat(width as usize - 2));
+        line(frame, top + 1 + rows.len() as u16, width, &bottom, Some(Color::DarkGrey), false)?;
+    }
+    Ok(())
 }
 
 /// Keys and what they do, the key bold and its word dim. A pair that would not
@@ -2004,43 +2092,24 @@ async fn route_connection(
         }
     };
 
-    // A handoff brings a login to this origin, so it is taken before the origin
-    // asks for one. A code that is not good sends the browser to the page, which
-    // asks for the PIN.
-    if let Some(name) = &instance
-        && let Some(code) = parsed.target.strip_prefix(HANDOFF_PATH)
-    {
-        let cookie = access.take_handoff(code, name).map(|login| access.set_cookie(&login));
-        let mut headers = vec![("Location", "/")];
-        if let Some(cookie) = &cookie {
-            headers.push(("Set-Cookie", cookie.as_str()));
-        }
-        write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &headers).await?;
-        return Ok(());
-    }
-
     let login = access.login_in(parsed.cookie.as_deref());
     let path = parsed.target.split('?').next().unwrap_or_default();
 
-    // The master answers its own questions on the landing origin always, and on
-    // an instance origin until the browser has logged in there: from then on, the
-    // origin is its worker's.
-    if path == PIN_PATH {
-        return log_in(client, &access, &parsed, &request).await;
-    }
-    if landing || login.is_none() {
+    // The master answers its own questions on the landing origin, the one place a
+    // browser enters the PIN; an instance origin is its worker's.
+    if landing {
+        if path == PIN_PATH {
+            return log_in(client, &access, &parsed, &request).await;
+        }
         match (parsed.method.as_str(), path) {
             ("GET", "/api/auth/status") => {
                 let status = serde_json::json!({
                     "authenticated": login.is_some(),
                     "login": "pin",
-                    "landing": landing,
                     "problem": pin_problem(&access.pin()),
                 });
                 return write_json(&mut client, "200 OK", &status, &[]).await;
             }
-            // An instance's own branding is its worker's to say, once the browser
-            // can reach it.
             ("GET", "/api/config") => {
                 let config = serde_json::json!({ "branding": DEFAULT_BRANDING, "logo": false, "throughput": false });
                 return write_json(&mut client, "200 OK", &config, &[]).await;
@@ -2049,23 +2118,31 @@ async fn route_connection(
         }
     }
 
-    let Some(login) = login else {
-        // The page and the questions above, and nothing else until the PIN is
-        // entered: the page is what asks for it.
+    if login.is_none() {
         if is_api(path) {
             return write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": "not logged in" }), &[]).await;
         }
+        // An instance origin sends the browser to the landing page, which asks
+        // for the PIN and, once it is in, sends the browser back to where it was.
+        if let Some(name) = &instance
+            && parsed.method == "GET"
+            && parsed.target.starts_with('/')
+        {
+            let location = format!("http://{MASTER_HOST}:{public_port}{OPEN_PATH}{name}{}", parsed.target);
+            write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
+            return Ok(());
+        }
         return write_bundle(&mut client, &parsed, path).await;
-    };
+    }
 
     let Some(name) = instance else {
-        if let Some(name) = path.strip_prefix(OPEN_PATH) {
+        if let Some(rest) = parsed.target.strip_prefix(OPEN_PATH) {
+            let (name, back) = rest.find('/').map_or((rest, "/"), |slash| rest.split_at(slash));
             if !routes.inner.read().await.contains_key(name) {
                 write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
                 return Ok(());
             }
-            let code = access.hand_off(&login, name);
-            let location = format!("http://{name}.{MASTER_HOST}:{public_port}{HANDOFF_PATH}{code}");
+            let location = format!("{}{back}", instance_url(name, public_port));
             write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
             return Ok(());
         }
@@ -2077,7 +2154,7 @@ async fn route_connection(
                     serde_json::json!({
                         "name": name,
                         "state": instance.status.label(),
-                        "open": (instance.status == InstanceStatus::Running).then(|| format!("{OPEN_PATH}{name}")),
+                        "open": (instance.status == InstanceStatus::Running).then(|| instance_url(name, public_port)),
                     })
                 })
                 .collect();
@@ -2122,12 +2199,11 @@ async fn route_connection(
     Ok(())
 }
 
-/// The landing origin's link to an instance: `/__zdesk/open/<name>` hands the
-/// browser's login to that instance's origin.
+/// Where an instance origin sends a browser without a login:
+/// `/__zdesk/open/<name><path>` on the landing origin asks for the PIN, and once
+/// the browser is in, sends it to `<path>` on that instance's origin.
 const OPEN_PATH: &str = "/__zdesk/open/";
-/// Where an instance origin takes a handoff code: `/__zdesk/handoff?code=<code>`.
-const HANDOFF_PATH: &str = "/__zdesk/handoff?code=";
-/// Where the page posts the PIN, on any origin.
+/// Where the page posts the PIN, on the landing origin.
 const PIN_PATH: &str = "/api/auth/pin";
 /// The most a PIN entry's body may be. It holds six digits and a field name.
 const MAX_LOGIN_BODY: usize = 1024;
@@ -2143,8 +2219,8 @@ struct PinEntry {
     pin: String,
 }
 
-/// `POST /api/auth/pin` with `{"pin": "123456"}`: a login cookie for this origin,
-/// or what was wrong with the entry.
+/// `POST /api/auth/pin` with `{"pin": "123456"}` on the landing origin: a login
+/// cookie for it and every instance origin, or what was wrong with the entry.
 ///
 /// A post is taken only with its own origin's `Origin`, which a browser always
 /// sends on one: otherwise any page on the web could post wrong entries until the
@@ -2246,8 +2322,8 @@ async fn read_body(stream: &mut tokio::net::TcpStream, request: &[u8], length: u
 ///
 /// One response per connection, because the master reads only the first request
 /// on a connection before handing the rest to the worker. A browser keeping the
-/// connection would send its next request past the master: a handoff to this
-/// origin among them, which the worker does not know. A WebSocket upgrade keeps
+/// connection would send its next request past the master's check of its login.
+/// A WebSocket upgrade keeps
 /// its `Connection` header; it is one request and then the socket.
 fn forwarded(request: &[u8], parsed: &ParsedRequest, token: &str) -> anyhow::Result<Vec<u8>> {
     let end = head_end(request)?;
@@ -2506,8 +2582,11 @@ mod tests {
         };
         let frame = render((80, 24), &options, &pin, &instances, 0, &View::List, "started work").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains(&access_line(&pin).0), "{frame}");
-        assert!(frame.contains("PIN 123456 · expires 14:32, 10 min left"), "{frame}");
+        for row in big_digits("123456") {
+            assert!(frame.contains(&row), "the PIN three rows tall: {frame}");
+        }
+        assert!(frame.contains("PIN 123 456"), "{frame}");
+        assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access "), "{frame}");
         assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
         for (key, label) in list_bar(80) {
@@ -2520,6 +2599,25 @@ mod tests {
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
+
+        // Too narrow for the tall digits beside it, the PIN is still there in
+        // the terminal's own.
+        let frame = render((36, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
+        let frame = String::from_utf8(frame).unwrap();
+        assert!(frame.contains("PIN 123 456") && !frame.contains('█'), "{frame}");
+    }
+
+    /// Every digit of the PIN's font is drawn differently, so none reads as
+    /// another.
+    #[test]
+    fn each_digit_is_drawn_its_own_way() {
+        let glyphs: Vec<_> = (0..10).map(|digit| big_digits(&digit.to_string())).collect();
+        for (digit, glyph) in glyphs.iter().enumerate() {
+            assert!(glyph.iter().all(|row| row.chars().count() == 3), "{digit}: {glyph:?}");
+            assert_eq!(glyphs.iter().filter(|other| *other == glyph).count(), 1, "{digit}: {glyph:?}");
+        }
+        assert_eq!(big_digits("88"), ["█▀█ █▀█", "█▀█ █▀█", "▀▀▀ ▀▀▀"]);
+        assert_eq!(big_digits("123456")[0].chars().count(), 6 * 3 + 4 + 3);
     }
 
     /// The specs page answers from the config the instance would start on, and
@@ -2778,11 +2876,11 @@ mod tests {
         second.1.await.unwrap();
     }
 
-    /// A browser without a login is served the page on every origin, which asks
-    /// it for the PIN, and nothing of any instance: no API, and never a worker's
-    /// token.
+    /// A browser without a login is asked for the PIN on the landing origin only:
+    /// an instance origin sends it there, keeping where it was going, and gives
+    /// nothing of the instance — no API, and never a worker's token.
     #[tokio::test]
-    async fn a_browser_without_a_login_is_asked_for_the_pin() {
+    async fn a_browser_without_a_login_is_asked_for_the_pin_on_the_landing_origin() {
         let routes = RouteTable::default();
         routes.inner.write().await.insert(
             "one".to_owned(),
@@ -2796,26 +2894,35 @@ mod tests {
         );
         let port = free_port();
         let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
-        for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
-            let page = request(port, host, Some("zdesk_session=launch-token")).await;
-            assert!(page.starts_with("HTTP/1.1 200 OK"), "{host}: {page}");
-            assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{host}: {page}");
-            assert!(page.contains("<div id=\"root\">"), "the bundle's document: {host}: {page}");
-            assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {host}: {page}");
-            assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{host}: {page}");
 
-            let status = get(port, host, "/api/auth/status", None).await;
-            let landing = host == "zdesk.localhost";
+        let page = request(port, "zdesk.localhost", Some("zdesk_session=launch-token")).await;
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+        assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{page}");
+        assert!(page.contains("<div id=\"root\">"), "the bundle's document: {page}");
+        assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {page}");
+        assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{page}");
+        let status = get(port, "zdesk.localhost", "/api/auth/status", None).await;
+        assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"pin\",\"problem\":null}", "{status}");
+        let opening = get(port, "zdesk.localhost", &format!("{OPEN_PATH}one/display/2?x=1"), None).await;
+        assert!(opening.starts_with("HTTP/1.1 200 OK") && opening.contains("<div id=\"root\">"), "the PIN form: {opening}");
+
+        for host in ["one.zdesk.localhost", "nothing.zdesk.localhost"] {
+            let name = host.split('.').next().unwrap();
+            let sent = get(port, host, "/display/2?x=1", Some("zdesk_session=launch-token")).await;
+            assert!(sent.starts_with("HTTP/1.1 303 See Other"), "{host}: {sent}");
             assert!(
-                body_of(&status).starts_with(&format!(
-                    "{{\"authenticated\":false,\"landing\":{landing},\"login\":\"pin\",\"problem\":null}}"
-                )),
-                "{host}: {status}"
+                sent.contains(&format!("Location: http://zdesk.localhost:{port}{OPEN_PATH}{name}/display/2?x=1\r\n")),
+                "{host}: {sent}"
             );
-            for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+            assert!(!sent.contains("launch-token") && !sent.contains("Set-Cookie"), "{host}: {sent}");
+            for path in ["/api/auth/status", "/api/config", PIN_PATH, "/api/targets", "/api/instances", "/ws", "/ws/audio"] {
                 let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
                 assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
             }
+        }
+        for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+            let refused = get(port, "zdesk.localhost", path, Some("zdesk_session=launch-token")).await;
+            assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{path}: {refused}");
         }
         drop(router);
     }
@@ -2869,8 +2976,8 @@ mod tests {
         drop(router);
     }
 
-    /// The page's PIN logs the browser in on its own origin; a post from another
-    /// origin is not taken, and does not count against the PIN.
+    /// The page's PIN logs the browser in, for the landing origin's domain; a post
+    /// from another origin is not taken, and does not count against the PIN.
     #[tokio::test]
     async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
         let port = free_port();
@@ -2900,20 +3007,21 @@ mod tests {
             .lines()
             .find_map(|line| line.strip_prefix("Set-Cookie: "))
             .expect("a login cookie");
-        assert!(cookie.starts_with(&format!("zdesk_login_{port}=")) && cookie.contains("HttpOnly"), "{cookie}");
+        assert!(cookie.starts_with(&format!("zdesk_login_{port}=")), "{cookie}");
+        assert!(cookie.contains("; Domain=zdesk.localhost;") && cookie.contains("; HttpOnly; SameSite=Lax;"), "{cookie}");
         let login = cookie.split(';').next().unwrap();
 
         let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
-        assert!(body_of(&status).starts_with("{\"authenticated\":true,\"landing\":true,"), "{status}");
+        assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{status}");
         let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
         assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{instances}");
     }
 
-    /// The landing page's link to an instance carries the login there through a
-    /// one-time code, and the instance origin's request reaches its worker with
-    /// the worker's token.
+    /// A login made on the landing origin is sent back to the instance that asked
+    /// for it, keeping the path, and reaches that instance's worker with the
+    /// worker's token in its place.
     #[tokio::test]
-    async fn a_login_reaches_an_instance_through_a_handoff() {
+    async fn a_login_on_the_landing_origin_reaches_every_instance() {
         let routes = RouteTable::default();
         let worker = fake_gateway("one").await;
         routes.inner.write().await.insert(
@@ -2934,30 +3042,20 @@ mod tests {
         let listed = get(port, "zdesk.localhost", "/api/instances", Some(&login)).await;
         assert_eq!(
             body_of(&listed),
-            format!("[{{\"name\":\"one\",\"open\":\"{OPEN_PATH}one\",\"state\":\"running\"}}]"),
+            format!("[{{\"name\":\"one\",\"open\":\"http://one.zdesk.localhost:{port}\",\"state\":\"running\"}}]"),
             "{listed}"
         );
 
-        let opened = send(
-            port,
-            &format!("GET {OPEN_PATH}one HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nCookie: {login}\r\n\r\n"),
-        )
-        .await;
-        assert!(opened.starts_with("HTTP/1.1 303 See Other"), "{opened}");
-        let location = opened
-            .lines()
-            .find_map(|line| line.strip_prefix("Location: "))
-            .expect("a redirect");
-        let prefix = format!("http://one.zdesk.localhost:{port}{HANDOFF_PATH}");
-        let code = location.strip_prefix(&prefix).unwrap_or_else(|| panic!("{location}"));
-
-        let handoff = format!("GET {HANDOFF_PATH}{code} HTTP/1.1\r\nHost: one.zdesk.localhost:{port}\r\n\r\n");
-        let taken = send(port, &handoff).await;
-        assert!(taken.starts_with("HTTP/1.1 303 See Other"), "{taken}");
-        assert!(taken.contains("Location: /\r\n"), "{taken}");
-        assert!(taken.contains(&format!("Set-Cookie: {login};")), "the same login, on this origin: {taken}");
-        let again = send(port, &handoff).await;
-        assert!(!again.contains("Set-Cookie"), "a code is spent once: {again}");
+        for (opened, back) in [("one", "/"), ("one/display/2?x=1", "/display/2?x=1")] {
+            let sent = get(port, "zdesk.localhost", &format!("{OPEN_PATH}{opened}"), Some(&login)).await;
+            assert!(sent.starts_with("HTTP/1.1 303 See Other"), "{sent}");
+            assert!(sent.contains(&format!("Location: http://one.zdesk.localhost:{port}{back}\r\n")), "{sent}");
+            assert!(!sent.contains("Set-Cookie"), "the login is already the instance's: {sent}");
+        }
+        for unknown in ["two", "two/display/2", "one?x=1"] {
+            let refused = get(port, "zdesk.localhost", &format!("{OPEN_PATH}{unknown}"), Some(&login)).await;
+            assert!(refused.starts_with("HTTP/1.1 404 Not Found"), "{unknown}: {refused}");
+        }
 
         let reached = request(port, "one.zdesk.localhost", Some(&login)).await;
         let seen = body_of(&reached);

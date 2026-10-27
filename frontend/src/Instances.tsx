@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { AppVersion } from "./AppVersion.tsx";
-import { gatewayFetch, gatewayUrl } from "./gateway.ts";
+import { gatewayFetch } from "./gateway.ts";
 
 // The TUI control plane's landing page: its instances, a running one as a link
-// that carries this browser's login to the instance's own origin. Started and
-// stopped in the TUI, so the list is asked again every two seconds.
+// to the instance's own origin, which this browser's login reaches too. Started
+// and stopped in the TUI, so the list is asked again every two seconds.
 type Instance = {
   name: string;
   state: string;
-  /** The landing origin's path that opens it; null while it is not running. */
+  /** The instance's own origin; null while it is not running. */
   open: string | null;
 };
 
@@ -82,7 +82,7 @@ export default function Instances({
           {instances?.map((instance) => (
             <li key={instance.name}>
               {instance.open ? (
-                <a href={gatewayUrl(instance.open)}>{instance.name}</a>
+                <a href={instance.open}>{instance.name}</a>
               ) : (
                 <span className="instances-name">{instance.name}</span>
               )}

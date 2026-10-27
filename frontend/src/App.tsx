@@ -32,8 +32,8 @@ if (TAB_DISPLAY !== null) {
 //
 // Which login is the gateway's to say, on /api/auth/status: a served gateway's
 // username and password, or, behind the TUI's control plane, the PIN its access
-// panel shows. The control plane's own origin is its landing page, the list of
-// its instances, rather than a desktop.
+// panel shows, which only the control plane's own origin asks for. That origin
+// is its landing page, the list of its instances, rather than a desktop.
 type Gate =
   | { kind: "checking" }
   | { kind: "password" }
@@ -43,21 +43,19 @@ type Gate =
 
 type AuthStatus = {
   authenticated: boolean;
-  /** "pin" behind the TUI's control plane; absent on a served gateway. */
+  /** "pin" on the TUI control plane's own origin; absent on a gateway. */
   login?: "pin";
-  /** Whether this is the control plane's own origin. */
-  landing?: boolean;
   /** Why no PIN can log anyone in right now, if so. */
   problem?: string | null;
 };
 
 function gateOf(status: AuthStatus): Gate {
-  if (status.authenticated) {
-    return status.landing ? { kind: "instances" } : { kind: "desktop" };
+  if (status.login === "pin") {
+    return status.authenticated
+      ? { kind: "instances" }
+      : { kind: "pin", problem: status.problem ?? null };
   }
-  return status.login === "pin"
-    ? { kind: "pin", problem: status.problem ?? null }
-    : { kind: "password" };
+  return status.authenticated ? { kind: "desktop" } : { kind: "password" };
 }
 
 export default function App() {

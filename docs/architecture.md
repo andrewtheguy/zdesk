@@ -3803,24 +3803,33 @@ reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 The boundary is whoever can see the TUI's terminal, not the machine, with one
 accepted gap set out below (`src/worker/access.rs`). The master draws a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
-clock time it expires, ten minutes on, and the minutes left. `P` draws a new
-one and starts its time again.
+clock time it expires, ten minutes on, and the minutes left. The panel draws the
+digits three rows tall in half blocks, from a font three pixels wide and five
+tall, so they read in a terminal's small type, with the PIN in plain digits
+beside them; a terminal too narrow for both shows the plain digits alone. `P`
+draws a new one and starts its time again.
 
-The page that asks for the PIN is the SPA, the one bundle compiled into the
-binary, which the master serves itself to a browser without a login on the
-landing origin and on every instance origin, isolated as a gateway serves it
-(`assets::asset`). The master answers that page's `GET /api/auth/status` with
-`"login": "pin"`, whether this is the landing origin, and why no PIN can log
+The PIN is entered on the landing origin only. The page that asks for it is the
+SPA, the one bundle compiled into the binary, which the master serves itself
+there, isolated as a gateway serves it (`assets::asset`). The master answers
+that page's `GET /api/auth/status` with `"login": "pin"` and why no PIN can log
 anyone in when none can, and its `GET /api/config` with the default branding.
-Every other `/api/*` and `/ws*` is a 401 until the browser logs in. The page
-shows its PIN form (`frontend/src/PinLogin.tsx`) for that status and posts the
-entry to `POST /api/auth/pin` as `{"pin": "…"}`. The master compares it in
-constant time, and on a right one sets the login cookie and the page reloads.
-On an instance origin the reload is then the worker's page. On the landing
-origin the page shows the instances (`frontend/src/Instances.tsx`), which
-`GET /api/instances` lists, each running one with its `/__zdesk/open/<name>`
-link. The PIN post is taken only with its own origin's `Origin`, so a page
-elsewhere on the web cannot spend the PIN's tries. After
+Every other `/api/*` and `/ws*` is a 401 until the browser logs in, on every
+origin. The page shows its PIN form (`frontend/src/PinLogin.tsx`) for that
+status and posts the entry to `POST /api/auth/pin` as `{"pin": "…"}`. The master
+compares it in constant time, and on a right one sets the login cookie and the
+page reloads to the instances (`frontend/src/Instances.tsx`), which
+`GET /api/instances` lists, each running one as a link to its own origin. The
+PIN post is taken only with its own origin's `Origin`, so a page elsewhere on
+the web cannot spend the PIN's tries.
+
+An instance origin without a login sends a page request to the landing origin's
+`/__zdesk/open/<name><path>`, where `<path>` is the request's path and query.
+There the PIN form is shown, and once the browser is in, its reload is a 303 to
+`<path>` on that instance's origin, which is then the worker's page. So a
+browser enters the PIN once, wherever it started, and is taken back to where it
+was going. The TUI's `o` opens the instance's own origin and goes through the
+same. After
 five wrong entries the PIN is withdrawn, and every entry is refused until a new
 one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
 each PIN the person at the terminal chooses to draw. A local process can force
@@ -3828,17 +3837,31 @@ a new draw, but it never gets in. An entry that is not six digits cannot be the
 PIN and is not counted.
 
 A right entry is a login: 32 random bytes the master keeps in memory, sent back
-as a host-only HttpOnly `SameSite=Strict` cookie named for the master's port,
+as an HttpOnly `SameSite=Lax` cookie named for the master's port,
 `zdesk_login_<port>`, so two control planes on one machine keep separate logins.
 The PIN guards only new logins. A
 login outlives the PIN's expiry, a new draw and a withdrawal, and every
 instance's restarts. Logins are kept in the master's memory only, so quitting
-the TUI is the only way to log out. A login reaches another origin through a
-handoff, not a cookie shared across subdomains. The landing page's link to an
-instance, and the TUI's `o`, go through `/__zdesk/open/<name>` on the landing
-origin. That route mints a one-time code bound to the instance, good for 30
-seconds and spent by its first use. The instance origin exchanges the code at
-`/__zdesk/handoff` for the same login under its own cookie.
+the TUI is the only way to log out. The cookie is set with
+`Domain=zdesk.localhost`, so one login reaches the landing origin and every
+instance subdomain. Chromium, Firefox and Playwright's WebKit send it to
+`<instance>.zdesk.localhost` and not to another `.localhost` name (checked
+2026-10-27). Playwright's WebKit does not send it two labels down, which an
+instance name, a single label, never is. Safari itself has not been checked. A
+browser that kept the cookie from the subdomain would be sent between the two
+origins until it gave up on the redirects.
+
+The cookie is `Lax` rather than the `Strict` a served gateway's is. WebKit takes
+`zdesk.localhost` and `<instance>.zdesk.localhost` for different sites, sending
+`Sec-Fetch-Site: cross-site` between them, and keeps a `Strict` cookie off a
+navigation from an instance origin to the landing page, which is the way back
+from the PIN. Chromium and Firefox take them for one site. `Lax` is sent on a
+top-level navigation, from another site too, and on nothing else that site
+starts. So what it adds is another site opening an instance's page logged in,
+in a tab the user sees and the site cannot read. That page does what any opened
+page does: it claims a free session slot, and asks before taking over an
+attached one. The site's own requests, a `POST` or a socket, are not sent the
+cookie.
 
 The master answers only `zdesk.localhost` and its subdomains, and only when the
 `Host` header names the master's own port, as a development server's allowed
@@ -3847,20 +3870,22 @@ TUI is for the machine it runs on, and this keeps a tunnel or port forward that
 reaches the port under its own name from reaching the PIN form or a login.
 
 A cookie is scoped by host and ignores the port, so the master sets its login
-only on `zdesk.localhost` and the instance subdomains. It answers `localhost`,
+only for `zdesk.localhost` and its subdomains. It answers `localhost`,
 `127.0.0.1` and `[::1]` at its port with a redirect to `zdesk.localhost`,
 keeping the path,
 because a login set on a bare loopback name would be sent to every server the
 browser reaches by that name, every local development server among them.
 
 What remains, and is accepted, is anything else serving `zdesk.localhost` or one
-of its subdomains on another port. `SameSite=Strict` does not stop it: it keeps
-the cookie off a navigation another site starts, but the page a listener on
-`zdesk.localhost:<other port>` serves is same-site with the master, so its next
-request to itself carries every cookie of that host, the login among them. Any
+of its subdomains on another port, a served gateway sent to
+`<label>.zdesk.localhost` among them. `SameSite` does not stop it: the page a
+listener on `zdesk.localhost:<other port>` serves is same-site with the master,
+so its next request to itself carries the login. Any
 site can send the browser there. Another local user who runs such a listener and
 gets a link followed therefore takes the login, and can replay it to the master
-past the PIN. No browser offers a cookie bound to a port, and a replayed cookie
+past the PIN. Such a listener, or a worker, whose responses the master passes
+on as they are, can also set a cookie of the same name for the domain: that logs
+the browser out, but never in, since a login is one the master made. No browser offers a cookie bound to a port, and a replayed cookie
 is indistinguishable from the browser's. A host nobody else can name, drawn per
 run, such as `<random>.zdesk.localhost` with each instance under it, would close
 the gap at the cost of the TUI's stable addresses, and was not taken. So the PIN
@@ -3879,8 +3904,7 @@ served gateway's username and password, and this PIN.
 The master reads only the first request of a connection before handing the
 rest to the worker. So it asks the worker to close each connection after one
 response, by rewriting the request's `Connection` to `close`. Every request
-then reaches the master, which checks its login, and a handoff to an origin the
-browser already has a connection to is still the master's to take. A WebSocket
+then reaches the master, which checks its login. A WebSocket
 upgrade keeps its `Connection` header: it is one request, and then the socket.
 The owner-only instance directories and worker endpoints protect the configs
 and the private transport from other OS accounts.
