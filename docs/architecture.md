@@ -2393,7 +2393,7 @@ and `GET /api/targets` carries it:
   `flac` (`Sound` in `src/config.rs`). On a target that offers it the picker
   shows a Sound tick, and under a ticked one the two formats side by side, Opus
   on the left, which ticking takes, and lossless on the right. Opus is sent at the
-  gateway's fixed ceiling, 320 kbit/s, walking below it with the link
+  gateway's fixed ceiling, 192 kbit/s, walking below it with the link
   ([Audio frames](#audio-frames)); lossless is FLAC, with no rate
   ([Lossless sound](#lossless-sound)).
   A `connect` that names none takes none.
@@ -2609,7 +2609,8 @@ encoder.
 There is no codec byte in the binary frame; the codec is named once, out of
 band, in `audioFormat`. It is Opus encoded here: `codec` is `opus`, `sampleRate`
 48 000, `packetFrames` 960 (20 ms), and `head` the `OpusHead`. The rate is
-320 kbit/s, the rate a Mac's own AAC-ELD runs at, walking down to the floor
+192 kbit/s, past which a stereo stream stops getting better by sound-opus's
+measures, walking down to the floor
 sound-opus fixes, 32 kbit/s. The one exception is a High Performance Mac's AAC-ELD, passed in
 every session on such a target: `codec` `mp4a.40.39`, `packetFrames` 480 (10 ms), `head`
 the Mac's AudioSpecificConfig, and each packet one of the Mac's units, with no

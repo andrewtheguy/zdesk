@@ -431,7 +431,7 @@ password_ref = "example"
 # an RDP pipeline without H.264 do not need WebCodecs.
 #
 # Its bitrate is not a key, and neither is whether it adapts: Opus always
-# follows the audio socket's own backpressure, with 320 kbit/s as its ceiling.
+# follows the audio socket's own backpressure, with 192 kbit/s as its ceiling.
 # That ceiling is an average, not a packet size: Opus is variable-rate, so
 # silence costs a few bytes a packet and music about this. Sustained slow sends
 # walk the bitrate down, sustained clear sends walk it back up to the ceiling,

@@ -3992,7 +3992,7 @@ mod tests {
                 other => panic!("expected the passed unit, got {other:?}"),
             }
             let rate = *asked.borrow();
-            assert_eq!(rate, (codec == "opus").then_some(320_000), "the rate wlshare's Opus starts at");
+            assert_eq!(rate, (codec == "opus").then_some(192_000), "the rate wlshare's Opus starts at");
         }
     }
 

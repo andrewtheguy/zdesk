@@ -1034,12 +1034,16 @@ pub struct TargetConfig {
 pub const DEFAULT_VIDEO_QUALITY: u8 = 90;
 
 /// The Opus bitrate (kbit/s) of every session whose sound is Opus — the ceiling
-/// of the adaptive walk, not a promise, and not a key. It is the rate a Mac's
-/// own AAC-ELD runs at, so a link carries the same sound budget whichever
-/// server it reaches, and the walk is what takes it down on a link that cannot
-/// carry it. Opus is variable-rate: a packet of silence costs a few bytes and a
-/// packet of music about this.
-pub const AUDIO_BITRATE_KBPS: u32 = 320;
+/// of the adaptive walk, not a promise, and not a key. Past it a stereo stream
+/// stops getting better: measured over sound-opus's recordings (its
+/// `docs/benchmarks.md`, rate against quality), each channel is within 0.13 dB
+/// of 320 kbit/s's log-spectral distance and the stereo side within 0.52 dB,
+/// at six tenths of the link. And the walk, which starts here, does better
+/// from it: on sound-opus's simulated links (its `docs/walk.md`) 16% less
+/// sound lost and 19% less stalled than from 320, a link swinging between 250
+/// and 450 kbit/s never walked at all. Opus is variable-rate: a packet of
+/// silence costs a few bytes and a packet of music about this.
+pub const AUDIO_BITRATE_KBPS: u32 = 192;
 
 /// Read [`TargetConfig::size`]: a width by a height, as in `"1920x1080"`.
 fn size<'de, D>(deserializer: D) -> Result<Option<(u16, u16)>, D::Error>
