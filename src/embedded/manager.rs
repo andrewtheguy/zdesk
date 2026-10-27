@@ -128,8 +128,9 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     loop {
         let instances = supervisor.instances();
         selected = selected.min(instances.len().saturating_sub(1));
+        let size = terminal::size().context("cannot read terminal size")?;
         screen.draw(
-            render(&options, router.port(), &instances, selected, &view, &message)?,
+            render(size, &options, router.port(), &instances, selected, &view, &message)?,
             &mut std::io::stdout().lock(),
         )?;
 
@@ -181,35 +182,45 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     continue;
                 }
 
-                // The specs screen is a reader, so it takes only the keys that
-                // move within it or leave it: acting on an instance is the list's,
-                // and a stop pressed over a page of text is one nobody aimed.
-                if let View::Specs { lines, offset, .. } = &mut view {
+                // A page is a reader, so it takes only the keys that move within
+                // it or leave it: acting on an instance is the list's, and a stop
+                // pressed over a page of text is one nobody aimed.
+                if let View::Page { lines, offset, .. } = &mut view {
                     match key.code {
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                         KeyCode::Up | KeyCode::Char('k') => *offset = offset.saturating_sub(1),
                         KeyCode::Down | KeyCode::Char('j') => {
                             *offset = (*offset + 1).min(lines.len().saturating_sub(1));
                         }
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => view = View::List,
+                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | '?') => view = View::List,
                         _ => {}
                     }
                     continue;
                 }
 
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    break;
+                }
+                let Some(action) = action_for(key.code) else { continue };
+                match action {
+                    Action::Quit => break,
+                    Action::Up => selected = selected.saturating_sub(1),
+                    Action::Down => {
                         selected = (selected + 1).min(instances.len().saturating_sub(1));
                     }
-                    KeyCode::Char('n') => view = View::Naming(String::new()),
-                    KeyCode::Char('R') => {
+                    Action::Keys => {
+                        view = View::Page {
+                            title: "keys".to_owned(),
+                            lines: key_lines(),
+                            offset: 0,
+                        };
+                    }
+                    Action::New => view = View::Naming(String::new()),
+                    Action::Rescan => {
                         supervisor.rescan().await?;
                         message = "rescanned the instances directory".to_owned();
                     }
-                    KeyCode::Char('a') => {
+                    Action::StartAll => {
                         let stopped: Vec<_> = supervisor
                             .instances()
                             .into_iter()
@@ -231,7 +242,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             message = "started every stopped instance".to_owned();
                         }
                     }
-                    KeyCode::Char('s') => {
+                    Action::Start => {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             message = if instance.status == InstanceStatus::Running {
@@ -248,16 +259,16 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    KeyCode::Enter => {
+                    Action::Specs => {
                         if let Some(instance) = instances.get(selected) {
-                            view = View::Specs {
-                                name: instance.name.clone(),
+                            view = View::Page {
+                                title: format!("instance {}", instance.name),
                                 lines: describe_instance(instance, router.port()),
                                 offset: 0,
                             };
                         }
                     }
-                    KeyCode::Char('x') => {
+                    Action::Stop => {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             message = match supervisor.stop(&name).await {
@@ -266,7 +277,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    KeyCode::Char('r') => {
+                    Action::Restart => {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             let restarted = match master.key_for(&instance.config_path()) {
@@ -279,7 +290,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    KeyCode::Char('o') => {
+                    Action::Open => {
                         if let Some(instance) = instances.get(selected) {
                             let url = instance_url(&instance.name, router.port());
                             message = if instance.status != InstanceStatus::Running {
@@ -292,7 +303,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    KeyCode::Char('p') => {
+                    Action::Password => {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             terminal.suspend()?;
@@ -310,7 +321,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    KeyCode::Char('e') => {
+                    Action::Edit => {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             let path = instance.config_path();
@@ -325,7 +336,6 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             };
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -638,21 +648,265 @@ impl Screen {
 }
 
 /// What the screen is showing. One value rather than a flag per overlay, because
-/// the list, the name prompt and the specs page each take the keyboard whole.
+/// the list, the name prompt and a page each take the keyboard whole.
 enum View {
     List,
     /// A new instance's name, as it is being typed.
     Naming(String),
-    /// One instance's specs, as read when the page was opened, scrolled by
-    /// `offset` lines.
-    Specs {
-        name: String,
+    /// A page to read — one instance's specs, or the keys — as built when it was
+    /// opened, scrolled by `offset` lines.
+    Page {
+        title: String,
         lines: Vec<String>,
         offset: usize,
     },
 }
 
+/// What a key does on the instance list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Up,
+    Down,
+    Specs,
+    Start,
+    Stop,
+    Restart,
+    Open,
+    Edit,
+    Password,
+    New,
+    StartAll,
+    Rescan,
+    Keys,
+    Quit,
+}
+
+/// Which heading of the keys page a binding is listed under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+    Selected,
+    Instances,
+    ControlPlane,
+}
+
+impl Group {
+    const ALL: [Self; 3] = [Self::Selected, Self::Instances, Self::ControlPlane];
+
+    fn heading(self) -> &'static str {
+        match self {
+            Self::Selected => "the selected instance",
+            Self::Instances => "instances",
+            Self::ControlPlane => "control plane",
+        }
+    }
+}
+
+/// One action's keys and the words the screen says about it.
+struct Binding {
+    action: Action,
+    codes: &'static [KeyCode],
+    /// The word the key bar shows after the key.
+    label: &'static str,
+    /// The keys page's sentence.
+    about: &'static str,
+    group: Group,
+    /// Whether the key bar under the list shows it. Every binding is on the keys
+    /// page; the bar keeps to what fits one line of an 80-column terminal.
+    bar: bool,
+}
+
+/// Every key the list takes. The key bar and the keys page are drawn from this
+/// and the key loop looks its actions up here, so an action added here is one
+/// the screen already explains.
+const BINDINGS: &[Binding] = &[
+    Binding {
+        action: Action::Up,
+        codes: &[KeyCode::Up, KeyCode::Char('k')],
+        label: "up",
+        about: "select the instance above",
+        group: Group::Instances,
+        bar: false,
+    },
+    Binding {
+        action: Action::Down,
+        codes: &[KeyCode::Down, KeyCode::Char('j')],
+        label: "down",
+        about: "select the instance below",
+        group: Group::Instances,
+        bar: false,
+    },
+    Binding {
+        action: Action::Specs,
+        codes: &[KeyCode::Enter],
+        label: "specs",
+        about: "show its settings and what each target will do",
+        group: Group::Selected,
+        bar: true,
+    },
+    Binding {
+        action: Action::Start,
+        codes: &[KeyCode::Char('s')],
+        label: "start",
+        about: "start it",
+        group: Group::Selected,
+        bar: true,
+    },
+    Binding {
+        action: Action::Stop,
+        codes: &[KeyCode::Char('x')],
+        label: "stop",
+        about: "stop it",
+        group: Group::Selected,
+        bar: true,
+    },
+    Binding {
+        action: Action::Restart,
+        codes: &[KeyCode::Char('r')],
+        label: "restart",
+        about: "restart it, which applies an edited config",
+        group: Group::Selected,
+        bar: false,
+    },
+    Binding {
+        action: Action::Open,
+        codes: &[KeyCode::Char('o')],
+        label: "open",
+        about: "open it in the browser, once it is running",
+        group: Group::Selected,
+        bar: true,
+    },
+    Binding {
+        action: Action::Edit,
+        codes: &[KeyCode::Char('e')],
+        label: "edit",
+        about: "edit its zdesk.toml in $VISUAL or $EDITOR",
+        group: Group::Selected,
+        bar: true,
+    },
+    Binding {
+        action: Action::Password,
+        codes: &[KeyCode::Char('p')],
+        label: "password",
+        about: "encrypt a password into its [passwords]",
+        group: Group::Selected,
+        bar: false,
+    },
+    Binding {
+        action: Action::New,
+        codes: &[KeyCode::Char('n')],
+        label: "new",
+        about: "create an instance",
+        group: Group::Instances,
+        bar: true,
+    },
+    Binding {
+        action: Action::StartAll,
+        codes: &[KeyCode::Char('a')],
+        label: "start all",
+        about: "start every stopped instance",
+        group: Group::Instances,
+        bar: false,
+    },
+    Binding {
+        action: Action::Rescan,
+        codes: &[KeyCode::Char('R')],
+        label: "rescan",
+        about: "rescan the instances directory",
+        group: Group::Instances,
+        bar: false,
+    },
+    Binding {
+        action: Action::Keys,
+        codes: &[KeyCode::Char('?')],
+        label: "keys",
+        about: "show every key",
+        group: Group::ControlPlane,
+        bar: true,
+    },
+    Binding {
+        action: Action::Quit,
+        codes: &[KeyCode::Char('q'), KeyCode::Esc],
+        label: "quit",
+        about: "stop every instance and quit, as Ctrl+C does",
+        group: Group::ControlPlane,
+        bar: true,
+    },
+];
+
+fn action_for(code: KeyCode) -> Option<Action> {
+    BINDINGS
+        .iter()
+        .find(|binding| binding.codes.contains(&code))
+        .map(|binding| binding.action)
+}
+
+fn key_name(code: KeyCode) -> String {
+    match code {
+        KeyCode::Up => "↑".to_owned(),
+        KeyCode::Down => "↓".to_owned(),
+        KeyCode::Enter => "Enter".to_owned(),
+        KeyCode::Esc => "Esc".to_owned(),
+        KeyCode::Char(character) => character.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// The keys page: every binding under its heading.
+fn key_lines() -> Vec<String> {
+    let mut lines = Vec::new();
+    for group in Group::ALL {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(group.heading().to_owned());
+        for binding in BINDINGS.iter().filter(|binding| binding.group == group) {
+            let keys: Vec<_> = binding.codes.iter().map(|code| key_name(*code)).collect();
+            lines.push(format!("  {:<10} {}", keys.join(" "), binding.about));
+        }
+    }
+    lines
+}
+
+/// The key bar under the list, in the order the bindings are listed, as much of
+/// it as fits `width`. What does not fit goes from the end of the instance keys,
+/// so the keys page and quitting stay named on the narrowest terminal.
+fn list_bar(width: u16) -> Vec<(String, &'static str)> {
+    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
+    while bar_width(&shown) > width as usize {
+        let Some(last) = shown.iter().rposition(|binding| binding.group != Group::ControlPlane) else {
+            break;
+        };
+        shown.remove(last);
+    }
+    shown
+        .iter()
+        .map(|binding| (key_name(binding.codes[0]), binding.label))
+        .collect()
+}
+
+/// The columns a key bar of these bindings takes: each key, a space and its
+/// word, two spaces between pairs.
+fn bar_width(bindings: &[&Binding]) -> usize {
+    let pairs: usize = bindings
+        .iter()
+        .map(|binding| key_name(binding.codes[0]).chars().count() + 1 + binding.label.chars().count())
+        .sum();
+    pairs + 2 * bindings.len().saturating_sub(1)
+}
+
+/// Who can reach a running instance through the shared port, for the access
+/// panel. Anyone on the machine can today; the PIN login of the roadmap's
+/// "A PIN as the TUI's login" is what this panel is for.
+const ACCESS_TODAY: &str = "no login — anyone on this machine can open a running instance";
+
+/// The rows above the list: the title, the instances directory, a blank row,
+/// the access panel's three, a blank row and the column headings.
+const LIST_TOP: u16 = 8;
+/// The rows below it: a blank row, the rule, the message and the key bar.
+const LIST_BOTTOM: u16 = 4;
+
 fn render(
+    size: (u16, u16),
     options: &TuiOptions,
     port: u16,
     instances: &[InstanceInfo],
@@ -660,47 +914,40 @@ fn render(
     view: &View,
     message: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let (width, height) = terminal::size().context("cannot read terminal size")?;
+    let (width, height) = size;
     let mut frame = Vec::new();
     queue!(frame, MoveTo(0, 0), Clear(ClearType::All))?;
-    if let View::Specs { name, lines, offset } = view {
-        render_specs(&mut frame, width, height, name, lines, *offset)?;
+    if let View::Page { title, lines, offset } = view {
+        render_page(&mut frame, width, height, title, lines, *offset)?;
         return Ok(frame);
     }
     line(
         &mut frame,
         0,
         width,
-        &format!("zDesk {VERSION} local control plane"),
+        &format!("zDesk {VERSION} · http://{MASTER_HOST}:{port}"),
         Some(Color::Cyan),
         true,
     )?;
     line(
         &mut frame,
-        2,
-        width,
-        &format!("master   http://{MASTER_HOST}:{port}"),
-        None,
-        false,
-    )?;
-    line(
-        &mut frame,
-        3,
+        1,
         width,
         &format!("instances {}", options.instances_dir.display()),
-        None,
+        Some(Color::DarkGrey),
         false,
     )?;
+    panel(&mut frame, 3, width, "access", ACCESS_TODAY, Color::Yellow)?;
     line(
         &mut frame,
-        5,
+        LIST_TOP - 1,
         width,
-        "  instance              state      URL",
+        "  instance             state      URL",
         Some(Color::DarkGrey),
         false,
     )?;
 
-    let available = height.saturating_sub(10) as usize;
+    let available = height.saturating_sub(LIST_TOP + LIST_BOTTOM) as usize;
     let start = if selected >= available && available > 0 {
         selected + 1 - available
     } else {
@@ -716,7 +963,7 @@ fn render(
         );
         line(
             &mut frame,
-            6 + row as u16,
+            LIST_TOP + row as u16,
             width,
             &text,
             (index == selected).then_some(Color::Yellow),
@@ -724,61 +971,102 @@ fn render(
         )?;
     }
     if instances.is_empty() {
-        line(&mut frame, 6, width, "  no instances — press n to create one", Some(Color::Yellow), false)?;
+        line(&mut frame, LIST_TOP, width, "  no instances — press n to create one", Some(Color::Yellow), false)?;
     }
 
-    let footer = height.saturating_sub(3);
+    let rule = height.saturating_sub(3);
+    line(&mut frame, rule, width, &"─".repeat(width as usize), Some(Color::DarkGrey), false)?;
     if let View::Naming(name) = view {
         line(
             &mut frame,
-            footer,
+            rule + 1,
             width,
             &format!("new instance name: {name}_"),
             Some(Color::Yellow),
             true,
         )?;
-        line(&mut frame, footer + 1, width, "Enter create · Esc cancel", Some(Color::DarkGrey), false)?;
+        key_bar(&mut frame, rule + 2, width, &[("Enter".to_owned(), "create"), ("Esc".to_owned(), "cancel")])?;
     } else {
-        line(
-            &mut frame,
-            footer,
-            width,
-            "↑↓ select · Enter specs · s start · x stop · r restart · a start all · o open · n new · e edit · p password · R rescan · q quit",
-            Some(Color::DarkGrey),
-            false,
-        )?;
         let detail = instances
             .get(selected)
             .and_then(|instance| instance.detail.as_deref())
             .unwrap_or(message);
-        line(&mut frame, footer + 1, width, detail, None, false)?;
+        line(&mut frame, rule + 1, width, detail, None, false)?;
+        key_bar(&mut frame, rule + 2, width, &list_bar(width))?;
     }
     Ok(frame)
 }
 
-fn render_specs(
+fn render_page(
     frame: &mut Vec<u8>,
     width: u16,
     height: u16,
-    name: &str,
+    title: &str,
     lines: &[String],
     offset: usize,
 ) -> anyhow::Result<()> {
-    line(frame, 0, width, &format!("instance {name}"), Some(Color::Cyan), true)?;
+    line(frame, 0, width, title, Some(Color::Cyan), true)?;
     let available = height.saturating_sub(4) as usize;
     for (row, text) in lines.iter().skip(offset).take(available).enumerate() {
         line(frame, 2 + row as u16, width, text, None, false)?;
     }
-    let more = if offset + available < lines.len() { " · more below" } else { "" };
-    line(
-        frame,
-        height.saturating_sub(1),
-        width,
-        &format!("↑↓ scroll · Esc back{more}"),
-        Some(Color::DarkGrey),
-        false,
-    )?;
+    let mut keys = vec![("↑↓".to_owned(), "scroll"), ("Esc".to_owned(), "back")];
+    if offset + available < lines.len() {
+        keys.push(("…".to_owned(), "more below"));
+    }
+    key_bar(frame, height.saturating_sub(1), width, &keys)?;
     Ok(())
+}
+
+/// A boxed one-line panel across the screen, three rows from `top`, with its
+/// title in the top border. Too narrow for a box, it is the text alone.
+fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, text: &str, color: Color) -> std::io::Result<()> {
+    let inner = (width as usize).saturating_sub(4);
+    let border = 4 + title.chars().count();
+    if inner == 0 || border >= width as usize {
+        return line(frame, top + 1, width, text, Some(color), false);
+    }
+    let top_border = format!("┌ {title} {}┐", "─".repeat(width as usize - border));
+    line(frame, top, width, &top_border, Some(Color::DarkGrey), false)?;
+    let clipped: String = text.chars().take(inner).collect();
+    let padding = " ".repeat(inner - clipped.chars().count());
+    spans(
+        frame,
+        top + 1,
+        width,
+        &[
+            ("│ ", Some(Color::DarkGrey), false),
+            (&clipped, Some(color), false),
+            (&padding, None, false),
+            (" │", Some(Color::DarkGrey), false),
+        ],
+    )?;
+    let bottom = format!("└{}┘", "─".repeat(width as usize - 2));
+    line(frame, top + 2, width, &bottom, Some(Color::DarkGrey), false)
+}
+
+/// Keys and what they do, the key bold and its word dim. A pair that would not
+/// fit whole is left off rather than cut through.
+fn key_bar(frame: &mut Vec<u8>, row: u16, width: u16, keys: &[(String, &str)]) -> std::io::Result<()> {
+    let mut parts = Vec::new();
+    let mut used = 0;
+    for (key, label) in keys {
+        let gap = if parts.is_empty() { "" } else { "  " };
+        let length = gap.chars().count() + key.chars().count() + 1 + label.chars().count();
+        if used + length > width as usize {
+            break;
+        }
+        used += length;
+        parts.push((gap, key.as_str(), *label));
+    }
+    let words: Vec<_> = parts.iter().map(|(_, _, label)| format!(" {label}")).collect();
+    let mut runs = Vec::new();
+    for ((gap, key, _), word) in parts.iter().zip(&words) {
+        runs.push((*gap, None, false));
+        runs.push((*key, None, true));
+        runs.push((word.as_str(), Some(Color::DarkGrey), false));
+    }
+    spans(frame, row, width, &runs)
 }
 
 /// Everything known about one instance, as the specs page's lines: its own state
@@ -962,15 +1250,31 @@ fn line(
     color: Option<Color>,
     bold: bool,
 ) -> std::io::Result<()> {
-    let clipped: String = text.chars().take(width as usize).collect();
+    spans(stdout, row, width, &[(text, color, bold)])
+}
+
+/// One row of runs, each in its own colour and weight, clipped to `width` as a
+/// whole.
+fn spans(
+    stdout: &mut impl Write,
+    row: u16,
+    width: u16,
+    runs: &[(&str, Option<Color>, bool)],
+) -> std::io::Result<()> {
     queue!(stdout, MoveTo(0, row))?;
-    if let Some(color) = color {
-        queue!(stdout, SetForegroundColor(color))?;
+    let mut left = width as usize;
+    for (text, color, bold) in runs {
+        let clipped: String = text.chars().take(left).collect();
+        left -= clipped.chars().count();
+        if let Some(color) = color {
+            queue!(stdout, SetForegroundColor(*color))?;
+        }
+        if *bold {
+            queue!(stdout, SetAttribute(Attribute::Bold))?;
+        }
+        queue!(stdout, Print(clipped), SetAttribute(Attribute::Reset), ResetColor)?;
     }
-    if bold {
-        queue!(stdout, SetAttribute(Attribute::Bold))?;
-    }
-    queue!(stdout, Print(clipped), SetAttribute(Attribute::Reset), ResetColor)
+    Ok(())
 }
 
 /// Stable state shown by both the TUI and the master landing page.
@@ -1853,6 +2157,65 @@ mod tests {
         screen.invalidate();
         screen.draw(b"second".to_vec(), &mut out).unwrap();
         assert_eq!(out, b"firstsecondsecond");
+    }
+
+    /// The key loop, the key bar and the keys page read one table, so it must
+    /// bind every action once and no key twice.
+    #[test]
+    fn every_action_has_one_binding_and_every_key_one_action() {
+        let mut seen = Vec::new();
+        for binding in BINDINGS {
+            assert!(
+                BINDINGS.iter().filter(|other| other.action == binding.action).count() == 1,
+                "{:?} is bound twice",
+                binding.action
+            );
+            for code in binding.codes {
+                assert!(!seen.contains(code), "{code:?} is bound twice");
+                seen.push(*code);
+                assert_eq!(action_for(*code), Some(binding.action));
+            }
+        }
+        assert_eq!(action_for(KeyCode::Char('z')), None);
+
+        let page = key_lines().join("\n");
+        for binding in BINDINGS {
+            assert!(page.contains(binding.about), "the keys page lists {:?}: {page}", binding.action);
+        }
+    }
+
+    /// The list screen at the smallest common terminal: the access panel says who
+    /// can reach an instance, and the whole key bar fits on its one line.
+    #[test]
+    fn the_list_screen_fits_an_80_column_terminal() {
+        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
+        assert!(bar_width(&every) <= 80, "the key bar is {} columns", bar_width(&every));
+        assert_eq!(list_bar(80).len(), every.len());
+
+        // Narrower, the instance keys give way and the keys page stays named.
+        let narrow = list_bar(40);
+        assert!(narrow.len() < every.len());
+        assert!(narrow.contains(&("?".to_owned(), "keys")), "{narrow:?}");
+        assert!(narrow.contains(&("q".to_owned(), "quit")), "{narrow:?}");
+
+        let options = TuiOptions {
+            port: 52380,
+            instances_dir: PathBuf::from("/instances"),
+        };
+        let instances = [InstanceInfo {
+            name: "work".to_owned(),
+            status: InstanceStatus::Running,
+            dir: PathBuf::from("/instances/work"),
+            detail: None,
+        }];
+        let frame = render((80, 24), &options, 52380, &instances, 0, &View::List, "started work").unwrap();
+        let frame = String::from_utf8(frame).unwrap();
+        assert!(frame.contains(ACCESS_TODAY), "{frame}");
+        assert!(frame.contains("┌ access "), "{frame}");
+        assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
+        for (key, label) in list_bar(80) {
+            assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
+        }
     }
 
     /// The specs page answers from the config the instance would start on, and

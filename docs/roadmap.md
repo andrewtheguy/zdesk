@@ -80,7 +80,9 @@ new PIN is one keypress at the terminal that shows it.
 What the master would do:
 
 - Draw a six-digit PIN from the system's random source when it starts. Show it
-  in the TUI beside the instance list, with a key that draws a new one.
+  in the TUI's access panel above the instance list, with the clock time it
+  expires and the minutes left, and a key that draws a new one, which starts
+  its time again. An expired PIN logs nobody in until a new one is drawn.
 - Serve a PIN form instead of the redirect that seeds the cookie, on the landing
   page and on any instance origin a browser reaches without a login. Compare the
   entry in constant time.
@@ -88,8 +90,12 @@ What the master would do:
   PIN is drawn at the TUI's keyboard. Guessing is then limited to those few
   tries for each PIN the person at the terminal chooses to draw, however fast a
   local process can post. That process can force a new draw, but it never gets in.
-- Keep logins in memory only, so they end when the master stops. The TUI lists
-  the browsers that are logged in, with a key that signs them out.
+- Guard only new logins with the PIN. A browser that has logged in stays logged
+  in when the PIN expires or a new one is drawn. The master holds the login, not
+  any instance's gateway: stopping or restarting an instance leaves the browser
+  logged in, and the master seeds the restarted worker's new token without
+  asking for the PIN again. Logins are kept in the master's memory only, so the
+  only way to log out is to quit the TUI and start it again.
 
 Two questions are still open:
 
