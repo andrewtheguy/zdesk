@@ -949,6 +949,9 @@ async fn audio(
             () = async { tokio::time::sleep_until(overdue.unwrap()).await }, if overdue.is_some() => {
                 link.tick(Instant::now().into_std());
             }
+            // A ping out with no deadline to hear it by yet: back round the
+            // loop, to set one.
+            () = link.pinged() => {}
             _ = heartbeat_check.tick() => {
                 // A browser that vanished without a FIN would otherwise leave its slot
                 // registered, and the next `connect` would arm a pump into a socket

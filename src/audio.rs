@@ -814,6 +814,9 @@ pub struct AudioLink {
     /// Woken when a pong leaves the walk skipping: no batch comes then to
     /// write a ping ahead of, so the socket's task writes one at once.
     wanted: Notify,
+    /// Woken when a ping goes out, so the socket's reader, which may be
+    /// waiting with none to hear overdue, wakes to [`Self::next_tick`].
+    pinged: Notify,
 }
 
 #[derive(Default)]
@@ -846,6 +849,7 @@ impl AudioLink {
         let number = state.next;
         state.next += 1;
         state.pinged = Some(number);
+        self.pinged.notify_one();
         Some(number.to_be_bytes())
     }
 
@@ -887,6 +891,12 @@ impl AudioLink {
     /// Resolves when a ping is wanted with no batch to write it ahead of.
     pub async fn wanted(&self) {
         self.wanted.notified().await;
+    }
+
+    /// Resolves when a ping has gone out since the last time it did: when
+    /// [`Self::next_tick`] may have changed.
+    pub async fn pinged(&self) {
+        self.pinged.notified().await;
     }
 }
 
@@ -1349,9 +1359,9 @@ mod tests {
         heard(&mut walk, LATE, start);
         assert_eq!(signals.desired_bps(), 64_000);
 
-        // Sustained lag bottoms out on the crate's floor, never below.
+        // Sustained lag walks down to the crate's floor, a verdict a cooldown.
         let mut at = start;
-        for _ in 0..20 {
+        for _ in 0..3 {
             at += cooldown;
             heard(&mut walk, LATE, at);
             heard(&mut walk, LATE, at);
@@ -1468,6 +1478,22 @@ mod tests {
         assert!(signals.skipping());
         tokio::time::timeout(Duration::from_secs(1), link.wanted()).await.expect("a ping is wanted");
         assert!(link.ping(start + Duration::from_secs(1)).is_some());
+    }
+
+    /// A ping going out wakes the socket's reader, which waited with no
+    /// deadline while none was in flight, to hear it once it is overdue.
+    #[tokio::test]
+    async fn a_ping_going_out_wakes_the_reader_to_its_deadline() {
+        let link = AudioLink::default();
+        link.arm(Some(AudioWalk::new(96_000, Arc::new(AudioSignals::new(96_000)), None)));
+        let start = Instant::now();
+        let ping = link.ping(start).unwrap();
+        link.pong(&ping, start + TRIP);
+        link.pinged().await;
+        assert_eq!(link.next_tick(), None, "none in flight");
+        link.ping(start + TRIP).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), link.pinged()).await.expect("the reader is woken");
+        assert!(link.next_tick().is_some());
     }
 
     /// While the link is behind, silent buffers are shed before the encoder —
