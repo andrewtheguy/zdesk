@@ -212,13 +212,13 @@ readable by its user alone, and refuses to replace one that exists unless given
 `--force`, after which every value encrypted under the old one stops opening;
 `password master show` prints a `[master]` block under the one already there. The TUI keeps its own in the keychain
 (the macOS Keychain, Windows Credential Manager, or a Linux desktop's Secret
-Service: GNOME Keyring, KWallet), generated the first time it needs one, so
-you never type it. Nothing but the TUI reads the keychain.
+Service: GNOME Keyring, KWallet), read once when the TUI starts and generated
+then if there is none, so you never type it. Nothing but the TUI reads the keychain.
 
 | Started as | Master password from |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`; refused without it when a target names an encrypted value, never asked |
-| `zdesk tui` | the keychain; generated and kept there when it has none; refused when the keychain will not answer, never asked |
+| `zdesk tui` | the keychain, read when the TUI starts; generated and kept there when it has none; refused when the keychain will not answer, never asked |
 | `zdesk password` | `[server].master_password_file`, else asked; `password master create` asks twice and writes that file |
 
 A local instance has no `[server]` block, so its master password always comes

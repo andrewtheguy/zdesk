@@ -3950,8 +3950,15 @@ Where the master password comes from is each audience's:
   over zbus, so no build needs libdbus), and when the keychain keeps none
   generates one (32 random bytes) and keeps it there, as Chrome's and Slack's
   Safe Storage keys are made: nobody types it, and every instance opens under
-  the same one. It never asks at its terminal; a keychain that will not answer
-  is reported as the start's error. It then derives each instance's key and
+  the same one. It reads the keychain once, when it starts and before it takes
+  the screen, so a keychain that asks with a system prompt asks then. It never
+  asks at its terminal. A keychain that will not answer is reported on the
+  status line and as the error of each start that needs it, and is asked again
+  then. `ZDESK_KEYCHAIN=mock` puts the TUI on keyring-core's in-memory store
+  instead, as `cargo test` always is, for an end-to-end test or a QA run on a
+  machine whose keychain would prompt: the master password is generated at
+  start and gone at exit, and the account's store is never touched. It then
+  derives each instance's key and
   writes it as the worker's first stdin line. A worker holds the key that opens
   its own config and nothing that opens another's, and never reads the keychain
   itself. An instance config has no `[server]` block, so there is no file to

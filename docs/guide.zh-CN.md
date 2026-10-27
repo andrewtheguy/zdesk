@@ -84,12 +84,12 @@ workstation = "$ZD;1;AES-256-GCM;…"
 
 值也可以留空，`workstation = ""`，作为尚未设置的密码的占位符：在粘贴真实的值之前，目标使用空密码应答；如果 `[passwords]` 中的值全是这样的占位符，配置就不需要 `[master]` 或主密码。
 
-其他所有值都用 AES-256-GCM 加密，密钥由你的**主密码**和配置自己的 salt 派生。提供服务的网关从 `[server].master_password_file` 指定的文件读取主密码：可以是容器的 secret、systemd 的 credential，或只有网关账户能读的文件。该文件只包含主密码；末尾的换行会被忽略。`password master create` 写入该文件，只有其用户能读取；文件已存在时拒绝替换，除非给出 `--force`，替换后用旧主密码加密的每个值都无法再打开。`password master show` 输出已有主密码下的 `[master]` 块。TUI 把自己的主密码保存在钥匙串中（macOS 钥匙串、Windows 凭据管理器，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），首次需要时生成，因此你从不需要输入。除 TUI 外没有任何东西读取钥匙串。
+其他所有值都用 AES-256-GCM 加密，密钥由你的**主密码**和配置自己的 salt 派生。提供服务的网关从 `[server].master_password_file` 指定的文件读取主密码：可以是容器的 secret、systemd 的 credential，或只有网关账户能读的文件。该文件只包含主密码；末尾的换行会被忽略。`password master create` 写入该文件，只有其用户能读取；文件已存在时拒绝替换，除非给出 `--force`，替换后用旧主密码加密的每个值都无法再打开。`password master show` 输出已有主密码下的 `[master]` 块。TUI 把自己的主密码保存在钥匙串中（macOS 钥匙串、Windows 凭据管理器，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），在 TUI 启动时读取一次，没有时在那时生成，因此你从不需要输入。除 TUI 外没有任何东西读取钥匙串。
 
 | 启动方式 | 主密码来源 |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`；目标引用加密值而未设置它时拒绝启动，从不询问 |
-| `zdesk tui` | 钥匙串；没有时生成并保存在那里；钥匙串无响应时拒绝启动，从不询问 |
+| `zdesk tui` | 钥匙串，在 TUI 启动时读取；没有时生成并保存在那里；钥匙串无响应时拒绝启动，从不询问 |
 | `zdesk password` | `[server].master_password_file`，否则询问；`password master create` 询问两次并写入该文件 |
 
 本地实例没有 `[server]` 块，因此其主密码总是来自钥匙串。

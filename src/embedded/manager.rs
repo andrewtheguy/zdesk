@@ -108,6 +108,9 @@ pub fn default_instances_dir() -> anyhow::Result<PathBuf> {
 
 /// Run the terminal UI and its shared-port router until `q` or a shutdown signal.
 pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
+    let mocked = crate::keychain::mocked()?;
+    let mut master = Master::default();
+    let keychain = master.get().map(|_| ());
     let binary = std::env::current_exe().context("cannot locate the zdesk executable")?;
     let mut supervisor = Supervisor::open(options.instances_dir.clone(), binary).await?;
     let access = Access::open();
@@ -121,11 +124,14 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
     let mut view = View::List;
-    let mut master = Master::default();
-    let mut message = format!(
-        "control plane listening on http://{MASTER_HOST}:{}",
-        router.port()
-    );
+    let mut message = match keychain {
+        Err(error) => format!("{error:#}; an instance whose config names passwords cannot start until it answers"),
+        Ok(()) if mocked => format!(
+            "{}=mock: passwords set now open only until the TUI quits",
+            crate::keychain::MOCK_ENV
+        ),
+        Ok(()) => format!("control plane listening on http://{MASTER_HOST}:{}", router.port()),
+    };
 
     loop {
         let instances = supervisor.instances();
@@ -364,7 +370,10 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
 /// as Chrome's and Slack's Safe Storage keys are, so nobody types or knows it
 /// and every instance opens under the same one. Never asked for at the terminal,
 /// and never `[server].master_password_file`: an instance has no `[server]`
-/// block. Read from the keychain once per run.
+/// block. Read from the keychain once per run, when the TUI starts and before
+/// it takes the screen, so a keychain that asks the user with a system prompt
+/// asks then rather than at the first start of an instance; a read that failed
+/// is tried again by the next thing that needs it.
 #[derive(Default)]
 struct Master(Option<MasterPassword>);
 
@@ -392,28 +401,24 @@ impl Master {
     /// both find the keychain empty and each keep a master the other's save
     /// replaces. The keychain has no create-if-absent, so a file beside the
     /// account's default instances directory stands in, whichever directory
-    /// either was given. Under test the store is the process's own mock, and the
-    /// tests serialize themselves.
+    /// either was given. On the mock store, under test or `ZDESK_KEYCHAIN=mock`,
+    /// the store is the process's own and there is nothing to share.
     fn lock() -> anyhow::Result<Option<std::fs::File>> {
-        #[cfg(test)]
-        {
-            Ok(None)
+        if crate::keychain::mocked()? {
+            return Ok(None);
         }
-        #[cfg(not(test))]
-        {
-            let instances = default_instances_dir()?;
-            let root = instances.parent().context("the instances directory has no parent")?;
-            std::fs::create_dir_all(root).with_context(|| format!("cannot create {}", root.display()))?;
-            let path = root.join("master.lock");
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(&path)
-                .with_context(|| format!("cannot open {}", path.display()))?;
-            file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
-            Ok(Some(file))
-        }
+        let instances = default_instances_dir()?;
+        let root = instances.parent().context("the instances directory has no parent")?;
+        std::fs::create_dir_all(root).with_context(|| format!("cannot create {}", root.display()))?;
+        let path = root.join("master.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
+        Ok(Some(file))
     }
 
     /// The key a start of the instance whose config is at `path` hands its worker:
