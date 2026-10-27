@@ -21,14 +21,14 @@ case "$("$binary" --help)" in
     echo "container gateway unexpectedly exposes tui" >&2
     exit 1
     ;;
-  *serve-embedded*)
-    echo "container gateway unexpectedly exposes serve-embedded" >&2
+  *serve-worker*)
+    echo "container gateway unexpectedly exposes serve-worker" >&2
     exit 1
     ;;
 esac
 case "$("$binary" check-config --help)" in
-  *--embedded*)
-    echo "container gateway unexpectedly exposes check-config --embedded" >&2
+  *--worker*)
+    echo "container gateway unexpectedly exposes check-config --worker" >&2
     exit 1
     ;;
 esac

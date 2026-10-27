@@ -72,11 +72,11 @@ Write-Host "   $reported"
 # `tui` would bind its port and create its instances directory.
 $null = & $exe tui --help
 if ($LASTEXITCODE -ne 0) { throw "tui --help exited $LASTEXITCODE" }
-# An empty instance config is a new instance under the embedded rules, and refused under
+# An empty instance config is a new instance under the worker rules, and refused under
 # the served ones — so a pass here is those rules, not a flag nobody read.
-$null = '' | & $exe check-config --embedded
-if ($LASTEXITCODE -ne 0) { throw "check-config --embedded refused an empty instance config (exit $LASTEXITCODE)" }
-Write-Host '   the control plane is in the package: tui, and check-config --embedded'
+$null = '' | & $exe check-config --worker
+if ($LASTEXITCODE -ne 0) { throw "check-config --worker refused an empty instance config (exit $LASTEXITCODE)" }
+Write-Host '   the control plane is in the package: tui, and check-config --worker'
 if (-not (Test-OnMachinePath $binDir)) { throw "the machine PATH lacks $binDir" }
 Write-Host "   $binDir is on the machine PATH"
 if ((Test-Path $config) -ne $configBefore) { throw "the install created $config" }

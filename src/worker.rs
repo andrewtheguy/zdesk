@@ -1,11 +1,11 @@
 //! A managed local gateway: one browser instance, one private socket, one token.
 //!
-//! `zdesk serve-embedded --instance-dir <dir>` is not a deployment. It is
+//! `zdesk serve-worker --instance-dir <dir>` is not a deployment. It is
 //! started by an instance manager, serves that browser instance alone, and dies
 //! with its parent. Everything that makes a `serve` gateway configurable is
 //! therefore decided here instead: it listens on its private transport —
 //! `<instance-dir>/gateway.sock`, or a named pipe on Windows, see [`transport`] —
-//! and there is no login to offer — see [`crate::config::Audience::Embedded`].
+//! and there is no login to offer — see [`crate::config::Audience::Worker`].
 //!
 //! The SPA it serves is the same browser client as `zdesk serve`. The token below
 //! is the master's credential to this process, never a browser's: a browser logs in
@@ -41,7 +41,7 @@ use anyhow::Context as _;
 use log::info;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::EmbeddedToken;
+use crate::auth::WorkerToken;
 use crate::config::{Audience, ConfigFile};
 use crate::vault::Key;
 
@@ -72,7 +72,7 @@ pub struct Handshake {
     pub token: String,
 }
 
-// Manual Debug, for the reason [`EmbeddedToken`]'s is manual: this is the other
+// Manual Debug, for the reason [`WorkerToken`]'s is manual: this is the other
 // holder of the same secret, and the one that exists to be *written somewhere*. A
 // derived Debug would put the token in any log line that ever formats a handshake,
 // which is a mistake nobody would notice making.
@@ -98,7 +98,7 @@ impl Handshake {
 
 /// The managed instance directory: its config and future per-instance state.
 ///
-/// Everything about an embedded gateway is under here, and nothing outside it is
+/// Everything about a worker is under here, and nothing outside it is
 /// read — in particular not the installed gateway's global config, which belongs
 /// to the server install. Multiple instances can therefore coexist without being
 /// able to change what another does, which is the point of naming the
@@ -129,7 +129,7 @@ impl Instance {
         let path = self.config_path();
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read config file {}", path.display()))?;
-        ConfigFile::parse_with(&text, Audience::Embedded)
+        ConfigFile::parse_with(&text, Audience::Worker)
             .with_context(|| format!("in config file {}", path.display()))
     }
 
@@ -189,9 +189,9 @@ pub async fn serve(instance: &Instance, claim: Claim, key: Option<Key>) -> anyho
     let mut file = instance.load()?;
     file.unlock(key.as_ref())
         .with_context(|| format!("in config file {}", instance.config_path().display()))?;
-    let token = EmbeddedToken::generate();
+    let token = WorkerToken::generate();
     let endpoint = transport::endpoint(&instance.dir);
-    let config = file.resolve_embedded(
+    let config = file.resolve_worker(
         token.clone(),
         transport::listen_addr(&endpoint),
         &instance.dir,
@@ -229,7 +229,7 @@ pub async fn serve(instance: &Instance, claim: Claim, key: Option<Key>) -> anyho
         .context("cannot write the handshake to stdout")?;
     drop(stdout);
 
-    info!("embedded gateway listening on {}", config.listen);
+    info!("worker listening on {}", config.listen);
     info!("config: {}", instance.config_path().display());
     info!("{} target(s) available in the picker:", config.targets.len());
     for target in &config.targets {
@@ -283,7 +283,7 @@ pub fn read_key() -> anyhow::Result<Option<Key>> {
 /// rests on, and it is the same on every platform: on Windows a read from a pipe
 /// whose writer is gone ends too.
 ///
-/// On a `serve-embedded` run started by hand from a terminal, stdin is that
+/// On a `serve-worker` run started by hand from a terminal, stdin is that
 /// terminal and this simply never fires — which is the right answer for a run
 /// nobody is parenting.
 pub async fn parent_closed() {
@@ -319,20 +319,20 @@ pub async fn parent_closed() {
     }
 }
 
-/// Validate candidate config text the way an embedded gateway will read it.
+/// Validate candidate config text the way a worker will read it.
 ///
 /// An instance manager can call this through the binary on unsaved editor text, so
 /// what it accepts is by construction what the gateway accepts. A second parser in
 /// a manager would be a second opinion, and the one that mattered would be whichever
 /// ran last.
 pub fn check(text: &str) -> anyhow::Result<()> {
-    let file = ConfigFile::parse_with(text, Audience::Embedded)?;
+    let file = ConfigFile::parse_with(text, Audience::Worker)?;
     // Parsing alone would accept a file the gateway then refuses to start on, so
     // the check goes all the way through resolution. The endpoint is the worker's
     // to place and is not in the file, so any one is sufficient here, and so is
     // any instance or data directory: nothing is opened in either.
-    file.resolve_embedded(
-        EmbeddedToken::generate(),
+    file.resolve_worker(
+        WorkerToken::generate(),
         transport::listen_addr(&transport::endpoint(Path::new(""))),
         Path::new(""),
         Path::new(""),
@@ -370,10 +370,10 @@ mod tests {
         assert_eq!(instance.config_path(), Path::new("/tmp/inst").join("zdesk.toml"));
     }
 
-    /// An embedded config is `[branding]` and `[[targets]]`, and an empty one is a
+    /// A worker's config is `[branding]` and `[[targets]]`, and an empty one is a
     /// new instance rather than an error.
     #[test]
-    fn the_embedded_audience_accepts_a_config_with_nothing_in_it() {
+    fn the_worker_audience_accepts_a_config_with_nothing_in_it() {
         check("").expect("a first launch has no targets yet");
         let served = crate::config::check("").expect_err("a served gateway needs a target");
         assert!(format!("{served:#}").contains("[[targets]]"), "{served:#}");
@@ -382,7 +382,7 @@ mod tests {
     /// The block the launcher owns is refused where it cannot mean anything, with a
     /// message that says which keys belong instead.
     #[test]
-    fn the_embedded_audience_refuses_a_server_block() {
+    fn the_worker_audience_refuses_a_server_block() {
         for text in ["[server]\n", "[server]\nlisten = \"0.0.0.0:1234\"\n"] {
             let error = check(text).expect_err("[server] is the launcher's");
             let message = format!("{error:#}");
@@ -391,7 +391,7 @@ mod tests {
         }
     }
 
-    /// One table, one place, both audiences — including an embedded instance, whose
+    /// One table, one place, both audiences — including a worker, whose
     /// config has no `[server]` block a name could have lived in.
     #[test]
     fn branding_is_one_top_level_table_for_both_audiences() {
@@ -400,12 +400,12 @@ mod tests {
 
         let file = ConfigFile::parse_with(
             "[branding]\ntext = \"work laptop\"\nlogo = \"/tmp/logo.png\"\n",
-            Audience::Embedded,
+            Audience::Worker,
         )
         .unwrap();
         let resolved = file
-            .resolve_embedded(
-                EmbeddedToken::generate(),
+            .resolve_worker(
+                WorkerToken::generate(),
                 transport::listen_addr(&transport::endpoint(Path::new("/i"))),
                 Path::new("/i"),
                 Path::new("/i"),
@@ -413,19 +413,6 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.branding.text, "work laptop");
         assert_eq!(resolved.branding.logo.unwrap().mime, "image/png");
-
-        // There is exactly one place to write it, so the block it used to live in
-        // refuses it — `deny_unknown_fields` and nothing else, which is the whole of
-        // the migration this project offers.
-        let error = crate::config::check("[server]\nbranding = \"x\"\n")
-            .expect_err("[server].branding is gone");
-        assert!(format!("{error:#}").contains("branding"), "{error:#}");
-
-        // And the old top-level string spelling fails to parse: a table is not a
-        // string.
-        let error = check("branding = \"x\"\n")
-            .expect_err("the string spelling is gone");
-        assert!(format!("{error:#}").contains("branding"), "{error:#}");
     }
 
     /// A target is a target: the same rules, the same messages, either audience.

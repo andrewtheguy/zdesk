@@ -99,7 +99,7 @@ fn bundle_file(path: &str) -> EmbeddedFile {
 /// A file of the bundle as the TUI's control plane serves it, to a browser that
 /// has not yet logged in to it: the same file, type and validator [`serve`]
 /// answers the same path with, for a router that writes its own responses.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub struct Asset {
     pub data: std::borrow::Cow<'static, [u8]>,
     pub content_type: HeaderValue,
@@ -107,7 +107,7 @@ pub struct Asset {
 }
 
 /// The bundle's file for a request path, `/` and all.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub fn asset(path: &str) -> Asset {
     let file = bundle_file(path.trim_start_matches('/'));
     Asset {
@@ -118,7 +118,7 @@ pub fn asset(path: &str) -> Asset {
 }
 
 /// The isolation headers, by name, for a router that writes its own responses.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub const ISOLATION: [(&str, &str); 2] = [
     ("Cross-Origin-Opener-Policy", "same-origin"),
     ("Cross-Origin-Embedder-Policy", "require-corp"),

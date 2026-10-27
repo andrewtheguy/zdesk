@@ -22,8 +22,8 @@ pub const TEST_PASSWORD: &str = "hunter2";
 /// directly. bcrypt's minimum cost keeps logins fast in tests.
 ///
 /// The login rather than a token because these tests are about the gateway a
-/// browser reaches; the embedded one has its own suite
-/// (`tests/embedded_gateway_e2e.rs`).
+/// browser reaches; a TUI worker has its own suite
+/// (`tests/tui_worker_e2e.rs`).
 #[allow(dead_code)]
 pub fn test_auth() -> zdesk::auth::GatewayAuth {
     let encoded = zdesk::auth::generate(TEST_USER, TEST_PASSWORD, 4).unwrap();

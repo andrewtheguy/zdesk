@@ -428,7 +428,7 @@ impl Master {
     fn key_for(&mut self, path: &Path) -> anyhow::Result<Option<Key>> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read {}", path.display()))?;
-        let file = ConfigFile::parse_with(&text, Audience::Embedded)?;
+        let file = ConfigFile::parse_with(&text, Audience::Worker)?;
         if !file.needs_master() {
             return Ok(None);
         }
@@ -1783,7 +1783,7 @@ async fn spawn_gateway(binary: &Path, dir: &Path, key: Option<&Key>) -> anyhow::
     let stderr = log.try_clone()?;
     let mut command = Command::new(binary);
     command
-        .arg("serve-embedded")
+        .arg("serve-worker")
         .arg("--instance-dir")
         .arg(dir)
         .stdin(Stdio::piped())
@@ -2693,7 +2693,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_instance_gets_the_embedded_config_shape() {
+    fn a_new_instance_gets_the_worker_config_shape() {
         let temp = tempfile::tempdir().unwrap();
         bootstrap_config(temp.path()).unwrap();
         let text = std::fs::read_to_string(temp.path().join("zdesk.toml")).unwrap();
@@ -3023,7 +3023,7 @@ mod tests {
         crate::vault::init_file(&path, &generated).unwrap();
         crate::vault::set_file(&path, "w", "hunter2", &generated).unwrap();
         let key = second.key_for(&path).unwrap().expect("a config naming passwords has a key");
-        let mut file = ConfigFile::parse_with(&std::fs::read_to_string(&path).unwrap(), Audience::Embedded).unwrap();
+        let mut file = ConfigFile::parse_with(&std::fs::read_to_string(&path).unwrap(), Audience::Worker).unwrap();
         file.unlock(Some(&key)).unwrap();
         assert_eq!(file.targets[0].password, "hunter2");
     }

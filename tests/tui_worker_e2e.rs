@@ -1,4 +1,4 @@
-//! End-to-end tests of a managed embedded gateway: the handshake it prints,
+//! End-to-end tests of a TUI worker: the handshake it prints,
 //! the token it takes in a cookie, the login it refuses, the SPA it serves out of
 //! its own binary, and the way it dies with whatever started it.
 //!
@@ -16,17 +16,17 @@ use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use zdesk::embedded::transport;
+use zdesk::worker::transport;
 
-/// A running embedded gateway, its handshake already read.
-struct Embedded {
+/// A running worker, its handshake already read.
+struct Worker {
     child: Child,
     endpoint: String,
     token: String,
     dir: common::ScratchDir,
 }
 
-impl Drop for Embedded {
+impl Drop for Worker {
     fn drop(&mut self) {
         // Belt and braces: every test that cares about shutdown asserts it
         // explicitly, and a test that failed early must not leave a gateway behind.
@@ -35,11 +35,11 @@ impl Drop for Embedded {
     }
 }
 
-impl Embedded {
+impl Worker {
     /// Write `config` into a fresh instance directory, start the gateway, and read
     /// its handshake.
     fn start(config: &str) -> Self {
-        let dir = common::ScratchDir::new("embedded");
+        let dir = common::ScratchDir::new("worker");
         dir.write("zdesk.toml", config);
         let (child, endpoint, token) = launch(dir.path());
         Self {
@@ -70,7 +70,7 @@ impl Embedded {
             None => String::new(),
         };
         let req = format!(
-            "GET {path} HTTP/1.1\r\nHost: embedded.zdesk.localhost\r\n{header}Connection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: worker.zdesk.localhost\r\n{header}Connection: close\r\n\r\n"
         );
         let (status, _head, body) = endpoint_http_request(&self.endpoint, &req).await;
         (status, body)
@@ -115,7 +115,7 @@ fn launch(dir: &std::path::Path) -> (Child, String, String) {
 /// does for a config that names passwords.
 fn launch_keyed(dir: &std::path::Path, key: &str) -> (Child, String, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_zdesk"))
-        .arg("serve-embedded")
+        .arg("serve-worker")
         .arg("--instance-dir")
         .arg(dir)
         // stdin is the liveness pipe: closing our end is how the parent tells this
@@ -196,19 +196,19 @@ fn one_target() -> &'static str {
 /// would pass a parse and fail a connection.
 #[tokio::test]
 async fn the_handshake_names_an_endpoint_that_answers_and_a_token_that_works() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
     #[cfg(unix)]
     assert!(
-        std::path::Path::new(&embedded.endpoint).exists(),
+        std::path::Path::new(&worker.endpoint).exists(),
         "the socket is bound before the handshake"
     );
-    assert_eq!(embedded.token.len(), 43, "32 bytes of base64url: {}", embedded.token);
+    assert_eq!(worker.token.len(), 43, "32 bytes of base64url: {}", worker.token);
 
-    let (status, body) = embedded.get_authorized("/api/health").await;
+    let (status, body) = worker.get_authorized("/api/health").await;
     assert_eq!((status, body.as_str()), (200, "ok"));
 
-    let (status, body) = embedded.get_authorized("/api/targets").await;
+    let (status, body) = worker.get_authorized("/api/targets").await;
     assert_eq!(status, 200, "the token must unlock the API: {body}");
     assert!(body.contains("\"unreachable\""), "{body}");
 }
@@ -218,32 +218,32 @@ async fn the_handshake_names_an_endpoint_that_answers_and_a_token_that_works() {
 /// requests, and a page cannot set one.
 #[tokio::test]
 async fn nothing_but_the_token_gets_past_the_guard() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
     for cookie in [
         None,
         Some("zdesk_session="),
         Some("zdesk_session=not-the-token"),
         // The right value under the wrong name.
-        Some(&format!("session={}", embedded.token) as &str),
+        Some(&format!("session={}", worker.token) as &str),
     ] {
-        let (status, _) = embedded.get("/api/targets", cookie).await;
+        let (status, _) = worker.get("/api/targets", cookie).await;
         assert_eq!(status, 401, "must refuse {cookie:?}");
     }
 
     // Among other cookies is still found, which is what a real browser sends.
-    let (status, _) = embedded
-        .get("/api/targets", Some(&format!("other=1; {}", embedded.cookie())))
+    let (status, _) = worker
+        .get("/api/targets", Some(&format!("other=1; {}", worker.cookie())))
         .await;
     assert_eq!(status, 200);
 
     // A bearer header is not another spelling of the cookie credential.
     let req = format!(
-        "GET /api/targets HTTP/1.1\r\nHost: embedded.zdesk.localhost\r\nAuthorization: Bearer {}\r\n\
+        "GET /api/targets HTTP/1.1\r\nHost: worker.zdesk.localhost\r\nAuthorization: Bearer {}\r\n\
          Connection: close\r\n\r\n",
-        embedded.token
+        worker.token
     );
-    let (status, _, _) = endpoint_http_request(&embedded.endpoint, &req).await;
+    let (status, _, _) = endpoint_http_request(&worker.endpoint, &req).await;
     assert_eq!(status, 401, "the credential lives in the cookie now");
 }
 
@@ -252,15 +252,15 @@ async fn nothing_but_the_token_gets_past_the_guard() {
 /// would send somebody hunting for a routing bug.
 #[tokio::test]
 async fn the_login_routes_refuse_rather_than_vanish() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
     let body = r#"{"username":"admin","password":"hunter2"}"#;
     let req = format!(
-        "POST /api/auth/login HTTP/1.1\r\nHost: embedded.zdesk.localhost\r\nConnection: close\r\n\
+        "POST /api/auth/login HTTP/1.1\r\nHost: worker.zdesk.localhost\r\nConnection: close\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
-    let (status, head, _) = endpoint_http_request(&embedded.endpoint, &req).await;
+    let (status, head, _) = endpoint_http_request(&worker.endpoint, &req).await;
     assert_eq!(status, 403, "there is no login to attempt");
     assert!(
         !head.to_lowercase().contains("set-cookie"),
@@ -268,7 +268,7 @@ async fn the_login_routes_refuse_rather_than_vanish() {
     );
 
     // The public branding route still answers before any cookie exists.
-    let (status, body) = embedded.get("/api/config", None).await;
+    let (status, body) = worker.get("/api/config", None).await;
     assert_eq!(status, 200, "the branding is still readable: {body}");
     assert!(body.contains("branding"), "{body}");
 }
@@ -279,13 +279,13 @@ async fn the_login_routes_refuse_rather_than_vanish() {
 /// would put a login form in front of somebody with nothing to type into it.
 #[tokio::test]
 async fn the_status_route_answers_for_the_token() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
-    let (status, body) = embedded.get_authorized("/api/auth/status").await;
+    let (status, body) = worker.get_authorized("/api/auth/status").await;
     assert_eq!(status, 200);
     assert!(body.contains("\"authenticated\":true"), "{body}");
 
-    let (status, body) = embedded.get("/api/auth/status", None).await;
+    let (status, body) = worker.get("/api/auth/status", None).await;
     assert_eq!(status, 200, "the question is public; the answer is not yes");
     assert!(body.contains("\"authenticated\":false"), "{body}");
 }
@@ -297,10 +297,10 @@ async fn the_status_route_answers_for_the_token() {
 /// put a header on it.
 #[tokio::test]
 async fn the_socket_upgrade_takes_the_cookie() {
-    let embedded = Embedded::start(one_target());
-    let url = "ws://embedded.zdesk.localhost/ws?session=not-a-claim&apple_media=false&page_hevc=false&rdp_graphics=false&rdp_h264=false&vp9_444=false";
+    let worker = Worker::start(one_target());
+    let url = "ws://worker.zdesk.localhost/ws?session=not-a-claim&apple_media=false&page_hevc=false&rdp_graphics=false&rdp_h264=false&vp9_444=false";
 
-    let stream = transport::connect(&embedded.endpoint).await.unwrap();
+    let stream = transport::connect(&worker.endpoint).await.unwrap();
     let err = tokio_tungstenite::client_async(url, stream)
         .await
         .expect_err("an upgrade with no credential must be refused");
@@ -318,8 +318,8 @@ async fn the_socket_upgrade_takes_the_cookie() {
     let mut request = url.into_client_request().unwrap();
     request
         .headers_mut()
-        .insert("Cookie", embedded.cookie().parse().unwrap());
-    let stream = transport::connect(&embedded.endpoint).await.unwrap();
+        .insert("Cookie", worker.cookie().parse().unwrap());
+    let stream = transport::connect(&worker.endpoint).await.unwrap();
     let (_socket, response) = tokio_tungstenite::client_async(request, stream)
         .await
         .expect("the token must get the upgrade past require_auth");
@@ -333,9 +333,9 @@ async fn the_socket_upgrade_takes_the_cookie() {
 /// anything.
 #[tokio::test]
 async fn the_spa_is_served_and_unknown_api_paths_are_not() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
-    let (status, body) = embedded.get("/", None).await;
+    let (status, body) = worker.get("/", None).await;
     assert_eq!(status, 200, "the document is public");
     assert!(body.contains("<div id=\"root\">"), "{body}");
 
@@ -346,20 +346,20 @@ async fn the_spa_is_served_and_unknown_api_paths_are_not() {
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .expect("the document references its script from the root");
-    let (status, body) = embedded.get_authorized(&format!("/{script}")).await;
+    let (status, body) = worker.get_authorized(&format!("/{script}")).await;
     assert_eq!(status, 200, "{script}");
     assert!(!body.contains("<div id=\"root\">"), "a script, not the index: {script}");
 
     // A client-side route is the index with a 200, not a 404, the page a display
     // shows in a tab of its own among them.
     for route in ["/login", "/display/2"] {
-        let (status, body) = embedded.get_authorized(route).await;
+        let (status, body) = worker.get_authorized(route).await;
         assert_eq!(status, 200, "{route}");
         assert!(body.contains("<div id=\"root\">"), "{route}: {body}");
     }
 
     // But an unknown API path is still an honest 404 rather than an SPA shell.
-    let (status, body) = embedded.get_authorized("/api/nope").await;
+    let (status, body) = worker.get_authorized("/api/nope").await;
     assert_eq!(status, 404);
     assert!(!body.contains("<title>"), "{body}");
 }
@@ -369,27 +369,27 @@ async fn the_spa_is_served_and_unknown_api_paths_are_not() {
 /// the parent, which is what a crash or a `kill -9` leaves behind.
 #[tokio::test]
 async fn closing_the_liveness_pipe_stops_the_gateway() {
-    let mut embedded = Embedded::start(one_target());
+    let mut worker = Worker::start(one_target());
     // Alive and serving first, so the exit below cannot be a gateway that never
     // started.
-    let (status, _) = embedded.get_authorized("/api/health").await;
+    let (status, _) = worker.get_authorized("/api/health").await;
     assert_eq!(status, 200);
 
-    embedded.close_stdin();
+    worker.close_stdin();
 
     assert!(
-        embedded.exited_within(Duration::from_secs(3)),
+        worker.exited_within(Duration::from_secs(3)),
         "the gateway must not outlive the parent that started it"
     );
     #[cfg(unix)]
     assert!(
-        !std::path::Path::new(&embedded.endpoint).exists(),
+        !std::path::Path::new(&worker.endpoint).exists(),
         "a graceful liveness-pipe exit removes the private socket"
     );
     // A pipe has no file to leave behind; what is left to check is that nothing
     // answers at its name.
     assert!(
-        transport::connect(&embedded.endpoint).await.is_err(),
+        transport::connect(&worker.endpoint).await.is_err(),
         "nothing answers at a stopped gateway's endpoint"
     );
 }
@@ -415,7 +415,7 @@ fn vaulted_target() -> (String, zdesk::vault::Key) {
 #[tokio::test]
 async fn a_config_naming_passwords_starts_on_the_key_it_is_handed() {
     let (text, key) = vaulted_target();
-    let dir = common::ScratchDir::new("embedded-vaulted");
+    let dir = common::ScratchDir::new("worker-vaulted");
     dir.write("zdesk.toml", &text);
     let (mut child, endpoint, token) = launch_keyed(dir.path(), &key.to_line());
     let request = format!(
@@ -427,7 +427,7 @@ async fn a_config_naming_passwords_starts_on_the_key_it_is_handed() {
     let _ = child.wait();
 
     let output = Command::new(env!("CARGO_BIN_EXE_zdesk"))
-        .arg("serve-embedded")
+        .arg("serve-worker")
         .arg("--instance-dir")
         .arg(dir.path())
         .stdin(Stdio::null())
@@ -443,14 +443,14 @@ async fn a_config_naming_passwords_starts_on_the_key_it_is_handed() {
 /// binds or prints anything, and the first goes on serving.
 #[tokio::test]
 async fn a_second_gateway_for_the_same_instance_is_refused() {
-    let embedded = Embedded::start(one_target());
+    let worker = Worker::start(one_target());
 
     // No stdin to hold it: were it let through, it would stop by itself rather
     // than hang the test.
     let second = Command::new(env!("CARGO_BIN_EXE_zdesk"))
-        .arg("serve-embedded")
+        .arg("serve-worker")
         .arg("--instance-dir")
-        .arg(embedded.dir.path())
+        .arg(worker.dir.path())
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&second.stderr);
@@ -458,7 +458,7 @@ async fn a_second_gateway_for_the_same_instance_is_refused() {
     assert!(second.stdout.is_empty(), "no handshake from a refused gateway");
     assert!(stderr.contains("already served by another gateway"), "{stderr}");
 
-    let (status, _) = embedded.get_authorized("/api/health").await;
+    let (status, _) = worker.get_authorized("/api/health").await;
     assert_eq!(status, 200, "the first gateway still serves");
 }
 
@@ -466,9 +466,9 @@ async fn a_second_gateway_for_the_same_instance_is_refused() {
 /// and on Unix the next start takes over the socket file it left.
 #[tokio::test]
 async fn a_killed_gateway_leaves_nothing_that_blocks_the_next() {
-    let mut embedded = Embedded::start(one_target());
-    embedded.kill_and_relaunch();
-    let (status, _) = embedded.get_authorized("/api/health").await;
+    let mut worker = Worker::start(one_target());
+    worker.kill_and_relaunch();
+    let (status, _) = worker.get_authorized("/api/health").await;
     assert_eq!(status, 200);
 }
 
@@ -476,9 +476,9 @@ async fn a_killed_gateway_leaves_nothing_that_blocks_the_next() {
 /// than an error: the browser's picker is what says "no targets are configured".
 #[tokio::test]
 async fn a_config_with_no_targets_still_serves() {
-    let embedded = Embedded::start("");
+    let worker = Worker::start("");
 
-    let (status, body) = embedded.get_authorized("/api/targets").await;
+    let (status, body) = worker.get_authorized("/api/targets").await;
     assert_eq!((status, body.as_str()), (200, "[]"));
 }
 
@@ -487,14 +487,14 @@ async fn a_config_with_no_targets_still_serves() {
 /// what does belong, because a manager may show it in a config editor.
 #[test]
 fn a_server_block_refuses_the_start() {
-    let dir = common::ScratchDir::new("embedded-server-block");
+    let dir = common::ScratchDir::new("worker-server-block");
     dir.write(
         "zdesk.toml",
         &format!("[server]\nlisten = \"0.0.0.0:1234\"\n{}", one_target()),
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_zdesk"))
-        .arg("serve-embedded")
+        .arg("serve-worker")
         .arg("--instance-dir")
         .arg(dir.path())
         .stdin(Stdio::null())
@@ -522,11 +522,11 @@ fn a_server_block_refuses_the_start() {
 /// text that refuses one fails with the reason on stderr.
 #[test]
 fn check_config_agrees_with_what_the_gateway_would_do() {
-    let check = |text: &str, embedded: bool| {
+    let check = |text: &str, worker: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_zdesk"));
         command.arg("check-config");
-        if embedded {
-            command.arg("--embedded");
+        if worker {
+            command.arg("--worker");
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -549,7 +549,7 @@ fn check_config_agrees_with_what_the_gateway_would_do() {
     assert!(check("", true).0, "no targets yet is not an error for an instance");
 
     let (ok, stderr) = check("[server]\n", true);
-    assert!(!ok, "the embedded-instance rules apply");
+    assert!(!ok, "the worker rules apply");
     assert!(stderr.contains("[server]"), "{stderr}");
 
     // Silence is not a pass: the served audience has its own rules, and the same
@@ -568,8 +568,8 @@ fn check_config_agrees_with_what_the_gateway_would_do() {
 /// separate tokens. Nothing is shared, which is what makes a second one safe to start.
 #[tokio::test]
 async fn two_instances_share_nothing() {
-    let a = Embedded::start(one_target());
-    let b = Embedded::start(one_target());
+    let a = Worker::start(one_target());
+    let b = Worker::start(one_target());
 
     assert_ne!(a.endpoint, b.endpoint);
     assert_ne!(a.token, b.token);

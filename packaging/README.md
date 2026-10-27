@@ -3,7 +3,7 @@
 Native packages are the release install contract. Linux ships both `.deb` and
 `.rpm`; macOS ships `.pkg`. The distro-agnostic tarball is the layout input
 for native package and container builds, and no release asset. Containers replace its native binary
-with a build that excludes the `embedded-gateway` default feature.
+with a build that excludes the `tui` default feature.
 
 Every artifact carries one gateway binary with the web client compiled into it
 (`src/assets.rs` embeds the bundle from Cargo's private output directory at build
@@ -189,6 +189,6 @@ succeed.
 Container images take their layout from the Linux tarballs, then replace
 `bin/zdesk` with the separately built container gateway. The build
 script, release smoke test, and Dockerfile all reject a binary that exposes
-`tui`, `serve-embedded`, or `check-config --embedded`. The tarballs are build
+`tui`, `serve-worker`, or `check-config --worker`. The tarballs are build
 plumbing between the workflow's jobs and are not published: the native packages
 and the image are what bring the gateway everything it needs.

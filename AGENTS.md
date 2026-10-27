@@ -80,13 +80,13 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
 
 ## Packaging and platforms
 
-- The native `embedded-gateway` feature is the `zdesk tui` control plane and
-  its hidden `serve-embedded` workers, on Unix and Windows alike, each worker's
+- The native `tui` feature is the `zdesk tui` control plane and
+  its hidden `serve-worker` workers, on Unix and Windows alike, each worker's
   private endpoint a Unix socket or an owner-only named pipe behind
-  `src/embedded/transport.rs`. Containers must be built through
+  `src/worker/transport.rs`. Containers must be built through
   `packaging/build-container-binary.sh`, with default features disabled (release
   CI adds `wlshare` back through `ZDESK_CONTAINER_FEATURES`), and must
-  never expose `tui`, `serve-embedded`, or `check-config --embedded`.
+  never expose `tui`, `serve-worker`, or `check-config --worker`.
 - The Windows MSI ships the native binary, `tui` included. Build it with
   `packaging/build-windows-msi.ps1` on `windows-ci-build` through
   `ci/windows/remote.ps1 ci -Package` only when packaging changes: release CI

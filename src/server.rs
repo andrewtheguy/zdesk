@@ -11,7 +11,7 @@ use axum::{
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use crate::auth::GatewayAuth;
 use crate::{
     auth::{self, AuthSessions},
@@ -30,8 +30,8 @@ pub struct AppState {
     /// The single session slot: claim here, attach over `/ws`.
     pub sessions: Arc<SessionManager>,
     /// Live auth sessions behind the login cookie. Only a
-    /// [`GatewayAuth::Login`] gateway mints or validates one — an embedded
-    /// gateway's requests carry the launch token the control plane adds in that
+    /// [`GatewayAuth::Login`] gateway mints or validates one — a
+    /// worker's requests carry the launch token the control plane adds in that
     /// same cookie and there is no session to look up, so this stays empty there.
     pub auth: Arc<AuthSessions>,
     /// Every browser socket's byte counters, and the database `[meter]` records them in.
@@ -94,7 +94,7 @@ impl axum::serve::Listener for NodelayListener {
 /// taken on the way out leaves every port exactly as it was found.
 ///
 /// This lives here rather than beside `serve` because the TUI control plane binds
-/// the same pair of loopbacks for the same reason (`crate::embedded::manager`), and
+/// the same pair of loopbacks for the same reason (`crate::worker::manager`), and
 /// two implementations of "is this port already somebody else's" is one of them
 /// being wrong.
 pub fn bind_all(
@@ -195,7 +195,7 @@ fn bind_one(socket: std::net::SocketAddr) -> std::io::Result<std::net::TcpListen
 /// Build the axum router.
 ///
 /// - `/api/auth/*` + `/api/health` — public: the login flow itself and the
-///   liveness probe. On an embedded gateway `login` and `logout` answer 403
+///   liveness probe. On a worker `login` and `logout` answer 403
 ///   instead (see `no_login_handler`), while `status` stays real — the same SPA
 ///   runs there and asks it first.
 /// - the rest of `/api/*` and all four WebSockets — refuse requests that do not
@@ -209,7 +209,7 @@ fn bind_one(socket: std::net::SocketAddr) -> std::io::Result<std::net::TcpListen
 ///   real file is served as itself; any unknown path returns `index.html` with a
 ///   200 so client-side routes resolve (matching an SPA's expectations). The
 ///   static shell stays public — it renders the login screen and holds no
-///   secrets; everything it talks to is behind the cookie. An embedded gateway
+///   secrets; everything it talks to is behind the cookie. A worker
 ///   is the same binary and serves the same SPA.
 ///
 /// `throughput` is where the browser sockets count their bytes and, when `[meter].enabled`
@@ -237,7 +237,7 @@ pub fn router_with_sessions(
     hevc_decoder: Option<HevcDecoder>,
 ) -> Router {
     // Two shapes of the same three routes, and which one is registered is decided
-    // here rather than inside the handlers. An embedded gateway *has* no login —
+    // here rather than inside the handlers. A worker *has* no login —
     // its browser logged in to the control plane, which presents the token for
     // it — so the honest answer to one is a refusal, and a refusal is easier to
     // read at the router than a handler that begins by asking what kind of
@@ -246,7 +246,7 @@ pub fn router_with_sessions(
     // `status` is the exception, and registering it either way is the point: the
     // page asks the same question on both, and there it answers yes because the
     // control plane adds the launch token to every request it forwards.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     let auth_routes = match config.auth {
         GatewayAuth::Login(_) => Router::new()
             .route("/auth/login", post(login_handler))
@@ -256,7 +256,7 @@ pub fn router_with_sessions(
             .route("/auth/logout", post(no_login_handler)),
     }
     .route("/auth/status", get(status_handler));
-    #[cfg(not(feature = "embedded-gateway"))]
+    #[cfg(not(feature = "tui"))]
     let auth_routes = Router::new()
         .route("/auth/login", post(login_handler))
         .route("/auth/logout", post(logout_handler))
@@ -450,8 +450,8 @@ async fn dev_hostname_redirect(State(state): State<AppState>, req: Request, next
 /// [`GatewayAuth`] asks for, or no service.
 ///
 /// Both modes read the same `zdesk_session` cookie and differ only in what
-/// makes it valid — a login gateway looks the value up in [`AuthSessions`], an
-/// embedded one compares it against the token it minted at startup. One carrier
+/// makes it valid — a login gateway looks the value up in [`AuthSessions`], a
+/// worker compares it against the token it minted at startup. One carrier
 /// for both, because a cookie is the only credential a *document* can carry: the
 /// SPA's `fetch` calls and its `ws://` upgrades are issued by the page, not by
 /// the client that opened it, and neither can be given a header.
@@ -624,14 +624,14 @@ async fn logo_handler(State(state): State<AppState>) -> ApiResult<impl IntoRespo
     Ok(([(header::CONTENT_TYPE, logo.mime)], bytes))
 }
 
-/// The login routes on an embedded gateway: 403, always.
+/// The login routes on a worker: 403, always.
 ///
 /// A refusal rather than a missing route, because the two say different things. A
 /// 404 reads as "this build is older than you thought" and sends somebody looking
 /// for a routing mistake; a 403 says the request was understood and is not allowed
 /// here — which is the truth, and it is the same answer whatever credentials are
-/// offered, since an embedded gateway holds none to check them against.
-#[cfg(feature = "embedded-gateway")]
+/// offered, since a worker holds none to check them against.
+#[cfg(feature = "tui")]
 async fn no_login_handler() -> AppError {
     AppError::Forbidden
 }
@@ -644,7 +644,7 @@ struct StatusResponse {
 /// Whether the caller holds a live session — the SPA asks on load to decide
 /// between the login screen and the desktop.
 ///
-/// This route exists on an embedded gateway too, unlike the two beside it: the
+/// This route exists on a worker too, unlike the two beside it: the
 /// same SPA runs there and asks the same question first. Its control plane adds
 /// the launch token to every request it forwards, once the browser has logged in
 /// with the TUI's PIN.

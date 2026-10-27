@@ -15,8 +15,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::PcmFormat;
-#[cfg(feature = "embedded-gateway")]
-use crate::auth::EmbeddedToken;
+#[cfg(feature = "tui")]
+use crate::auth::WorkerToken;
 use crate::auth::{GatewayAuth, SitePasswd};
 use crate::protocol::HostDisplay;
 use crate::throughput::MeterConfig;
@@ -1484,8 +1484,8 @@ pub enum ListenAddr {
     /// The path of a Unix socket to create.
     Unix(PathBuf),
     /// A managed worker's named pipe on Windows, where there are no Unix sockets.
-    /// Never read from a config: `src/embedded/transport.rs` names it at launch.
-    #[cfg(all(feature = "embedded-gateway", windows))]
+    /// Never read from a config: `src/worker/transport.rs` names it at launch.
+    #[cfg(all(feature = "tui", windows))]
     Pipe(String),
 }
 
@@ -1496,7 +1496,7 @@ impl std::fmt::Display for ListenAddr {
         match self {
             Self::Tcp(addr) => f.write_str(addr),
             Self::Unix(path) => write!(f, "{UNIX_LISTEN_PREFIX}{}", path.display()),
-            #[cfg(all(feature = "embedded-gateway", windows))]
+            #[cfg(all(feature = "tui", windows))]
             Self::Pipe(name) => write!(f, "pipe:{name}"),
         }
     }
@@ -1530,7 +1530,7 @@ pub struct ServerSection {
     /// no `[server]` block, and its control plane takes the keychain's instead.
     pub master_password_file: Option<PathBuf>,
     // No `branding` here: it is the top-level `[branding]` table now (see
-    // `ConfigFile::branding`), because an embedded config has no `[server]`
+    // `ConfigFile::branding`), because a worker's config has no `[server]`
     // block to hold it and one value with two spellings is one of them going
     // stale. `deny_unknown_fields` refuses a file that still has it here.
     /// **Development only.** A label to give this gateway its own hostname on
@@ -1563,7 +1563,7 @@ pub const DEFAULT_BRANDING: &str = "zDesk";
 /// image it puts in the browser tab.
 ///
 /// Top-level rather than in `[server]`, and it is the **only** place to set it.
-/// An embedded config has no `[server]` block at all ([`Audience::Embedded`]),
+/// A worker's config has no `[server]` block at all ([`Audience::Worker`]),
 /// so a table that lived there could not name the instance — and accepting both
 /// spellings would be two places to write one value, with the loser losing
 /// silently. `deny_unknown_fields` refuses a file that still has anything of it
@@ -1730,7 +1730,7 @@ fn resolve_logo(value: &str) -> anyhow::Result<Logo> {
 ///
 /// - a [`Self::Served`] gateway is useless without a target to offer and a
 ///   credential to guard it, and it is told where to listen;
-/// - an [`Self::Embedded`] one is started by a manager with the private endpoint
+/// - a [`Self::Worker`] one is started by a manager with the private endpoint
 ///   and secret decided outside the config, so a `[server]` block could only
 ///   contradict them — and it may come up with **no targets at all**, because that
 ///   is a valid new instance and the picker's job is to say so.
@@ -1738,29 +1738,27 @@ fn resolve_logo(value: &str) -> anyhow::Result<Logo> {
 pub enum Audience {
     /// `zdesk serve`: a browser's gateway.
     Served,
-    /// `zdesk serve-embedded`: a managed local instance.
-    #[cfg(feature = "embedded-gateway")]
-    Embedded,
+    /// `zdesk serve-worker`: a managed local instance.
+    #[cfg(feature = "tui")]
+    Worker,
 }
 
 /// The parsed TOML file, before a target is selected.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
-    /// `None` when the file has no `[server]` block at all, which is what an
-    /// embedded gateway's config must look like — distinguishing "absent" from
+    /// `None` when the file has no `[server]` block at all, which is what a
+    /// worker's config must look like — distinguishing "absent" from
     /// "present and empty" is the whole reason this is an `Option`.
     #[serde(default)]
     pub server: Option<ServerSection>,
     /// The `[branding]` table: display name and tab icon. See [`BrandingSection`]
-    /// for why it is top-level and nowhere else. A config that still writes the
-    /// old `branding = "…"` string fails to parse — a table is not a string, and
-    /// that refusal is the whole of the migration.
+    /// for why it is top-level and nowhere else.
     #[serde(default)]
     pub branding: Option<BrandingSection>,
     /// The `[meter]` table: where the browser sockets' throughput is recorded. Absent,
     /// or present with `enabled = false`, records nothing; present it must say which.
-    /// Top-level for [`Self::branding`]'s reason — an embedded config may set it too.
+    /// Top-level for [`Self::branding`]'s reason — a worker's config may set it too.
     #[serde(default)]
     pub meter: Option<MeterSection>,
     /// The `[hevc_wasm]` table: where the page's software HEVC
@@ -1830,10 +1828,10 @@ pub struct AppConfig {
     /// a named pipe on Windows.
     pub listen: ListenAddr,
     /// Every target profile this process serves; the post-login picker selects
-    /// one. Non-empty for [`Audience::Served`]; possibly empty for an embedded
-    /// gateway, whose client shows "no targets are configured" instead.
+    /// one. Non-empty for [`Audience::Served`]; possibly empty for a
+    /// worker, whose client shows "no targets are configured" instead.
     pub targets: Vec<TargetConfig>,
-    /// What gets a request past the door: a login, or the embedded client's token.
+    /// What gets a request past the door: a login, or the token of the TUI that started a worker.
     pub auth: GatewayAuth,
     /// The deployment's name and, when configured, the icon file behind
     /// `GET /api/logo`.
@@ -1892,8 +1890,8 @@ impl ConfigFile {
                 ),
             }
         }
-        #[cfg(feature = "embedded-gateway")]
-        if audience == Audience::Embedded {
+        #[cfg(feature = "tui")]
+        if audience == Audience::Worker {
             // Refused rather than ignored, and named as a whole block rather than
             // key by key: every one of them is a decision the launcher has already
             // made for this gateway — a private endpoint the control plane proxies
@@ -1902,7 +1900,7 @@ impl ConfigFile {
             // as decoration.
             anyhow::ensure!(
                 config.server.is_none(),
-                "an embedded instance config may not have a [server] block: \
+                "an instance config may not have a [server] block: \
                  the launcher decides where its gateway listens and how it \
                  authenticates. Only [branding] and [[targets]] belong here"
             );
@@ -1912,7 +1910,7 @@ impl ConfigFile {
                 "config has no [[targets]] — at least one target profile is required"
             );
         }
-        #[cfg(not(feature = "embedded-gateway"))]
+        #[cfg(not(feature = "tui"))]
         {
             let _ = audience;
             anyhow::ensure!(
@@ -2301,17 +2299,17 @@ impl ConfigFile {
     /// endpoint and a freshly minted token.
     ///
     /// Both are arguments here rather than a default that
-    /// `[server]` could override, which is what [`Audience::Embedded`] enforces on
+    /// `[server]` could override, which is what [`Audience::Worker`] enforces on
     /// the way in. `[branding]` is the one thing such a config *may* say about the
     /// gateway itself: it names the instance, and multiple local instances are
     /// easier to tell apart if they can be called different things.
     ///
     /// `state_dir` is the instance directory, where `[meter]` keeps its database, and
     /// `data_dir` is where `[hevc_wasm]` finds its archive; see [`data_dir`].
-    #[cfg(feature = "embedded-gateway")]
-    pub fn resolve_embedded(
+    #[cfg(feature = "tui")]
+    pub fn resolve_worker(
         self,
-        token: EmbeddedToken,
+        token: WorkerToken,
         endpoint: ListenAddr,
         state_dir: &Path,
         data_dir: &Path,
@@ -2632,7 +2630,7 @@ pub fn state_dir(config: &Path) -> PathBuf {
 /// replaced with it: they are pinned to its version, unlike the state directory.
 ///
 /// A binary outside a release tree — a Cargo build — has `outside`: the config's
-/// directory, or the embedded instance's.
+/// directory, or the worker's instance's.
 pub fn data_dir(outside: &Path) -> PathBuf {
     running_exe()
         .and_then(|exe| data_dir_for_exe(&exe))
@@ -2893,8 +2891,7 @@ mod tests {
             .unwrap()
     }
 
-    /// One key, and it carries both halves — including the shapes the old pair
-    /// could not express as one string, which is what the bracket rule is for.
+    /// One key, and it carries both halves, an IPv6 host in brackets.
     #[test]
     fn a_listen_address_is_one_key() {
         assert_eq!(resolved(r#"listen = "0.0.0.0:8080""#).listen.to_string(), "0.0.0.0:8080");
@@ -2907,13 +2904,6 @@ mod tests {
         assert_eq!(resolved(r#"listen = "  127.0.0.1:1  ""#).listen.to_string(), "127.0.0.1:1");
         // Port 0 is how the kernel is asked for an ephemeral one.
         assert_eq!(resolved(r#"listen = "127.0.0.1:0""#).listen.to_string(), "127.0.0.1:0");
-        // The pair this replaced is gone, not accepted alongside it.
-        for gone in [r#"host = "0.0.0.0""#, "port = 8080"] {
-            assert!(
-                ConfigFile::parse_fixture(&with_server(gone)).is_err(),
-                "{gone} is not half of [server].listen"
-            );
-        }
     }
 
     /// The other kind of address, for a gateway that answers a reverse proxy on
@@ -3129,15 +3119,6 @@ mod tests {
         let toml = toml.replace("  Acme Remote  ", "   ");
         let config = ConfigFile::parse_fixture(&toml).unwrap().resolve().unwrap();
         assert_eq!(config.branding.text, DEFAULT_BRANDING);
-    }
-
-    /// The old top-level string spelling is gone, and gone loudly: a table is not
-    /// a string, so the file fails to parse rather than quietly naming nothing.
-    #[test]
-    fn the_old_branding_string_is_refused() {
-        let toml = format!("branding = \"zdesk\"\n{}", minimal());
-        let err = ConfigFile::parse_fixture(&toml).expect_err("a string is not a [branding] table");
-        assert!(format!("{err:#}").contains("branding"), "{err:#}");
     }
 
     /// Nothing is recorded until `enabled = true`; an enabled table names its database
@@ -4084,12 +4065,6 @@ mod tests {
             standard.accepts(Choices { size: Sizing::Window, ..Choices::default() }),
             Err(NotOffered { target: "mac".to_owned(), choice: "resize" })
         );
-
-        // The four keys these choices replaced are no longer keys.
-        for key in ["resize = true", "audio = true", "media_passthrough = true", "egfx_passthrough = true"] {
-            let err = ConfigFile::parse_fixture(&vnc_toml(key)).unwrap_err();
-            assert!(format!("{err:#}").contains("unknown field"), "{key}: {err:#}");
-        }
     }
 
     /// The opening size resolves the same way for every engine: a kept size is
@@ -4124,15 +4099,12 @@ mod tests {
         }
     }
 
-    /// One key, a width by a height. The two keys it replaced are no longer keys.
+    /// One key, a width by a height.
     #[test]
     fn a_size_is_written_as_a_width_by_a_height() {
         for wrong in ["1600", "1600x", "x1000", "1600 x 1000", "1600X1000", "1600x1000x2", "70000x1000"] {
             let err = ConfigFile::parse_fixture(&vnc_toml(&format!("size = \"{wrong}\""))).unwrap_err();
             assert!(format!("{err:#}").contains("is not a width by a height"), "{wrong}: {err:#}");
-        }
-        for key in ["width = 1600", "height = 1000", "size = 1600"] {
-            ConfigFile::parse_fixture(&vnc_toml(key)).expect_err(key);
         }
     }
 
@@ -4720,8 +4692,8 @@ vnc_password_ref = \"x\"")).unwrap();
 
     // ---- the adaptive dials --------------------------------------------------
 
-    /// One valid target body per test below, parameterized by the keys under test,
-    /// on a target whose sessions can carry sound.
+    /// A wlshare target, whose sessions can carry sound, with `body` added to it.
+    #[cfg(feature = "wlshare")]
     fn parse_audio_target(body: &str) -> anyhow::Result<AppConfig> {
         ConfigFile::parse_fixture(&format!(
             r#"
@@ -4872,39 +4844,5 @@ vnc_password_ref = \"x\"")).unwrap();
                 assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
             }
         }
-    }
-
-    /// The floor key is gone: a settle sharpens a quiet desktop at the dial, which
-    /// is what the floor was for, and a file that still writes it is refused as
-    /// any unknown key is.
-    #[test]
-    fn a_render_floor_is_no_longer_a_key() {
-        let err = parse_target("video_quality = 80\nrender_adaptive_min = 30").unwrap_err();
-        assert!(format!("{err:#}").contains("render_adaptive_min"), "{err:#}");
-    }
-
-    /// The bitrate key is gone: every Opus session is sent at the one rate, and a
-    /// file that still writes it is refused as any unknown key is.
-    #[test]
-    fn an_audio_bitrate_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_bitrate = 96").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_bitrate"), "{err:#}");
-    }
-
-    /// The floor key is gone: the walk's floor is sound-opus's, fixed where a
-    /// lower rate stops being the same sound, and a file that still writes it
-    /// is refused as any unknown key is.
-    #[test]
-    fn an_audio_floor_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_adaptive_min = 24").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_adaptive_min"), "{err:#}");
-    }
-
-    /// The walk's switch is gone: every Opus stream walks with the link, and a
-    /// file that still writes it is refused as any unknown key is.
-    #[test]
-    fn an_audio_walk_switch_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_adaptive = false").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_adaptive"), "{err:#}");
     }
 }

@@ -6,8 +6,8 @@ mod common;
 
 use std::net::Ipv4Addr;
 
-use zdesk::embedded::access::{Access, PinState};
-use zdesk::embedded::manager::{SharedPort, Supervisor};
+use zdesk::worker::access::{Access, PinState};
+use zdesk::worker::manager::{SharedPort, Supervisor};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 #[tokio::test]
