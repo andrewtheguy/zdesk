@@ -1,5 +1,5 @@
 //! Who may talk to this gateway: the web login for a browser, or one minted
-//! token for the client an embedded gateway was started by.
+//! token for the client a worker was started by.
 //!
 //! A process has exactly one of them ([`GatewayAuth`], chosen at startup), which
 //! is what keeps each mode free of the other's machinery.
@@ -12,23 +12,27 @@
 //! Sessions live in memory only — a server restart logs every browser out,
 //! which is fine for a single-user program.
 //!
-//! **The token.** `zdesk serve-embedded` has no user to ask and nowhere to keep
+//! **The token.** `zdesk serve-worker` has no user to ask and nowhere to keep
 //! a credential: it is started for one managed browser instance. So it mints an
-//! [`EmbeddedToken`], hands it to its parent down a pipe (see [`crate::embedded`]),
+//! [`WorkerToken`], hands it to its parent down a pipe (see [`crate::worker`]),
 //! and takes it in the same `zdesk_session` cookie a login would have set. The
-//! parent control plane seeds it as an HttpOnly cookie on the instance subdomain,
-//! which lets one page load carry it to `/api/*` and to the WebSocket upgrades alike
-//! — a header cannot reach either from inside a document. Such a gateway still refuses `/api/auth/login`
-//! and `/api/auth/logout`: there is no credential to check and no session to end.
+//! token is not a browser's way in: the browser logs in to the parent control
+//! plane with the PIN its TUI shows, and the control plane adds the token to each
+//! request it forwards, `/api/*` and the WebSocket upgrades alike. Such a gateway
+//! still refuses `/api/auth/login` and `/api/auth/logout`: there is no credential
+//! to check and no session to end.
+//!
+//! So a browser has two ways in, one per kind of gateway: a served gateway's
+//! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use base64::Engine as _;
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 use rand::RngExt as _;
 
 /// Name of the auth session cookie.
@@ -91,7 +95,7 @@ impl SitePasswd {
 /// How this process decides that a request may proceed at all.
 ///
 /// One of the two, fixed at startup: a `serve` gateway can only be a
-/// [`Self::Login`] and a `serve-embedded` one can only be a [`Self::Token`]. That
+/// [`Self::Login`] and a `serve-worker` one can only be a [`Self::Token`]. That
 /// is the point of an enum here rather than two optional fields — neither mode
 /// carries a way in that it does not use, and `require_auth` in
 /// [`crate::server`] matches on this and on nothing else.
@@ -100,12 +104,12 @@ pub enum GatewayAuth {
     /// A web login: the `[server].site_passwd` credential, the `zdesk_session`
     /// cookie, and the [`AuthSessions`] behind it.
     Login(SitePasswd),
-    /// One token, minted at startup and given to the client that started this
-    /// gateway, which presents it as the same `zdesk_session` cookie a login
-    /// would have set. `/api/auth/login` and `/api/auth/logout` refuse on such a
+    /// One token, minted at startup and given to the control plane that started
+    /// this gateway, which presents it for its logged-in browsers as the same
+    /// `zdesk_session` cookie a login would have set. `/api/auth/login` and `/api/auth/logout` refuse on such a
     /// gateway: there is nothing to log in to and nothing to end.
-    #[cfg(feature = "embedded-gateway")]
-    Token(EmbeddedToken),
+    #[cfg(feature = "tui")]
+    Token(WorkerToken),
 }
 
 impl GatewayAuth {
@@ -114,7 +118,7 @@ impl GatewayAuth {
     pub fn login(&self) -> Option<&SitePasswd> {
         match self {
             Self::Login(site_passwd) => Some(site_passwd),
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             Self::Token(_) => None,
         }
     }
@@ -124,13 +128,13 @@ impl GatewayAuth {
     pub fn authenticates(&self, sessions: &AuthSessions, presented: &str) -> bool {
         match self {
             Self::Login(_) => sessions.validate(presented),
-            #[cfg(feature = "embedded-gateway")]
+            #[cfg(feature = "tui")]
             Self::Token(expected) => expected.matches(presented),
         }
     }
 }
 
-/// The secret an embedded gateway and its one client share: 32 random bytes,
+/// The secret a worker and its one client share: 32 random bytes,
 /// base64url, minted per launch.
 ///
 /// Deliberately not hashed the way [`SitePasswd`] is. A hash protects a credential
@@ -139,21 +143,21 @@ impl GatewayAuth {
 /// this one, and gone when this one exits. There is also nobody to be slow for —
 /// bcrypt's cost exists to make guessing a *human's* password expensive, and 32
 /// random bytes are not guessable at any cost.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 #[derive(Clone)]
-pub struct EmbeddedToken(String);
+pub struct WorkerToken(String);
 
 // Manual Debug so a config dump — which carries the whole `GatewayAuth` — cannot
 // print the one secret that would let anything drive the remote.
-#[cfg(feature = "embedded-gateway")]
-impl std::fmt::Debug for EmbeddedToken {
+#[cfg(feature = "tui")]
+impl std::fmt::Debug for WorkerToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("EmbeddedToken(…)")
+        f.write_str("WorkerToken(…)")
     }
 }
 
-#[cfg(feature = "embedded-gateway")]
-impl EmbeddedToken {
+#[cfg(feature = "tui")]
+impl WorkerToken {
     /// How many random bytes the token carries.
     const BYTES: usize = 32;
 
@@ -183,11 +187,11 @@ impl EmbeddedToken {
 /// Whether two secrets are the same, without leaking *where* they stop matching.
 ///
 /// A free function because the same token is checked in two places: here, by the
-/// embedded gateway holding the [`EmbeddedToken`], and by the control plane's
+/// worker holding the [`WorkerToken`], and by the control plane's
 /// router, which reads it out of a cookie before proxying
-/// ([`crate::embedded::manager`]) and never holds the token type at all. One
+/// ([`crate::worker::manager`]) and never holds the token type at all. One
 /// comparison, so there is no second copy to be the one that compares with `==`.
-#[cfg(feature = "embedded-gateway")]
+#[cfg(feature = "tui")]
 pub fn secrets_match(expected: &str, presented: &str) -> bool {
     let expected = expected.as_bytes();
     let presented = presented.as_bytes();
@@ -329,23 +333,23 @@ mod tests {
     /// A minted token matches itself and nothing else, including the near misses a
     /// hand-rolled constant-time compare could get wrong: a prefix, an extension,
     /// and the empty string.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
-    fn an_embedded_token_matches_only_itself() {
-        let token = EmbeddedToken::generate();
+    fn a_worker_token_matches_only_itself() {
+        let token = WorkerToken::generate();
         assert!(token.matches(token.as_str()));
         assert!(!token.matches(""));
         assert!(!token.matches(&token.as_str()[..token.as_str().len() - 1]), "a prefix");
         assert!(!token.matches(&format!("{}x", token.as_str())), "an extension");
-        assert!(!token.matches(EmbeddedToken::generate().as_str()), "another token");
+        assert!(!token.matches(WorkerToken::generate().as_str()), "another token");
     }
 
     /// Two launches never share a secret, and the encoding is URL-safe base64 so
     /// the value can sit in a header untouched.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
-    fn embedded_tokens_are_fresh_and_header_safe() {
-        let (a, b) = (EmbeddedToken::generate(), EmbeddedToken::generate());
+    fn worker_tokens_are_fresh_and_header_safe() {
+        let (a, b) = (WorkerToken::generate(), WorkerToken::generate());
         assert_ne!(a.as_str(), b.as_str());
         // 32 bytes, base64 without padding.
         assert_eq!(a.as_str().len(), 43, "{}", a.as_str());
@@ -360,10 +364,10 @@ mod tests {
 
     /// The one secret that would drive the remote must not be printable by
     /// accident: `AppConfig` derives Debug and carries this.
-    #[cfg(feature = "embedded-gateway")]
+    #[cfg(feature = "tui")]
     #[test]
-    fn an_embedded_token_is_not_in_its_debug_output() {
-        let token = EmbeddedToken::generate();
+    fn a_worker_token_is_not_in_its_debug_output() {
+        let token = WorkerToken::generate();
         let auth = GatewayAuth::Token(token.clone());
         for rendered in [format!("{token:?}"), format!("{auth:?}")] {
             assert!(!rendered.contains(token.as_str()), "{rendered}");

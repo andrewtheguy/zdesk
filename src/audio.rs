@@ -621,10 +621,12 @@ pub struct EncodedAudio<S> {
     /// Whether the packets are the remote's own, passed as they came, rather
     /// than coded here: what the session card says of the stream.
     pub passthrough: bool,
-    /// `Some` exactly when the plan is adaptive: what the walk publishes
+    /// `Some` exactly when the stream has a rate to move, as every Opus stream
+    /// coded here or by a remote told its rate does: what the walk publishes
     /// through ([`AudioWalk`]), and the encoder's source of truth for the rate
     /// it should be at and what to drop. A passed stream's encoder is the
-    /// remote's, which the walk tells itself.
+    /// remote's, which the walk tells itself. `None` for FLAC, and for a
+    /// passed stream with no rate to move.
     pub signals: Option<Arc<AudioSignals>>,
     /// Raised by a passed stream when units the remote coded were dropped
     /// before the batch it yields next. The sender takes it down and tells the
@@ -744,10 +746,10 @@ pub struct AudioWalk {
 impl AudioWalk {
     /// A walk from `ceiling` bits per second, the plan's rate, already
     /// validated by [`crate::config`]; `signals` is the [`EncodedAudio`]'s,
-    /// which an adaptive plan has, and `remote` the bridge of a remote that
-    /// codes its own Opus.
+    /// which every stream with a rate to move has, and `remote` the bridge of
+    /// a remote that codes its own Opus.
     pub fn new(ceiling: i32, signals: Arc<AudioSignals>, remote: Option<Arc<AudioBridge>>) -> Self {
-        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0), true), signals, remote }
+        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)), signals, remote }
     }
 
     /// Whether to write a ping now, taken as written at `now` when it is.
@@ -768,9 +770,9 @@ impl AudioWalk {
         self.hear(|walk| walk.tick(now));
     }
 
-    fn sent(&mut self, blocked: Duration) {
+    fn sent(&mut self, blocked: Duration, packets: u32, bytes: usize) {
         self.hear(|walk| {
-            walk.sent(blocked);
+            walk.sent(blocked, packets, bytes);
             None
         });
     }
@@ -881,10 +883,13 @@ impl AudioLink {
         self.state.lock().unwrap().walk.as_ref()?.walk.next_tick()
     }
 
-    /// The pump's send of a batch waited `blocked` for the socket's queue.
-    pub fn sent(&self, blocked: Duration) {
+    /// The pump sent a batch of `packets` packets, `bytes` in all, after
+    /// waiting `blocked` for the socket's queue. The bytes tell the walk
+    /// whether the sound behind its next ping was quiet, which a clear pong
+    /// then proves nothing about.
+    pub fn sent(&self, blocked: Duration, packets: u32, bytes: usize) {
         if let Some(walk) = &mut self.state.lock().unwrap().walk {
-            walk.sent(blocked);
+            walk.sent(blocked, packets, bytes);
         }
     }
 
@@ -1105,9 +1110,9 @@ mod tests {
         let mut walk = AudioWalk::new(plan.bitrate_bps, Arc::clone(&signals), Some(Arc::clone(&bridge)));
         let start = Instant::now();
         heard(&mut walk, Duration::ZERO, start);
-        heard(&mut walk, LATE, start);
+        heard(&mut walk, LATE, start + BATCH);
         assert!(!asked.has_changed().unwrap(), "one late pong is not a verdict");
-        heard(&mut walk, LATE, start);
+        heard(&mut walk, LATE, start + 2 * BATCH);
         assert!(asked.has_changed().unwrap(), "two give up rate, and the remote is asked");
         let lower = asked.borrow_and_update().expect("a rate");
         assert!(lower < plan.bitrate_bps, "{lower}");
@@ -1310,12 +1315,16 @@ mod tests {
     }
 
     /// The plan every walk test runs on.
-    fn adaptive_plan() -> AudioPlan {
+    fn walk_plan() -> AudioPlan {
         AudioPlan { bitrate_bps: 96_000 }
     }
 
     /// The least round trip in the walk's tests.
     const TRIP: Duration = Duration::from_millis(40);
+
+    /// The cadence pings go at from a host that hands over a wave buffer
+    /// five times a second: past the crate's spacing of them.
+    const BATCH: Duration = Duration::from_millis(200);
 
     /// A pong this far past the least round trip: behind, to the walk, but
     /// short of what gives up more than a step or skips.
@@ -1348,22 +1357,24 @@ mod tests {
         let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
         let start = Instant::now();
         let cooldown = Duration::from_secs(2);
-        let batch = Duration::from_millis(200);
+        let batch = BATCH;
 
         // The first pong says what the round trip is; one late pong is not a
         // verdict, but it does mark the link behind.
         heard(&mut walk, Duration::ZERO, start);
-        heard(&mut walk, LATE, start);
+        heard(&mut walk, LATE, start + batch);
         assert!(signals.behind());
         assert_eq!(signals.desired_bps(), 96_000);
-        heard(&mut walk, LATE, start);
+        heard(&mut walk, LATE, start + 2 * batch);
         assert_eq!(signals.desired_bps(), 64_000);
 
-        // Sustained lag walks down to the crate's floor, a verdict a cooldown.
-        let mut at = start;
+        // Sustained lag walks down to the crate's floor, a verdict a cooldown:
+        // two late pongs a batch apart, the second a cooldown past the last move.
+        let mut at = start + 2 * batch;
         for _ in 0..3 {
             at += cooldown;
             heard(&mut walk, LATE, at);
+            at += batch;
             heard(&mut walk, LATE, at);
         }
         assert_eq!(signals.desired_bps(), sound_opus::walk::BITRATE_FLOOR as i32);
@@ -1397,9 +1408,9 @@ mod tests {
         let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
         let start = Instant::now();
         heard(&mut walk, Duration::ZERO, start);
-        walk.sent(LATE);
+        walk.sent(LATE, 9, 9 * 240);
         assert!(!signals.behind(), "heard at the next pong");
-        heard(&mut walk, Duration::ZERO, start);
+        heard(&mut walk, Duration::ZERO, start + BATCH);
         assert!(signals.behind());
     }
 
@@ -1411,7 +1422,7 @@ mod tests {
         let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
         let start = Instant::now();
         heard(&mut walk, Duration::ZERO, start);
-        heard(&mut walk, Duration::from_millis(500), start);
+        heard(&mut walk, Duration::from_millis(500), start + BATCH);
         assert!(signals.skipping() && signals.behind());
         heard(&mut walk, Duration::ZERO, start + Duration::from_secs(1));
         assert!(!signals.skipping());
@@ -1427,10 +1438,11 @@ mod tests {
         heard(&mut walk, Duration::ZERO, at);
         signals.note_lag();
         assert!(signals.behind(), "shed from the moment the lag is seen");
+        at += BATCH;
         heard(&mut walk, Duration::ZERO, at);
         assert!(signals.behind(), "one clear pong is not relief");
         for _ in 0..6 {
-            at += Duration::from_millis(200);
+            at += BATCH;
             heard(&mut walk, Duration::ZERO, at);
         }
         assert!(!signals.behind());
@@ -1453,7 +1465,7 @@ mod tests {
         assert_eq!(link.ping(start + TRIP), None, "a heartbeat's pong is not the walk's");
         link.pong(&first, start + TRIP);
         // The walk knows the trip now: a ping out past it is overdue.
-        let second = link.ping(start + TRIP).expect("its pong came back");
+        let second = link.ping(start + BATCH).expect("its pong came back");
         let due = link.next_tick().expect("a trip is known");
         link.tick(due);
         assert!(signals.behind(), "a ping still out is heard as it lags");
@@ -1473,8 +1485,8 @@ mod tests {
         let start = Instant::now();
         let ping = link.ping(start).unwrap();
         link.pong(&ping, start + TRIP);
-        let ping = link.ping(start).unwrap();
-        link.pong(&ping, start + TRIP + Duration::from_millis(500));
+        let ping = link.ping(start + BATCH).unwrap();
+        link.pong(&ping, start + BATCH + TRIP + Duration::from_millis(500));
         assert!(signals.skipping());
         tokio::time::timeout(Duration::from_secs(1), link.wanted()).await.expect("a ping is wanted");
         assert!(link.ping(start + Duration::from_secs(1)).is_some());
@@ -1491,7 +1503,7 @@ mod tests {
         link.pong(&ping, start + TRIP);
         link.pinged().await;
         assert_eq!(link.next_tick(), None, "none in flight");
-        link.ping(start + TRIP).unwrap();
+        link.ping(start + BATCH).unwrap();
         tokio::time::timeout(Duration::from_secs(1), link.pinged()).await.expect("the reader is woken");
         assert!(link.next_tick().is_some());
     }
@@ -1504,9 +1516,9 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
-        let signals = encoded.signals.clone().expect("an adaptive plan has signals");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
+        let signals = encoded.signals.clone().expect("an opus stream has signals");
         let mut stream = Box::pin(encoded.packets);
 
         // Not behind: silence is content like any other.
@@ -1537,9 +1549,9 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
-        let signals = encoded.signals.clone().expect("an adaptive plan has signals");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
+        let signals = encoded.signals.clone().expect("an opus stream has signals");
         let mut stream = Box::pin(encoded.packets);
 
         signals.set_skipping(true);
@@ -1582,8 +1594,8 @@ mod tests {
         let bridge = AudioBridge::new();
         let encoded = bridge
             .take_listener()
-            .into_packets(PCM_CD_QUALITY, adaptive_plan())
-            .expect("an adaptive opus stream");
+            .into_packets(PCM_CD_QUALITY, walk_plan())
+            .expect("an opus stream");
         let signals = encoded.signals.clone().expect("signals");
         let mut stream = Box::pin(encoded.packets);
 

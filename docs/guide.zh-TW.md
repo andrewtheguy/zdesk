@@ -84,12 +84,12 @@ workstation = "$ZD;1;AES-256-GCM;…"
 
 值也可以留空，`workstation = ""`，作為尚未設定之密碼的預留位置：在貼上真實的值之前，目標以空白密碼回應；如果 `[passwords]` 中的值全是這樣的預留位置，設定就不需要 `[master]` 或主密碼。
 
-其他所有值都用 AES-256-GCM 加密，金鑰由你的**主密碼**和設定自己的 salt 衍生。提供服務的閘道從 `[server].master_password_file` 指定的檔案讀取主密碼：可以是容器的 secret、systemd 的 credential，或只有閘道帳號能讀取的檔案。該檔案只包含主密碼；結尾的換行會被忽略。`password master create` 寫入該檔案，只有其使用者能讀取；檔案已存在時拒絕取代，除非指定 `--force`，取代後用舊主密碼加密的每個值都無法再開啟。`password master show` 輸出既有主密碼下的 `[master]` 區塊。TUI 把自己的主密碼儲存在鑰匙圈中（macOS 鑰匙圈、Windows 認證管理員，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），第一次需要時產生，因此你從不需要輸入。除了 TUI 以外，沒有任何東西會讀取鑰匙圈。
+其他所有值都用 AES-256-GCM 加密，金鑰由你的**主密碼**和設定自己的 salt 衍生。提供服務的閘道從 `[server].master_password_file` 指定的檔案讀取主密碼：可以是容器的 secret、systemd 的 credential，或只有閘道帳號能讀取的檔案。該檔案只包含主密碼；結尾的換行會被忽略。`password master create` 寫入該檔案，只有其使用者能讀取；檔案已存在時拒絕取代，除非指定 `--force`，取代後用舊主密碼加密的每個值都無法再開啟。`password master show` 輸出既有主密碼下的 `[master]` 區塊。TUI 把自己的主密碼儲存在鑰匙圈中（macOS 鑰匙圈、Windows 認證管理員，或 Linux 桌面的 Secret Service：GNOME Keyring、KWallet），在 TUI 啟動時讀取一次，沒有時在那時產生，因此你從不需要輸入。除了 TUI 以外，沒有任何東西會讀取鑰匙圈。
 
 | 啟動方式 | 主密碼來源 |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`；目標參照加密值而未設定它時拒絕啟動，從不詢問 |
-| `zdesk tui` | 鑰匙圈；沒有時產生並儲存在那裡；鑰匙圈無回應時拒絕啟動，從不詢問 |
+| `zdesk tui` | 鑰匙圈，在 TUI 啟動時讀取；沒有時產生並儲存在那裡；鑰匙圈無回應時拒絕啟動，從不詢問 |
 | `zdesk password` | `[server].master_password_file`，否則詢問；`password master create` 詢問兩次並寫入該檔案 |
 
 本機執行個體沒有 `[server]` 區塊，因此其主密碼一律來自鑰匙圈。
@@ -217,7 +217,7 @@ vnc_password_ref = "workstation-vnc"
 zdesk tui
 ```
 
-它只監聽回送位址，預設連接埠為 52380，可以用 `--port` 或 `ZDESK_TUI_PORT` 變更；連接埠已被其他程式占用時拒絕啟動。開啟 <http://zdesk.localhost:52380>；每個執行中的執行個體位於 `http://<instance>.zdesk.localhost:52380`。
+它只監聽回送位址，預設連接埠為 52380，可以用 `--port` 或 `ZDESK_TUI_PORT` 變更；連接埠已被其他程式占用時拒絕啟動。開啟 <http://zdesk.localhost:52380>；每個執行中的執行個體位於 `http://<instance>.zdesk.localhost:52380`。它只回應這些名稱，而且只在自己的連接埠上回應。該連接埠上的 `localhost`、`127.0.0.1` 和 `[::1]` 會被重新導向到 `zdesk.localhost`。其他主機名稱或連接埠一律拒絕，因此以其他主機名稱或連接埠到達的通道或連接埠轉送進不了 TUI；但以該連接埠上的 `zdesk.localhost` 到達、或把主機名稱改寫成它的通道或轉送，仍然可以進入。
 
 | 按鍵 | 操作 |
 |---|---|
@@ -230,12 +230,16 @@ zdesk tui
 | `o` | 在瀏覽器中開啟執行中的執行個體 |
 | Enter | 顯示其設定 |
 | `R` | 重新掃描執行個體目錄 |
+| `P` | 重新產生登入 PIN，並重新開始計時 |
+| `?` | 列出所有按鍵 |
 | `q`、Esc | 停止所有執行個體並離開 |
 
 執行個體根目錄下的每個直接子目錄就是一個執行個體：Linux 上為 `~/.local/share/zdesk/instances`（或 `$XDG_DATA_HOME/zdesk/instances`），macOS 上為 `~/Library/Application Support/zdesk/instances`，Windows 上為 `%LOCALAPPDATA%\zdesk\instances`；可以用 `--instances-dir` 指定其他目錄。根目錄只有你的帳號能存取，因為設定中包含憑證。執行個體的設定與閘道的設定有相同的 `[branding]` 和 `[[targets]]`，但沒有 `[server]` 區塊：TUI 占用連接埠，並把每個子網域代理到該執行個體私有的 Unix 通訊端或具名管道。
 
 參照了加密密碼的設定需要主密碼才能啟動（請見[目標密碼](#目標密碼)）。TUI 從鑰匙圈中取得主密碼，第一次時在那裡產生，然後只把每個 worker 自己設定的金鑰交給它。從另一個帳號的鑰匙圈複製來的執行個體設定在本帳號下無法開啟：刪除其 `[master]` 和 `[passwords]`，再用 `p` 重新設定每個密碼。
 
-私有檔案和 worker 端點可以防止其他本機使用者取得憑證，但共用的回送監聽器不驗證作業系統使用者：電腦上的任何帳號都可以開啟首頁並操作執行中的執行個體。不要在與不應存取這些桌面的使用者共用的電腦上執行 `zdesk tui`。
+瀏覽器以 PIN 登入。TUI 執行個體清單上方的存取面板顯示一組六位數 PIN 及其到期的時刻，也就是產生後十分鐘。沒有登入的瀏覽器會看到輸入 PIN 的表單，首頁和每個執行個體上都是如此。`P` 重新產生 PIN 並重新開始計時。輸錯五次後 PIN 會被撤銷，在以 `P` 產生新的 PIN 之前，所有輸入都會被拒絕。PIN 只保護新的登入。已經登入的瀏覽器在 PIN 到期或重新產生後、在其執行個體重新啟動後都維持登入。只有結束 TUI 才會讓它登出。在首頁的登入會透過頁面上的連結到達每個執行個體，`o` 也經由首頁開啟執行個體。
+
+PIN 能擋住看不到 TUI 終端機的人，但有一個缺口：cookie 不區分連接埠，電腦上的其他帳號如果在另一個連接埠以 `zdesk.localhost` 提供頁面，並讓你開啟指向它的連結，就能取得已登入瀏覽器的登入。不要在與不應存取這些桌面的使用者共用的電腦上執行 `zdesk tui`。私有檔案和 worker 端點可以防止其他本機使用者取得憑證。瀏覽器從不持有 worker 的權杖：TUI 代替已登入的瀏覽器出示它。瀏覽器進入閘道只有兩種方式：這組 PIN，或獨立執行的閘道的使用者名稱和密碼。
 
 請見 [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)。

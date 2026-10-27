@@ -44,7 +44,7 @@ COPY share /opt/zdesk/versions/${VERSION}/share
 # binary finds the versioned root.
 RUN ln -s "versions/${VERSION}" /opt/zdesk/current && mkdir -p /opt/zdesk/etc
 
-# A normal native release binary has the embedded gateway feature enabled. Fail
+# A normal native release binary has the `tui` feature enabled. Fail
 # closed if one is accidentally placed in this context: release CI also checks,
 # but keeping the invariant here covers every manual or downstream image build.
 RUN set -eu; \
@@ -54,10 +54,10 @@ RUN set -eu; \
       *"  tui "*) echo "container binary exposes tui" >&2; exit 1 ;; \
     esac; \
     case "$("$binary" --help)" in \
-      *serve-embedded*) echo "container binary exposes serve-embedded" >&2; exit 1 ;; \
+      *serve-worker*) echo "container binary exposes serve-worker" >&2; exit 1 ;; \
     esac; \
     case "$("$binary" check-config --help)" in \
-      *--embedded*) echo "container binary exposes check-config --embedded" >&2; exit 1 ;; \
+      *--worker*) echo "container binary exposes check-config --worker" >&2; exit 1 ;; \
     esac
 
 # The config is the one thing that has to come from outside — bind-mount it

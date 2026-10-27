@@ -212,13 +212,13 @@ readable by its user alone, and refuses to replace one that exists unless given
 `--force`, after which every value encrypted under the old one stops opening;
 `password master show` prints a `[master]` block under the one already there. The TUI keeps its own in the keychain
 (the macOS Keychain, Windows Credential Manager, or a Linux desktop's Secret
-Service: GNOME Keyring, KWallet), generated the first time it needs one, so
-you never type it. Nothing but the TUI reads the keychain.
+Service: GNOME Keyring, KWallet), read once when the TUI starts and generated
+then if there is none, so you never type it. Nothing but the TUI reads the keychain.
 
 | Started as | Master password from |
 |---|---|
 | `zdesk serve` | `[server].master_password_file`; refused without it when a target names an encrypted value, never asked |
-| `zdesk tui` | the keychain; generated and kept there when it has none; refused when the keychain will not answer, never asked |
+| `zdesk tui` | the keychain, read when the TUI starts; generated and kept there when it has none; refused when the keychain will not answer, never asked |
 | `zdesk password` | `[server].master_password_file`, else asked; `password master create` asks twice and writes that file |
 
 A local instance has no `[server]` block, so its master password always comes
@@ -540,7 +540,11 @@ zdesk tui
 It listens on loopback only, on port 52380 unless `--port` or
 `ZDESK_TUI_PORT` says otherwise, and refuses to start on a port something else
 is serving. Open <http://zdesk.localhost:52380>; each running instance is at
-`http://<instance>.zdesk.localhost:52380`.
+`http://<instance>.zdesk.localhost:52380`. It answers only those names at its
+own port. `localhost`, `127.0.0.1` and `[::1]` at that port are redirected to
+`zdesk.localhost`. Any other host or port is refused, so a tunnel or port
+forward that arrives under another name or port does not reach the TUI. One that
+arrives as `zdesk.localhost` at this port, or rewrites the host to it, does.
 
 | Key | Action |
 |---|---|
@@ -553,6 +557,8 @@ is serving. Open <http://zdesk.localhost:52380>; each running instance is at
 | `o` | open a running one in the browser |
 | Enter | show its settings |
 | `R` | rescan the instances directory |
+| `P` | draw a new login PIN, its time started again |
+| `?` | list every key |
 | `q`, Esc | stop every instance and quit |
 
 Each immediate subdirectory of the instances root is one instance:
@@ -572,10 +578,23 @@ its own config. An instance config copied from another account's keychain
 does not open under this one: remove its `[master]` and `[passwords]` and set
 each password again with `p`.
 
-The private files and worker endpoints protect credentials from other local
-users, but the shared loopback listener does not authenticate the OS user: any
-account on the machine can open the landing page and drive a running instance.
-Do not run `zdesk tui` on a machine shared with users who must not reach those
-desktops.
+A browser logs in with a PIN. The TUI's access panel, above the instance list,
+shows a six-digit PIN and the clock time it expires, ten minutes after it is
+drawn. A browser without a login is shown a form for it, on the landing page
+and on every instance. `P` draws a new PIN and starts its time again. After
+five wrong entries the PIN is withdrawn, and every entry is refused until `P`
+draws a new one. The PIN guards only new logins. A browser that has logged in
+stays logged in when the PIN expires or is drawn again, and when its instances
+restart. Only quitting the TUI logs it out. A login on the landing page reaches
+every instance through the page's links, and `o` opens an instance through it.
+
+The PIN keeps out anyone who cannot see the TUI's terminal, with one gap. A
+cookie ignores the port, so another account on the machine that serves a page at
+`zdesk.localhost` on another port, and gets you to open a link to it, can take a
+logged-in browser's login. Do not run `zdesk tui` on a machine shared with users
+who must not reach those desktops. The private files and worker endpoints keep credentials from
+other local users. A browser never holds a worker's token: the TUI presents it
+for a logged-in browser. A browser gets in to a gateway one of two ways: this
+PIN, or a served gateway's username and password.
 
 See [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane).

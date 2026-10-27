@@ -3,7 +3,7 @@
 //! One entry per OS account — service `zdesk`, account `master` — opens every
 //! local instance's config (see [`crate::vault`]): the Keychain on macOS,
 //! Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on
-//! Linux. Only the TUI reads it, so it is part of `embedded-gateway`: a served
+//! Linux. Only the TUI reads it, so it is part of `tui`: a served
 //! gateway and `zdesk password` take theirs from a file or the terminal.
 //!
 //! A store can be there and still not answer: Credential Manager refuses a network
@@ -11,6 +11,15 @@
 //! a session that cannot show its unlock dialog, and a headless Linux has no Secret
 //! Service at all. [`load`] tells that apart from an empty store, so whoever asked
 //! can say why and what to do instead.
+//!
+//! `ZDESK_KEYCHAIN=mock` puts the process on keyring-core's in-memory store
+//! instead, as `cargo test` always is: for an end-to-end test or a QA run of
+//! `zdesk tui` on a machine whose store would answer with a system prompt, which
+//! an unsigned build meets again after every rebuild. The master password is then
+//! generated at start and gone at exit, so a password set in one such run does not
+//! open in the next. It never reads or writes the account's store.
+
+use std::ffi::OsStr;
 
 use anyhow::Context as _;
 
@@ -18,6 +27,26 @@ use crate::vault::MasterPassword;
 
 const SERVICE: &str = "zdesk";
 const ACCOUNT: &str = "master";
+/// The variable that, set to `mock`, keeps the master password in memory.
+pub const MOCK_ENV: &str = "ZDESK_KEYCHAIN";
+
+/// Whether this process keeps its master password in memory rather than in the
+/// account's store: always under `cargo test`, and when `ZDESK_KEYCHAIN=mock`.
+/// Any other value is refused rather than read as the real store.
+pub fn mocked() -> anyhow::Result<bool> {
+    if cfg!(test) {
+        return Ok(true);
+    }
+    mock_value(std::env::var_os(MOCK_ENV).as_deref())
+}
+
+fn mock_value(value: Option<&OsStr>) -> anyhow::Result<bool> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "mock" => Ok(true),
+        Some(value) => anyhow::bail!("{MOCK_ENV} is {value:?}; the only value it takes is \"mock\""),
+    }
+}
 
 /// The master password the store keeps: `Ok(None)` when it keeps none, an error
 /// when there is no store to ask or it would not answer.
@@ -43,29 +72,26 @@ fn entry() -> anyhow::Result<keyring_core::Entry> {
     keyring_core::Entry::new(SERVICE, ACCOUNT).context("cannot name the keychain entry")
 }
 
-/// Install the store once per process.
+/// Install the store, once it installs: a store that would not install — a
+/// Secret Service not yet up — is tried again by the next caller, so the TUI's
+/// read at start does not decide for the rest of the run.
 ///
-/// Under test it is keyring-core's in-memory mock, never the machine's own store:
-/// a locked keychain or Secret Service answers a write with an unlock dialog, which
-/// hangs an unattended run, and a test has no business in the developer's store.
+/// Under test, or [`mocked`], it is keyring-core's in-memory mock, never the
+/// machine's own store: a locked keychain or Secret Service answers a write with an
+/// unlock dialog, which hangs an unattended run, and a test has no business in the
+/// developer's store.
 fn init_store() -> anyhow::Result<()> {
-    static INSTALLED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-    INSTALLED
-        .get_or_init(|| {
-            #[cfg(test)]
-            {
-                keyring_core::set_default_store(
-                    keyring_core::mock::Store::new().map_err(|error| error.to_string())?,
-                );
-                Ok(())
-            }
-            #[cfg(not(test))]
-            {
-                native_store()
-            }
-        })
-        .clone()
-        .map_err(|error| anyhow::anyhow!("no keychain: {error}"))
+    static INSTALLED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    let mut installed = INSTALLED.lock().unwrap();
+    if !*installed {
+        if mocked()? {
+            keyring_core::set_default_store(keyring_core::mock::Store::new().context("no mock keychain")?);
+        } else {
+            native_store().map_err(|error| anyhow::anyhow!("no keychain: {error}"))?;
+        }
+        *installed = true;
+    }
+    Ok(())
 }
 
 fn native_store() -> Result<(), String> {
@@ -131,6 +157,17 @@ mod tests {
         cleanup.0.delete_credential().expect("delete from the real store");
         assert!(matches!(cleanup.0.get_password(), Err(keyring_core::Error::NoEntry)));
         eprintln!("round-tripped through {vendor}");
+    }
+
+    /// `ZDESK_KEYCHAIN` takes `mock` or nothing: a typo is not the real store.
+    #[test]
+    fn the_mock_is_asked_for_by_name_only() {
+        assert!(!mock_value(None).unwrap());
+        assert!(mock_value(Some(OsStr::new("mock"))).unwrap());
+        for wrong in ["", "Mock", "memory", "1"] {
+            let error = mock_value(Some(OsStr::new(wrong))).unwrap_err();
+            assert!(format!("{error:#}").contains("only value it takes"), "{wrong:?}: {error:#}");
+        }
     }
 
     /// The guard for every test in this binary: the store a test reaches is the

@@ -1590,7 +1590,7 @@ impl SessionManager {
                 }
             }
         };
-        // The adaptive walk, when the plan asked for one. The audio socket drives
+        // The walk, for every stream with a rate to move. The audio socket drives
         // it with its pings ([`AudioLink`]), the pump with how long its sends
         // wait, and it publishes through the signals the encoder reads; see
         // [`crate::audio::AudioWalk`]. Where the encoder is wlshare's, what it
@@ -1643,11 +1643,12 @@ impl SessionManager {
                 {
                     break;
                 }
+                let (count, bytes) = (packets.len() as u32, packets.iter().map(|packet| packet.len()).sum());
                 let queued = tokio::time::Instant::now();
                 if out.send(ServerMsg::Audio(packets)).await.is_err() {
                     break;
                 }
-                link.sent(queued.elapsed());
+                link.sent(queued.elapsed(), count, bytes);
             }
         }));
     }
