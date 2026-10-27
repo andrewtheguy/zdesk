@@ -2637,9 +2637,9 @@ than the number, and the running rate stays close enough to it that the
 number is what the link sees. There is no FEC and no DTX — the socket
 is TCP, nothing is lost, and the adaptive walk already sheds silence.
 
-The rate is not a key, and neither is whether it walks. Like AAC-ELD's, the
-rate is the highest the sound is sent at, `AUDIO_BITRATE_KBPS` in
-`src/config.rs`, and Opus always walks below it with the link. The walk is
+Opus always walks its rate with the link. Like AAC-ELD's, the rate is the
+highest the sound is sent at, `AUDIO_BITRATE_KBPS` in `src/config.rs`, and the
+walk stays below it. The walk is
 sound-opus's (`sound_opus::walk::BitrateWalk`), the one crate that codes a
 desktop's sound as Opus for this gateway and for wlshare, so nothing adaptive
 about sound is this gateway's own: `AudioWalk` (`src/audio.rs`) holds one and

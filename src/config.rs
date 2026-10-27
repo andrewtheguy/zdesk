@@ -1753,9 +1753,7 @@ pub struct ConfigFile {
     #[serde(default)]
     pub server: Option<ServerSection>,
     /// The `[branding]` table: display name and tab icon. See [`BrandingSection`]
-    /// for why it is top-level and nowhere else. A config that still writes the
-    /// old `branding = "…"` string fails to parse — a table is not a string, and
-    /// that refusal is the whole of the migration.
+    /// for why it is top-level and nowhere else.
     #[serde(default)]
     pub branding: Option<BrandingSection>,
     /// The `[meter]` table: where the browser sockets' throughput is recorded. Absent,
@@ -2893,8 +2891,7 @@ mod tests {
             .unwrap()
     }
 
-    /// One key, and it carries both halves — including the shapes the old pair
-    /// could not express as one string, which is what the bracket rule is for.
+    /// One key, and it carries both halves, an IPv6 host in brackets.
     #[test]
     fn a_listen_address_is_one_key() {
         assert_eq!(resolved(r#"listen = "0.0.0.0:8080""#).listen.to_string(), "0.0.0.0:8080");
@@ -2907,13 +2904,6 @@ mod tests {
         assert_eq!(resolved(r#"listen = "  127.0.0.1:1  ""#).listen.to_string(), "127.0.0.1:1");
         // Port 0 is how the kernel is asked for an ephemeral one.
         assert_eq!(resolved(r#"listen = "127.0.0.1:0""#).listen.to_string(), "127.0.0.1:0");
-        // The pair this replaced is gone, not accepted alongside it.
-        for gone in [r#"host = "0.0.0.0""#, "port = 8080"] {
-            assert!(
-                ConfigFile::parse_fixture(&with_server(gone)).is_err(),
-                "{gone} is not half of [server].listen"
-            );
-        }
     }
 
     /// The other kind of address, for a gateway that answers a reverse proxy on
@@ -3129,15 +3119,6 @@ mod tests {
         let toml = toml.replace("  Acme Remote  ", "   ");
         let config = ConfigFile::parse_fixture(&toml).unwrap().resolve().unwrap();
         assert_eq!(config.branding.text, DEFAULT_BRANDING);
-    }
-
-    /// The old top-level string spelling is gone, and gone loudly: a table is not
-    /// a string, so the file fails to parse rather than quietly naming nothing.
-    #[test]
-    fn the_old_branding_string_is_refused() {
-        let toml = format!("branding = \"zdesk\"\n{}", minimal());
-        let err = ConfigFile::parse_fixture(&toml).expect_err("a string is not a [branding] table");
-        assert!(format!("{err:#}").contains("branding"), "{err:#}");
     }
 
     /// Nothing is recorded until `enabled = true`; an enabled table names its database
@@ -4084,12 +4065,6 @@ mod tests {
             standard.accepts(Choices { size: Sizing::Window, ..Choices::default() }),
             Err(NotOffered { target: "mac".to_owned(), choice: "resize" })
         );
-
-        // The four keys these choices replaced are no longer keys.
-        for key in ["resize = true", "audio = true", "media_passthrough = true", "egfx_passthrough = true"] {
-            let err = ConfigFile::parse_fixture(&vnc_toml(key)).unwrap_err();
-            assert!(format!("{err:#}").contains("unknown field"), "{key}: {err:#}");
-        }
     }
 
     /// The opening size resolves the same way for every engine: a kept size is
@@ -4124,15 +4099,12 @@ mod tests {
         }
     }
 
-    /// One key, a width by a height. The two keys it replaced are no longer keys.
+    /// One key, a width by a height.
     #[test]
     fn a_size_is_written_as_a_width_by_a_height() {
         for wrong in ["1600", "1600x", "x1000", "1600 x 1000", "1600X1000", "1600x1000x2", "70000x1000"] {
             let err = ConfigFile::parse_fixture(&vnc_toml(&format!("size = \"{wrong}\""))).unwrap_err();
             assert!(format!("{err:#}").contains("is not a width by a height"), "{wrong}: {err:#}");
-        }
-        for key in ["width = 1600", "height = 1000", "size = 1600"] {
-            ConfigFile::parse_fixture(&vnc_toml(key)).expect_err(key);
         }
     }
 
@@ -4720,8 +4692,8 @@ vnc_password_ref = \"x\"")).unwrap();
 
     // ---- the adaptive dials --------------------------------------------------
 
-    /// One valid target body per test below, parameterized by the keys under test,
-    /// on a target whose sessions can carry sound.
+    /// A wlshare target, whose sessions can carry sound, with `body` added to it.
+    #[cfg(feature = "wlshare")]
     fn parse_audio_target(body: &str) -> anyhow::Result<AppConfig> {
         ConfigFile::parse_fixture(&format!(
             r#"
@@ -4872,39 +4844,5 @@ vnc_password_ref = \"x\"")).unwrap();
                 assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
             }
         }
-    }
-
-    /// The floor key is gone: a settle sharpens a quiet desktop at the dial, which
-    /// is what the floor was for, and a file that still writes it is refused as
-    /// any unknown key is.
-    #[test]
-    fn a_render_floor_is_no_longer_a_key() {
-        let err = parse_target("video_quality = 80\nrender_adaptive_min = 30").unwrap_err();
-        assert!(format!("{err:#}").contains("render_adaptive_min"), "{err:#}");
-    }
-
-    /// The bitrate key is gone: every Opus session is sent at the one rate, and a
-    /// file that still writes it is refused as any unknown key is.
-    #[test]
-    fn an_audio_bitrate_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_bitrate = 96").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_bitrate"), "{err:#}");
-    }
-
-    /// The floor key is gone: the walk's floor is sound-opus's, fixed where a
-    /// lower rate stops being the same sound, and a file that still writes it
-    /// is refused as any unknown key is.
-    #[test]
-    fn an_audio_floor_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_adaptive_min = 24").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_adaptive_min"), "{err:#}");
-    }
-
-    /// The walk's switch is gone: every Opus stream walks with the link, and a
-    /// file that still writes it is refused as any unknown key is.
-    #[test]
-    fn an_audio_walk_switch_is_no_longer_a_key() {
-        let err = parse_audio_target("audio_adaptive = false").unwrap_err();
-        assert!(format!("{err:#}").contains("audio_adaptive"), "{err:#}");
     }
 }

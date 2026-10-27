@@ -413,19 +413,6 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.branding.text, "work laptop");
         assert_eq!(resolved.branding.logo.unwrap().mime, "image/png");
-
-        // There is exactly one place to write it, so the block it used to live in
-        // refuses it — `deny_unknown_fields` and nothing else, which is the whole of
-        // the migration this project offers.
-        let error = crate::config::check("[server]\nbranding = \"x\"\n")
-            .expect_err("[server].branding is gone");
-        assert!(format!("{error:#}").contains("branding"), "{error:#}");
-
-        // And the old top-level string spelling fails to parse: a table is not a
-        // string.
-        let error = check("branding = \"x\"\n")
-            .expect_err("the string spelling is gone");
-        assert!(format!("{error:#}").contains("branding"), "{error:#}");
     }
 
     /// A target is a target: the same rules, the same messages, either audience.

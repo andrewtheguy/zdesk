@@ -430,9 +430,8 @@ password_ref = "example"
 # it are unavailable. The gateway's tiles, a Standard Mac's Adaptive picture and
 # an RDP pipeline without H.264 do not need WebCodecs.
 #
-# Its bitrate is not a key, and neither is whether it adapts: Opus always
-# follows how late the audio socket's pings come back, with 192 kbit/s as its
-# ceiling. That ceiling is an average, not a packet size: Opus is variable-rate,
+# Opus always adapts: its bitrate follows how late the audio socket's pings come
+# back, with 192 kbit/s as its ceiling. That ceiling is an average, not a packet size: Opus is variable-rate,
 # so silence costs a few bytes a packet and music about this. A link that lags
 # walks the bitrate down, one that keeps up walks it back up to the ceiling,
 # silence is shed while the link is behind, and sound queued past what is worth
