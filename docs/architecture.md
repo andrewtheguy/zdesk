@@ -2395,7 +2395,7 @@ and `GET /api/targets` carries it:
   `flac` (`Sound` in `src/config.rs`). On a target that offers it the picker
   shows a Sound tick, and under a ticked one the two formats side by side, Opus
   on the left, which ticking takes, and lossless on the right. Opus is sent at the
-  gateway's fixed ceiling, 320 kbit/s, walking below it with the link
+  gateway's fixed ceiling, 192 kbit/s, walking below it with the link
   ([Audio frames](#audio-frames)); lossless is FLAC, with no rate
   ([Lossless sound](#lossless-sound)).
   A `connect` that names none takes none.
@@ -2605,6 +2605,13 @@ u8 kind = 0x03 | u8 flags | u16 packet count
 repeated: u16 packet length | packet bytes
 ```
 
+A frame is what the pump had when it sent: an RDP host's wave buffer, nine or
+ten packets, or a passed stream's units already queued. Those a passed stream
+whose rate walks are held, while the walk is at 64 kbit/s or under, until a
+frame carries 60 ms of them: a frame costs about 30 bytes of WebSocket and TLS
+framing, nothing beside a unit at the ceiling and half again one at the floor
+(`BATCH_BELOW_BPS` in `src/audio.rs`).
+
 The one flag is bit 0, a gap, on a frame of no packets. The gateway sends it
 when a listener fell behind a passed stream and units the remote had coded were
 dropped: the next packet does not follow the last one sent, so the player resets
@@ -2615,8 +2622,9 @@ encoder.
 There is no codec byte in the binary frame; the codec is named once, out of
 band, in `audioFormat`. It is Opus encoded here: `codec` is `opus`, `sampleRate`
 48 000, `packetFrames` 960 (20 ms), and `head` the `OpusHead`. The rate is
-320 kbit/s, the rate a Mac's own AAC-ELD runs at, walking down to the floor
-sound-opus fixes, 32 kbit/s. The one exception is a High Performance Mac's AAC-ELD, passed in
+192 kbit/s, past which a stereo stream stops getting better by sound-opus's
+measures, walking down to the floor
+sound-opus fixes, 24 kbit/s. The one exception is a High Performance Mac's AAC-ELD, passed in
 every session on such a target: `codec` `mp4a.40.39`, `packetFrames` 480 (10 ms), `head`
 the Mac's AudioSpecificConfig, and each packet one of the Mac's units, with no
 encoder and neither the rate nor the walk below reaching it
@@ -2634,15 +2642,27 @@ rate is the highest the sound is sent at, `AUDIO_BITRATE_KBPS` in
 `src/config.rs`, and Opus always walks below it with the link. The walk is
 sound-opus's (`sound_opus::walk::BitrateWalk`), the one crate that codes a
 desktop's sound as Opus for this gateway and for wlshare, so nothing adaptive
-about sound is this gateway's own: `AudioWalk` (`src/audio.rs`) owns one beside
-the pump's send and publishes its word through `AudioSignals`. The audio
-socket's queue is deliberately two deep, and how long a send waited is the
-walk's whole signal; two slow sends among four are a behind verdict. The walk
-gives a third up a step, more the longer the send blocked, down to the floor the
-crate fixes at 32 kbit/s — where Opus stereo still codes the whole band, so
-there is no floor key — and takes rate back after three seconds of clear sends
-in steps that double from a sixteenth of the ceiling, held under a rate the link
-refused, never past the ceiling. The change reaches the live encoder through
+about sound is this gateway's own: `AudioWalk` (`src/audio.rs`) holds one and
+publishes its word through `AudioSignals`. Its signal is lag: the audio socket
+writes a WebSocket ping ahead of a batch when none is in flight, the browser
+answers it as it reads it, behind everything written before it, and its round
+trip over the least any ping took is how long the newest sound waits for the
+link. A ping still out is heard as lagging by as long as it has been out, so a
+queue growing behind it is heard as it grows. The socket's task reads pongs
+while its writer is blocked, which is why the writer is a task of its own
+(`audio_outbound` in `src/ws.rs`), and both drive the walk through the
+socket's `AudioLink`; the pump tells it how long each send waited on the
+socket's two-deep queue, heard as the longer of the two. Two late pongs among
+four are a behind verdict. The walk gives a third up a step, more the longer
+the lag, down to the floor the crate fixes at 24 kbit/s — where Opus still
+codes a stereo stream as stereo and the whole band, so there is no floor key —
+and takes rate back after three seconds of clear pongs in steps that double
+from a sixteenth of the ceiling, held under a rate the link refused, never past
+the ceiling. A lag past 200 ms is sound that would be heard that late, and the
+walk skips it: every wave buffer is dropped before the encoder, and the socket
+pings back to back, until a pong says the queue has drained. A lag that does
+not drain while nothing is written is another stream's, and the walk measures
+over it from then. The change reaches the live encoder through
 `OPUS_SET_BITRATE`; packets stay 20 ms and independently decodable, so nothing
 is re-announced. While the link is *behind*, wave buffers that are pure silence
 are shed before the encoder instead of queued — silence is the one content whose

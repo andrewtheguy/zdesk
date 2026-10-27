@@ -22,8 +22,8 @@
 //! FLAC here ([`AudioListener::into_flac`]). The browser's own decoder plays
 //! either, and there is no rate to walk.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -31,7 +31,7 @@ use bytes::Bytes;
 use futures_util::Stream;
 use log::{debug, info, warn};
 use sound_opus::walk::BitrateWalk;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Notify, broadcast, watch};
 
 use crate::config::AudioPlan;
 use crate::opus_stream::{OpusStream, OPUS_CODEC};
@@ -45,6 +45,31 @@ use crate::opus_stream::{OpusStream, OPUS_CODEC};
 /// that survives to playback. A remote that sends smaller buffers gets a shorter
 /// retained interval from the same fixed depth.
 pub const AUDIO_QUEUE_DEPTH: usize = 16;
+
+/// The rate, in bits per second, at or under which a passed stream's units are
+/// held for a batch of [`BATCH_HOLD`] rather than sent as each arrives.
+///
+/// Every batch is a WebSocket message of its own in a TLS record of its own,
+/// about 30 bytes of framing: nothing beside a unit of 20 ms at the ceiling,
+/// but half again a 60-byte unit at 24 kbit/s, so wlshare's sound sent a unit
+/// a message cost the link 36 kbit/s at that floor where an RDP host's, nine
+/// packets a message, cost 25. On sound-opus's simulation of this path (its
+/// `docs/walk.md`), holding units to 60 ms while the walk is at 64 kbit/s or
+/// under has wlshare's sound lose 7 to 9 s of a minute on a link carrying
+/// 28 kbit/s of it rather than 13 to 18, as an RDP host's does, and changes nothing
+/// above it; 48 kbit/s measured the same and 96 began to hold where a link
+/// had merely narrowed. The rate is the walk's, not the units' sizes: held
+/// until they came to so many bytes, a paused desktop's few-byte units of
+/// silence would be held at every rate, and the browser, which plays from
+/// when sound arrives, would keep that delay.
+const BATCH_BELOW_BPS: i32 = 64_000;
+
+/// How much of a passed stream's sound a batch holds while the walk is at
+/// [`BATCH_BELOW_BPS`] or under, and the longest the first unit of it waits:
+/// three units of 20 ms. Under the floor and just over it, 40 ms cut what
+/// wlshare lost by 21% for 48 ms more delay, 100 ms by 39% for 162; this by
+/// 30% for 77.
+const BATCH_HOLD: Duration = Duration::from_millis(60);
 
 /// Linear PCM parameters: the only kind of audio this path carries.
 ///
@@ -285,13 +310,21 @@ impl AudioListener {
                         debug!("audio: listener fell behind, {dropped} buffer(s) dropped");
                         // The queue only lags when the sender stopped draining it,
                         // which is the link behind by the whole queue's depth — no
-                        // send measurement needed to know shedding should be on,
-                        // and the walk is told at the sender's next send.
+                        // ping needed to know shedding should be on, and the walk
+                        // is told the next time it hears anything.
                         state.signals.note_lag();
                         continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
                 };
+                // The walk says this much sound is queued that it would be heard
+                // late by more than it is worth: skipped before the encoder,
+                // whatever it is, until the queue has drained. Lost here as PCM,
+                // so the encoder goes on and the client needs no word of it.
+                if state.signals.skipping() {
+                    debug!("audio: skipped {} bytes so the link can come back to live", samples.len());
+                    continue;
+                }
                 let desired = state.signals.desired_bps();
                 if desired != state.applied_bps {
                     match state.encoder.set_bitrate(desired) {
@@ -366,45 +399,62 @@ impl AudioListener {
     /// Everything the client has to be told about a passed stream, and a live-only
     /// stream of its units, each already a packet: no encoder and no silence to
     /// shed, since what arrives is what the remote coded. Every unit already
-    /// queued when one is read goes in the same batch.
+    /// queued when one is read goes in the same batch, and while the walk is
+    /// at [`BATCH_BELOW_BPS`] or under, the batch is held until it holds
+    /// [`BATCH_HOLD`] of sound or its first unit has waited that long.
     ///
     /// `plan` is a remote's that codes Opus at a rate it can be told
     /// (wlshare's), and `None` for a stream with no rate to move. A plan gets
-    /// the walk's signals, as an encoder here would: the sender
-    /// reports its sends through them, and what the walk asks for goes to the
-    /// remote ([`AudioBridge::ask_rate`]) in place of an encoder.
+    /// the walk's signals, as an encoder here would: the walk publishes
+    /// through them, and what it asks for goes to the remote
+    /// ([`AudioBridge::ask_rate`]) in place of an encoder.
     ///
-    /// Units this listener fell behind are dropped, as PCM is, but they were
-    /// coded: the remote's encoder went on from them and the client's decoder
-    /// never saw them. [`EncodedAudio::gap`] is raised when that happens, for
-    /// the sender to tell the client before the next batch.
+    /// Units this listener fell behind are dropped, as PCM is, and so are
+    /// those that arrive while the walk is skipping, but they were coded: the
+    /// remote's encoder went on from them and the client's decoder never saw
+    /// them. [`EncodedAudio::gap`] is raised when that happens, for the sender
+    /// to tell the client before the next batch.
     pub fn into_passed(self, format: PassedFormat, plan: Option<AudioPlan>) -> EncodedAudio<impl Stream<Item = Vec<Bytes>>> {
         let signals = plan.map(|plan| Arc::new(AudioSignals::new(plan.bitrate_bps)));
         let gap = Arc::new(AtomicBool::new(false));
+        let unit_length = Duration::from_micros(u64::from(format.packet_frames) * 1_000_000 / u64::from(format.sample_rate));
         // The flag, and whether units were lost after the batch last yielded,
-        // which is a gap before the next one rather than before that one.
-        let state = (self.waves, Arc::clone(&gap), false);
-        let stream = futures_util::stream::unfold(state, |(mut units, gap, mut lost)| async move {
+        // which is a gap before the next one rather than before that one; and
+        // the walk, whose rate says whether a batch is held.
+        let state = (self.waves, Arc::clone(&gap), false, signals.clone());
+        let stream = futures_util::stream::unfold(state, move |(mut units, gap, lost, signals)| async move {
             if lost {
                 gap.store(true, Ordering::Relaxed);
-                lost = false;
             }
             loop {
                 match units.recv().await {
+                    // Skipped as an RDP host's buffer is, but after its
+                    // encoder: the next unit sent follows a gap.
+                    Ok(_) if signals.as_ref().is_some_and(|signals| signals.skipping()) => {
+                        gap.store(true, Ordering::Relaxed);
+                    }
                     Ok(unit) => {
                         let mut batch = vec![unit];
-                        loop {
-                            match units.try_recv() {
-                                Ok(unit) => batch.push(unit),
-                                Err(broadcast::error::TryRecvError::Lagged(dropped)) => {
-                                    debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
-                                    lost = true;
-                                    break;
+                        let mut lost = queued(&mut units, &mut batch);
+                        if signals.as_ref().is_some_and(|signals| signals.desired_bps() <= BATCH_BELOW_BPS) {
+                            let until = tokio::time::Instant::now() + BATCH_HOLD;
+                            while !lost && unit_length * (batch.len() as u32) < BATCH_HOLD {
+                                match tokio::time::timeout_at(until, units.recv()).await {
+                                    Ok(Ok(unit)) => {
+                                        batch.push(unit);
+                                        lost = queued(&mut units, &mut batch);
+                                    }
+                                    Ok(Err(broadcast::error::RecvError::Lagged(dropped))) => {
+                                        debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
+                                        lost = true;
+                                    }
+                                    // Held long enough, or the stream is over:
+                                    // what is held goes, and the next read ends it.
+                                    Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => break,
                                 }
-                                Err(_) => break,
                             }
                         }
-                        return Some((batch, (units, gap, lost)));
+                        return Some((batch, (units, gap, lost, signals)));
                     }
                     // As for PCM, skipping forward is the point; unlike PCM,
                     // what was skipped was coded, and the client is told.
@@ -426,6 +476,21 @@ impl AudioListener {
             signals,
             gap,
             packets: stream,
+        }
+    }
+}
+
+/// Every unit already queued, onto `batch`: `true` if the queue lagged, the
+/// units it dropped coming after the batch.
+fn queued(units: &mut broadcast::Receiver<Bytes>, batch: &mut Vec<Bytes>) -> bool {
+    loop {
+        match units.try_recv() {
+            Ok(unit) => batch.push(unit),
+            Err(broadcast::error::TryRecvError::Lagged(dropped)) => {
+                debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
+                return true;
+            }
+            Err(_) => return false,
         }
     }
 }
@@ -556,10 +621,10 @@ pub struct EncodedAudio<S> {
     /// Whether the packets are the remote's own, passed as they came, rather
     /// than coded here: what the session card says of the stream.
     pub passthrough: bool,
-    /// `Some` exactly when the plan is adaptive: the sender's handle for
-    /// reporting how its sends went ([`AudioWalk`] writes through it) and
-    /// the encoder's source of truth for the rate it should be at. A passed
-    /// stream's encoder is the remote's, which the sender tells itself.
+    /// `Some` exactly when the plan is adaptive: what the walk publishes
+    /// through ([`AudioWalk`]), and the encoder's source of truth for the rate
+    /// it should be at and what to drop. A passed stream's encoder is the
+    /// remote's, which the walk tells itself.
     pub signals: Option<Arc<AudioSignals>>,
     /// Raised by a passed stream when units the remote coded were dropped
     /// before the batch it yields next. The sender takes it down and tells the
@@ -587,21 +652,24 @@ impl<S: Stream<Item = Vec<Bytes>> + Send + 'static> EncodedAudio<S> {
     }
 }
 
-/// The adaptive audio walk's shared state — written on the sending side, where
-/// blocking is measurable, and read on the encoding side, which owns the
-/// encoder. Two atomics rather than a channel because neither side may wait on
-/// the other: the encoder reads whatever verdict is current when a wave buffer
-/// arrives. The walk itself is sound-opus's ([`AudioWalk`]); this is only how
-/// its word crosses between the two tasks.
+/// The adaptive audio walk's shared state — written by the walk, which the
+/// audio socket drives ([`AudioLink`]), and read on the encoding side, which
+/// owns the encoder. Atomics rather than a channel because neither side may
+/// wait on the other: the encoder reads whatever verdict is current when a
+/// wave buffer arrives. The walk itself is sound-opus's ([`AudioWalk`]); this
+/// is only how its word crosses between the two tasks.
 #[derive(Debug)]
 pub struct AudioSignals {
     /// The bitrate the walk wants the encoder at, in bits per second.
     desired_bps: AtomicI32,
     /// Whether the link is currently behind — the state that sheds silence.
     behind: AtomicBool,
+    /// Whether the walk is skipping — the state that drops whatever arrives,
+    /// silence or not, until the queue on the link has drained.
+    skipping: AtomicBool,
     /// Whether the encoder's queue lagged since the walk last heard: evidence
-    /// of the link behind that the sending side did not measure, for the
-    /// walk to take up at its next send ([`AudioWalk::sent`]).
+    /// of the link behind that no ping measured, for the walk to take up the
+    /// next time it hears anything.
     lagged: AtomicBool,
 }
 
@@ -610,6 +678,7 @@ impl AudioSignals {
         Self {
             desired_bps: AtomicI32::new(bitrate_bps),
             behind: AtomicBool::new(false),
+            skipping: AtomicBool::new(false),
             lagged: AtomicBool::new(false),
         }
     }
@@ -630,8 +699,16 @@ impl AudioSignals {
         self.behind.store(behind, Ordering::Relaxed);
     }
 
+    pub fn skipping(&self) -> bool {
+        self.skipping.load(Ordering::Relaxed)
+    }
+
+    fn set_skipping(&self, skipping: bool) {
+        self.skipping.store(skipping, Ordering::Relaxed);
+    }
+
     /// The encoder's queue lagged: the link is behind from now, whatever the
-    /// walk last said, and the walk hears of it at the next send.
+    /// walk last said, and the walk hears of it next.
     fn note_lag(&self) {
         self.behind.store(true, Ordering::Relaxed);
         self.lagged.store(true, Ordering::Relaxed);
@@ -643,44 +720,183 @@ impl AudioSignals {
 }
 
 /// What the audio link will bear: sound-opus's walk (`sound_opus::walk`), the
-/// one both this gateway and wlshare code from, owned by whatever task sends
-/// the packets, with its verdicts published through [`AudioSignals`] to the
-/// side that holds the encoder — or, for a passed stream, to the engine that
-/// tells the remote ([`AudioBridge::ask_rate`]). The signal is how long the
-/// send waited: the audio socket's queue is deliberately two deep
-/// ([`crate::session::AUDIO_SOCKET_BUFFER`]), so a wait means the browser is
-/// not draining sound as fast as the remote produces it. The ceiling is the
-/// configured bitrate, the floor the crate's, and the steps, the cooldowns and
-/// the hold on a refused rate are the crate's too, so a card and a log line
-/// here state what the stream does and nothing adaptive is this gateway's own.
+/// one both this gateway and wlshare code from, with its verdicts published
+/// through [`AudioSignals`] to the side that holds the encoder, and each rate
+/// it arrives at, for a passed stream, to the engine that tells the remote
+/// ([`AudioBridge::ask_rate`]). The signal is lag: how long the newest sound
+/// waits for the browser, read off a ping the audio socket writes ahead of a
+/// batch, which the browser answers once it has read everything before it
+/// ([`AudioLink`]). How long the pump's send waited is heard too, the longer
+/// of the two: the socket's queue is two deep
+/// ([`crate::session::AUDIO_SOCKET_BUFFER`]). The ceiling is the configured
+/// bitrate, the floor the crate's, and the thresholds, the steps, the
+/// cooldowns, the hold on a refused rate and when to skip are the crate's too,
+/// so a card and a log line here state what the stream does and nothing
+/// adaptive is this gateway's own.
 pub struct AudioWalk {
     walk: BitrateWalk,
     signals: Arc<AudioSignals>,
+    /// The bridge whose remote codes the stream, told each rate the walk
+    /// arrives at; `None` where the encoder is here.
+    remote: Option<Arc<AudioBridge>>,
 }
 
 impl AudioWalk {
     /// A walk from `ceiling` bits per second, the plan's rate, already
     /// validated by [`crate::config`]; `signals` is the [`EncodedAudio`]'s,
-    /// which an adaptive plan has.
-    pub fn new(ceiling: i32, signals: Arc<AudioSignals>) -> Self {
-        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0), true), signals }
+    /// which an adaptive plan has, and `remote` the bridge of a remote that
+    /// codes its own Opus.
+    pub fn new(ceiling: i32, signals: Arc<AudioSignals>, remote: Option<Arc<AudioBridge>>) -> Self {
+        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0), true), signals, remote }
     }
 
-    /// Record how long one send blocked, publish the verdicts, and return the
-    /// new bitrate when it moved (for the caller's log line). Behind is the
-    /// walk's word; a queue that lagged on the encoder side is handed to the
-    /// walk first, so the link stays behind for the clear second the walk
-    /// asks for rather than until this send.
-    pub fn sent(&mut self, blocked: Duration, now: Instant) -> Option<i32> {
+    /// Whether to write a ping now, taken as written at `now` when it is.
+    fn ping(&mut self, now: Instant) -> bool {
+        let mut wanted = false;
+        self.hear(|walk| {
+            wanted = walk.ping(now);
+            None
+        });
+        wanted
+    }
+
+    fn pong(&mut self, now: Instant) {
+        self.hear(|walk| walk.pong(now));
+    }
+
+    fn tick(&mut self, now: Instant) {
+        self.hear(|walk| walk.tick(now));
+    }
+
+    fn sent(&mut self, blocked: Duration) {
+        self.hear(|walk| {
+            walk.sent(blocked);
+            None
+        });
+    }
+
+    /// Tell the walk something with `hear`, and publish what it says after.
+    /// A queue that lagged on the encoder side is handed to it first, so the
+    /// link stays behind for the clear second the walk asks for rather than
+    /// until this hearing.
+    fn hear(&mut self, hear: impl FnOnce(&mut BitrateWalk) -> Option<u32>) {
         if self.signals.take_lagged() {
             self.walk.dropped();
         }
-        let moved = self.walk.sent(blocked, now).map(|bps| bps as i32);
+        let moved = hear(&mut self.walk);
         self.signals.set_behind(self.walk.behind());
+        self.signals.set_skipping(self.walk.skipping());
         if let Some(bps) = moved {
+            let bps = bps as i32;
+            debug!("audio: the walk asks for {} kbit/s", bps / 1000);
             self.signals.set_desired_bps(bps);
+            if let Some(remote) = &self.remote {
+                remote.ask_rate(bps);
+            }
         }
-        moved
+    }
+}
+
+/// The audio socket's hold on the walk of whatever stream it carries: one for
+/// the life of the socket, shared by its task, which writes the pings and
+/// reads their pongs, and the pump of the stream armed on it, which says how
+/// long each send waited. A target switch arms a new stream on the same
+/// socket with a walk of its own ([`Self::arm`]); a stream with no rate to
+/// walk arms none, and the socket then pings for its heartbeat alone.
+///
+/// A ping of the walk's carries its number, so its pong is told apart from
+/// the heartbeat's, whose pings are empty, and from one a walk since replaced
+/// wrote. The browser answers a ping as it reads it, behind everything
+/// written before it, whatever its page is doing.
+#[derive(Default)]
+pub struct AudioLink {
+    state: Mutex<LinkState>,
+    /// Woken when a pong leaves the walk skipping: no batch comes then to
+    /// write a ping ahead of, so the socket's task writes one at once.
+    wanted: Notify,
+    /// Woken when a ping goes out, so the socket's reader, which may be
+    /// waiting with none to hear overdue, wakes to [`Self::next_tick`].
+    pinged: Notify,
+}
+
+#[derive(Default)]
+struct LinkState {
+    walk: Option<AudioWalk>,
+    /// The number of the walk's ping in flight.
+    pinged: Option<u64>,
+    /// The number the next ping carries.
+    next: u64,
+}
+
+impl AudioLink {
+    /// Walk with `walk` from now, in place of whatever walked before: the
+    /// stream armed on the socket changed.
+    pub fn arm(&self, walk: Option<AudioWalk>) {
+        let mut state = self.state.lock().unwrap();
+        state.walk = walk;
+        state.pinged = None;
+    }
+
+    /// The payload of a ping to write at `now`, if the walk wants one: none
+    /// of its own in flight. Asked ahead of every batch of sound, and when
+    /// [`Self::wanted`] wakes.
+    pub fn ping(&self, now: Instant) -> Option<[u8; 8]> {
+        let mut state = self.state.lock().unwrap();
+        let state = &mut *state;
+        if !state.walk.as_mut()?.ping(now) {
+            return None;
+        }
+        let number = state.next;
+        state.next += 1;
+        state.pinged = Some(number);
+        self.pinged.notify_one();
+        Some(number.to_be_bytes())
+    }
+
+    /// A pong carrying `payload` came back at `now`.
+    pub fn pong(&self, payload: &[u8], now: Instant) {
+        let mut state = self.state.lock().unwrap();
+        let state = &mut *state;
+        if state.pinged.is_none_or(|number| payload != number.to_be_bytes()) {
+            return;
+        }
+        state.pinged = None;
+        if let Some(walk) = &mut state.walk {
+            walk.pong(now);
+            if walk.walk.skipping() {
+                self.wanted.notify_one();
+            }
+        }
+    }
+
+    /// Hear the ping in flight as overdue, at [`Self::next_tick`].
+    pub fn tick(&self, now: Instant) {
+        if let Some(walk) = &mut self.state.lock().unwrap().walk {
+            walk.tick(now);
+        }
+    }
+
+    /// When the ping in flight is next overdue, if one is.
+    pub fn next_tick(&self) -> Option<Instant> {
+        self.state.lock().unwrap().walk.as_ref()?.walk.next_tick()
+    }
+
+    /// The pump's send of a batch waited `blocked` for the socket's queue.
+    pub fn sent(&self, blocked: Duration) {
+        if let Some(walk) = &mut self.state.lock().unwrap().walk {
+            walk.sent(blocked);
+        }
+    }
+
+    /// Resolves when a ping is wanted with no batch to write it ahead of.
+    pub async fn wanted(&self) {
+        self.wanted.notified().await;
+    }
+
+    /// Resolves when a ping has gone out since the last time it did: when
+    /// [`Self::next_tick`] may have changed.
+    pub async fn pinged(&self) {
+        self.pinged.notified().await;
     }
 }
 
@@ -883,16 +1099,60 @@ mod tests {
         let signals = passed.signals.expect("a plan walks");
         assert_eq!(signals.desired_bps(), plan.bitrate_bps);
 
+        let bridge = Arc::new(bridge);
         let mut asked = bridge.asked_rate();
         assert_eq!(*asked.borrow_and_update(), None, "nothing asked until a walk does");
-        let mut walk = AudioWalk::new(plan.bitrate_bps, signals);
-        let now = Instant::now();
-        assert_eq!(walk.sent(SLOW, now), None);
-        let lower = walk.sent(SLOW, now).expect("two slow sends give up rate");
+        let mut walk = AudioWalk::new(plan.bitrate_bps, Arc::clone(&signals), Some(Arc::clone(&bridge)));
+        let start = Instant::now();
+        heard(&mut walk, Duration::ZERO, start);
+        heard(&mut walk, LATE, start);
+        assert!(!asked.has_changed().unwrap(), "one late pong is not a verdict");
+        heard(&mut walk, LATE, start);
+        assert!(asked.has_changed().unwrap(), "two give up rate, and the remote is asked");
+        let lower = asked.borrow_and_update().expect("a rate");
         assert!(lower < plan.bitrate_bps, "{lower}");
-        bridge.ask_rate(lower);
-        assert!(asked.has_changed().unwrap());
-        assert_eq!(*asked.borrow_and_update(), Some(lower));
+        assert_eq!(signals.desired_bps(), lower);
+    }
+
+    /// While the walk is at [`BATCH_BELOW_BPS`] or under, a passed stream's
+    /// units go in batches of [`BATCH_HOLD`]: what is queued at once, units
+    /// arriving within the hold as they come, and what arrived by its end;
+    /// over it, each as it comes, as a stream with no walk always is.
+    #[tokio::test(start_paused = true)]
+    async fn a_passed_stream_batches_its_units_while_the_walk_is_low() {
+        let bridge = Arc::new(AudioBridge::new());
+        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
+        let signals = passed.signals.clone().expect("a plan walks");
+        let mut stream = Box::pin(passed.packets);
+        let unit = |n: u8| Bytes::from(vec![n]);
+
+        bridge.unit(vec![1]);
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(1)], "at the ceiling, as it comes");
+
+        signals.set_desired_bps(BATCH_BELOW_BPS);
+        for n in 2..5 {
+            bridge.unit(vec![n]);
+        }
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(2), unit(3), unit(4)], "a hold's worth queued goes at once");
+        assert_eq!(start.elapsed(), Duration::ZERO);
+
+        let later = Arc::clone(&bridge);
+        tokio::spawn(async move {
+            for n in 5..7 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                later.unit(vec![n]);
+            }
+        });
+        bridge.unit(vec![4]);
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(4), unit(5), unit(6)], "units arriving in the hold join it");
+        assert_eq!(start.elapsed(), Duration::from_millis(40));
+
+        bridge.unit(vec![7]);
+        let start = tokio::time::Instant::now();
+        assert_eq!(next(&mut stream).await.unwrap(), [unit(7)], "what arrived by the hold's end goes");
+        assert_eq!(start.elapsed(), BATCH_HOLD);
     }
 
     /// A passed stream that fell behind the queue says so: the units it lost
@@ -1054,8 +1314,18 @@ mod tests {
         AudioPlan { bitrate_bps: 96_000 }
     }
 
-    /// A send that blocked a packet's length: behind, to the walk.
-    const SLOW: Duration = Duration::from_millis(20);
+    /// The least round trip in the walk's tests.
+    const TRIP: Duration = Duration::from_millis(40);
+
+    /// A pong this far past the least round trip: behind, to the walk, but
+    /// short of what gives up more than a step or skips.
+    const LATE: Duration = Duration::from_millis(120);
+
+    /// A ping `walk` wanted at `at`, back `lag` past [`TRIP`].
+    fn heard(walk: &mut AudioWalk, lag: Duration, at: Instant) {
+        assert!(walk.ping(at), "a ping was still in flight");
+        walk.pong(at + TRIP + lag);
+    }
 
     #[test]
     fn silence_is_recognized_and_a_tone_is_not() {
@@ -1070,68 +1340,160 @@ mod tests {
 
     /// The walk is sound-opus's, and its word reaches the signals: the rate it
     /// arrives at, bounded by the crate's floor and the plan's ceiling, and
-    /// whether the link is behind, which rises with the first slow send and
+    /// whether the link is behind, which rises with the first late pong and
     /// clears after a second of clear ones, well before any rate returns.
     #[test]
     fn the_audio_walk_publishes_through_the_signals() {
         let signals = Arc::new(AudioSignals::new(96_000));
-        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals));
+        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
         let start = Instant::now();
         let cooldown = Duration::from_secs(2);
-        let send = Duration::from_millis(200);
+        let batch = Duration::from_millis(200);
 
-        // One slow send is not a verdict — but it does mark the link behind.
-        assert_eq!(walk.sent(SLOW, start), None);
+        // The first pong says what the round trip is; one late pong is not a
+        // verdict, but it does mark the link behind.
+        heard(&mut walk, Duration::ZERO, start);
+        heard(&mut walk, LATE, start);
         assert!(signals.behind());
-        assert_eq!(walk.sent(SLOW, start), Some(64_000));
+        assert_eq!(signals.desired_bps(), 96_000);
+        heard(&mut walk, LATE, start);
         assert_eq!(signals.desired_bps(), 64_000);
 
-        // Sustained blocking bottoms out on the crate's floor, never below.
+        // Sustained lag walks down to the crate's floor, a verdict a cooldown.
         let mut at = start;
-        for _ in 0..20 {
+        for _ in 0..3 {
             at += cooldown;
-            walk.sent(SLOW, at);
-            walk.sent(SLOW, at);
+            heard(&mut walk, LATE, at);
+            heard(&mut walk, LATE, at);
         }
         assert_eq!(signals.desired_bps(), sound_opus::walk::BITRATE_FLOOR as i32);
         assert!(signals.behind());
+        assert!(!signals.skipping(), "a lag short of the skip's is the rate's to drain");
 
-        // A second of clear sends clears the behind flag well before any rate returns.
+        // A second of clear pongs clears the behind flag well before any rate returns.
         for _ in 0..6 {
-            at += send;
-            walk.sent(Duration::ZERO, at);
+            at += batch;
+            heard(&mut walk, Duration::ZERO, at);
         }
         assert!(!signals.behind());
-        assert_eq!(signals.desired_bps(), 32_000);
+        assert_eq!(signals.desired_bps(), sound_opus::walk::BITRATE_FLOOR as i32);
 
         // And a long clear stretch climbs back exactly to the ceiling.
         for _ in 0..20 {
             for _ in 0..20 {
-                at += send;
-                walk.sent(Duration::ZERO, at);
+                at += batch;
+                heard(&mut walk, Duration::ZERO, at);
             }
             at += cooldown;
         }
         assert_eq!(signals.desired_bps(), 96_000);
     }
 
-    /// A lag the encoder side saw, with no slow send to show for it, is
-    /// behind until a clear second has followed, not until the next send.
+    /// A send that waited on the socket's queue longer than a pong's lag is
+    /// what that pong is heard as.
+    #[test]
+    fn a_send_that_waited_is_heard_with_the_next_pong() {
+        let signals = Arc::new(AudioSignals::new(96_000));
+        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
+        let start = Instant::now();
+        heard(&mut walk, Duration::ZERO, start);
+        walk.sent(LATE);
+        assert!(!signals.behind(), "heard at the next pong");
+        heard(&mut walk, Duration::ZERO, start);
+        assert!(signals.behind());
+    }
+
+    /// A lag past the crate's skip is published as skipping, until a ping
+    /// written while skipping comes back clear.
+    #[test]
+    fn a_long_lag_is_published_as_skipping_until_it_drains() {
+        let signals = Arc::new(AudioSignals::new(96_000));
+        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
+        let start = Instant::now();
+        heard(&mut walk, Duration::ZERO, start);
+        heard(&mut walk, Duration::from_millis(500), start);
+        assert!(signals.skipping() && signals.behind());
+        heard(&mut walk, Duration::ZERO, start + Duration::from_secs(1));
+        assert!(!signals.skipping());
+    }
+
+    /// A lag the encoder side saw, with no late pong to show for it, is
+    /// behind until a clear second has followed, not until the next pong.
     #[test]
     fn a_lagged_queue_keeps_the_link_behind_for_a_clear_second() {
         let signals = Arc::new(AudioSignals::new(96_000));
-        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals));
+        let mut walk = AudioWalk::new(96_000, Arc::clone(&signals), None);
         let mut at = Instant::now();
+        heard(&mut walk, Duration::ZERO, at);
         signals.note_lag();
         assert!(signals.behind(), "shed from the moment the lag is seen");
-        assert_eq!(walk.sent(Duration::ZERO, at), None);
-        assert!(signals.behind(), "one clear send is not relief");
+        heard(&mut walk, Duration::ZERO, at);
+        assert!(signals.behind(), "one clear pong is not relief");
         for _ in 0..6 {
             at += Duration::from_millis(200);
-            walk.sent(Duration::ZERO, at);
+            heard(&mut walk, Duration::ZERO, at);
         }
         assert!(!signals.behind());
         assert_eq!(signals.desired_bps(), 96_000, "a lag moves no rate by itself");
+    }
+
+    /// The link pings for the walk armed on it alone: a heartbeat's pong, and
+    /// one a walk since replaced wrote, are nobody's; nothing is pinged while
+    /// one is in flight, or with no walk armed.
+    #[test]
+    fn the_link_hears_only_its_walks_own_pongs() {
+        let link = AudioLink::default();
+        let start = Instant::now();
+        assert_eq!(link.ping(start), None, "no walk armed");
+        let signals = Arc::new(AudioSignals::new(96_000));
+        link.arm(Some(AudioWalk::new(96_000, Arc::clone(&signals), None)));
+        let first = link.ping(start).expect("a walk with none in flight pings");
+        assert_eq!(link.ping(start), None, "one in flight");
+        link.pong(&[], start + TRIP);
+        assert_eq!(link.ping(start + TRIP), None, "a heartbeat's pong is not the walk's");
+        link.pong(&first, start + TRIP);
+        // The walk knows the trip now: a ping out past it is overdue.
+        let second = link.ping(start + TRIP).expect("its pong came back");
+        let due = link.next_tick().expect("a trip is known");
+        link.tick(due);
+        assert!(signals.behind(), "a ping still out is heard as it lags");
+
+        link.arm(Some(AudioWalk::new(96_000, Arc::new(AudioSignals::new(96_000)), None)));
+        link.pong(&second, due);
+        assert!(link.ping(due).is_some(), "the pong of a replaced walk's ping is not this one's");
+    }
+
+    /// A pong that leaves the walk skipping wants a ping at once: no batch
+    /// comes to write one ahead of.
+    #[tokio::test]
+    async fn a_skipping_walk_wants_a_ping_with_no_batch() {
+        let link = AudioLink::default();
+        let signals = Arc::new(AudioSignals::new(96_000));
+        link.arm(Some(AudioWalk::new(96_000, Arc::clone(&signals), None)));
+        let start = Instant::now();
+        let ping = link.ping(start).unwrap();
+        link.pong(&ping, start + TRIP);
+        let ping = link.ping(start).unwrap();
+        link.pong(&ping, start + TRIP + Duration::from_millis(500));
+        assert!(signals.skipping());
+        tokio::time::timeout(Duration::from_secs(1), link.wanted()).await.expect("a ping is wanted");
+        assert!(link.ping(start + Duration::from_secs(1)).is_some());
+    }
+
+    /// A ping going out wakes the socket's reader, which waited with no
+    /// deadline while none was in flight, to hear it once it is overdue.
+    #[tokio::test]
+    async fn a_ping_going_out_wakes_the_reader_to_its_deadline() {
+        let link = AudioLink::default();
+        link.arm(Some(AudioWalk::new(96_000, Arc::new(AudioSignals::new(96_000)), None)));
+        let start = Instant::now();
+        let ping = link.ping(start).unwrap();
+        link.pong(&ping, start + TRIP);
+        link.pinged().await;
+        assert_eq!(link.next_tick(), None, "none in flight");
+        link.ping(start + TRIP).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), link.pinged()).await.expect("the reader is woken");
+        assert!(link.next_tick().is_some());
     }
 
     /// While the link is behind, silent buffers are shed before the encoder —
@@ -1166,6 +1528,50 @@ mod tests {
         // silent frame shed, the encoder's first packet carries signal.
         let peak = decoded.iter().map(|s| s.abs()).max().expect("samples");
         assert!(peak > 1_000, "the surviving packet should carry the tone, peak {peak}");
+    }
+
+    /// While the walk is skipping, every buffer is dropped before the encoder,
+    /// silence or not, and sound resumes when it stops.
+    #[tokio::test]
+    async fn a_skipping_walk_drops_buffers_before_the_encoder() {
+        let bridge = AudioBridge::new();
+        let encoded = bridge
+            .take_listener()
+            .into_packets(PCM_CD_QUALITY, adaptive_plan())
+            .expect("an adaptive opus stream");
+        let signals = encoded.signals.clone().expect("an adaptive plan has signals");
+        let mut stream = Box::pin(encoded.packets);
+
+        signals.set_skipping(true);
+        bridge.wave(one_frame_of_tone());
+        bridge.wave(one_frame_of_tone());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), next(&mut stream)).await.is_err(),
+            "nothing reaches the stream while skipping"
+        );
+        signals.set_skipping(false);
+        bridge.wave(one_frame_of_tone());
+        assert_eq!(next(&mut stream).await.expect("packets").len(), 1, "the skipped buffers added no packet");
+    }
+
+    /// A passed stream skips its units as they come, and the one after them
+    /// follows a gap: they were coded.
+    #[tokio::test]
+    async fn a_passed_stream_skips_its_units_behind_a_gap() {
+        let bridge = AudioBridge::new();
+        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
+        let signals = passed.signals.clone().expect("a plan walks");
+        let gap = Arc::clone(&passed.gap);
+        let mut stream = Box::pin(passed.packets);
+
+        signals.set_skipping(true);
+        bridge.unit(vec![1]);
+        bridge.unit(vec![2]);
+        assert!(tokio::time::timeout(Duration::from_millis(50), next(&mut stream)).await.is_err());
+        assert!(gap.load(Ordering::Relaxed), "the skipped units were coded");
+        signals.set_skipping(false);
+        bridge.unit(vec![3]);
+        assert_eq!(next(&mut stream).await.unwrap(), [Bytes::from(vec![3])]);
     }
 
     /// The desired rate published on the signals reaches the live encoder: the

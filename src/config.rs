@@ -161,18 +161,19 @@ impl Protocol {
 /// What an Opus encoder is built from. In bits per second because that is
 /// libopus's unit.
 ///
-/// Every Opus stream walks its bitrate on the audio socket's own backpressure;
-/// there is no key to hold it. A send that blocks means the previous packets
-/// are still unwritten, and sustained blocking walks the bitrate down toward
-/// the floor; a clear stretch walks it back up to [`Self::bitrate_bps`]. The
-/// walk is sound-opus's (`sound_opus::walk`), shared with wlshare, and so is its
-/// floor, fixed there where a lower rate stops being the same sound. While
-/// behind, wave buffers that are pure silence are shed instead of queued —
-/// silence is the one content whose loss is free, and dropping it is how the
-/// client catches up without a trimmed or resampled note anywhere (see
+/// Every Opus stream walks its bitrate on the audio socket's lag, how late a
+/// ping written ahead of a batch comes back; there is no key to hold it. A
+/// link that lags walks the bitrate down toward the floor; a clear stretch
+/// walks it back up to [`Self::bitrate_bps`]. The walk is sound-opus's
+/// (`sound_opus::walk`), shared with wlshare, and so is its floor, fixed there
+/// where a lower rate stops being the same sound. While behind, wave buffers
+/// that are pure silence are shed instead of queued — silence is the one
+/// content whose loss is free, and dropping it is how the client catches up
+/// without a trimmed or resampled note anywhere — and a lag too long to drain
+/// that way is skipped, whatever the sound, until it has drained (see
 /// [`crate::audio`]). On a `wlshare` target the walk is the same and the
 /// encoder is wlshare's, told each rate the walk arrives at; its packets are
-/// passed, so no silence is shed.
+/// passed, so no silence is shed, and skipped units leave a gap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioPlan {
     /// The Opus target bitrate — the average the encoder holds to, and the
@@ -1034,12 +1035,16 @@ pub struct TargetConfig {
 pub const DEFAULT_VIDEO_QUALITY: u8 = 90;
 
 /// The Opus bitrate (kbit/s) of every session whose sound is Opus — the ceiling
-/// of the adaptive walk, not a promise, and not a key. It is the rate a Mac's
-/// own AAC-ELD runs at, so a link carries the same sound budget whichever
-/// server it reaches, and the walk is what takes it down on a link that cannot
-/// carry it. Opus is variable-rate: a packet of silence costs a few bytes and a
-/// packet of music about this.
-pub const AUDIO_BITRATE_KBPS: u32 = 320;
+/// of the adaptive walk, not a promise, and not a key. Past it a stereo stream
+/// stops getting better: measured over sound-opus's recordings (its
+/// `docs/benchmarks.md`, rate against quality), each channel is within 0.13 dB
+/// of 320 kbit/s's log-spectral distance and the stereo side within 0.52 dB,
+/// at six tenths of the link. And the walk, which starts here, does better
+/// from it: on sound-opus's simulated links (its `docs/walk.md`) 16% less
+/// sound lost and 19% less stalled than from 320, a link swinging between 250
+/// and 450 kbit/s never walked at all. Opus is variable-rate: a packet of
+/// silence costs a few bytes and a packet of music about this.
+pub const AUDIO_BITRATE_KBPS: u32 = 192;
 
 /// Read [`TargetConfig::size`]: a width by a height, as in `"1920x1080"`.
 fn size<'de, D>(deserializer: D) -> Result<Option<(u16, u16)>, D::Error>

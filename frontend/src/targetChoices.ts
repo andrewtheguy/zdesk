@@ -532,7 +532,7 @@ function soundRow(
       label: "Opus",
       note: !plays
         ? "This browser has no WebCodecs AudioDecoder to play it with."
-        : "Compressed, up to 320 kbit/s, lower while the link is behind.",
+        : "Compressed, up to 192 kbit/s, lower while the link is behind.",
       disabled: !plays,
     },
     {

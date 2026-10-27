@@ -408,7 +408,7 @@ test("High Performance's sound has no row and is always carried", () => {
 
 test("Opus says its rate follows the link", () => {
   const note = targetOptions(RDP, undefined, ABLE).soundRow?.formats[0].note;
-  assert.match(note ?? "", /up to 320 kbit\/s, lower while the link is behind/);
+  assert.match(note ?? "", /up to 192 kbit\/s, lower while the link is behind/);
 });
 
 test("a browser with no audio decoder is offered no sound", () => {

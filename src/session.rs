@@ -10,7 +10,7 @@ use log::{debug, info, warn};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::audio::AudioBridge;
+use crate::audio::{AudioBridge, AudioLink};
 use crate::camera::{CameraBridge, CameraFormat, CameraSignal};
 use crate::mic::{MicBridge, MicSignal};
 use crate::config::{
@@ -263,6 +263,9 @@ pub struct AudioAttachment {
     /// newer audio socket. Both outcomes mean the same thing, so the caller does not
     /// inspect it.
     pub evicted: oneshot::Receiver<()>,
+    /// The walk of the stream armed on this socket, which the socket drives with
+    /// its pings and their pongs.
+    pub link: Arc<AudioLink>,
 }
 
 /// One camera WebSocket's live handle on the session, returned by
@@ -482,6 +485,8 @@ struct ClientSlot {
 struct AudioSlot {
     id: u64,
     packets: mpsc::Sender<ServerMsg>,
+    /// The socket's [`AudioAttachment::link`], armed with each stream's walk.
+    link: Arc<AudioLink>,
     /// Held, never sent on: dropping this slot resolves the socket's receiver, which
     /// is what closes it. A signal rather than closing `packets`, because a browser
     /// that has been taken over must stop hearing the session *now* rather than after
@@ -702,6 +707,9 @@ impl State {
         if let Some(pump) = self.audio_pump.take() {
             debug!("session: stopping this attachment's audio");
             pump.abort();
+        }
+        if let Some(slot) = &self.audio {
+            slot.link.arm(None);
         }
     }
 
@@ -1315,11 +1323,12 @@ impl SessionManager {
             st.evict_audio();
             let (packets_tx, packets) = mpsc::channel(AUDIO_SOCKET_BUFFER);
             let (close_tx, evicted) = oneshot::channel();
+            let link = Arc::new(AudioLink::default());
             st.next_audio_id += 1;
             let id = st.next_audio_id;
-            st.audio = Some(AudioSlot { id, packets: packets_tx, _close: close_tx });
+            st.audio = Some(AudioSlot { id, packets: packets_tx, link: Arc::clone(&link), _close: close_tx });
             info!("session: an audio socket attached");
-            AudioAttachment { id, packets, evicted }
+            AudioAttachment { id, packets, evicted, link }
         };
         // Outside the lock, and unconditional: an engine may already be running, in
         // which case this socket has sound waiting for it.
@@ -1495,13 +1504,13 @@ impl SessionManager {
         // goes through (`forward_input`), so the rule this module states for itself is
         // that critical sections stay short. `audio_epoch` is what makes letting go
         // safe.
-        let (bridge, out, audio_id, epoch, plan, source_format, passed, remote_plan, lossless) = {
+        let (bridge, out, link, audio_id, epoch, plan, source_format, passed, remote_plan, lossless) = {
             let mut st = self.state.lock().unwrap();
             // Unconditional, and first: this is also how "replace the previous pump" is
             // expressed, and it is what tells a build already in flight to stand down.
             st.stop_audio();
-            let Some((audio_id, out)) =
-                st.audio.as_ref().map(|slot| (slot.id, slot.packets.clone()))
+            let Some((audio_id, out, link)) =
+                st.audio.as_ref().map(|slot| (slot.id, slot.packets.clone(), Arc::clone(&slot.link)))
             else {
                 // Nobody is listening. Not a fault: the ordinary state of a session
                 // whose browser never asked for sound.
@@ -1541,7 +1550,7 @@ impl SessionManager {
                 .as_ref()
                 .map_or(crate::audio::PCM_CD_QUALITY, |selected| selected.target.audio_source_format());
             let plan = AudioPlan::default();
-            (bridge, out, audio_id, st.audio_epoch, plan, source_format, passed, remote_plan, lossless)
+            (bridge, out, link, audio_id, st.audio_epoch, plan, source_format, passed, remote_plan, lossless)
         };
 
         // The negotiated format when the remote's channel is up, and otherwise the
@@ -1581,12 +1590,13 @@ impl SessionManager {
                 }
             }
         };
-        // The adaptive walk, when the plan asked for one. It lives in the pump —
-        // the side whose sends block — and publishes through the signals the
-        // encoder reads; see [`crate::audio::AudioWalk`]. Where the encoder is
-        // wlshare's, the pump hands what the walk asks for to the engine.
+        // The adaptive walk, when the plan asked for one. The audio socket drives
+        // it with its pings ([`AudioLink`]), the pump with how long its sends
+        // wait, and it publishes through the signals the encoder reads; see
+        // [`crate::audio::AudioWalk`]. Where the encoder is wlshare's, what it
+        // asks for goes to the engine.
         let remote = remote_plan.is_some().then(|| Arc::clone(&bridge));
-        let mut walk = encoded.signals.clone().map(|signals| crate::audio::AudioWalk::new(plan.bitrate_bps, signals));
+        let walk = encoded.signals.clone().map(|signals| crate::audio::AudioWalk::new(plan.bitrate_bps, signals, remote));
 
         let mut st = self.state.lock().unwrap();
         // Anything that touched audio while the lock was down wins, and the epoch is
@@ -1598,6 +1608,7 @@ impl SessionManager {
             debug!("session: discarding an audio subscription that was superseded while it was set up");
             return;
         }
+        link.arm(walk);
         st.audio_pump = Some(tokio::spawn(async move {
             let announce = ServerMsg::AudioFormat {
                 codec: encoded.codec,
@@ -1621,9 +1632,10 @@ impl SessionManager {
                 // delay (see [`crate::audio`]). What it no longer waits behind is a
                 // video frame.
                 //
-                // How long the await took is also the adaptive walk's whole
-                // signal: the queue is two deep, so blocking at all means the
-                // socket is not draining sound as fast as the remote produces it.
+                // How long the await took the walk hears too, beside the lag its
+                // pings measure: the queue is two deep, so a wait means the
+                // socket would not take the sound even where a proxy answers
+                // the pings.
                 // Units dropped ahead of this batch were coded, and its first
                 // decodes from them: the client is told first.
                 if encoded.gap.swap(false, std::sync::atomic::Ordering::Relaxed)
@@ -1631,19 +1643,11 @@ impl SessionManager {
                 {
                     break;
                 }
-                let queued = std::time::Instant::now();
+                let queued = tokio::time::Instant::now();
                 if out.send(ServerMsg::Audio(packets)).await.is_err() {
                     break;
                 }
-                if let Some(walk) = &mut walk {
-                    let now = std::time::Instant::now();
-                    if let Some(bps) = walk.sent(now - queued, now) {
-                        debug!("session: the audio walk asks for {} kbit/s", bps / 1000);
-                        if let Some(bridge) = &remote {
-                            bridge.ask_rate(bps);
-                        }
-                    }
-                }
+                link.sent(queued.elapsed());
             }
         }));
     }
@@ -3992,7 +3996,7 @@ mod tests {
                 other => panic!("expected the passed unit, got {other:?}"),
             }
             let rate = *asked.borrow();
-            assert_eq!(rate, (codec == "opus").then_some(320_000), "the rate wlshare's Opus starts at");
+            assert_eq!(rate, (codec == "opus").then_some(192_000), "the rate wlshare's Opus starts at");
         }
     }
 
