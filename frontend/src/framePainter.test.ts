@@ -1941,9 +1941,10 @@ test("a malformed batch of tiles asks for the whole picture", async () => {
 });
 
 // wlshare's tiles with their moving regions (regionStreams.ts): TILE records as
-// above, and REGION records transcribed from `RegionUnit::write_record` in
+// above, REGION records transcribed from `RegionUnit::write_record` in
 // src/protocol.rs: op 0x07, the stream, the flags (0x01 a keyframe), x, y, w and
-// h as u16, a u32 length, the unit, little-endian.
+// h as u16, a u32 length, the unit, little-endian; and COPY records from
+// `CopyUnit::write_record`: op 0x08, then sx, sy, x, y, w and h as u16.
 type TilesRecord =
   | { tile: [number, number, number, number]; image: number[] }
   | {
@@ -1951,7 +1952,8 @@ type TilesRecord =
       at: [number, number, number, number];
       keyframe: boolean;
       payload: number[];
-    };
+    }
+  | { copy: [number, number, number, number, number, number] };
 
 function regionsFrame(records: TilesRecord[]): ArrayBuffer {
   const bytes: number[] = [];
@@ -1967,6 +1969,9 @@ function regionsFrame(records: TilesRecord[]): ArrayBuffer {
       record.tile.forEach(u16);
       u32(record.image.length);
       bytes.push(...record.image);
+    } else if ("copy" in record) {
+      bytes.push(0x08);
+      record.copy.forEach(u16);
     } else {
       bytes.push(0x07, record.region, record.keyframe ? 0x01 : 0x00);
       record.at.forEach(u16);
@@ -1982,7 +1987,9 @@ function regionContext() {
   const draws: string[] = [];
   let clip = "";
   const saved: string[] = [];
+  const canvas = { canvas: true };
   const ctx = {
+    canvas,
     save() {
       saved.push(clip);
     },
@@ -1995,6 +2002,14 @@ function regionContext() {
     },
     clip() {},
     drawImage(source: { tag?: number }, ...args: number[]) {
+      if (source === canvas) {
+        // The canvas onto itself: a part of it, drawn at its size elsewhere.
+        assert.equal(args.length, 8);
+        const [sx, sy, sw, sh, dx, dy, dw, dh] = args;
+        assert.deepEqual([dw, dh], [sw, sh]);
+        draws.push(`copy ${sx},${sy} ${sw}x${sh} to ${dx},${dy}${clip}`);
+        return;
+      }
       // Drawn whole at its place: the clip is what cuts it.
       assert.equal(args.length, 2);
       const what = source.tag === undefined ? "frame" : `tile${source.tag}`;
@@ -2057,6 +2072,36 @@ test("wlshare's regions are decoded by their own decoders and drawn cut to their
     decoded.every((frame) => frame.closed),
     "a drawn frame is let go",
   );
+  assert.deepEqual(videoKeyframeAsks, []);
+});
+
+test("wlshare's copies draw the canvas onto itself in their turn, and only while the picture is tiles", async () => {
+  const { ctx, draws } = regionContext();
+  const p = regionPainter(ctx);
+  const copy = regionsFrame([{ copy: [0, 40, 0, 0, 320, 160] }]);
+  await p.draw(copy);
+  assert.deepEqual(draws, [], "a copy before the tiles' start");
+  p.startTiles();
+  p.setRegionFormat(1, { decode: REGION });
+  // The tile decodes last, and the copy after it still reads what it drew.
+  decodeDelay.set(1, 20);
+  await p.draw(
+    regionsFrame([
+      { tile: [0, 192, 64, 64], image: [1] },
+      { copy: [0, 40, 0, 0, 320, 160] },
+      { region: 1, at: [0, 160, 64, 32], keyframe: true, payload: KEYFRAME },
+      { copy: [64, 0, 64, 32, 128, 64] },
+    ]),
+  );
+  assert.deepEqual(draws, [
+    "tile1 0,192",
+    "copy 0,40 320x160 to 0,0",
+    "frame 0,160 clip 0,160 64x32",
+    "copy 64,0 128x64 to 64,32",
+  ]);
+  p.clear();
+  await p.draw(copy);
+  assert.equal(draws.length, 4, "a copy drawn after the attachment ended");
   assert.deepEqual(videoKeyframeAsks, []);
 });
 

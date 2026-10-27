@@ -6202,7 +6202,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
         // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
-        // stream over it, or that stream's end, each passed to the browser untouched.
+        // stream over it, that stream's end, or a copy of what the browser holds
+        // elsewhere, each passed to the browser untouched.
         // Past the ceiling, those wlshare sent of the resized desktop before the list
         // without them reached it are dropped while the picture is held, as the VP9's
         // are, and refused in a session that sized the remote; the list it answers
@@ -6224,7 +6225,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
                 TileHeader::Png { len } | TileHeader::Webp { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
-                TileHeader::End { .. } => 0,
+                TileHeader::End { .. } | TileHeader::Copy { .. } => 0,
             };
             let mut body = vec![0u8; len];
             reader.read_exact(&mut body).await?;
@@ -6242,6 +6243,15 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 TileHeader::Webp { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Webp, body).await?,
                 TileHeader::Start { stream, .. } => sink.pass_region(stream, x, y, w, h, true, body).await?,
                 TileHeader::Frame { stream, .. } => sink.pass_region(stream, x, y, w, h, false, body).await?,
+                TileHeader::Copy { x: sx, y: sy } => {
+                    anyhow::ensure!(
+                        u32::from(sx) + u32::from(w) <= u32::from(size.0) && u32::from(sy) + u32::from(h) <= u32::from(size.1),
+                        "server sent a tiles copy of {w}x{h} from {sx},{sy}, not inside the {}x{} desktop",
+                        size.0,
+                        size.1
+                    );
+                    sink.pass_copy(sx, sy, x, y, w, h).await?
+                }
             }
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
@@ -13295,12 +13305,19 @@ mod tests {
 
     /// An update of wlshare's tiles on a desktop `w` wide and at least 208 high: a
     /// PNG over the top 16 rows, a 320×192 region's H.264 stream started below it,
-    /// its next frame and its end, and a fence asking an echo of `marker`.
+    /// its next frame and its end, the 160 rows from row 48 copied up to row 16, and a
+    /// fence asking an echo of `marker`.
     #[cfg(feature = "wlshare")]
     fn wlshare_tiles_update(w: u16, marker: &[u8]) -> Vec<u8> {
+        wlshare_tiles_update_copying(w, (0, 48), marker)
+    }
+
+    /// [`wlshare_tiles_update`] with the copy from `from`.
+    #[cfg(feature = "wlshare")]
+    fn wlshare_tiles_update_copying(w: u16, from: (u16, u16), marker: &[u8]) -> Vec<u8> {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let mut msg = vec![0u8, 0];
-        msg.extend_from_slice(&4u16.to_be_bytes());
+        msg.extend_from_slice(&5u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
             for field in [x, y, w, h] {
                 msg.extend_from_slice(&field.to_be_bytes());
@@ -13319,6 +13336,9 @@ mod tests {
         }
         rect(&mut msg, (0, 16, 320, 192), wlshare_proto::tiles::KIND_END);
         msg.push(2);
+        rect(&mut msg, (0, 16, w.min(320), 160), wlshare_proto::tiles::KIND_COPY);
+        msg.extend_from_slice(&from.0.to_be_bytes());
+        msg.extend_from_slice(&from.1.to_be_bytes());
         msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
         msg
     }
@@ -13340,6 +13360,7 @@ mod tests {
         assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (0, 16, 320, 192)));
         assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if !unit.keyframe));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
+        assert!(matches!(rx.recv().await, Some(ServerMsg::Copy(unit)) if unit == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }));
         let echo = client_fence(0, b"t1");
         tokio::time::timeout(Duration::from_secs(2), async {
             while written(&sent) != echo {
@@ -13349,6 +13370,20 @@ mod tests {
         .await
         .expect("the fence was never echoed");
         task.abort();
+    }
+
+    /// A copy whose source is not inside the desktop is fatal, as a rectangle outside
+    /// it is: nothing the browser holds is there.
+    #[cfg(feature = "wlshare")]
+    #[tokio::test]
+    async fn a_tiles_copy_from_outside_the_desktop_is_fatal() {
+        let (uplink, _sent) = test_uplink();
+        let (sink, _rx) = sized_sink((320, 208)).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
+        shared.passthrough = Some(test_tiles_listing());
+        let wire = wlshare_tiles_update_copying(320, (0, 49), b"t1");
+        let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
+        assert!(format!("{err:#}").contains("not inside the 320x208 desktop"), "{err:#}");
     }
 
     /// A session lists one of wlshare's pictures, and the other arriving is refused as
@@ -13399,7 +13434,7 @@ mod tests {
             }
             while let Ok(msg) = rx.try_recv() {
                 assert!(
-                    !matches!(msg, ServerMsg::TilesStart { .. } | ServerMsg::Tile(_) | ServerMsg::RegionFormat { .. } | ServerMsg::Region(_) | ServerMsg::RegionEnd { .. }),
+                    !matches!(msg, ServerMsg::TilesStart { .. } | ServerMsg::Tile(_) | ServerMsg::RegionFormat { .. } | ServerMsg::Region(_) | ServerMsg::RegionEnd { .. } | ServerMsg::Copy(_)),
                     "{oversize:?}: {msg:?}"
                 );
             }

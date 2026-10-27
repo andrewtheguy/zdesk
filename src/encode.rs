@@ -27,7 +27,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::config::RenderPlan;
 use crate::feedback::LinkFeedback;
-use crate::protocol::{GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit};
+use crate::protocol::{CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit};
 use crate::shadow::Rect;
 use crate::tiles::{Coded, Format, LEVELS, Round, Tiles};
 use crate::video;
@@ -522,6 +522,8 @@ struct Shared {
     png_bytes: AtomicU64,
     webp: AtomicU64,
     webp_bytes: AtomicU64,
+    /// Rectangles of wlshare's tiles drawn from what the browser holds.
+    copies: AtomicU64,
     code_micros: AtomicU64,
     /// Wall time the order task spent waiting for rounds to be coded.
     waited_micros: AtomicU64,
@@ -583,6 +585,7 @@ impl Shared {
             png_bytes: AtomicU64::new(0),
             webp: AtomicU64::new(0),
             webp_bytes: AtomicU64::new(0),
+            copies: AtomicU64::new(0),
             code_micros: AtomicU64::new(0),
             waited_micros: AtomicU64::new(0),
             stalled_micros: AtomicU64::new(0),
@@ -947,6 +950,20 @@ impl VideoSink {
         total.fetch_add(bytes as u64, Ordering::Relaxed);
         let unit = TileUnit { x, y, w, h, format, data: image, held, painted: Painted::default() };
         self.push(Pending::Msg(ServerMsg::Tile(unit))).await?;
+        self.uncover_behind().await
+    }
+
+    /// Queue a rectangle of wlshare's tiles drawn from what the browser holds, the
+    /// `w`×`h` at `(sx, sy)` drawn at `(x, y)`, as the next record, untouched: a
+    /// scroll, or a window moved. It is a record of a few bytes, which takes nothing of
+    /// [`QUEUE_BUDGET`], and the browser draws it in its turn, from its canvas as the
+    /// records before it left it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn pass_copy(&self, sx: u16, sy: u16, x: u16, y: u16, w: u16, h: u16) -> anyhow::Result<()> {
+        self.tiles_begin().await?;
+        self.shared.feedback.handed(tokio::time::Instant::now());
+        self.shared.copies.fetch_add(1, Ordering::Relaxed);
+        self.push(Pending::Msg(ServerMsg::Copy(CopyUnit { sx, sy, x, y, w, h }))).await?;
         self.uncover_behind().await
     }
 
@@ -1487,6 +1504,7 @@ struct Totals {
     png_bytes: u64,
     webp: u64,
     webp_bytes: u64,
+    copies: u64,
     code_micros: u64,
     waited_micros: u64,
     stalled_micros: u64,
@@ -1533,6 +1551,7 @@ impl Totals {
             png_bytes: load(&shared.png_bytes),
             webp: load(&shared.webp),
             webp_bytes: load(&shared.webp_bytes),
+            copies: load(&shared.copies),
             code_micros: load(&shared.code_micros),
             waited_micros: load(&shared.waited_micros),
             stalled_micros: load(&shared.stalled_micros),
@@ -1546,7 +1565,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes{}, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} WebP / {} bytes, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} WebP / {} bytes, {} copied, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1564,8 +1583,8 @@ impl fmt::Display for Totals {
             self.png_bytes,
             self.webp,
             self.webp_bytes,
+            self.copies,
             self.code_micros,
-
             self.waited_micros,
             self.stalled_micros
         )
@@ -1983,6 +2002,7 @@ mod tests {
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_tile(64, 64, 320, 64, Format::Webp, vec![b'R', b'I']).await.unwrap();
+        sink.pass_copy(0, 40, 0, 0, 1280, 600).await.unwrap();
         sink.flush().await;
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
@@ -1994,8 +2014,10 @@ mod tests {
         assert!(matches!(&out[4], ServerMsg::Region(unit) if !unit.keyframe && unit.data == FRAME));
         assert!(matches!(&out[5], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe: {:?}", out[5]);
         assert!(matches!(out[6], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[6]);
-        let out = drain(&mut frame_rx, 1).await;
+        let out = drain(&mut frame_rx, 2).await;
         assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.format == Format::Webp && unit.data == *b"RI"), "the end was said twice: {:?}", out[0]);
+        assert!(matches!(out[1], ServerMsg::Copy(CopyUnit { sx: 0, sy: 40, x: 0, y: 0, w: 1280, h: 600 })), "{:?}", out[1]);
+        assert_eq!(Totals::of(&sink.shared).copies, 1);
 
         assert!(frame_rx.try_recv().is_err());
     }

@@ -515,12 +515,27 @@ export interface RegionMsg {
   data: Uint8Array;
 }
 
+// What the canvas holds at `(sx, sy)`, `w`×`h`, drawn at `(x, y)` in its turn among
+// the batch's TILE and REGION records: a scroll, or a window moved, in wlshare's
+// tiles. The source is read whole before any of it is drawn, so the two may overlap.
+// See `CopyUnit` in src/protocol.rs.
+export interface CopyMsg {
+  kind: "copy";
+  sx: number;
+  sy: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export type BatchRecord =
   | VideoMsg
   | GraphicsMsg
   | StandardMsg
   | TileMsg
-  | RegionMsg;
+  | RegionMsg
+  | CopyMsg;
 
 // Why a desktop has no picture: see `oversize`.
 export type HoldCause = "size";
@@ -551,6 +566,8 @@ const REGION_HEADER_LEN = 15;
 // A REGION record's one flag: its stream's decoder can start here. Any other bit
 // drops the batch, as a VIDEO record's unknown bits do.
 const REGION_KEYFRAME = 0x01;
+const OP_COPY = 0x08;
+const COPY_LEN = 13;
 // A VIDEO record's flags: a decoder that has seen nothing before it can start here;
 // the unit is one strip of the picture, its number in two bits, and whether it is the
 // last of its frame. Any other bit means a gateway newer than this client, and
@@ -634,6 +651,8 @@ function decodeRecord(
       return decodeTile(view, buf, at);
     case OP_REGION:
       return decodeRegion(view, buf, at);
+    case OP_COPY:
+      return decodeCopy(view, buf, at);
     default:
       return decodeVideo(view, buf, at);
   }
@@ -755,6 +774,23 @@ function decodeRegion(
     },
     next: start + len,
   };
+}
+
+function decodeCopy(
+  view: DataView,
+  buf: ArrayBuffer,
+  at: number,
+): { record: CopyMsg; next: number } | null {
+  if (at + COPY_LEN > buf.byteLength) {
+    return null;
+  }
+  const field = (i: number) => view.getUint16(at + 1 + 2 * i, true);
+  const [sx, sy, x, y, w, h] = [0, 1, 2, 3, 4, 5].map(field);
+  // An empty rectangle is one the gateway never sends.
+  if (w === 0 || h === 0) {
+    return null;
+  }
+  return { record: { kind: "copy", sx, sy, x, y, w, h }, next: at + COPY_LEN };
 }
 
 function decodeVideo(

@@ -2,7 +2,7 @@
 //! messages flush the pending batch to preserve ordering against the records
 //! around them, and batches are bounded.
 
-use crate::protocol::{self, GraphicsUnit, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit, WireFrame, batch};
+use crate::protocol::{self, CopyUnit, GraphicsUnit, Held, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit, WireFrame, batch};
 
 /// Record bytes per batch, below client WebSocket limits and large enough to
 /// amortize per-frame overhead.
@@ -78,6 +78,7 @@ impl Wire {
                     ServerMsg::Standard(unit) => self.push(Record::Standard(unit), &mut frames)?,
                     ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
                     ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
+                    ServerMsg::Copy(unit) => self.push(Record::Copy(unit), &mut frames)?,
                     // A frame's last run is its batch's last record: the browser
                     // shows a batch once it has drawn all of it, and acknowledges
                     // it then, which is this frame's acknowledgement to the host.
@@ -170,6 +171,12 @@ impl Wire {
                     unit.write_record(&mut frame);
                     unit.held
                 }
+                // A copy of what the browser holds is a tile it draws, of no image.
+                Record::Copy(unit) => {
+                    self.totals.tile(batch::COPY_LEN);
+                    unit.write_record(&mut frame);
+                    Held::default()
+                }
             });
         }
         self.pending_bytes = 0;
@@ -186,6 +193,7 @@ enum Record {
     Standard(StandardUnit),
     Tile(TileUnit),
     Region(RegionUnit),
+    Copy(CopyUnit),
 }
 
 impl Record {
@@ -196,6 +204,7 @@ impl Record {
             Record::Standard(unit) => unit.record_len(),
             Record::Tile(unit) => unit.record_len(),
             Record::Region(unit) => unit.record_len(),
+            Record::Copy(_) => batch::COPY_LEN,
         }
     }
 }
@@ -303,7 +312,7 @@ impl std::fmt::Display for Totals {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Held, UNSCALED};
+    use crate::protocol::UNSCALED;
 
     /// An access unit whose payload is `bytes` long, stamped with `seed` so a test
     /// can tell units apart after parsing.

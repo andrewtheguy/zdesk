@@ -21,6 +21,7 @@ import { createEgfxVideo, drawnAsCoded, type EgfxVideo } from "./egfxVideo.ts";
 import type { PlanesPicture } from "./planesPicture.ts";
 import {
   type BatchRecord,
+  type CopyMsg,
   decodeBatchFrame,
   type GraphicsMsg,
   type RegionMsg,
@@ -701,6 +702,21 @@ export function createFramePainter(options: {
     }
   };
 
+  // What the canvas holds elsewhere, drawn in its turn: a scroll, or a window moved,
+  // in wlshare's tiles. A canvas drawn onto itself reads its source whole first, so
+  // a source the rectangle overlaps is drawn as it was.
+  const paintCopy = (record: CopyMsg, born: number) => {
+    const ctx = options.context();
+    if (generation !== born || !tiles || !ctx) {
+      return;
+    }
+    const { sx, sy, x, y, w, h } = record;
+    ctx.drawImage(ctx.canvas, sx, sy, w, h, x, y, w, h);
+    // The desktop's own canvas is the picture again.
+    hidePlanes();
+    painted();
+  };
+
   // One unit's picture. Null when there is nothing to draw — a decoder that dropped
   // the unit has said so itself. A run of the pipeline has no picture of its own: it
   // is composed in its turn. A region's unit with no picture of tiles is of one that
@@ -946,6 +962,9 @@ export function createFramePainter(options: {
         return;
       case "tile":
         await paintTile(record, image, born);
+        return;
+      case "copy":
+        paintCopy(record, born);
         return;
       case "region":
         showRegion(record, await decoding, born);

@@ -245,6 +245,10 @@ impl View {
                         size.h
                     );
                 }
+                common::BatchRecord::Copy(copy) => {
+                    let inside = |x: u16, y: u16| u64::from(x) + u64::from(copy.w) <= size.w && u64::from(y) + u64::from(copy.h) <= size.h;
+                    assert!(inside(copy.sx, copy.sy) && inside(copy.x, copy.y), "a copy not inside the {}x{} desktop", size.w, size.h);
+                }
             }
         }
     }
