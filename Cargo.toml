@@ -1,5 +1,5 @@
 # The gateway. `serve` is the deployable browser gateway; `tui` is the
-# feature-gated local multi-instance control plane; `serve-embedded` is its
+# feature-gated local multi-instance control plane; `serve-worker` is its
 # hidden per-instance worker. Every shape serves the same SPA and uses the same
 # protocol implementation.
 #
@@ -263,7 +263,7 @@ anyhow = "1"
 tikv-jemallocator = "0.7"
 tikv-jemalloc-sys = { version = "0.7", features = ["unprefixed_malloc_on_supported_platforms"] }
 
-# The control plane's names for how a worker ended (src/embedded/manager.rs): a
+# The control plane's names for how a worker ended (src/worker/manager.rs): a
 # Unix worker that did not exit was ended by a signal.
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", optional = true, features = ["keychain"] }
@@ -279,7 +279,7 @@ features = ["rt-async-io-crypto-rust"]
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
 
-# The control plane's private transport on Windows (src/embedded/transport.rs): a
+# The control plane's private transport on Windows (src/worker/transport.rs): a
 # named pipe whose DACL admits this user alone, and the same owner-only DACL on the
 # instance directories that hold the targets' credentials — what a `0600` socket in
 # a `0700` directory is on Unix. The version tokio already links.
@@ -292,7 +292,7 @@ windows-sys = { version = "0.61", optional = true, features = [
 ] }
 
 [[test]]
-name = "embedded_gateway_e2e"
+name = "tui_worker_e2e"
 required-features = ["tui"]
 
 [[test]]

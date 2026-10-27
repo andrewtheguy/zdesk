@@ -3314,8 +3314,8 @@ RDP and RFB have no portable application ping.
 
 Browser-facing sockets get `TCP_NODELAY` too — `NodelayListener` in
 `src/server.rs` sets it on every accepted connection of the served shape, and
-the embedded shape's shared port sets it on every connection it routes
-(`src/embedded/manager.rs`). Those sockets feed an ack-gated paint window, and a segment
+the TUI's shared port sets it on every connection it routes
+(`src/worker/manager.rs`). Those sockets feed an ack-gated paint window, and a segment
 Nagle holds back is that window stalled for a round trip.
 
 ## Engines
@@ -3770,7 +3770,7 @@ browser: <instance>.zdesk.localhost:<port>
              TUI master process
                     │ <instance>/gateway.sock, or \\.\pipe\zdesk-<random> on Windows
                     ▼
-       hidden serve-embedded subprocess
+       hidden serve-worker subprocess
 ```
 
 The master is the only TCP listener, and it takes its port the way `serve` takes
@@ -3785,7 +3785,7 @@ for a port — an ephemeral one is a control plane nobody can be told how to
 reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 
 The boundary is whoever can see the TUI's terminal, not the machine, with one
-accepted gap set out below (`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
+accepted gap set out below (`src/worker/access.rs`). The master draws a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
 clock time it expires, ten minutes on, and the minutes left. `P` draws a new
 one and starts its time again.
@@ -3873,8 +3873,8 @@ Each hidden worker reads one line from stdin first — the key to its config's
 `[passwords]`, or an empty line for a config that names none or only placeholders (see
 [Target passwords](#target-passwords)) — binds its private endpoint, prints one
 JSON readiness line — `{"endpoint","token"}` — after binding, reads only that
-instance's `zdesk.toml`, and stops when its parent's stdin closes (`src/embedded.rs`,
-`Audience::Embedded`). Before any of that it claims the instance: an exclusive
+instance's `zdesk.toml`, and stops when its parent's stdin closes (`src/worker.rs`,
+`Audience::Worker`). Before any of that it claims the instance: an exclusive
 lock on `<instance>/gateway.lock` through std's `File::try_lock`, the same on
 every platform and released by the operating system however the worker ends. A
 second worker for the same instance — another TUI on the same directory, or one
@@ -3882,7 +3882,7 @@ started by hand — is refused before it binds, and the TUI asks the same lock
 before it spawns, so it can say why. A killed worker leaves no lock to clear,
 and on Unix its leftover socket is simply replaced. On Unix the endpoint is `<instance>/gateway.sock` at mode
 `0600` in a `0700` directory. On Windows it is a named pipe
-(`src/embedded/transport.rs`): a random `\\.\pipe\zdesk-<random>` per
+(`src/worker/transport.rs`): a random `\\.\pipe\zdesk-<random>` per
 launch, because pipe names are one machine-wide namespace any user may create
 in, created as its first instance so the name printed is one the worker holds,
 with a DACL naming only the user and remote clients refused. Several instances
@@ -3897,11 +3897,11 @@ HTTP and WebSocket upgrades without another gateway protocol implementation.
 
 The entire substrate is behind the default `tui` Cargo feature:
 the module, token authentication, config audience, CLI commands, and their
-`check-config --embedded` validation mode compile out together. Native packages
+`check-config --worker` validation mode compile out together. Native packages
 retain it. Container artifacts are built separately with
 `--no-default-features` and the features the script names, none unless told
 otherwise — release CI names `wlshare`; the build script and Dockerfile reject a
-binary that exposes any embedded CLI surface.
+binary that exposes any worker CLI surface.
 
 wlshare is the other default feature, `wlshare`: the `subtype = "wlshare"`
 target and everything it lists, its private extensions' bytes coming from
@@ -3926,7 +3926,7 @@ combinations.
 A served gateway needs a target to offer and a credential to guard it, and is
 told where to listen. `zdesk check-config` applies those rules to a file — or to
 text on stdin, which is what an unsaved edit is — without starting anything; a
-native build's `--embedded` applies the managed-instance rules instead.
+native build's `--worker` applies the managed-instance rules instead.
 
 Where it listens is one key, `[server].listen`, and the one setting a deployment
 can give from outside the file: `--listen`, or `ZDESK_LISTEN` for a container
@@ -3946,7 +3946,7 @@ that something is still serving refuses the start, and the file is removed when
 the gateway stops. No client addresses that form directly — the client reaches its
 gateway over one HTTP origin and up to five WebSocket paths, a second display's
 tab opening `/ws/display` and the first tab the others, all of which need a host
-and a port, so whatever terminates the proxy is what a browser talks to. An embedded
+and a port, so whatever terminates the proxy is what a browser talks to. A TUI's
 gateway is that arrangement in one process tree: the worker listens on its
 private endpoint — `<instance>/gateway.sock`, or a named pipe on Windows — and
 never on TCP, and the thing terminating the proxy is the TUI master, which the

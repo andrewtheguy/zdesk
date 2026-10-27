@@ -87,7 +87,7 @@ pub enum Commands {
     /// is how it dies with its manager.
     #[cfg(feature = "tui")]
     #[command(hide = true)]
-    ServeEmbedded {
+    ServeWorker {
         /// The managed instance directory. Nothing outside it is read.
         #[arg(long)]
         instance_dir: PathBuf,
@@ -106,7 +106,7 @@ pub enum Commands {
         /// [server] block, and no targets configured yet is not an error
         #[cfg(feature = "tui")]
         #[arg(long)]
-        embedded: bool,
+        worker: bool,
     },
 
     /// Generate a [server].site_passwd credential for the web login: prompts
@@ -249,23 +249,23 @@ mod tests {
     /// gateway's to decide, and the SPA is in the binary.
     #[cfg(feature = "tui")]
     #[test]
-    fn serve_embedded_takes_the_one_path_the_launcher_knows() {
-        let cli = Cli::try_parse_from(["zdesk", "serve-embedded", "--instance-dir", "/i"])
+    fn serve_worker_takes_the_one_path_the_launcher_knows() {
+        let cli = Cli::try_parse_from(["zdesk", "serve-worker", "--instance-dir", "/i"])
             .unwrap();
-        let Commands::ServeEmbedded { instance_dir } = cli.command else {
-            panic!("expected the serve-embedded subcommand");
+        let Commands::ServeWorker { instance_dir } = cli.command else {
+            panic!("expected the serve-worker subcommand");
         };
         assert_eq!(instance_dir, std::path::Path::new("/i"));
 
         assert!(
-            Cli::try_parse_from(["zdesk", "serve-embedded"]).is_err(),
+            Cli::try_parse_from(["zdesk", "serve-worker"]).is_err(),
             "the instance directory has no default: the launcher names it"
         );
         for rejected in ["--port", "--gateway", "--token", "--web-root"] {
             assert!(
                 Cli::try_parse_from([
                     "zdesk",
-                    "serve-embedded",
+                    "serve-worker",
                     "--instance-dir",
                     "/i",
                     rejected,
@@ -343,29 +343,29 @@ mod tests {
     #[test]
     fn check_config_reads_stdin_by_default_and_takes_an_audience() {
         let cli = Cli::try_parse_from(["zdesk", "check-config"]).unwrap();
-        let Commands::CheckConfig { config, embedded } = cli.command else {
+        let Commands::CheckConfig { config, worker } = cli.command else {
             panic!("expected the check-config subcommand");
         };
         assert!(config.is_none(), "stdin, which is what an unsaved editor has");
-        assert!(!embedded, "a served gateway's rules unless asked otherwise");
+        assert!(!worker, "a served gateway's rules unless asked otherwise");
 
         let cli =
-            Cli::try_parse_from(["zdesk", "check-config", "--embedded", "-c", "/i/zdesk.toml"])
+            Cli::try_parse_from(["zdesk", "check-config", "--worker", "-c", "/i/zdesk.toml"])
                 .unwrap();
-        let Commands::CheckConfig { config, embedded } = cli.command else {
+        let Commands::CheckConfig { config, worker } = cli.command else {
             panic!("expected the check-config subcommand");
         };
         assert_eq!(config.as_deref(), Some(std::path::Path::new("/i/zdesk.toml")));
-        assert!(embedded);
+        assert!(worker);
     }
 
     #[cfg(not(feature = "tui"))]
     #[test]
-    fn embedded_cli_is_absent_without_the_feature() {
-        assert!(Cli::try_parse_from(["zdesk", "serve-embedded"]).is_err());
+    fn worker_cli_is_absent_without_the_feature() {
+        assert!(Cli::try_parse_from(["zdesk", "serve-worker"]).is_err());
         assert!(Cli::try_parse_from(["zdesk", "tui", "--port", "52380"]).is_err());
         assert!(
-            Cli::try_parse_from(["zdesk", "check-config", "--embedded"]).is_err()
+            Cli::try_parse_from(["zdesk", "check-config", "--worker"]).is_err()
         );
 
         let cli = Cli::try_parse_from(["zdesk", "check-config"]).unwrap();

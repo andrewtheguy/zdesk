@@ -56,22 +56,22 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "tui")]
         Commands::Tui { port, instances_dir } => {
             anyhow::ensure!(port != 0, "--port must be between 1 and 65535");
-            zdesk::embedded::run_tui(zdesk::embedded::TuiOptions {
+            zdesk::worker::run_tui(zdesk::worker::TuiOptions {
                 port,
                 instances_dir: instances_dir
                     .map(Ok)
-                    .unwrap_or_else(zdesk::embedded::default_instances_dir)?,
+                    .unwrap_or_else(zdesk::worker::default_instances_dir)?,
             })
             .await?;
         }
         #[cfg(feature = "tui")]
-        Commands::ServeEmbedded { instance_dir } => {
-            serve_embedded(&zdesk::embedded::Instance::new(instance_dir)).await?;
+        Commands::ServeWorker { instance_dir } => {
+            serve_worker(&zdesk::worker::Instance::new(instance_dir)).await?;
         }
         Commands::CheckConfig {
             config,
             #[cfg(feature = "tui")]
-            embedded,
+            worker,
         } => {
             // The message is the product here: an instance manager can run this for
             // its configuration editor and show stderr to somebody about to fix the
@@ -79,8 +79,8 @@ async fn main() -> anyhow::Result<()> {
             // is what names the target the complaint is about.
             let text = zdesk::config::read_candidate(config.as_deref())?;
             #[cfg(feature = "tui")]
-            let result = if embedded {
-                zdesk::embedded::check(&text)
+            let result = if worker {
+                zdesk::worker::check(&text)
             } else {
                 zdesk::config::check(&text)
             };
@@ -223,17 +223,17 @@ fn master_file_exists(file: &std::path::Path) -> anyhow::Result<bool> {
         .with_context(|| format!("cannot look for the master password file {}", file.display()))
 }
 
-/// Run a managed embedded gateway, and stop when its parent does.
+/// Run a TUI worker, and stop when its parent does.
 ///
 /// Three ways out, and the first is the one the guarantee rests on: the parent's
 /// end of our stdin closing, which happens however the parent ended — see
-/// [`zdesk::embedded::parent_closed`]. The signal handler is for a run started by
+/// [`zdesk::worker::parent_closed`]. The signal handler is for a run started by
 /// hand, and the server arm only completes by failing.
 #[cfg(feature = "tui")]
-async fn serve_embedded(instance: &zdesk::embedded::Instance) -> anyhow::Result<()> {
+async fn serve_worker(instance: &zdesk::worker::Instance) -> anyhow::Result<()> {
     // The parent writes the key line the moment this process starts, so this wait
     // is short; it is read before anything else reads stdin.
-    let key = tokio::task::spawn_blocking(zdesk::embedded::read_key)
+    let key = tokio::task::spawn_blocking(zdesk::worker::read_key)
         .await
         .context("the key reader panicked")??;
     // Ahead of the race below, because asking for the claim can wait, and waiting
@@ -248,8 +248,8 @@ async fn serve_embedded(instance: &zdesk::embedded::Instance) -> anyhow::Result<
         // that wins decides whether a refused config is reported at all: `[server]`
         // in the file, and one run in five exits 0 with nothing on stderr.
         biased;
-        result = zdesk::embedded::serve(instance, claim, key) => result?,
-        _ = zdesk::embedded::parent_closed() => {
+        result = zdesk::worker::serve(instance, claim, key) => result?,
+        _ = zdesk::worker::parent_closed() => {
             info!("stdin closed: whatever started this gateway is gone; stopping");
         }
         _ = shutdown_signal() => info!("shutdown signal received; stopping"),
@@ -357,9 +357,9 @@ async fn serve(config: AppConfig) -> anyhow::Result<()> {
             "unix:{} — Unix sockets are not supported on Windows",
             path.display()
         ),
-        // Only `resolve_embedded` names a pipe, and `serve-embedded` serves it.
+        // Only `resolve_worker` names a pipe, and `serve-worker` serves it.
         #[cfg(all(feature = "tui", windows))]
-        ListenAddr::Pipe(name) => anyhow::bail!("{name} is an embedded worker's private pipe"),
+        ListenAddr::Pipe(name) => anyhow::bail!("{name} is a worker's private pipe"),
     }
 
     info!("{} target(s) available in the post-login picker:", config.targets.len());

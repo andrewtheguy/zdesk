@@ -189,6 +189,6 @@ succeed.
 Container images take their layout from the Linux tarballs, then replace
 `bin/zdesk` with the separately built container gateway. The build
 script, release smoke test, and Dockerfile all reject a binary that exposes
-`tui`, `serve-embedded`, or `check-config --embedded`. The tarballs are build
+`tui`, `serve-worker`, or `check-config --worker`. The tarballs are build
 plumbing between the workflow's jobs and are not published: the native packages
 and the image are what bring the gateway everything it needs.

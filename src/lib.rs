@@ -12,7 +12,7 @@ pub mod combined;
 pub mod cli;
 pub mod config;
 #[cfg(feature = "tui")]
-pub mod embedded;
+pub mod worker;
 pub mod encode;
 pub mod engine;
 pub mod error;
