@@ -1147,14 +1147,14 @@ listing sends.
 #### wlshare's tiles with motion, passed through
 
 wlshare has a second picture encoding, `WLST` (`0x574c5354`), which a `wlshare`
-session started with its tiles with motion, chosen at the picker as *Tiles with
-motion* or its *Adaptive tiles* against its VP9, lists in place of `WLSV`: the desktop as exact PNG
-tiles where it is still, and a video stream of its own, 4:2:0, for each region
-that moves, at most four at once — H.264, by the wlshare host's hardware
-encoder where it has one and libx264 otherwise — and every tile a stream
-carried sent again as PNG once it is still,
-so the picture ends exact; its adaptive tiles send every still as a lossy
-WebP instead, never made exact. It is Motion, which this gateway removed because here
+session started with its tiles, chosen at the picker as *Tiles with motion* or
+*Adaptive tiles* against its VP9, lists in place of `WLSV`. Both are a video
+stream of its own, 4:2:0, for each region that moves, at most four at once —
+H.264, by the wlshare host's hardware encoder where it has one and libx264
+otherwise — and stills where the desktop is still. Its tiles with motion
+send the stills as exact PNG, and every tile a stream carried again as PNG
+once it is still, so the picture ends exact; its adaptive tiles send every
+still as a lossy WebP instead, never made exact. It is Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).

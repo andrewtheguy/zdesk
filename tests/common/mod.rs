@@ -390,16 +390,17 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
             }
             batch::OP_TILE => {
                 let format = frame[at + 1];
-                assert!(
-                    format == batch::TILE_JPEG || format == batch::TILE_PNG,
-                    "unknown tile format {format:#x}"
-                );
                 let len = le32(10);
                 let start = at + batch::TILE_HEADER_LEN;
                 let image = frame[start..start + len].to_vec();
                 assert!(!image.is_empty(), "a tile with no image");
-                let magic: &[u8] = if format == batch::TILE_JPEG { &[0xff, 0xd8] } else { b"\x89PNG" };
-                assert!(image.starts_with(magic), "a tile that is not the image its format says");
+                let is_format = match format {
+                    batch::TILE_JPEG => image.starts_with(&[0xff, 0xd8]),
+                    batch::TILE_PNG => image.starts_with(b"\x89PNG"),
+                    batch::TILE_WEBP => image.starts_with(b"RIFF") && image.get(8..12) == Some(b"WEBP"),
+                    _ => panic!("unknown tile format {format:#x}"),
+                };
+                assert!(is_format, "a tile that is not the image its format says");
                 records.push(BatchRecord::Tile(BatchTile { format, x: le(2), y: le(4), w: le(6), h: le(8), image }));
                 at = start + len;
             }

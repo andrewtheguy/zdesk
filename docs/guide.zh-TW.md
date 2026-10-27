@@ -34,7 +34,7 @@ defaults write -g NSConvolutionOverride1 -float 1
 | `rdp` | 是 | 關、Opus 或 FLAC | 圖形管線，一律直通 | 高品質或自適應 H.264 |
 | `rdp` 且 `egfx = false` | 否 | 關、Opus 或 FLAC | — | — |
 | `vnc` | 否 | 無 | — | — |
-| `vnc`，`wlshare` | 是 | 關、Opus 或 FLAC | 其 VP9，或其帶移動視訊的圖塊，一律直通 | — |
+| `vnc`，`wlshare` | 是 | 關、Opus 或 FLAC | 其 VP9、其帶移動視訊的圖塊，或其依連線調整的圖塊，一律直通 | — |
 | `vnc`，`ard` | 否 | 無 | Mac 的 Adaptive 畫面直通（beta），或不直通：閘道針對 Mac Full 品質編碼的圖塊 | — |
 | `vnc`，`ard` 且 `virtual_display` | 是 | 無 | 同 `ard` | — |
 | `vnc`，`ard-high-performance` | 是 | 一律傳輸 | Mac 的 HEVC，或其 H.264（beta），一律直通 | — |

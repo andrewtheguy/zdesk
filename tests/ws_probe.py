@@ -126,7 +126,7 @@ def batch_records(frame: bytes) -> int:
             parts.append(f"adaptive {kind} {w}x{h}+{x}+{y} {length}B")
             at += 13 + length
         elif op == 0x06:
-            image = {1: "jpeg", 2: "png"}.get(frame[at + 1], "?")
+            image = {1: "jpeg", 2: "png", 3: "webp"}.get(frame[at + 1], "?")
             x, y, w, h = rect(at + 2)
             length = int.from_bytes(frame[at + 10 : at + 14], "little")
             parts.append(f"tile {image} {w}x{h}+{x}+{y} {length}B")
@@ -179,14 +179,15 @@ async def main() -> int:
         "--passthrough",
         nargs="?",
         const="apple-media",
-        choices=["apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9", "wlshare-tiles-motion"],
+        choices=["apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9", "wlshare-tiles-motion", "wlshare-tiles-adaptive"],
         help="start the session with the target's own stream passed, by its name: a "
         "High Performance Mac's HEVC (apple-media, the default, to a client that states "
         "--apple-media) or its H.264 (apple-h264), one of which such a target's session "
         "has to name, or a Standard Mac's Adaptive picture (apple-adaptive); a Standard "
         "session that names none is the gateway's tiles of the Mac's Full quality, or a "
-        "wlshare target's VP9 (wlshare-vp9, what a session that names none is sent) or "
-        "its tiles with motion (wlshare-tiles-motion). An RDP host's graphics pipeline "
+        "wlshare target's VP9 (wlshare-vp9, what a session that names none is sent), "
+        "its tiles with motion (wlshare-tiles-motion) or its adaptive tiles "
+        "(wlshare-tiles-adaptive). An RDP host's graphics pipeline "
         "passes in every session and is not named",
     )
     parser.add_argument(
