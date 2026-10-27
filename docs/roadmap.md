@@ -62,67 +62,48 @@ end it once they stop. What the Mac does with a gesture it is sent that way, and
 whether the phases alone make the horizontal axis feel right, are still to be
 tested, on a physical Mac.
 
-### A passkey as the login, the TUI first
+### A PIN as the TUI's login
 
-A passkey as the way into a gateway, registered once and presented in place of
-a password. A served gateway is where it is needed most, since that is the
-login reached from outside the machine; the TUI's control plane is where it
-starts, for reasons that are several:
-
-- The feature is alpha. The TUI is a single-user desktop tool, so its first
-  version can be rough without exposing a gateway anyone else reaches.
-- The TUI has local storage to keep the public keys in — the owner-only
-  instances directory — where a containerized gateway may have no writable
-  place that outlives it.
-- The TUI has the one-ID-over-many-subdomains layout a served gateway does not:
-  `zdesk.localhost` and `<instance>.zdesk.localhost` share a port, so it is
-  the only place that scoping is exercised.
-- Passkeys are flaky enough to lock someone out, and a lockout is recoverable
-  at the TUI, whose terminal is in front of the person, where on a gateway it
-  is a remote machine nobody can log in to.
-
-On the TUI it also closes a gap: the master hands the selected worker's session
-cookie to whoever asks on the loopback port, so its boundary is the machine
-rather than the user
+A PIN that the TUI shows on its screen and the browser must enter before the
+master hands it any instance's cookie. Today the master gives the selected
+worker's session cookie to anyone who asks on the loopback port, so the control
+plane's boundary is the machine, not the user
 ([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)).
-A passkey checked by the master before it seeds any instance's cookie moves
-the boundary to the account whose authenticator holds it.
+A PIN read off the TUI's screen moves that boundary to whoever can see the
+terminal the TUI runs in. On a desktop, that is the person who started it.
 
-One passkey covers every instance because of how WebAuthn scopes a credential,
-not through any wildcard: a credential is bound to a relying-party ID, a bare
-domain with no scheme or port, and a page may use an ID equal to its own host or
-to a parent of it that is not a public suffix. The ID `zdesk.localhost` is
-therefore usable from the landing page and from every
-`<instance>.zdesk.localhost`, as long as both the registration and every login
-name it explicitly — the browser's default is the page's own host, which on a
-subdomain finds nothing. Plain `http` is enough on loopback, since browsers treat
-`localhost` and its subdomains as a secure context. Checked on 2026-10-27 with a
-small relying party on the shared port: a passkey registered on
-`zdesk.localhost` logged in from two levels of subdomain in Chrome and Safari,
-and Chromium's virtual authenticator (`WebAuthn.addVirtualAuthenticator` over
-CDP) drives the same ceremonies headless, so the behaviour can be held by a
-Playwright spec under the usual rules.
+It comes before [A passkey as the login](#a-passkey-as-the-login) because it
+needs none of what a passkey does. There is no ceremony for a browser or an
+authenticator to fail and no keys to store. Nobody can be locked out either: a
+new PIN is one keypress at the terminal that shows it.
 
-What the master would do: serve the registration and login ceremonies on the
-landing page and on any instance origin, verify an assertion itself — the
-challenge it issued, an origin of `http://zdesk.localhost:<port>` or one of its
-subdomains, the ID's hash in the authenticator data, and the signature against
-the stored public key — and only then seed the worker's token. The public keys
-would live in an owner-only file beside the instance folders, so a control
-plane started with `--instances-dir` has its own, and the first registration
-would be opened from the TUI's keyboard rather than from the page, so enrolling
-takes the terminal the TUI runs in, and a passkey that stopped working would be
-removed from the same keyboard, which is the recovery from a lockout. Which bits of that belong in the settings
-file of [A settings file for the TUI](#a-settings-file-for-the-tui), if any, is
-decided when both exist.
+What the master would do:
 
-A served gateway follows once the TUI's version has settled. Its ID would be
-the operator's host name, and the secure context WebAuthn requires is the HTTPS
-it already needs from its reverse proxy ([The client](guide.md#the-client)).
-What has to be answered first is where a gateway keeps the public keys when it
-runs in a container, and how an operator locked out by a failed passkey gets
-back in from outside the machine; its password login stays as the way to enrol
-the first passkey, and as that way back in, until something better exists.
+- Draw a six-digit PIN from the system's random source when it starts. Show it
+  in the TUI beside the instance list, with a key that draws a new one.
+- Serve a PIN form instead of the redirect that seeds the cookie, on the landing
+  page and on any instance origin a browser reaches without a login. Compare the
+  entry in constant time.
+- Withdraw the PIN after a few wrong entries and refuse every entry until a new
+  PIN is drawn at the TUI's keyboard. Guessing is then limited to those few
+  tries for each PIN the person at the terminal chooses to draw, however fast a
+  local process can post. That process can force a new draw, but it never gets in.
+- Keep logins in memory only, so they end when the master stops. The TUI lists
+  the browsers that are logged in, with a key that signs them out.
+
+Two questions are still open:
+
+- How a login on one origin reaches the others. The instance cookie is
+  host-only, one per `<instance>.zdesk.localhost`. Either a login cookie on
+  `zdesk.localhost` is sent to its subdomains, which needs checking in Chrome
+  and Safari as the passkey's ID was, or the landing page's link to an instance
+  carries a one-time handoff that the instance's origin exchanges for its cookie.
+- How a Playwright spec reads the PIN without it being written anywhere another
+  local user could read it. A spec cannot read the TUI's screen. This is decided
+  with the spec.
+
+A served gateway keeps its password, because nobody is at its terminal to read
+a PIN.
 
 ## Under consideration
 
@@ -196,6 +177,52 @@ defaults hold and the file shows what can be set. It would be parsed strictly:
 an unknown key or a bad value refuses the start instead of being skipped. The
 port would move into it as `port`, with `--port` and `ZDESK_TUI_PORT` still
 taking precedence. A change would apply at the next start.
+
+### A passkey as the login
+
+Taken up once [A PIN as the TUI's login](#a-pin-as-the-tuis-login) has settled.
+The user registers a passkey once and presents it instead of a PIN or a
+password. A served gateway needs it most, since its login is the one reached
+from outside the machine. It would still start on the TUI, which has the
+owner-only instances directory to keep the public keys in. The TUI is also the
+only place with the one-ID-over-many-subdomains layout. A failed passkey is
+recoverable there, because its PIN is still at the terminal.
+
+One passkey covers every instance because of how WebAuthn scopes a credential,
+not through any wildcard. A credential is bound to a relying-party ID: a bare
+domain with no scheme or port. A page may use an ID equal to its own host, or
+to a parent of that host that is not a public suffix. The ID `zdesk.localhost`
+therefore works from the landing page and from every
+`<instance>.zdesk.localhost`, provided both the registration and every login
+name it explicitly. The browser's default ID is the page's own host, and on a
+subdomain that default finds no credential. Plain `http` is enough on loopback,
+because browsers treat `localhost` and its subdomains as a secure context. This
+was checked on 2026-10-27 with a small relying party on the shared port. A
+passkey registered on `zdesk.localhost` logged in from two levels of subdomain
+in Chrome and Safari. Chromium's virtual authenticator
+(`WebAuthn.addVirtualAuthenticator` over CDP) drives the same ceremonies
+headless, so a Playwright spec can hold the behaviour under the usual rules.
+
+The master would serve the registration and login ceremonies on the landing
+page and on any instance origin, and verify each assertion itself before it
+seeds the worker's token. It would check the challenge it issued, an origin of
+`http://zdesk.localhost:<port>` or one of its subdomains, the ID's hash in the
+authenticator data, and the signature against the stored public key. The public
+keys would live in an owner-only file beside the instance folders, so a control
+plane started with `--instances-dir` has its own. Only a browser already logged
+in with the PIN could register a passkey. The TUI would list the registered
+passkeys, with a key that removes one. Which of these settings belong in the
+file described in [A settings file for the TUI](#a-settings-file-for-the-tui),
+if any, is decided when both exist.
+
+A served gateway would follow the TUI. Its ID would be the operator's host
+name. WebAuthn requires a secure context, and the HTTPS that the gateway
+already needs from its reverse proxy provides one
+([The client](guide.md#the-client)). Two questions come first: where a gateway
+running in a container keeps the public keys, and how an operator locked out by
+a failed passkey gets back in from outside the machine. Its password login
+stays as the way to register the first passkey, and as that way back in, until
+something better exists.
 
 ### Touch on an RDP target (MS-RDPEI)
 
