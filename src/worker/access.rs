@@ -136,9 +136,9 @@ impl Refusal {
                 if left == 1 { "entry" } else { "entries" }
             ),
             Self::Withdrawn => format!(
-                "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI to draw a new one."
+                "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI for a new one."
             ),
-            Self::Expired => "The PIN has expired. Press P in the zDesk TUI to draw a new one.".to_owned(),
+            Self::Expired => "The PIN has expired. Press P in the zDesk TUI for a new one.".to_owned(),
         }
     }
 }

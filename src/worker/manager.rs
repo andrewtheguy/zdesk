@@ -219,8 +219,8 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     Action::NewPin => {
                         access.draw();
                         message = match access.pin() {
-                            PinState::Open { expires_at, .. } => format!("drew a new PIN; it expires at {expires_at}"),
-                            _ => "drew a new PIN".to_owned(),
+                            PinState::Open { expires_at, .. } => format!("new PIN; it expires at {expires_at}"),
+                            _ => "new PIN".to_owned(),
                         };
                     }
                     Action::Keys => {
@@ -834,7 +834,7 @@ const BINDINGS: &[Binding] = &[
         action: Action::NewPin,
         codes: &[KeyCode::Char('P')],
         label: "new PIN",
-        about: "draw a new login PIN, its time started again; logged-in browsers stay in",
+        about: "a new login PIN, its time started again; logged-in browsers stay in",
         group: Group::ControlPlane,
         bar: false,
     },
@@ -977,7 +977,7 @@ fn grouped(digits: &str) -> String {
 /// in with, in digits three rows tall beside what it is when they fit, or why no
 /// PIN can log anyone in.
 fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
-    let hint = ("P draws a new one".to_owned(), Some(Color::DarkGrey), false);
+    let hint = ("press P for a new PIN".to_owned(), Some(Color::DarkGrey), false);
     let (heading, color, detail) = match pin {
         PinState::Open {
             digits,
