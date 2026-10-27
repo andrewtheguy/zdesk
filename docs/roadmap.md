@@ -62,55 +62,6 @@ end it once they stop. What the Mac does with a gesture it is sent that way, and
 whether the phases alone make the horizontal axis feel right, are still to be
 tested, on a physical Mac.
 
-### A PIN as the TUI's login
-
-A PIN that the TUI shows on its screen and the browser must enter before the
-master hands it any instance's cookie. Today the master gives the selected
-worker's session cookie to anyone who asks on the loopback port, so the control
-plane's boundary is the machine, not the user
-([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)).
-A PIN read off the TUI's screen moves that boundary to whoever can see the
-terminal the TUI runs in. On a desktop, that is the person who started it.
-
-It comes before [A passkey as the login](#a-passkey-as-the-login) because it
-needs none of what a passkey does. There is no ceremony for a browser or an
-authenticator to fail and no keys to store. Nobody can be locked out either: a
-new PIN is one keypress at the terminal that shows it.
-
-What the master would do:
-
-- Draw a six-digit PIN from the system's random source when it starts. Show it
-  in the TUI's access panel above the instance list, with the clock time it
-  expires and the minutes left, and a key that draws a new one, which starts
-  its time again. An expired PIN logs nobody in until a new one is drawn.
-- Serve a PIN form instead of the redirect that seeds the cookie, on the landing
-  page and on any instance origin a browser reaches without a login. Compare the
-  entry in constant time.
-- Withdraw the PIN after a few wrong entries and refuse every entry until a new
-  PIN is drawn at the TUI's keyboard. Guessing is then limited to those few
-  tries for each PIN the person at the terminal chooses to draw, however fast a
-  local process can post. That process can force a new draw, but it never gets in.
-- Guard only new logins with the PIN. A browser that has logged in stays logged
-  in when the PIN expires or a new one is drawn. The master holds the login, not
-  any instance's gateway: stopping or restarting an instance leaves the browser
-  logged in, and the master seeds the restarted worker's new token without
-  asking for the PIN again. Logins are kept in the master's memory only, so the
-  only way to log out is to quit the TUI and start it again.
-
-Two questions are still open:
-
-- How a login on one origin reaches the others. The instance cookie is
-  host-only, one per `<instance>.zdesk.localhost`. Either a login cookie on
-  `zdesk.localhost` is sent to its subdomains, which needs checking in Chrome
-  and Safari as the passkey's ID was, or the landing page's link to an instance
-  carries a one-time handoff that the instance's origin exchanges for its cookie.
-- How a Playwright spec reads the PIN without it being written anywhere another
-  local user could read it. A spec cannot read the TUI's screen. This is decided
-  with the spec.
-
-A served gateway keeps its password, because nobody is at its terminal to read
-a PIN.
-
 ## Under consideration
 
 ### Verifying an RDP host's certificate
@@ -186,7 +137,8 @@ taking precedence. A change would apply at the next start.
 
 ### A passkey as the login
 
-Taken up once [A PIN as the TUI's login](#a-pin-as-the-tuis-login) has settled.
+It builds on the TUI's PIN login
+([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)).
 The user registers a passkey once and presents it instead of a PIN or a
 password. A served gateway needs it most, since its login is the one reached
 from outside the machine. It would still start on the TUI, which has the
@@ -215,7 +167,7 @@ headless, so a Playwright spec can hold the behaviour under the usual rules.
 
 The master would serve the registration and login ceremonies on the landing
 page and on any instance origin. It would verify each ceremony itself before it
-keeps a credential or seeds the worker's token, checking:
+keeps a credential or logs a browser in, checking:
 
 - `type` in the client data: `webauthn.create` for a registration and
   `webauthn.get` for a login.

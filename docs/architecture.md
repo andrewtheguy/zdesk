@@ -3784,12 +3784,47 @@ on either of them, because a browser picks the family and a master left holding
 for a port — an ephemeral one is a control plane nobody can be told how to
 reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 
-The loopback boundary is the machine, not the OS account. The master gives any
-local caller the selected worker's session cookie before proxying it, so any
-local user can list and drive every running instance. The owner-only instance
-directories and worker endpoints protect the configs and the private transport;
-they do not authenticate the public loopback surface. Do not run the TUI on a
-machine shared with users who must not reach its desktops.
+The boundary is whoever can see the TUI's terminal, not the machine
+(`src/embedded/access.rs`). The master draws a six-digit PIN from the system's
+random source when it starts and shows it in the TUI's access panel, with the
+clock time it expires, ten minutes on, and the minutes left. `P` draws a new
+one and starts its time again. A browser without a login gets a PIN form on
+the landing origin and on every instance origin, and the master compares the
+entry in constant time. A form post is taken only with its own origin's
+`Origin`, so a page elsewhere on the web cannot spend the PIN's tries. After
+five wrong entries the PIN is withdrawn, and every entry is refused until a new
+one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
+each PIN the person at the terminal chooses to draw. A local process can force
+a new draw, but it never gets in. An entry that is not six digits cannot be the
+PIN and is not counted.
+
+A right entry is a login: 32 random bytes the master keeps in memory, sent back
+as a host-only HttpOnly `zdesk_login` cookie. The PIN guards only new logins. A
+login outlives the PIN's expiry, a new draw and a withdrawal, and every
+instance's restarts. Logins are kept in the master's memory only, so quitting
+the TUI is the only way to log out. A login reaches another origin through a
+handoff, not a cookie shared across subdomains. The landing page's link to an
+instance, and the TUI's `o`, go through `/__zdesk/open/<name>` on the landing
+origin. That route mints a one-time code bound to the instance, good for 30
+seconds and spent by its first use. The instance origin exchanges the code at
+`/__zdesk/handoff` for the same login under its own cookie.
+
+A browser never holds a worker's token. The master adds it, as the
+`zdesk_session` cookie, to each request it forwards. It strips the browser's
+`zdesk_login` and any `zdesk_session`: on these hosts that can only be stale,
+or a served gateway's on the same `<label>.zdesk.localhost`, since a cookie
+ignores the port. The TUI sets no `zdesk_session` of its own, so it does not
+log a served gateway's browser out. A browser therefore has two ways in: a
+served gateway's username and password, and this PIN.
+
+The master reads only the first request of a connection before handing the
+rest to the worker. So it asks the worker to close each connection after one
+response, by rewriting the request's `Connection` to `close`. Every request
+then reaches the master, which checks its login, and a handoff to an origin the
+browser already has a connection to is still the master's to take. A WebSocket
+upgrade keeps its `Connection` header: it is one request, and then the socket.
+The owner-only instance directories and worker endpoints protect the configs
+and the private transport from other OS accounts.
 
 Each hidden worker reads one line from stdin first — the key to its config's
 `[passwords]`, or an empty line for a config that names none or only placeholders (see
@@ -3813,10 +3848,9 @@ together. The instance directories get the equivalent of `0700`: a protected
 DACL naming the user and `SYSTEM`, inherited by the configs in them. A worker
 runs with a hidden console of its own, so the TUI's Ctrl+C and window close
 never reach it directly; closing the window still stops every worker, by ending
-the TUI and so their stdin. The master seeds the token as a host-only HttpOnly
-`zdesk_session` cookie before proxying the browser to the child. Raw connection
-proxying preserves both ordinary HTTP and WebSocket upgrades without another
-gateway protocol implementation.
+the TUI and so their stdin. The master presents the token for a logged-in
+browser, as described above. Raw connection proxying preserves both ordinary
+HTTP and WebSocket upgrades without another gateway protocol implementation.
 
 The entire substrate is behind the default `embedded-gateway` Cargo feature:
 the module, token authentication, config audience, CLI commands, and their

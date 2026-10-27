@@ -31,7 +31,7 @@ pub struct AppState {
     pub sessions: Arc<SessionManager>,
     /// Live auth sessions behind the login cookie. Only a
     /// [`GatewayAuth::Login`] gateway mints or validates one — an embedded
-    /// gateway's client carries the launch token the control plane seeded in that
+    /// gateway's requests carry the launch token the control plane adds in that
     /// same cookie and there is no session to look up, so this stays empty there.
     pub auth: Arc<AuthSessions>,
     /// Every browser socket's byte counters, and the database `[meter]` records them in.
@@ -238,13 +238,14 @@ pub fn router_with_sessions(
 ) -> Router {
     // Two shapes of the same three routes, and which one is registered is decided
     // here rather than inside the handlers. An embedded gateway *has* no login —
-    // its client was given a token before it made its first request — so the
-    // honest answer to one is a refusal, and a refusal is easier to read at the
-    // router than a handler that begins by asking what kind of gateway it is on.
+    // its browser logged in to the control plane, which presents the token for
+    // it — so the honest answer to one is a refusal, and a refusal is easier to
+    // read at the router than a handler that begins by asking what kind of
+    // gateway it is on.
     //
     // `status` is the exception, and registering it either way is the point: the
     // page asks the same question on both, and there it answers yes because the
-    // control plane already seeded the launch token on the instance origin.
+    // control plane adds the launch token to every request it forwards.
     #[cfg(feature = "embedded-gateway")]
     let auth_routes = match config.auth {
         GatewayAuth::Login(_) => Router::new()
@@ -644,8 +645,9 @@ struct StatusResponse {
 /// between the login screen and the desktop.
 ///
 /// This route exists on an embedded gateway too, unlike the two beside it: the
-/// same SPA runs there and asks the same question first. Its control plane seeds
-/// the launch token as an HttpOnly cookie before proxying the first request.
+/// same SPA runs there and asks the same question first. Its control plane adds
+/// the launch token to every request it forwards, once the browser has logged in
+/// with the TUI's PIN.
 async fn status_handler(State(state): State<AppState>, headers: HeaderMap) -> Json<StatusResponse> {
     Json(StatusResponse {
         authenticated: authenticate(&state, &headers),

@@ -6,6 +6,7 @@ mod common;
 
 use std::net::Ipv4Addr;
 
+use zdesk::embedded::access::{Access, PinState};
 use zdesk::embedded::manager::{SharedPort, Supervisor};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -27,25 +28,37 @@ async fn instances_start_stop_and_share_the_master_port() {
         Supervisor::open(root.path().to_path_buf(), env!("CARGO_BIN_EXE_zdesk").into())
             .await
             .unwrap();
-    let router = SharedPort::bind(free_port(), supervisor.routes()).await.unwrap();
+    let access = Access::open();
+    let router = SharedPort::bind(free_port(), supervisor.routes(), access.clone()).await.unwrap();
     supervisor.start("one", None).await.unwrap();
     supervisor.start("two", None).await.unwrap();
 
-    let one_cookie = seed_cookie(router.port(), "one").await;
-    let two_cookie = seed_cookie(router.port(), "two").await;
-    let one = request(router.port(), "one", "/api/config", Some(&one_cookie)).await;
-    let two = request(router.port(), "two", "/api/config", Some(&two_cookie)).await;
+    let refused = request(router.port(), "one", "/api/config", None).await;
+    assert!(refused.starts_with("HTTP/1.1 403 Forbidden"), "{refused}");
+    let PinState::Open { digits, .. } = access.pin() else {
+        panic!("a new control plane has an open PIN");
+    };
+    let login = log_in(router.port(), &digits).await;
+    let one = request(router.port(), "one", "/api/config", Some(&login)).await;
+    let two = request(router.port(), "two", "/api/config", Some(&login)).await;
     assert!(one.contains("\"branding\":\"one\""), "{one}");
     assert!(two.contains("\"branding\":\"two\""), "{two}");
 
-    let landing = request_master(router.port()).await;
-    assert!(landing.contains("one.zdesk.localhost"), "{landing}");
-    assert!(landing.contains("two.zdesk.localhost"), "{landing}");
+    let landing = request_master(router.port(), &login).await;
+    assert!(landing.contains("/__zdesk/open/one"), "{landing}");
+    assert!(landing.contains("/__zdesk/open/two"), "{landing}");
+
+    // A restarted worker has a new token, which the master presents for the
+    // browser: the login stands, whatever happened to the PIN since.
+    access.draw();
+    supervisor.restart("two", None).await.unwrap();
+    let restarted = request(router.port(), "two", "/api/config", Some(&login)).await;
+    assert!(restarted.contains("\"branding\":\"two\""), "{restarted}");
 
     supervisor.stop("one").await.unwrap();
-    let stopped = request(router.port(), "one", "/api/config", Some(&one_cookie)).await;
+    let stopped = request(router.port(), "one", "/api/config", Some(&login)).await;
     assert!(stopped.starts_with("HTTP/1.1 503 Service Unavailable"), "{stopped}");
-    let still_running = request(router.port(), "two", "/api/config", Some(&two_cookie)).await;
+    let still_running = request(router.port(), "two", "/api/config", Some(&login)).await;
     assert!(still_running.contains("\"branding\":\"two\""), "{still_running}");
     #[cfg(unix)]
     assert!(!root.path().join("one/gateway.sock").exists());
@@ -53,7 +66,7 @@ async fn instances_start_stop_and_share_the_master_port() {
     supervisor.shutdown().await;
     #[cfg(unix)]
     assert!(!root.path().join("two/gateway.sock").exists());
-    let gone = request(router.port(), "two", "/api/config", Some(&two_cookie)).await;
+    let gone = request(router.port(), "two", "/api/config", Some(&login)).await;
     assert!(gone.starts_with("HTTP/1.1 503 Service Unavailable"), "{gone}");
 }
 
@@ -68,9 +81,19 @@ fn free_port() -> u16 {
         .port()
 }
 
-async fn seed_cookie(port: u16, instance: &str) -> String {
-    let response = request(port, instance, "/", None).await;
-    assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{response}");
+/// Enter `pin` in the landing page's form, as a browser posts it, and return the
+/// login cookie it sets.
+async fn log_in(port: u16, pin: &str) -> String {
+    let body = format!("pin={pin}");
+    let response = raw_request(
+        port,
+        &format!(
+            "POST / HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: http://zdesk.localhost:{port}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    )
+    .await;
+    assert!(response.starts_with("HTTP/1.1 303 See Other"), "{response}");
     response
         .lines()
         .find_map(|line| {
@@ -78,7 +101,7 @@ async fn seed_cookie(port: u16, instance: &str) -> String {
             name.eq_ignore_ascii_case("set-cookie")
                 .then(|| value.trim().split(';').next().unwrap().to_owned())
         })
-        .expect("the control plane seeds the child token cookie")
+        .expect("the PIN logs the browser in")
 }
 
 async fn request(port: u16, instance: &str, path: &str, cookie: Option<&str>) -> String {
@@ -92,11 +115,11 @@ async fn request(port: u16, instance: &str, path: &str, cookie: Option<&str>) ->
     .await
 }
 
-async fn request_master(port: u16) -> String {
+async fn request_master(port: u16, cookie: &str) -> String {
     raw_request(
         port,
         &format!(
-            "GET / HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nConnection: close\r\n\r\n"
+            "GET / HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n"
         ),
     )
     .await

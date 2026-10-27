@@ -230,12 +230,16 @@ zdesk tui
 | `o` | 在浏览器中打开运行中的实例 |
 | Enter | 显示其设置 |
 | `R` | 重新扫描实例目录 |
+| `P` | 重新生成登录 PIN，并重新开始计时 |
+| `?` | 列出所有按键 |
 | `q`、Esc | 停止所有实例并退出 |
 
 实例根目录下的每个直接子目录就是一个实例：Linux 上为 `~/.local/share/zdesk/instances`（或 `$XDG_DATA_HOME/zdesk/instances`），macOS 上为 `~/Library/Application Support/zdesk/instances`，Windows 上为 `%LOCALAPPDATA%\zdesk\instances`；`--instances-dir` 可以指定其他目录。根目录只有你的账户能访问，因为配置中包含凭据。实例的配置与网关的配置有相同的 `[branding]` 和 `[[targets]]`，但没有 `[server]` 块：TUI 占用端口，并把每个子域名代理到该实例私有的 Unix 套接字或命名管道。
 
 引用了加密密码的配置需要主密码才能启动（见[目标密码](#目标密码)）。TUI 从钥匙串中获取主密码，首次时在那里生成，然后只把每个 worker 自己配置的密钥交给它。从另一个账户的钥匙串复制来的实例配置在本账户下打不开：删除其 `[master]` 和 `[passwords]`，再用 `p` 重新设置每个密码。
 
-私有文件和 worker 端点可以防止其他本地用户拿到凭据，但共享的回环监听器不验证操作系统用户：机器上的任何账户都可以打开首页并操作运行中的实例。不要在与不应访问这些桌面的用户共享的机器上运行 `zdesk tui`。
+浏览器用 PIN 登录。TUI 实例列表上方的访问面板显示一个六位数 PIN 及其过期的时刻，即生成后十分钟。没有登录的浏览器会看到输入 PIN 的表单，首页和每个实例上都是如此。`P` 重新生成 PIN 并重新开始计时。输错五次后 PIN 被撤销，在用 `P` 生成新的 PIN 之前，所有输入都会被拒绝。PIN 只保护新的登录。已经登录的浏览器在 PIN 过期或重新生成后、在其实例重启后都保持登录。只有退出 TUI 才会让它退出登录。在首页的登录通过页面上的链接到达每个实例，`o` 也经由首页打开实例。
+
+因此边界是能看到 TUI 终端的人，而不是机器上的所有账户。私有文件和 worker 端点可以防止其他本地用户拿到凭据。浏览器从不持有 worker 的令牌：TUI 代替已登录的浏览器出示它。浏览器进入网关只有两种方式：这个 PIN，或独立运行的网关的用户名和密码。
 
 见 [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)。

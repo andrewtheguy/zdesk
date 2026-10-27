@@ -553,6 +553,7 @@ is serving. Open <http://zdesk.localhost:52380>; each running instance is at
 | `o` | open a running one in the browser |
 | Enter | show its settings |
 | `R` | rescan the instances directory |
+| `P` | draw a new login PIN, its time started again |
 | `?` | list every key |
 | `q`, Esc | stop every instance and quit |
 
@@ -573,10 +574,20 @@ its own config. An instance config copied from another account's keychain
 does not open under this one: remove its `[master]` and `[passwords]` and set
 each password again with `p`.
 
-The private files and worker endpoints protect credentials from other local
-users, but the shared loopback listener does not authenticate the OS user: any
-account on the machine can open the landing page and drive a running instance.
-Do not run `zdesk tui` on a machine shared with users who must not reach those
-desktops. The TUI's access panel, above the instance list, says so too.
+A browser logs in with a PIN. The TUI's access panel, above the instance list,
+shows a six-digit PIN and the clock time it expires, ten minutes after it is
+drawn. A browser without a login is shown a form for it, on the landing page
+and on every instance. `P` draws a new PIN and starts its time again. After
+five wrong entries the PIN is withdrawn, and every entry is refused until `P`
+draws a new one. The PIN guards only new logins. A browser that has logged in
+stays logged in when the PIN expires or is drawn again, and when its instances
+restart. Only quitting the TUI logs it out. A login on the landing page reaches
+every instance through the page's links, and `o` opens an instance through it.
+
+The boundary is therefore whoever can see the TUI's terminal, not every account
+on the machine. The private files and worker endpoints keep credentials from
+other local users. A browser never holds a worker's token: the TUI presents it
+for a logged-in browser. A browser gets in to a gateway one of two ways: this
+PIN, or a served gateway's username and password.
 
 See [Local multi-instance control plane](architecture.md#local-multi-instance-control-plane).

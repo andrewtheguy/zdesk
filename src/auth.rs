@@ -16,10 +16,14 @@
 //! a credential: it is started for one managed browser instance. So it mints an
 //! [`EmbeddedToken`], hands it to its parent down a pipe (see [`crate::embedded`]),
 //! and takes it in the same `zdesk_session` cookie a login would have set. The
-//! parent control plane seeds it as an HttpOnly cookie on the instance subdomain,
-//! which lets one page load carry it to `/api/*` and to the WebSocket upgrades alike
-//! — a header cannot reach either from inside a document. Such a gateway still refuses `/api/auth/login`
-//! and `/api/auth/logout`: there is no credential to check and no session to end.
+//! token is not a browser's way in: the browser logs in to the parent control
+//! plane with the PIN its TUI shows, and the control plane adds the token to each
+//! request it forwards, `/api/*` and the WebSocket upgrades alike. Such a gateway
+//! still refuses `/api/auth/login` and `/api/auth/logout`: there is no credential
+//! to check and no session to end.
+//!
+//! So a browser has two ways in, one per kind of gateway: a served gateway's
+//! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -100,9 +104,9 @@ pub enum GatewayAuth {
     /// A web login: the `[server].site_passwd` credential, the `zdesk_session`
     /// cookie, and the [`AuthSessions`] behind it.
     Login(SitePasswd),
-    /// One token, minted at startup and given to the client that started this
-    /// gateway, which presents it as the same `zdesk_session` cookie a login
-    /// would have set. `/api/auth/login` and `/api/auth/logout` refuse on such a
+    /// One token, minted at startup and given to the control plane that started
+    /// this gateway, which presents it for its logged-in browsers as the same
+    /// `zdesk_session` cookie a login would have set. `/api/auth/login` and `/api/auth/logout` refuse on such a
     /// gateway: there is nothing to log in to and nothing to end.
     #[cfg(feature = "embedded-gateway")]
     Token(EmbeddedToken),
