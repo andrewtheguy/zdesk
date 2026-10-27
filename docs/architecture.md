@@ -3824,9 +3824,16 @@ origin. That route mints a one-time code bound to the instance, good for 30
 seconds and spent by its first use. The instance origin exchanges the code at
 `/__zdesk/handoff` for the same login under its own cookie.
 
+The master answers only `zdesk.localhost` and its subdomains, and only when the
+`Host` header names the master's own port, as a development server's allowed
+hosts do. Any other host or port gets a 403 before anything else is read. The
+TUI is for the machine it runs on, and this keeps a tunnel or port forward that
+reaches the port under its own name from reaching the PIN form or a login.
+
 A cookie is scoped by host and ignores the port, so the master sets its login
 only on `zdesk.localhost` and the instance subdomains. It answers `localhost`,
-`127.0.0.1` and `[::1]` with a redirect to `zdesk.localhost`, keeping the path,
+`127.0.0.1` and `[::1]` at its port with a redirect to `zdesk.localhost`,
+keeping the path,
 because a login set on a bare loopback name would be sent to every server the
 browser reaches by that name, every local development server among them.
 

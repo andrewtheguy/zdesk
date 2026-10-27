@@ -540,7 +540,10 @@ zdesk tui
 It listens on loopback only, on port 52380 unless `--port` or
 `ZDESK_TUI_PORT` says otherwise, and refuses to start on a port something else
 is serving. Open <http://zdesk.localhost:52380>; each running instance is at
-`http://<instance>.zdesk.localhost:52380`.
+`http://<instance>.zdesk.localhost:52380`. It answers only those names at its
+own port. `localhost`, `127.0.0.1` and `[::1]` at that port are redirected to
+`zdesk.localhost`. Any other host or port is refused, so a tunnel or port
+forward to it does not reach the TUI.
 
 | Key | Action |
 |---|---|
