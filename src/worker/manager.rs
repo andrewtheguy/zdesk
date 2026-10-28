@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use base64::Engine as _;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
@@ -221,6 +222,18 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                         message = match access.pin() {
                             PinState::Open { expires_at, .. } => format!("new PIN; it expires at {expires_at}"),
                             _ => "new PIN".to_owned(),
+                        };
+                    }
+                    Action::CopyPin => {
+                        message = match access.pin() {
+                            PinState::Open { digits, .. } => {
+                                let mut out = std::io::stdout().lock();
+                                out.write_all(&clipboard_write(&dashed(&digits)))
+                                    .and_then(|()| out.flush())
+                                    .context("cannot write to the terminal")?;
+                                copied_message()
+                            }
+                            _ => "no PIN is open; press P for a new one".to_owned(),
                         };
                     }
                     Action::Keys => {
@@ -692,6 +705,7 @@ enum Action {
     StartAll,
     Rescan,
     NewPin,
+    CopyPin,
     Keys,
     Quit,
 }
@@ -839,6 +853,14 @@ const BINDINGS: &[Binding] = &[
         bar: false,
     },
     Binding {
+        action: Action::CopyPin,
+        codes: &[KeyCode::Char('c')],
+        label: "copy PIN",
+        about: "copy the PIN to the clipboard through the terminal (OSC 52); Apple's Terminal.app ignores that",
+        group: Group::ControlPlane,
+        bar: false,
+    },
+    Binding {
         action: Action::Keys,
         codes: &[KeyCode::Char('?')],
         label: "keys",
@@ -939,14 +961,18 @@ const PIN_FONT: [[&str; 5]; 10] = [
 
 /// `digits` in [`PIN_FONT`], drawn in half blocks two rows of pixels to a row
 /// of the screen: three rows, a column between digits, and three between the
-/// halves of a six-digit PIN.
+/// halves of a six-digit PIN, the dash of `123-456` on the middle row of pixels.
 fn big_digits(digits: &str) -> [String; 3] {
     let mut rows: [String; 3] = Default::default();
     for (index, glyph) in digits.chars().filter_map(|digit| digit.to_digit(10)).enumerate() {
         let glyph = &PIN_FONT[glyph as usize];
         for (row, text) in rows.iter_mut().enumerate() {
             if index > 0 {
-                text.push_str(if index == 3 { "   " } else { " " });
+                text.push_str(match (index, row) {
+                    (3, 1) => " ▀ ",
+                    (3, _) => "   ",
+                    _ => " ",
+                });
             }
             let upper = glyph[2 * row].as_bytes();
             let lower = glyph.get(2 * row + 1).map(|pixels| pixels.as_bytes());
@@ -965,10 +991,32 @@ fn big_digits(digits: &str) -> [String; 3] {
     rows
 }
 
-/// A six-digit PIN as it is read out: two groups of three.
-fn grouped(digits: &str) -> String {
+/// The bytes that put `text` on the clipboard through the terminal: OSC 52,
+/// which the terminal emulator answers, so it reaches the clipboard of the
+/// machine whose screen this is, through SSH and tmux alike. iTerm2, kitty,
+/// WezTerm, Ghostty, Alacritty, foot and Windows Terminal take it; Apple's
+/// Terminal.app drops it, which is what the plain PIN on screen is for.
+fn clipboard_write(text: &str) -> Vec<u8> {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    format!("\x1b]52;c;{encoded}\x07").into_bytes()
+}
+
+/// What the status line says once the clipboard write has gone out. The
+/// terminal does not answer it, so the one emulator known to drop it is named
+/// by its own environment rather than left to look as if it copied.
+fn copied_message() -> String {
+    if std::env::var_os("TERM_PROGRAM").is_some_and(|program| program == "Apple_Terminal") {
+        "Terminal.app does not take a clipboard write; select the PIN instead".to_owned()
+    } else {
+        "PIN copied to the clipboard".to_owned()
+    }
+}
+
+/// A six-digit PIN as it is read out and typed: `123-456`. The dash keeps it one
+/// word for a double-click, and the landing page's field drops it.
+fn dashed(digits: &str) -> String {
     match digits.split_at_checked(3) {
-        Some((first, second)) => format!("{first} {second}"),
+        Some((first, second)) => format!("{first}-{second}"),
         None => digits.to_owned(),
     }
 }
@@ -977,14 +1025,14 @@ fn grouped(digits: &str) -> String {
 /// in with, in digits three rows tall beside what it is when they fit, or why no
 /// PIN can log anyone in.
 fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
-    let hint = ("press P for a new PIN".to_owned(), Some(Color::DarkGrey), false);
+    let hint = ("press P for a new PIN · c copies it".to_owned(), Some(Color::DarkGrey), false);
     let (heading, color, detail) = match pin {
         PinState::Open {
             digits,
             expires_at,
             minutes_left,
         } => (
-            format!("PIN {}", grouped(digits)),
+            format!("PIN {}", dashed(digits)),
             Color::Green,
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
@@ -2598,7 +2646,8 @@ mod tests {
         for row in big_digits("123456") {
             assert!(frame.contains(&row), "the PIN three rows tall: {frame}");
         }
-        assert!(frame.contains("PIN 123 456"), "{frame}");
+        assert!(frame.contains("PIN 123-456"), "{frame}");
+        assert!(frame.contains("press P for a new PIN · c copies it"), "{frame}");
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access "), "{frame}");
         assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
@@ -2618,9 +2667,18 @@ mod tests {
         for width in [36, 50] {
             let frame = render((width, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
             let frame = String::from_utf8(frame).unwrap();
-            assert!(frame.contains("PIN 123 456") && !frame.contains('█'), "{width}: {frame}");
+            assert!(frame.contains("PIN 123-456") && !frame.contains('█'), "{width}: {frame}");
             assert!(frame.contains("expires 14:32 · 10 min left"), "{width}: {frame}");
         }
+    }
+
+    /// The clipboard write is OSC 52 for the system clipboard, its text in
+    /// standard base64, ended by BEL: the form every emulator that takes the
+    /// sequence takes.
+    #[test]
+    fn the_pin_is_copied_through_the_terminal() {
+        assert_eq!(dashed("123456"), "123-456");
+        assert_eq!(clipboard_write(&dashed("123456")), b"\x1b]52;c;MTIzLTQ1Ng==\x07");
     }
 
     /// Every digit of the PIN's font is drawn differently, so none reads as
@@ -2633,7 +2691,14 @@ mod tests {
             assert_eq!(glyphs.iter().filter(|other| *other == glyph).count(), 1, "{digit}: {glyph:?}");
         }
         assert_eq!(big_digits("88"), ["█▀█ █▀█", "█▀█ █▀█", "▀▀▀ ▀▀▀"]);
-        assert_eq!(big_digits("123456")[0].chars().count(), 6 * 3 + 4 + 3);
+        // The gap between the halves, after three digits and their two columns
+        // apart, holds the dash on the middle row only.
+        let rows = big_digits("123456");
+        assert_eq!(rows[0].chars().count(), 6 * 3 + 4 + 3);
+        let gap = |row: &String| row.chars().skip(3 * 3 + 2).take(3).collect::<String>();
+        assert_eq!(gap(&rows[0]), "   ", "{}", rows[0]);
+        assert_eq!(gap(&rows[1]), " ▀ ", "{}", rows[1]);
+        assert_eq!(gap(&rows[2]), "   ", "{}", rows[2]);
     }
 
     /// The specs page answers from the config the instance would start on, and
