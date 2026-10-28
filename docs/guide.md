@@ -563,7 +563,7 @@ arrives as `zdesk.localhost` at this port, or rewrites the host to it, does.
 | `o` | open a running one in the browser |
 | Enter | show its settings |
 | `R` | rescan the instances directory |
-| `P` | draw a new login PIN, its time started again |
+| `P` | show a new login PIN for the next browser, its time started again |
 | `?` | list every key |
 | `q`, Esc | stop every instance and quit |
 
@@ -586,7 +586,7 @@ each password again with `p`.
 
 A browser logs in with a PIN. The TUI's access panel, above the instance list,
 shows a six-digit PIN and the clock time it expires, ten minutes after it is
-drawn. The PIN is printed as `123-456` in a colour of its own, one word for a
+generated. The PIN is printed as `123-456` in a colour of its own, one word for a
 double-click, and `c` sends it in that form to the
 clipboard through the terminal (OSC 52), which reaches your own clipboard over
 SSH. Inside tmux it goes into a tmux buffer, which tmux passes on to the
@@ -596,11 +596,14 @@ give the PIN, select it instead. The PIN field takes the PIN with or
 without its dash. The PIN is entered once, on whichever page the browser opened,
 the landing page or an instance, and the browser stays there. That one login
 reaches the landing page and every instance. A PIN page left open in another
-tab offers to continue instead once you switch back to it. `P` draws a new PIN and
-starts its time again. After five wrong entries the PIN is withdrawn, and every
-entry is refused until `P` draws a new one. The PIN guards only new logins. A
-browser that has logged in stays logged in when the PIN expires or is drawn
-again, and when its instances restart. Only quitting the TUI logs it out.
+tab offers to continue instead once you switch back to it. The PIN is one-time:
+it admits one new browser. Once it has, the access panel shows that a browser logged in and when,
+in place of the PIN, and the PIN no longer works. `P` shows a new PIN for the
+next browser and starts its time again. After five wrong entries the PIN is
+withdrawn, and every entry is refused until `P` shows a new one. The PIN form
+says which it was: used, expired or withdrawn. The PIN guards only new logins. A
+browser that has logged in stays logged in when the PIN is used, expires or is
+replaced, and when its instances restart. Only quitting the TUI logs it out.
 
 The PIN keeps out anyone who cannot see the TUI's terminal, with one gap. A
 cookie ignores the port, so another account on the machine that serves a page at

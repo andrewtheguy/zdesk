@@ -24,7 +24,7 @@ export default function PinLogin({
 }: {
   /** Display name shown as the form heading. */
   branding: string;
-  /** Why no PIN can log anyone in right now (expired, withdrawn), if so. */
+  /** Why no PIN can log anyone in right now (used, expired, withdrawn), if so. */
   problem: string | null;
 }) {
   const [pin, setPin] = useState("");

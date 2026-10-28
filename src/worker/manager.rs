@@ -218,7 +218,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                         selected = (selected + 1).min(instances.len().saturating_sub(1));
                     }
                     Action::NewPin => {
-                        access.draw();
+                        access.generate();
                         message = match access.pin() {
                             PinState::Open { expires_at, .. } => format!("new PIN; it expires at {expires_at}"),
                             _ => "new PIN".to_owned(),
@@ -845,7 +845,7 @@ const BINDINGS: &[Binding] = &[
         action: Action::NewPin,
         codes: &[KeyCode::Char('P')],
         label: "new PIN",
-        about: "a new login PIN, its time started again; logged-in browsers stay in",
+        about: "show a new login PIN for the next browser, its time started again; logged-in browsers stay in",
         group: Group::ControlPlane,
         bar: false,
     },
@@ -991,7 +991,8 @@ fn dashed(digits: &str) -> String {
 }
 
 /// The access panel's three rows: the PIN a browser logs in with, in a colour
-/// of its own beside its label, or why no new browser can log in with one.
+/// of its own beside its label, or why no new browser can log in with one. A
+/// PIN that has logged a browser in leaves the panel, and the panel says so.
 fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
     let hint = ("press P for a new PIN · c copies it".to_owned(), Some(Color::DarkGrey), false);
     // Browsers already logged in stay in whatever the PIN's state; only a new
@@ -1008,6 +1009,10 @@ fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
                 (dashed(digits), Some(Color::Magenta), true),
             ],
             format!("expires {expires_at} · {minutes_left} min left"),
+        ),
+        PinState::Used { at } => (
+            vec![(format!("PIN used: a browser logged in at {at}"), Some(Color::Green), true)],
+            refused.to_owned(),
         ),
         PinState::Expired => (
             vec![("PIN expired".to_owned(), Some(Color::Yellow), true)],
@@ -2594,7 +2599,7 @@ mod tests {
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
     }
 
-    /// The PIN is drawn in a colour of its own, apart from its label, and a PIN
+    /// The PIN is shown in a colour of its own, apart from its label, and a PIN
     /// that cannot log anyone in says that only new logins are refused.
     #[test]
     fn the_access_panel_sets_the_pin_apart() {
@@ -2611,7 +2616,11 @@ mod tests {
                 ("123-456".to_owned(), Some(Color::Magenta), true),
             ]
         );
-        for pin in [PinState::Expired, PinState::Withdrawn] {
+        let used = PinState::Used { at: "14:25".to_owned() };
+        let [heading, ..] = access_rows(&used);
+        assert_eq!(heading[0].0, "PIN used: a browser logged in at 14:25");
+        assert!(!format!("{:?}", access_rows(&used)).contains("123"), "the used PIN leaves the panel");
+        for pin in [used, PinState::Expired, PinState::Withdrawn] {
             let [_, detail, _] = access_rows(&pin);
             assert_eq!(detail[0].0, "no new browser can log in · logged-in ones stay in");
         }
@@ -2990,8 +2999,9 @@ mod tests {
             )
         };
 
-        let mut wrong_entries = 0;
         for host in ["zdesk.localhost", "one.zdesk.localhost"] {
+            // A PIN logs one browser in, so each host is entered with its own.
+            access.generate();
             let pin = pin_of(&access);
             for origin in ["http://evil.example".to_owned(), format!("http://{host}"), format!("http://other.zdesk.localhost:{port}")] {
                 let response = send(port, &post(host, origin.clone(), "000000")).await;
@@ -3000,10 +3010,9 @@ mod tests {
             }
 
             let wrong = if pin == "000000" { "000001" } else { "000000" };
-            wrong_entries += 1;
             let response = send(port, &post(host, format!("http://{host}:{port}"), wrong)).await;
             assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{host}: {response}");
-            let left = MAX_WRONG - wrong_entries;
+            let left = MAX_WRONG - 1;
             assert!(response.contains(&format!("{left} more wrong entries")), "only this one counted: {host}: {response}");
 
             let response = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
@@ -3015,6 +3024,9 @@ mod tests {
             assert!(cookie.starts_with(&format!("zdesk_login_{port}=")), "{cookie}");
             assert!(cookie.contains("; Domain=zdesk.localhost;") && cookie.contains("; HttpOnly; SameSite=Lax;"), "{cookie}");
             let login = cookie.split(';').next().unwrap();
+
+            let again = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
+            assert!(again.starts_with("HTTP/1.1 401 Unauthorized") && again.contains("already logged a browser in"), "{host}: {again}");
 
             let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
             assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{host}: {status}");
