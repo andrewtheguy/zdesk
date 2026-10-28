@@ -741,6 +741,9 @@ pub struct AudioWalk {
     /// The bridge whose remote codes the stream, told each rate the walk
     /// arrives at; `None` where the encoder is here.
     remote: Option<Arc<AudioBridge>>,
+    /// Since when the walk has been skipping, for the line that says how much
+    /// it skipped once it stops.
+    skipping_since: Option<Instant>,
 }
 
 impl AudioWalk {
@@ -749,7 +752,7 @@ impl AudioWalk {
     /// which every stream with a rate to move has, and `remote` the bridge of
     /// a remote that codes its own Opus.
     pub fn new(ceiling: i32, signals: Arc<AudioSignals>, remote: Option<Arc<AudioBridge>>) -> Self {
-        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)), signals, remote }
+        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)), signals, remote, skipping_since: None }
     }
 
     /// Whether to write a ping now, taken as written at `now` when it is.
@@ -788,12 +791,30 @@ impl AudioWalk {
         let moved = hear(&mut self.walk);
         self.signals.set_behind(self.walk.behind());
         self.signals.set_skipping(self.walk.skipping());
+        // A skip is sound the listener never hears, on either path: said when
+        // it starts and how long it ran once it ends, since a passed stream's
+        // units are dropped without a line of their own.
+        match (self.skipping_since, self.walk.skipping()) {
+            (None, true) => {
+                info!("audio: skipping sound until the link's queue drains");
+                self.skipping_since = Some(Instant::now());
+            }
+            (Some(since), false) => {
+                info!("audio: back to live after skipping {} ms of sound", since.elapsed().as_millis());
+                self.skipping_since = None;
+            }
+            _ => {}
+        }
         if let Some(bps) = moved {
             let bps = bps as i32;
-            debug!("audio: the walk asks for {} kbit/s", bps / 1000);
+            let from = self.signals.desired_bps();
             self.signals.set_desired_bps(bps);
+            // The encoder here says when it moves; a remote's is only asked.
             if let Some(remote) = &self.remote {
+                info!("audio: asked the remote's opus for {} kbit/s (from {})", bps / 1000, from / 1000);
                 remote.ask_rate(bps);
+            } else {
+                debug!("audio: the walk asks for {} kbit/s", bps / 1000);
             }
         }
     }

@@ -2671,7 +2671,10 @@ socket's `AudioLink`; the pump tells it how long each send waited on the
 socket's two-deep queue, heard as the longer of the two, and what each batch
 carried, its packets and bytes, so a clear pong behind quiet sound — a paused
 desktop's packets are three bytes at any rate — is no evidence of room at the
-rate. Two late pongs among four are a behind verdict. The walk gives a third
+rate. Two pings behind among the last four are a behind verdict, a ping
+heard overdue and then back counting once, and a ping out 400 ms is one
+alone: a Wi-Fi hop that holds everything a moment and lets it go is one ping
+late, and the next finds nothing queued. The walk gives a third
 up a step, more the longer the lag, and again a second later while the link
 stays far behind, down to the floor the crate fixes at 24 kbit/s — where Opus
 still codes a stereo stream as stereo and the whole band, so there is no floor
@@ -2679,9 +2682,11 @@ key — and takes rate back after three seconds of clear pongs in steps that
 double from a sixteenth of the ceiling, after one second once a step up the
 link took with nothing queued behind sound since, held under a rate the link
 refused, never past the ceiling. The walk pings no oftener than every 100 ms
-unless it is skipping, so a passed stream's 20 ms batches are not each pinged. A lag past 200 ms is sound that would be heard that late, and the
+unless it is skipping, so a passed stream's 20 ms batches are not each pinged. A lag past 200 ms on a verdict is sound that would be heard that late, and the
 walk skips it: every wave buffer is dropped before the encoder, and the socket
-pings back to back, until a pong says the queue has drained. A lag that does
+pings back to back, until a pong says the queue has drained. The log says
+when a skip starts and how long it ran, and each rate a passed stream's
+remote is asked for. A lag that does
 not drain while nothing is written is another stream's, and the walk measures
 over it from then. The change reaches the live encoder through
 `OPUS_SET_BITRATE`; packets stay 20 ms and independently decodable, so nothing
