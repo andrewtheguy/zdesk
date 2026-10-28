@@ -309,7 +309,8 @@ pub struct BatchUnit {
 }
 
 /// One `TILE` record parsed out of a batch frame: a rectangle of the desktop in the
-/// tiles the gateway codes, its image a JPEG or a PNG.
+/// tiles the gateway codes, its image a JPEG or a PNG; or in wlshare's tiles a WebP,
+/// or a progressive tile's block.
 #[allow(dead_code)]
 pub struct BatchTile {
     pub format: u8,
@@ -410,6 +411,8 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_JPEG => image.starts_with(&[0xff, 0xd8]),
                     batch::TILE_PNG => image.starts_with(b"\x89PNG"),
                     batch::TILE_WEBP => image.starts_with(b"RIFF") && image.get(8..12) == Some(b"WEBP"),
+                    // A first pass's block or an upgrade's: 0xCCC6 or 0xCCC7, little-endian.
+                    batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");

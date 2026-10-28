@@ -41,6 +41,7 @@ import init, {
   module as compiled,
   Egfx,
   type InitInput,
+  ProgressiveTiles,
   startPool,
   stopPool,
 } from "../wasm/egfx/pkg/zdesk_egfx.js";
@@ -148,6 +149,48 @@ export type DecodedFrame = Pick<
   VideoFrame,
   "format" | "visibleRect" | "allocationSize" | "copyTo"
 >;
+
+/**
+ * wlshare's progressive tiles as the page draws them: the module's RemoteFX
+ * Progressive decoder over the desktop, which keeps every tile's coefficients
+ * from one block to the next, so blocks go in in wire order.
+ */
+export interface ProgressiveDecoder {
+  /**
+   * The tile `block` is of, decoded against what this holds of it: `R, G, B, A`
+   * rows of the rectangle `x, y, w, h`, the block's tile cut by the edge of a
+   * `width`×`height` desktop, for the canvas to put there. Throws for a block that
+   * does not decode.
+   */
+  decode(
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    block: Uint8Array,
+  ): Uint8Array;
+  /** Give the module back what it holds of every tile. */
+  close(): void;
+}
+
+/**
+ * A progressive decoder out of the module, loaded and its threads started as for
+ * a compositor (`loadEgfx`).
+ */
+export async function loadProgressiveTiles(
+  source?: InitInput,
+  threads?: number,
+): Promise<ProgressiveDecoder> {
+  await loadEgfx(source, threads);
+  const tiles = new ProgressiveTiles();
+  return {
+    decode: (width, height, x, y, w, h, block) =>
+      tiles.decode(width, height, x, y, w, h, block),
+    close: () => tiles.free(),
+  };
+}
 
 export interface EgfxCompositor {
   /**

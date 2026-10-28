@@ -69,7 +69,8 @@ export type Passthrough =
   | "apple-adaptive"
   | "wlshare-vp9"
   | "wlshare-tiles-motion"
-  | "wlshare-tiles-adaptive";
+  | "wlshare-tiles-adaptive"
+  | "wlshare-tiles-progressive";
 
 /** One entry of GET /api/targets. */
 export interface TargetInfo {
@@ -431,6 +432,14 @@ function pictureOptions(
         ? "wlshare's tiles fitted to this browser's link: video only where the desktop moves, and what is still as lossy WebP. Fewer bytes than the tiles with motion; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.appleH264,
+    },
+    "wlshare-tiles-progressive": {
+      value: "wlshare-tiles-progressive",
+      label: "Progressive tiles (beta), passed through",
+      note: abilities.rdpGraphics
+        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Decoded by this page, with no video decoder; never lossless."
+        : RDP_GRAPHICS.blocked,
+      disabled: !abilities.rdpGraphics,
     },
   };
   const offered = target.passthroughs.flatMap((passthrough) =>

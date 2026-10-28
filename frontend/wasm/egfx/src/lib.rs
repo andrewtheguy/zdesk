@@ -28,6 +28,11 @@
 //! and iOS frees nothing of a worker ended there — not its instance, not the
 //! memory it shares — until its tab is closed. Stopped, each thread returns from
 //! [`run_pool_thread`], and its worker can be ended.
+//!
+//! wlshare's progressive tiles are decoded here too, by the same crate's
+//! RemoteFX Progressive decoder ([`ProgressiveTiles`]): each a tile block the
+//! page hands in order, put in a stream of its own with the protocol's tables
+//! (`wlshare_proto::progressive`), its tile's pixels handed back.
 
 use std::io;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -324,3 +329,62 @@ impl Default for Egfx {
         Self::new()
     }
 }
+
+/// wlshare's progressive tiles as the page draws them: one RemoteFX Progressive
+/// decoder over the desktop, which keeps every tile's coefficients from one block
+/// to the next. A desktop of another size starts it over.
+#[wasm_bindgen]
+pub struct ProgressiveTiles {
+    decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
+    size: (u32, u32),
+    frame: u32,
+}
+
+#[wasm_bindgen]
+impl ProgressiveTiles {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ProgressiveTiles {
+        ProgressiveTiles { decoder: Default::default(), size: (0, 0), frame: 0 }
+    }
+
+    /// The tile `block` is of, decoded against what this holds of it, as `R, G,
+    /// B, A` rows of the rectangle `x, y, w, h` — the block's tile cut by the edge
+    /// of a `width`×`height` desktop — for the page to put there.
+    ///
+    /// Throws for a block that does not decode, or that paints none of the
+    /// rectangle, after which the tile holds what it held before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
+        if self.size != (width, height) {
+            self.decoder = Default::default();
+            self.size = (width, height);
+        }
+        self.frame = self.frame.wrapping_add(1);
+        let stream = wlshare_proto::progressive::stream(self.frame, &[(x, y, w, h)], &[block]);
+        let (stride, mut out, mut painted) = (usize::from(w) * 4, vec![0u8; usize::from(w) * usize::from(h) * 4], false);
+        self.decoder.start_frame();
+        self.decoder
+            .decompress(1, width, height, &stream, usize::MAX, |rect, rows, from| {
+                painted = true;
+                let cols = usize::from(rect.right - rect.left);
+                for (row, y_at) in (rect.top..rect.bottom).enumerate() {
+                    let to = usize::from(y_at - y) * stride + usize::from(rect.left - x) * 4;
+                    for (px, src) in out[to..to + cols * 4].as_chunks_mut::<4>().0.iter_mut().zip(rows[row * from..].as_chunks::<4>().0) {
+                        px.copy_from_slice(&[src[0], src[1], src[2], 255]);
+                    }
+                }
+            })
+            .map_err(|e| JsError::new(&format!("a progressive tile at {x},{y}: {e}")))?;
+        if !painted {
+            return Err(JsError::new(&format!("a progressive tile at {x},{y} painted nothing")));
+        }
+        Ok(out)
+    }
+}
+
+impl Default for ProgressiveTiles {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+

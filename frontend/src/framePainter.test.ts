@@ -185,6 +185,7 @@ class FakeVideoDecoder {
 }
 
 const globals = globalThis as unknown as {
+  ImageData: unknown;
   VideoDecoder: unknown;
   EncodedVideoChunk: unknown;
   createImageBitmap: unknown;
@@ -1833,11 +1834,11 @@ test("a malformed batch ends a Mac's own picture", async () => {
 });
 
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
-// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG), x, y, w and h as u16, a u32
-// length, the image, little-endian.
+// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 WebP, 4 a progressive
+// tile), x, y, w and h as u16, a u32 length, the image, little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3;
+    format: 1 | 2 | 3 | 4;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1928,6 +1929,112 @@ test("a tile that does not decode asks for the whole picture, and the rest are d
   );
   assert.equal(videoKeyframeAsks.length, 1);
   assert.match(videoKeyframeAsks[0], /a tile did not decode/);
+});
+
+test("wlshare's progressive tiles are decoded in wire order by one decoder and put where they say, and a new picture starts it over", async () => {
+  const put: string[] = [];
+  const ctx = {
+    canvas: { width: 100, height: 80 },
+    putImageData(
+      image: { data: Uint8ClampedArray; width: number; height: number },
+      x: number,
+      y: number,
+    ) {
+      put.push(`${image.data[0]} ${image.width}x${image.height} at ${x},${y}`);
+    },
+    drawImage() {
+      put.push("an image");
+    },
+  } as unknown as CanvasRenderingContext2D;
+  const calls: string[] = [];
+  let made = 0;
+  let closed = 0;
+  const p = createFramePainter({
+    context: () => ctx,
+    onVideoError: (error) => {
+      videoErrors.push(error);
+    },
+    onVideoNeedsKeyframe: (reason) => {
+      videoKeyframeAsks.push(reason);
+    },
+    loadProgressive: async () => {
+      made += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        decode(width, height, x, y, w, h, block) {
+          calls.push(`${width}x${height} ${x},${y} ${w}x${h} [${block[0]}]`);
+          if (block[0] === 0xee) {
+            throw new Error("not a tile block");
+          }
+          const rgba = new Uint8Array(w * h * 4);
+          rgba[0] = block[0];
+          return rgba;
+        },
+        close() {
+          closed += 1;
+        },
+      };
+    },
+  });
+  globals.ImageData = class {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    constructor(data: Uint8ClampedArray, width: number, height: number) {
+      this.data = data;
+      this.width = width;
+      this.height = height;
+    }
+  };
+
+  try {
+    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [1] }]));
+    assert.deepEqual(put, [], "a progressive tile before the tiles' start");
+    assert.equal(made, 0);
+    p.startTiles();
+    // The decoder loads on the first, and each waits its turn behind it.
+    await p.draw(
+      tileFrame([
+        { format: 4, at: [0, 0, 64, 64], image: [1] },
+        { format: 4, at: [64, 64, 36, 16], image: [2] },
+        { format: 2, at: [0, 64, 64, 16], image: [3] },
+        { format: 4, at: [0, 0, 64, 64], image: [4] },
+      ]),
+    );
+    assert.deepEqual(calls, [
+      "100x80 0,0 64x64 [1]",
+      "100x80 64,64 36x16 [2]",
+      "100x80 0,0 64x64 [4]",
+    ]);
+    assert.deepEqual(put, [
+      "1 64x64 at 0,0",
+      "2 36x16 at 64,64",
+      "an image",
+      "4 64x64 at 0,0",
+    ]);
+    assert.equal(made, 1, "one decoder for the picture");
+    // One that does not decode asks for the whole picture, and the rest are drawn.
+    await p.draw(
+      tileFrame([
+        { format: 4, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 4, at: [64, 0, 36, 64], image: [5] },
+      ]),
+    );
+    assert.equal(put.at(-1), "5 36x64 at 64,0");
+    assert.equal(videoKeyframeAsks.length, 1);
+    assert.match(videoKeyframeAsks[0], /a progressive tile did not decode/);
+    // A picture that starts over gives the decoder back; the next tile makes one.
+    p.startTiles();
+    await waited(0);
+    assert.equal(closed, 1);
+    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [6] }]));
+    assert.equal(made, 2);
+    p.clear();
+    await waited(0);
+    assert.equal(closed, 2, "the attachment's end gives it back too");
+  } finally {
+    globals.ImageData = undefined;
+  }
 });
 
 test("a malformed batch of tiles asks for the whole picture", async () => {

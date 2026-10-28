@@ -14,6 +14,8 @@ import {
   type GpuArea,
   type H264Unit,
   loadEgfx,
+  loadProgressiveTiles,
+  type ProgressiveDecoder,
   type RunPlan,
 } from "./egfxCompositor.ts";
 import type { GraphicsPicture, PicturePart } from "./egfxPicture.ts";
@@ -178,6 +180,11 @@ export function createFramePainter(options: {
    */
   loadStandard?: () => Promise<StandardFactory>;
   /**
+   * Where wlshare's progressive tiles are decoded: the compositor's module,
+   * loaded on the first one. Injectable for a test, as the compositor's is.
+   */
+  loadProgressive?: () => Promise<ProgressiveDecoder>;
+  /**
    * Where a pipeline's picture comes from: the WebGL canvas the page shows it on
    * (egfxPicture.ts). A painter given none composes no pipeline.
    */
@@ -271,6 +278,20 @@ export function createFramePainter(options: {
   const releaseRegions = () => {
     regions?.close();
     regions = null;
+  };
+
+  // The decoder of wlshare's progressive tiles, from the first one: what it holds
+  // of each tile is what wlshare's next block of that tile is coded against, so it
+  // lives as long as the tiles do, and a `tilesStart`, whose picture wlshare sends
+  // whole again, starts it over.
+  const loadProgressive =
+    options.loadProgressive ?? (() => loadProgressiveTiles());
+  let progressive: Promise<ProgressiveDecoder> | null = null;
+
+  const releaseProgressive = () => {
+    // One that never loaded holds nothing.
+    progressive?.then((decoder) => decoder.close()).catch(() => {});
+    progressive = null;
   };
 
   // The cache of wlshare's tiles: `CACHE_SLOTS` tiles in a grid `CACHE_SIDE` wide
@@ -682,7 +703,7 @@ export function createFramePainter(options: {
   // One tile's image, decoded by the browser off this thread as soon as its batch
   // lands: null for a record that is no tile, or a tile of no picture of tiles.
   const tileImage = (record: BatchRecord): Promise<ImageBitmap> | null => {
-    if (record.kind !== "tile" || !tiles) {
+    if (record.kind !== "tile" || record.format === "progressive" || !tiles) {
       return null;
     }
     const type = `image/${record.format}`;
@@ -730,6 +751,58 @@ export function createFramePainter(options: {
     } finally {
       image.close();
     }
+  };
+
+  // One of wlshare's progressive tiles, decoded in its turn against what the
+  // decoder holds of the tile and put where it says. One that does not decode, or
+  // a decoder that does not load, leaves the canvas without it, so the whole
+  // picture is asked for, as for a tile that does not decode.
+  const paintProgressive = async (record: TileMsg, born: number) => {
+    if (!tiles) {
+      return;
+    }
+    progressive ??= loadProgressive();
+    let rgba: Uint8Array;
+    try {
+      const decoder = await progressive;
+      const ctx = options.context();
+      if (generation !== born || !tiles || !ctx) {
+        return;
+      }
+      const { x, y, w, h, data } = record;
+      rgba = decoder.decode(
+        ctx.canvas.width,
+        ctx.canvas.height,
+        x,
+        y,
+        w,
+        h,
+        data,
+      );
+      ctx.putImageData(
+        new ImageData(
+          new Uint8ClampedArray(
+            rgba.buffer as ArrayBuffer,
+            rgba.byteOffset,
+            rgba.byteLength,
+          ),
+          w,
+          h,
+        ),
+        x,
+        y,
+      );
+    } catch (error) {
+      if (generation === born && tiles) {
+        options.onVideoNeedsKeyframe(
+          `a progressive tile did not decode: ${describe(error)}`,
+        );
+      }
+      return;
+    }
+    // The desktop's own canvas is the picture again.
+    hidePlanes();
+    painted();
   };
 
   // What the canvas holds elsewhere, drawn in its turn: a scroll, or a window moved,
@@ -1042,7 +1115,11 @@ export function createFramePainter(options: {
         await paintStandard(record, born);
         return;
       case "tile":
-        await paintTile(record, image, born);
+        if (record.format === "progressive") {
+          await paintProgressive(record, born);
+        } else {
+          await paintTile(record, image, born);
+        }
         return;
       case "copy":
         paintCopy(record, born);
@@ -1081,6 +1158,7 @@ export function createFramePainter(options: {
       generation += 1;
       releaseVideo();
       releaseCache();
+      releaseProgressive();
       // The next attachment names its own part, ahead of any run, and its own
       // size, ahead of any picture.
       graphicsPart = null;
@@ -1169,6 +1247,7 @@ export function createFramePainter(options: {
     startTiles() {
       releaseVideo();
       tiles = true;
+      releaseProgressive();
       regions = createRegionStreams({
         handlers: {
           onError: complainAboutVideo,

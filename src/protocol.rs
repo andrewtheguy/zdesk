@@ -419,8 +419,9 @@ pub enum ClientMsg {
 ///
 /// A `TILE` record is a rectangle of the desktop in the tiles this gateway codes, an
 /// image the browser decodes on its own — see [`TileUnit`]. Its format is
-/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`] or [`batch::TILE_WEBP`], and a receiver rejects any other, an
-/// empty rectangle and one with no image.
+/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`], [`batch::TILE_WEBP`] or
+/// [`batch::TILE_PROGRESSIVE`], and a receiver rejects any other, an empty rectangle
+/// and one with no image.
 ///
 /// A `REGION` record is an access unit of one moving region's stream in wlshare's
 /// tiles, H.264 as its `regionFormat` said, passed as wlshare sent it — see
@@ -468,6 +469,11 @@ pub mod batch {
     pub const TILE_PNG: u8 = 0x02;
     /// A `TILE` record's image is a lossy WebP: a still of wlshare's adaptive tiles.
     pub const TILE_WEBP: u8 = 0x03;
+    /// A `TILE` record's image is one RemoteFX Progressive tile block of wlshare's
+    /// progressive tiles, of the rectangle's tile: the page decodes it in order,
+    /// keeping every tile's coefficients from one to the next
+    /// (`wlshare_proto::progressive`).
+    pub const TILE_PROGRESSIVE: u8 = 0x04;
 
 
     /// Bytes a `REGION` record costs besides its payload.

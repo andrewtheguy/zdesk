@@ -2881,11 +2881,13 @@ impl Listing {
 
 /// `encodings` with wlshare's tiles encoding ahead of them, and beside it what
 /// the picture is to be, from the plan: the dial as the ceiling, the same `WLQ`
-/// the VP9 is asked at, and `WLSD` for its tiles with motion, which hold the dial
-/// rather than walking it, as the VP9's list says it; its adaptive tiles walk.
+/// the VP9 is asked at, `WLSD` for its tiles with motion, which hold the dial
+/// rather than walking it, as the VP9's list says it, and `WLSP` for its
+/// progressive tiles; its adaptive and progressive tiles walk.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let mut listed = wlshare_proto::tiles::TilesPicture { quality: plan.quality, adaptive: plan.adaptive }.encodings();
+    let picture = wlshare_proto::tiles::TilesPicture { quality: plan.quality, adaptive: plan.adaptive, progressive: plan.wlshare_progressive };
+    let mut listed = picture.encodings();
     listed.extend_from_slice(encodings);
     listed
 }
@@ -6202,8 +6204,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
         // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
-        // stream over it, that stream's end, or a copy of what the browser holds
-        // elsewhere, each passed to the browser untouched.
+        // stream over it, that stream's end, a copy of what the browser holds
+        // elsewhere, or a progressive tile, each passed to the browser untouched.
         // Past the ceiling, those wlshare sent of the resized desktop before the list
         // without them reached it are dropped while the picture is held, as the VP9's
         // are, and refused in a session that sized the remote; the list it answers
@@ -6224,7 +6226,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             reader.read_exact(&mut header[1..used]).await?;
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
-                TileHeader::Png { len } | TileHeader::Webp { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } => len,
+                TileHeader::Png { len } | TileHeader::Webp { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } => len,
                 TileHeader::End { .. } | TileHeader::Copy { .. } | TileHeader::Cached { .. } | TileHeader::Store { .. } => 0,
             };
             let mut body = vec![0u8; len];
@@ -6241,6 +6243,22 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 }
                 TileHeader::Png { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body).await?,
                 TileHeader::Webp { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Webp, body).await?,
+                // One tile on the grid, cut by the desktop's edge, and the block's own
+                // tile the rectangle's: the page decodes it there against what it holds.
+                TileHeader::Progressive { .. } => {
+                    let tile = wlshare_proto::tiles::TILE;
+                    let whole = |at: u16, side: u16| tile.min(side - at);
+                    anyhow::ensure!(
+                        x % tile == 0 && y % tile == 0 && (w, h) == (whole(x, size.0), whole(y, size.1)),
+                        "server sent a progressive tile of {w}x{h}+{x}+{y}, not one {tile}x{tile} tile on the grid"
+                    );
+                    let cell = wlshare_proto::progressive::tile_of(&body);
+                    anyhow::ensure!(
+                        cell == Some((x / tile, y / tile)),
+                        "server sent a progressive tile at {x},{y} whose block is {cell:?}, not that tile"
+                    );
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Progressive, body).await?
+                }
                 TileHeader::Start { stream, .. } => sink.pass_region(stream, x, y, w, h, true, body).await?,
                 TileHeader::Frame { stream, .. } => sink.pass_region(stream, x, y, w, h, false, body).await?,
                 TileHeader::Copy { x: sx, y: sy } => {
@@ -9317,9 +9335,9 @@ mod tests {
         assert_eq!(wlshare_proto::vp9::ENCODING_VP9_HELD, i32::from_be_bytes(*b"WLSD"));
         assert_eq!(wlshare_proto::vp9::ENCODING_VP9_QUALITY_BASE, i32::from_be_bytes(*b"WLQ\0"));
         let rest = [ENCODING_ZRLE, ENCODING_DENSITY];
-        let walked = RenderPlan { quality: 60, adaptive: true, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv444 };
+        let walked = RenderPlan { quality: 60, adaptive: true, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv444 };
         assert_eq!(with_wlshare_vp9(&rest, walked), [ENCODING_VP9, 0x574c_513c, ENCODING_ZRLE, ENCODING_DENSITY]);
-        let held = RenderPlan { quality: 90, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv444 };
+        let held = RenderPlan { quality: 90, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv444 };
         assert_eq!(
             with_wlshare_vp9(&rest, held),
             [ENCODING_VP9, 0x574c_515a, wlshare_proto::vp9::ENCODING_VP9_HELD, ENCODING_ZRLE, ENCODING_DENSITY]
@@ -9340,14 +9358,16 @@ mod tests {
         use crate::config::RenderPlan;
         assert_eq!(ENCODING_TILES, i32::from_be_bytes(*b"WLST"));
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
-        let tiles = RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, chroma: crate::vp9::Chroma::Yuv420 };
+        let tiles = RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv420 };
         let lists = Listing::new(rest.clone(), tiles);
         assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "held: WLSD beside the dial");
         assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
         let walked = Listing::new(rest.clone(), RenderPlan { adaptive: true, ..tiles });
         assert_eq!(walked.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_DENSITY], "walked: no WLSD");
+        let progressive = Listing::new(rest.clone(), RenderPlan { adaptive: true, wlshare_progressive: true, ..tiles });
+        assert_eq!(progressive.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, 0x574c_5350, ENCODING_ZRLE, ENCODING_DENSITY], "progressive: WLSP beside the walked dial");
 
-        let vp9 = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: false, ..tiles });
+        let vp9 = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: false, wlshare_progressive: false, ..tiles });
         assert_eq!(vp9.listed((1280, 800))[0], ENCODING_VP9);
         assert_eq!(vp9.listed((7680, 4320)), rest, "the VP9 past the ceiling");
     }
@@ -10662,7 +10682,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
-            wlshare: true, wlshare_tiles: false,
+            wlshare: true, wlshare_tiles: false, wlshare_progressive: false,
             chroma: crate::vp9::Chroma::Yuv444,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
@@ -10680,7 +10700,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
-            wlshare: true, wlshare_tiles: true,
+            wlshare: true, wlshare_tiles: true, wlshare_progressive: false,
             chroma: crate::vp9::Chroma::Yuv420,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
@@ -10719,7 +10739,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
-            wlshare: true, wlshare_tiles: false,
+            wlshare: true, wlshare_tiles: false, wlshare_progressive: false,
             chroma: crate::vp9::Chroma::Yuv444,
         };
         let sink = VideoSink::new("vnc", frame_tx, plan, feedback, Oversize::Refuse);
@@ -13422,6 +13442,69 @@ mod tests {
         }
     }
 
+    /// A progressive tile as these tests send one: its rectangle, `(x, y, w, h)`,
+    /// and the tile its block names.
+    #[cfg(feature = "wlshare")]
+    type ProgressiveTile = ((u16, u16, u16, u16), (u16, u16));
+
+    /// An update of wlshare's progressive tiles, each a first pass's block, and a
+    /// fence asking an echo of `marker`.
+    #[cfg(feature = "wlshare")]
+    fn wlshare_progressive_update(tiles: &[ProgressiveTile], marker: &[u8]) -> Vec<u8> {
+        let mut msg = vec![0u8, 0];
+        msg.extend_from_slice(&(tiles.len() as u16).to_be_bytes());
+        for &((x, y, w, h), cell) in tiles {
+            for field in [x, y, w, h] {
+                msg.extend_from_slice(&field.to_be_bytes());
+            }
+            msg.extend_from_slice(&ENCODING_TILES.to_be_bytes());
+            msg.push(wlshare_proto::tiles::KIND_PROGRESSIVE);
+            let mut first = vec![0u8, 1, 2];
+            first.extend_from_slice(&cell.0.to_le_bytes());
+            first.extend_from_slice(&cell.1.to_le_bytes());
+            first.extend_from_slice(&[0; 11]);
+            let block = wlshare_proto::progressive::block(wlshare_proto::progressive::WBT_TILE_FIRST, &first);
+            msg.extend_from_slice(&(block.len() as u32).to_be_bytes());
+            msg.extend_from_slice(&block);
+        }
+        msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
+        msg
+    }
+
+    /// wlshare's progressive tiles are passed as tiles of their own format, each one
+    /// tile on the grid cut by the desktop's edge whose block is that tile's; one off
+    /// the grid, of another size, or whose block is another tile's, is fatal.
+    #[cfg(feature = "wlshare")]
+    #[tokio::test]
+    async fn wlshares_progressive_tiles_are_passed_one_tile_each() {
+        let size = (100, 80);
+        let (uplink, _sent) = test_uplink();
+        let (sink, mut rx) = sized_sink(size).await;
+        let mut shared = test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
+        shared.passthrough = Some(test_tiles_listing());
+        let wire = wlshare_progressive_update(&[((0, 0, 64, 64), (0, 0)), ((64, 0, 36, 64), (1, 0)), ((64, 64, 36, 16), (1, 1))], b"p1");
+        let task = open_read_loop(wire, shared, sink);
+        assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
+        for place in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)] {
+            let Some(ServerMsg::Tile(unit)) = rx.recv().await else { panic!("a tile") };
+            assert_eq!((unit.format, (unit.x, unit.y, unit.w, unit.h)), (crate::tiles::Format::Progressive, place));
+            assert_eq!(wlshare_proto::progressive::tile_of(&unit.data), Some((place.0 / 64, place.1 / 64)), "the block as it came");
+        }
+        task.abort();
+        for (tile, says) in [
+            (((16, 0, 64, 64), (0, 0)), "not one 64x64 tile on the grid"),
+            (((0, 0, 64, 32), (0, 0)), "not one 64x64 tile on the grid"),
+            (((64, 0, 36, 64), (0, 0)), "whose block is Some((0, 0)), not that tile"),
+        ] {
+            let (uplink, _sent) = test_uplink();
+            let (sink, _rx) = sized_sink(size).await;
+            let mut shared = test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
+            shared.passthrough = Some(test_tiles_listing());
+            let err = read_loop(std::io::Cursor::new(wlshare_progressive_update(&[tile], b"p1")), shared, false, None, sink).await.unwrap_err();
+            assert!(format!("{err:#}").contains(says), "{tile:?}: {err:#}");
+        }
+    }
+
     /// A session lists one of wlshare's pictures, and the other arriving is refused as
     /// any encoding not listed is: tiles in a VP9 session, VP9 in a tiles session.
     #[cfg(feature = "wlshare")]
@@ -13450,7 +13533,7 @@ mod tests {
         for oversize in [Oversize::Hold, Oversize::Refuse] {
             let (uplink, sent) = test_uplink();
             let (frame_tx, mut rx) = mpsc::channel(64);
-            let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, chroma: crate::vp9::Chroma::Yuv420 };
+            let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv420 };
             let sink = VideoSink::new("vnc", frame_tx, plan, Arc::new(crate::feedback::LinkFeedback::new()), oversize);
             sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
             let mut shared = test_shared(uplink, shared_desktop(small, None, None), test_shadow(small));
@@ -13656,7 +13739,7 @@ mod tests {
         let (small, big) = ((64, 32), (5376, 2288));
         let (uplink, sent) = test_uplink();
         let (frame_tx, mut rx) = mpsc::channel(64);
-        let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv420 };
+        let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv420 };
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());
         let sink = VideoSink::new("vnc", frame_tx, plan, feedback, Oversize::Hold);
         sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
@@ -14255,7 +14338,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
+            wlshare: false, wlshare_tiles: false, wlshare_progressive: false,
             chroma: crate::vp9::Chroma::Yuv420,
         };
         let (frames, mut tab_rx) = mpsc::channel(8);
@@ -14298,7 +14381,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
+            wlshare: false, wlshare_tiles: false, wlshare_progressive: false,
             chroma: crate::vp9::Chroma::Yuv420,
         };
         let feed = || {

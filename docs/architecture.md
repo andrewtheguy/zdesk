@@ -535,10 +535,10 @@ since neither end keeps an older layout. That version is also what
 leaves the extensions alone is no reason to move the pin; one that changes
 them is a new version and a new tag.
 
-A `wlshare` target lists one of wlshare's three pictures for every browser,
+A `wlshare` target lists one of wlshare's four pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
 (`Passthrough::WlshareVp9`, `Passthrough::WlshareTilesMotion`,
-`Passthrough::WlshareTilesAdaptive`), and passes its
+`Passthrough::WlshareTilesAdaptive`, `Passthrough::WlshareTilesProgressive`), and passes its
 frames untouched. Its VP9, *Video*, is the picture of a session that names
 none, listed with the plan's dial, walk and chroma as pseudo-encodings beside
 it. Its tiles with motion, exact PNG tiles where the desktop is still and a
@@ -550,7 +550,19 @@ and `WLSD`, every region held at it and every still exact. Its adaptive
 tiles are the same tiles listed with the dial alone, so that wlshare walks it
 as it walks the VP9, the regions following it and every still a lossy WebP at
 it, never made exact: the tiles' encoder time for a link that is not always
-wide. Neither selects a chroma, 4:2:0 for every browser. A server that ignores the listing is sent as tiles
+wide. Neither selects a chroma, 4:2:0 for every browser. Its progressive tiles
+are the adaptive tiles' walk listed with `WLSP` beside it: every tile, still or
+moving, one RemoteFX Progressive tile block, as a Windows host draws its desktop
+where it has no H.264 — a coarse first pass refined in place once it is still,
+a changed tile the difference from what the page holds — and no stream. Each
+is checked to be one 64×64 tile on the grid, cut by the desktop's edge, whose
+block names that tile, and passed as a `TILE` record of its own format
+(`TILE_PROGRESSIVE`). The page decodes them in wire order with the module that
+composes an RDP host's pipeline, its RemoteFX Progressive decoder over the
+desktop, each block put in a stream of its own with the protocol's tables
+(`wlshare_proto::progressive`), which never cross the link: so they need no
+video decoder, and a page that cannot compose the pipeline cannot take them
+either. A server that ignores the listing is sent as tiles
 from its ZRLE. Do not transcode a passed frame, pass one at a chroma other than
 the plan's, ask wlshare for the plan with a client message, or add a key that
 selects the picture, or a key or a choice that selects its chroma. See
@@ -2339,8 +2351,9 @@ and `GET /api/targets` carries it:
   passthrough at all. A `wlshare` target's Picture group is Video, passed
   through, wlshare's VP9, which `connect` names as `wlshare-vp9` and which a
   session that names none is sent, taken first, Tiles with motion, passed
-  through, `wlshare-tiles-motion`, and Adaptive tiles, passed through,
-  `wlshare-tiles-adaptive`.
+  through, `wlshare-tiles-motion`, Adaptive tiles, passed through,
+  `wlshare-tiles-adaptive`, and Progressive tiles (beta), passed through,
+  `wlshare-tiles-progressive`.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
@@ -2352,8 +2365,9 @@ and `GET /api/targets` carries it:
   under Combined Display, which is the gateway's tiles. A `wlshare` target's
   Video, VP9, is greyed in a browser whose decoder refuses VP9, and its tiles
   with motion, whose moving regions are H.264, in one with no `VideoDecoder`,
-  as the Mac's H.264 is; a browser that takes neither cannot start the
-  target. `/api/targets`
+  as the Mac's H.264 is; its progressive tiles in a page that cannot compose
+  an RDP host's pipeline, whose module decodes them; a browser that takes
+  none of them cannot start the target. `/api/targets`
   says which streams a target can pass, as `passthroughs`; on `rdp`, `wlshare`
   and `ard-high-performance` the picture is always one of them, while a
   Standard Mac's Full quality, which names none, is tiles coded here. For the pipeline the picker says the stream is always

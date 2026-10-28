@@ -86,8 +86,8 @@ const STANDARD = target({
   standardView: true,
 });
 
-// As the gateway lists a `wlshare` target: its VP9, its tiles with motion and its
-// adaptive tiles, all wlshare's own, passed.
+// As the gateway lists a `wlshare` target: its VP9, its tiles with motion, its
+// adaptive tiles and its progressive tiles, all wlshare's own, passed.
 const WLSHARE = target({
   subtype: "wlshare",
   resize: true,
@@ -96,6 +96,7 @@ const WLSHARE = target({
     "wlshare-vp9",
     "wlshare-tiles-motion",
     "wlshare-tiles-adaptive",
+    "wlshare-tiles-progressive",
   ],
   camera: true,
   microphone: true,
@@ -205,12 +206,13 @@ test("only what the target's type offers has a row", () => {
   const plain = targetOptions(target({}), undefined, ABLE);
   assert.equal(plain.pictures, null);
   assert.equal(plain.soundRow, null);
-  // wlshare's picture is one of its three, its VP9 first, and its sound a choice.
+  // wlshare's picture is one of its four, its VP9 first, and its sound a choice.
   const wlshare = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(wlshare), [
     ["wlshare-vp9", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-adaptive", false],
+    ["wlshare-tiles-progressive", false],
   ]);
   assert.equal(wlshare.choices.passthrough, "wlshare-vp9");
   assert.deepEqual(formats(wlshare), ["opus", "flac"]);
@@ -536,6 +538,7 @@ test("a wlshare target's picture is its VP9 or either of its tiles, passed", () 
     ["wlshare-vp9", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-adaptive", false],
+    ["wlshare-tiles-progressive", false],
   ]);
   assert.equal(options.choices.passthrough, "wlshare-vp9", "the first");
   const tiles = targetOptions(
@@ -552,6 +555,13 @@ test("a wlshare target's picture is its VP9 or either of its tiles, passed", () 
   );
   assert.equal(adaptive.choices.passthrough, "wlshare-tiles-adaptive");
   assert.equal(adaptive.blocked, null);
+  const progressive = targetOptions(
+    WLSHARE,
+    { passthrough: "wlshare-tiles-progressive" },
+    ABLE,
+  );
+  assert.equal(progressive.choices.passthrough, "wlshare-tiles-progressive");
+  assert.equal(progressive.blocked, null);
   // A picture remembered from another target's kind is not this one's.
   assert.equal(
     targetOptions(WLSHARE, { passthrough: "apple-media" }, ABLE).choices
@@ -607,20 +617,38 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
     ["wlshare-vp9", true],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-adaptive", false],
+    ["wlshare-tiles-progressive", false],
   ]);
   assert.match(tiles.pictures?.[0].note ?? "", /does not decode VP9/);
   assert.equal(tiles.choices.passthrough, "wlshare-tiles-motion");
   assert.equal(tiles.blocked, null);
-  // With no `VideoDecoder`, neither.
+  // With no `VideoDecoder`, neither: the progressive tiles, which this page
+  // decodes, are the picture.
+  const videoless = targetOptions(WLSHARE, undefined, {
+    ...ABLE,
+    vp9: false,
+    appleH264: false,
+  });
+  assert.deepEqual(pictures(videoless), [
+    ["wlshare-vp9", true],
+    ["wlshare-tiles-motion", true],
+    ["wlshare-tiles-adaptive", true],
+    ["wlshare-tiles-progressive", false],
+  ]);
+  assert.equal(videoless.choices.passthrough, "wlshare-tiles-progressive");
+  assert.equal(videoless.blocked, null);
+  // And with no module to decode those either, nothing.
   const unable = targetOptions(WLSHARE, undefined, {
     ...ABLE,
     vp9: false,
     appleH264: false,
+    rdpGraphics: false,
   });
   assert.deepEqual(pictures(unable), [
     ["wlshare-vp9", true],
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-adaptive", true],
+    ["wlshare-tiles-progressive", true],
   ]);
   assert.match(unable.blocked ?? "", /none of wlshare's pictures/);
   // A plain target, read through the RFB baseline, is sent the tiles.

@@ -190,11 +190,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wlshare-proto"
+version = "6.0.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "zdesk-egfx"
 version = "0.0.0"
 dependencies = [
  "rayon",
  "wasm-bindgen",
+ "wlshare-proto",
  "zdesk-rdp-graphics",
 ]
 

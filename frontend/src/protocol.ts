@@ -237,7 +237,8 @@ export type ControlMsg =
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
       // "apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9" or
-      // "wlshare-tiles-motion", "wlshare-tiles-adaptive" — or null for a desktop
+      // "wlshare-tiles-motion", "wlshare-tiles-adaptive",
+      // "wlshare-tiles-progressive" — or null for a desktop
       // the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
@@ -485,12 +486,14 @@ export interface StandardMsg {
 // tiles as one image: a JPEG of tiles still changing, which the gateway sends again
 // as PNG once they are still, or a PNG of the exact pixels; or, in wlshare's tiles
 // passed through, a lossy WebP of wlshare's adaptive tiles. Each replaces what the
-
 // canvas held there and depends on no other, so they are drawn in wire order and may
-// be decoded in any. See `TileUnit` in src/protocol.rs for the contract.
+// be decoded in any. Or one of wlshare's progressive tiles: a RemoteFX Progressive
+// tile block of one 64x64 tile, which depends on every block of that tile before
+// it, so it is decoded in wire order too (framePainter.ts). See `TileUnit` in
+// src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "webp";
+  format: "jpeg" | "png" | "webp" | "progressive";
   x: number;
   y: number;
   w: number;
@@ -573,7 +576,12 @@ const OP_TILE = 0x06;
 const TILE_HEADER_LEN = 14;
 // A TILE record's format byte. Any other means a gateway newer than this client,
 // and the batch is dropped rather than guessed at.
-const TILE_FORMATS = { 1: "jpeg", 2: "png", 3: "webp" } as const;
+const TILE_FORMATS = {
+  1: "jpeg",
+  2: "png",
+  3: "webp",
+  4: "progressive",
+} as const;
 
 const OP_REGION = 0x07;
 const REGION_HEADER_LEN = 15;
@@ -740,7 +748,7 @@ function decodeTile(
     return null;
   }
   const format = view.getUint8(at + 1);
-  if (format !== 1 && format !== 2 && format !== 3) {
+  if (format !== 1 && format !== 2 && format !== 3 && format !== 4) {
     return null;
   }
 

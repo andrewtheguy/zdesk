@@ -131,11 +131,16 @@ test("a tile record is its format, where its rectangle is, then its image, whole
   assert.equal(jpeg?.kind === "tile" && jpeg.format, "jpeg");
   const webp = decodeBatchFrame(frame(3, 64, [0x52]))?.[0];
   assert.equal(webp?.kind === "tile" && webp.format, "webp");
+  const progressive = decodeBatchFrame(frame(4, 64, [0xc6, 0xcc]))?.[0];
+  assert.equal(
+    progressive?.kind === "tile" && progressive.format,
+    "progressive",
+  );
 
   const whole = frame(2, 64, [0x89, 0x50]);
   assert.equal(decodeBatchFrame(whole.slice(0, whole.byteLength - 1)), null);
   assert.equal(
-    decodeBatchFrame(frame(4, 64, [1])),
+    decodeBatchFrame(frame(5, 64, [1])),
     null,
     "a format this client does not know",
   );

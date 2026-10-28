@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its adaptive tiles, always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, its adaptive tiles, or its progressive tiles (beta), always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -120,8 +120,10 @@ config key.
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
   VP9 of the whole desktop, *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN, or *Adaptive tiles, passed through*, the same tiles
-  fitted to the link: see [wlshare](#wlshare-vnc-subtype--wlshare).
+  own tiles, for a LAN, *Adaptive tiles, passed through*, the same tiles
+  fitted to the link, or *Progressive tiles (beta), passed through*, the
+  tiles as a Windows host draws without H.264: see
+  [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
   time* (beta), the default, starts on the main screen and offers the others in the
   display menu, in the picture chosen above; *Combined* (alpha) shows every
@@ -455,7 +457,14 @@ server is read as any VNC server is.
   passed through*: the same tiles following the link as the VP9 does, the
   regions' dial walking down from `video_quality` and what is still going out
   as lossy WebP, never made exact, so the time is saved on a link that is not
-  always wide too. `render_adaptive` walks the VP9 alone.
+  always wide too. Or *Progressive tiles (beta), passed through*: every tile,
+  still or moving, RemoteFX Progressive, as a Windows host draws its desktop
+  over RDP without H.264 — coarse first and refined in place once still, what
+  moves sent as the change from what the page holds — fitted to the link as
+  the adaptive tiles are, a slower link getting fewer frames. The page decodes
+  them itself, as it composes an RDP host's pipeline, so they need no video
+  decoder, and are greyed where the page cannot compose one; never lossless.
+  `render_adaptive` walks the VP9 alone.
 
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is

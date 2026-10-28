@@ -547,8 +547,107 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 
     assert!(view.decode.is_none(), "a session on the tiles was announced a stream: {:?}", view.decode);
     let logs = container.logs();
-    assert!(logs.contains("asked for tiles, its moving regions at quality 90"), "wlshare was not asked for its tiles:\n{logs}");
+    assert!(logs.contains("asked for tiles up to quality 90, held there"), "wlshare was not asked for its tiles with motion:\n{logs}");
     assert!(!logs.contains("asked for VP9"), "wlshare was asked for its VP9 as well:\n{logs}");
+}
+
+/// What a session started with `passthrough` shows of the desktop after `secs`:
+/// its size, its pixels as `R, G, B`, and the formats its tiles came in. Every tile
+/// is drawn as the page draws it — a PNG by its decoder, a progressive tile by the
+/// page's RemoteFX Progressive decoder in its turn, a copy from the picture — and
+/// every batch acknowledged, so wlshare keeps sending what it owes.
+async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16, Vec<u8>, std::collections::BTreeSet<u8>) {
+    use zdesk::protocol::batch;
+    let cookie = common::login(addr).await;
+    let token = common::claim_session(addr, &cookie).await;
+    let mut ws = common::connect_ws(addr, &token, &cookie).await;
+    ws.send(Message::text(format!(
+        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"{passthrough}"}}}}"#
+    )))
+    .await
+    .unwrap();
+    let (mut size, mut picture, mut formats) = ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
+    let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
+    let mut frame_no = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
+        match msg.expect("websocket receive") {
+            Message::Text(text) => {
+                let msg: serde_json::Value = serde_json::from_str(&text).expect("control message is JSON");
+                match msg["type"].as_str() {
+                    Some("error") => panic!("session failed: {text}"),
+                    Some("resize") => {
+                        size = (msg["w"].as_u64().unwrap() as u16, msg["h"].as_u64().unwrap() as u16);
+                        picture = vec![0u8; usize::from(size.0) * usize::from(size.1) * 3];
+                    }
+                    _ => {}
+                }
+            }
+            Message::Binary(frame) => {
+                let line = usize::from(size.0) * 3;
+                for record in common::batch_records(&frame) {
+                    let common::BatchRecord::Tile(tile) = record else { continue };
+                    formats.insert(tile.format);
+                    let mut put = |x: u16, y: u16, w: usize, rows: &[u8], stride: usize, step: usize| {
+                        for (row, src) in rows.chunks(stride).enumerate() {
+                            let at = (usize::from(y) + row) * line + usize::from(x) * 3;
+                            for col in 0..w {
+                                picture[at + col * 3..at + col * 3 + 3].copy_from_slice(&src[col * step..col * step + 3]);
+                            }
+                        }
+                    };
+                    match tile.format {
+                        batch::TILE_PNG => {
+                            let mut png = png::Decoder::new(std::io::Cursor::new(&tile.image));
+                            png.set_transformations(png::Transformations::EXPAND);
+                            let mut reader = png.read_info().expect("a PNG");
+                            let mut rgb = vec![0; reader.output_buffer_size().expect("a PNG's size")];
+                            let info = reader.next_frame(&mut rgb).expect("a PNG's pixels");
+                            let step = info.color_type.samples();
+                            put(tile.x, tile.y, usize::from(tile.w), &rgb[..info.buffer_size()], info.line_size, step);
+                        }
+                        batch::TILE_PROGRESSIVE => {
+                            frame_no += 1;
+                            let stream = wlshare_proto::progressive::stream(frame_no, &[(tile.x, tile.y, tile.w, tile.h)], &[&tile.image]);
+                            decoder.start_frame();
+                            decoder
+                                .decompress(1, u32::from(size.0), u32::from(size.1), &stream, usize::MAX, |rect, rows, stride| {
+                                    let w = usize::from(rect.right - rect.left);
+                                    put(rect.left, rect.top, w, &rows[..stride * usize::from(rect.bottom - rect.top)], stride, 4);
+                                })
+                                .expect("the page's decoder reads wlshare's progressive tile");
+                        }
+                        other => panic!("a tile of format {other:#x} in a test that draws PNG and progressive tiles"),
+                    }
+                }
+                ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+            }
+            _ => {}
+        }
+    }
+    (size.0, size.1, picture, formats)
+}
+
+/// A session started with wlshare's progressive tiles is sent them alone, passed:
+/// `TILE` records of their own format, every one a tile block, which the page's
+/// RemoteFX Progressive decoder reads into the desktop wlshare's exact tiles show,
+/// once wlshare has refined them; and wlshare was asked for progressive tiles.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_tiles() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+    let addr = spawn_app(vnc_port).await;
+    let (w, h, exact, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are exact PNG while nothing moves");
+    let (pw, ph, progressive, formats) = picture_of(addr, "wlshare-tiles-progressive", 6).await;
+    assert_eq!((pw, ph), (w, h), "the same desktop");
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_PROGRESSIVE].into(), "progressive tiles alone");
+    let se: f64 = exact.iter().zip(&progressive).map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2)).sum();
+    let psnr = if se == 0.0 { f64::INFINITY } else { 10.0 * (255.0f64.powi(2) * exact.len() as f64 / se).log10() };
+    assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the exact one");
+    let logs = container.logs();
+    assert!(logs.contains("asked for progressive tiles up to quality 90, walked by its lag"), "wlshare was not asked for its progressive tiles:\n{logs}");
 }
 
 /// How long the desktop's application records the microphone.

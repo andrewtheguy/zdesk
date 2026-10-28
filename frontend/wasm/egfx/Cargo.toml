@@ -20,6 +20,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 zdesk-rdp-graphics = { path = "../../../crates/zdesk-rdp-graphics" }
+# The tables and the stream of wlshare's progressive tiles, which the page decodes
+# here: the local tree until `proto-v6` is tagged, the gateway's pin then.
+wlshare-proto = { path = "../../../../wlshare/crates/wlshare-proto" }
 rayon = "1"
 wasm-bindgen = "0.2"
 

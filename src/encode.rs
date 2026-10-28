@@ -515,13 +515,16 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG, as PNG and as WebP, and their bytes.
+    /// Rectangles of tiles sent as JPEG, as PNG, as WebP and as progressive tile
+    /// blocks, and their bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
     webp: AtomicU64,
     webp_bytes: AtomicU64,
+    progressive: AtomicU64,
+    progressive_bytes: AtomicU64,
     /// Rectangles of wlshare's tiles drawn from what the browser holds.
     copies: AtomicU64,
     /// Tiles of wlshare's tiles drawn from the browser's cache of them.
@@ -547,6 +550,7 @@ impl Shared {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
             Format::Webp => (&self.webp, &self.webp_bytes),
+            Format::Progressive => (&self.progressive, &self.progressive_bytes),
         }
     }
 
@@ -587,6 +591,8 @@ impl Shared {
             png_bytes: AtomicU64::new(0),
             webp: AtomicU64::new(0),
             webp_bytes: AtomicU64::new(0),
+            progressive: AtomicU64::new(0),
+            progressive_bytes: AtomicU64::new(0),
             copies: AtomicU64::new(0),
             cached: AtomicU64::new(0),
             code_micros: AtomicU64::new(0),
@@ -1522,6 +1528,8 @@ struct Totals {
     png_bytes: u64,
     webp: u64,
     webp_bytes: u64,
+    progressive: u64,
+    progressive_bytes: u64,
     copies: u64,
     cached: u64,
     code_micros: u64,
@@ -1570,6 +1578,8 @@ impl Totals {
             png_bytes: load(&shared.png_bytes),
             webp: load(&shared.webp),
             webp_bytes: load(&shared.webp_bytes),
+            progressive: load(&shared.progressive),
+            progressive_bytes: load(&shared.progressive_bytes),
             copies: load(&shared.copies),
             cached: load(&shared.cached),
             code_micros: load(&shared.code_micros),
@@ -1585,7 +1595,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes{}, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} WebP / {} bytes, {} copied, {} cached, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} WebP / {} bytes and {} progressive / {} bytes, {} copied, {} cached, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1603,6 +1613,8 @@ impl fmt::Display for Totals {
             self.png_bytes,
             self.webp,
             self.webp_bytes,
+            self.progressive,
+            self.progressive_bytes,
             self.copies,
             self.cached,
             self.code_micros,
@@ -1672,7 +1684,7 @@ mod tests {
         }
     }
 
-    const VIDEO: RenderPlan = RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv420 };
+    const VIDEO: RenderPlan = RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv420 };
 
     /// A `wlshare` target's plan for a browser that decodes 4:4:4, whose stream wlshare
     /// passes at that chroma.
