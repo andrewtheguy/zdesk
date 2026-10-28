@@ -8,7 +8,9 @@
 # resizes or rescales — and makes the second when the gateway's target asks
 # wlshare for two virtual displays, with no GPU and no input devices. Nothing draws on
 # them, which is the point: a desktop that never changes is where a capture
-# waiting on damage shows itself. sway and wlroots 0.19 come from wlshare's APT
+# waiting on damage shows itself. A test that wants a moving one plays a video
+# on it (GStreamer's VP9 decoder and Wayland sink, below), which nothing else
+# starts. sway and wlroots 0.19 come from wlshare's APT
 # repository, because trixie's own wlroots 0.18 paints the cursor into a
 # headless capture.
 #
@@ -50,6 +52,7 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         sway pipewire-bin gstreamer1.0-pipewire gstreamer1.0-tools gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m desk
 # Its Depends resolve from trixie and wlshare's own repository, set up above.
