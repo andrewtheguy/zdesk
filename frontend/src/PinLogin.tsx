@@ -3,10 +3,10 @@ import { AppVersion } from "./AppVersion.tsx";
 import { gatewayFetch } from "./gateway.ts";
 
 // The TUI control plane's login gate: the PIN its access panel shows, entered
-// on the landing origin. POST /api/auth/pin sets the login cookie for it and
-// every instance origin, and the page then reloads: on the landing page that is
-// the list of instances, and where an instance origin sent the browser for the
-// PIN, the reload sends it back there.
+// on whichever of its origins the browser is at. POST /api/auth/pin sets the
+// login cookie for the landing origin and every instance origin, and the page
+// then reloads where it is: on the landing page that is the list of instances,
+// and on an instance origin it is that instance's gateway.
 export default function PinLogin({
   branding,
   problem,

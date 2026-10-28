@@ -592,10 +592,10 @@ clipboard through the terminal (OSC 52), which reaches your own clipboard over
 SSH. Inside tmux it goes into a tmux buffer, which tmux passes on to the
 terminal's clipboard under its default `set-clipboard` setting. No terminal
 confirms the write, and Apple's Terminal.app drops it, so if a paste does not
-give the PIN, select it instead. The landing page's field takes the PIN with or
-without its dash. The PIN is entered once, on the landing page: an
-instance sends a browser without a login there for it, and back to the instance
-once it is in. That one login reaches every instance. `P` draws a new PIN and
+give the PIN, select it instead. The PIN field takes the PIN with or
+without its dash. The PIN is entered once, on whichever page the browser opened,
+the landing page or an instance, and the browser stays there. That one login
+reaches the landing page and every instance. `P` draws a new PIN and
 starts its time again. After five wrong entries the PIN is withdrawn, and every
 entry is refused until `P` draws a new one. The PIN guards only new logins. A
 browser that has logged in stays logged in when the PIN expires or is drawn

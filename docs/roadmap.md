@@ -165,9 +165,9 @@ levels of subdomain in Chrome and Safari. Chromium's virtual authenticator
 (`WebAuthn.addVirtualAuthenticator` over CDP) drives the same ceremonies
 headless, so a Playwright spec can hold the behaviour under the usual rules.
 
-The master would serve the registration and login ceremonies on the landing
-page, where the PIN is entered, and its login cookie would carry the result to
-every instance origin as the PIN's does. It would verify each ceremony itself before it
+The master would serve the registration and login ceremonies wherever the PIN
+is entered, naming `zdesk.localhost` as above, and its login cookie would carry
+the result to every origin as the PIN's does. It would verify each ceremony itself before it
 keeps a credential or logs a browser in, checking:
 
 - `type` in the client data: `webauthn.create` for a registration and

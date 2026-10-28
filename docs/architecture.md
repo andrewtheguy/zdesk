@@ -3827,29 +3827,30 @@ clock time it expires, ten minutes on, and the minutes left. The panel prints
 the PIN as `123-456` in a colour of its own, apart from its label. `P` draws a
 new one and starts its time again.
 
-The PIN is entered on the landing origin only. The page that asks for it is the
-SPA, the one bundle compiled into the binary, which the master serves itself
-there, isolated as a gateway serves it (`assets::asset`). The master answers
-that page's `GET /api/auth/status` with `"login": "pin"` and why no PIN can log
-anyone in when none can, and its `GET /api/config` with the default branding.
-Every other `/api/*` and `/ws*` is a 401 until the browser logs in, on every
-origin. The page shows its PIN form (`frontend/src/PinLogin.tsx`) for that
-status and posts the entry to `POST /api/auth/pin` as `{"pin": "…"}`. The master
-compares it in constant time, and on a right one sets the login cookie and the
-page reloads to the instances (`frontend/src/Instances.tsx`), which
-`GET /api/instances` lists, each running one as a link to its own origin. The
-PIN post is taken only with its own origin's `Origin`, so a page elsewhere on
-the web cannot spend the PIN's tries.
+The PIN is entered on whichever origin the browser is at, with no redirect, as
+a served gateway's username and password are. Until the browser logs in, the
+master answers every origin itself, the landing origin and each instance's. Its
+page is the SPA, the one bundle compiled into the binary, served at any path and
+isolated as a gateway serves it (`assets::asset`). The master answers that page's
+`GET /api/auth/status` with `"login": "pin"` and why no PIN can log anyone in
+when none can, and its `GET /api/config` with the default branding. Every other
+`/api/*` and `/ws*` is a 401. The page shows its PIN form
+(`frontend/src/PinLogin.tsx`) for that status and posts the entry to
+`POST /api/auth/pin` as `{"pin": "…"}`, which the master takes on every origin.
+It compares the entry in constant time, and on a right one sets the login cookie,
+and the page reloads where it is. On the landing origin that is the instances
+(`frontend/src/Instances.tsx`), which `GET /api/instances` lists, each running
+one as a link to its own origin. On an instance origin it is the worker's page,
+at the path the browser asked for. A name with no instance is shown the form
+too, so the form does not say which instances exist, and is a 404 once the
+browser is in. The PIN post is taken only with its own origin's `Origin`, so a
+page elsewhere on the web cannot spend the PIN's tries.
 
-An instance origin without a login sends a page request to the landing origin's
-`/__zdesk/open/<name><path>`, where `<path>` is the request's path and query.
-There the PIN form is shown, and once the browser is in, its reload is a 303 to
-`<path>` on that instance's origin, which is then the worker's page. So a
-browser enters the PIN once, wherever it started, and is taken back to where it
-was going. The TUI's `o` opens the instance's own origin and goes through the
-same. A page already open on an instance origin whose login is gone, as after
-the TUI restarts, asks `GET /api/auth/status` when its requests are refused. The
-master answers `"login": "landing"`, and the page reloads into that redirect. After
+So a browser enters the PIN once, wherever it started, and stays where it was
+going. The TUI's `o` opens the instance's own origin. A page already open on an
+instance origin whose login is gone, as after the TUI restarts, asks
+`GET /api/auth/status` when its requests are refused, and the master's answer
+has it show the PIN form in place. After
 five wrong entries the PIN is withdrawn, and every entry is refused until a new
 one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
 each PIN the person at the terminal chooses to draw. A local process can force
@@ -3863,19 +3864,22 @@ The PIN guards only new logins. A
 login outlives the PIN's expiry, a new draw and a withdrawal, and every
 instance's restarts. Logins are kept in the master's memory only, so quitting
 the TUI is the only way to log out. The cookie is set with
-`Domain=zdesk.localhost`, so one login reaches the landing origin and every
-instance subdomain. Chromium, Firefox and Playwright's WebKit send it to
+`Domain=zdesk.localhost` on whichever origin the PIN was entered, so one login
+reaches the landing origin and every instance subdomain. Chromium, Firefox and
+Playwright's WebKit send a cookie set so on the landing origin to
 `<instance>.zdesk.localhost` and not to another `.localhost` name (checked
 2026-10-27). Playwright's WebKit does not send it two labels down, which an
-instance name, a single label, never is. Safari itself has not been checked. A
-browser that kept the cookie from the subdomain would be sent between the two
-origins until it gave up on the redirects.
+instance name, a single label, never is. Chrome and Safari keep the cookie for
+the domain when an instance origin sets it: a PIN entered on an instance origin
+logged the browser in on the landing origin and another instance's (checked
+2026-10-28). Firefox has not been checked for this. A browser that kept it for
+the subdomain alone would ask for the PIN again on each other origin.
 
 The cookie is `Lax` rather than the `Strict` a served gateway's is. WebKit takes
 `zdesk.localhost` and `<instance>.zdesk.localhost` for different sites, sending
 `Sec-Fetch-Site: cross-site` between them, and keeps a `Strict` cookie off a
-navigation from an instance origin to the landing page, which is the way back
-from the PIN. Chromium and Firefox take them for one site. `Lax` is sent on a
+navigation between them, as from the landing page's list to an instance.
+Chromium and Firefox take them for one site. `Lax` is sent on a
 top-level navigation, from another site too, and on nothing else that site
 starts. So what it adds is another site opening an instance's page logged in,
 in a tab the user sees and the site cannot read. That page does what any opened

@@ -15,13 +15,13 @@
 //! to those few tries per PIN drawn, however fast a local process can post. Such a
 //! process can force a new draw, but it never gets in.
 //!
-//! The PIN is entered on the landing origin, `zdesk.localhost`, and the login is
-//! set for that domain, so one login reaches every instance subdomain: an
-//! instance origin sends a browser without one to the landing page, which sends
-//! it back once the PIN is in. The cookie is `SameSite=Lax`, not `Strict`:
-//! WebKit takes `zdesk.localhost` and its subdomains for different sites, and
-//! keeps a `Strict` cookie off the navigation from an instance origin to the
-//! landing page and back. `Lax` adds only a top-level navigation from another
+//! The PIN is entered on whichever origin the browser is at, the landing origin
+//! `zdesk.localhost` or an instance's, and the login is set for that domain, so
+//! one login reaches the landing page and every instance subdomain. The cookie is
+//! `SameSite=Lax`, not `Strict`: WebKit takes `zdesk.localhost` and its
+//! subdomains for different sites, and keeps a `Strict` cookie off a navigation
+//! between them, as from the landing page's list to an instance. `Lax` adds only
+//! a top-level navigation from another
 //! site arriving logged in: a page the user sees and that site cannot read. The
 //! site's own `POST`s and sockets are still not sent the cookie.
 //!
