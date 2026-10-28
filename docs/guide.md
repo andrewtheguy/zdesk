@@ -585,9 +585,9 @@ does not open under this one: remove its `[master]` and `[passwords]` and set
 each password again with `p`.
 
 A browser logs in with a PIN. The TUI's access panel, above the instance list,
-shows a six-digit PIN in large digits and the clock time it expires, ten
-minutes after it is drawn. Beside the large digits the PIN is printed as
-`123-456`, one word for a double-click, and `c` sends it in that form to the
+shows a six-digit PIN and the clock time it expires, ten minutes after it is
+drawn. The PIN is printed as `123-456` in a colour of its own, one word for a
+double-click, and `c` sends it in that form to the
 clipboard through the terminal (OSC 52), which reaches your own clipboard over
 SSH. Inside tmux it goes into a tmux buffer, which tmux passes on to the
 terminal's clipboard under its default `set-clipboard` setting. No terminal

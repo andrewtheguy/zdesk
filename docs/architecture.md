@@ -3823,11 +3823,9 @@ reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 The boundary is whoever can see the TUI's terminal, not the machine, with one
 accepted gap set out below (`src/worker/access.rs`). The master draws a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
-clock time it expires, ten minutes on, and the minutes left. The panel draws the
-digits three rows tall in half blocks, from a font three pixels wide and five
-tall, so they read in a terminal's small type, with the PIN in plain digits
-beside them; a terminal too narrow for both shows the plain digits alone. `P`
-draws a new one and starts its time again.
+clock time it expires, ten minutes on, and the minutes left. The panel prints
+the PIN as `123-456` in a colour of its own, apart from its label. `P` draws a
+new one and starts its time again.
 
 The PIN is entered on the landing origin only. The page that asks for it is the
 SPA, the one bundle compiled into the binary, which the master serves itself

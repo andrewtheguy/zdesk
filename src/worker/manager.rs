@@ -941,53 +941,6 @@ fn bar_width(bindings: &[&Binding]) -> usize {
 /// A run of text in its colour and weight, as a row of the screen is drawn.
 type Run = (String, Option<Color>, bool);
 
-/// The digits in a font three pixels wide and five tall, a row of pixels to a
-/// string, so the PIN reads at a glance in a terminal's small type.
-const PIN_FONT: [[&str; 5]; 10] = [
-    ["###", "#.#", "#.#", "#.#", "###"],
-    ["##.", ".#.", ".#.", ".#.", "###"],
-    ["###", "..#", "###", "#..", "###"],
-    ["###", "..#", "###", "..#", "###"],
-    ["#.#", "#.#", "###", "..#", "..#"],
-    ["###", "#..", "###", "..#", "###"],
-    ["###", "#..", "###", "#.#", "###"],
-    ["###", "..#", "..#", "..#", "..#"],
-    ["###", "#.#", "###", "#.#", "###"],
-    ["###", "#.#", "###", "..#", "###"],
-];
-
-/// `digits` in [`PIN_FONT`], drawn in half blocks two rows of pixels to a row
-/// of the screen: three rows, a column between digits, and three between the
-/// halves of a six-digit PIN, the dash of `123-456` on the middle row of pixels.
-fn big_digits(digits: &str) -> [String; 3] {
-    let mut rows: [String; 3] = Default::default();
-    for (index, glyph) in digits.chars().filter_map(|digit| digit.to_digit(10)).enumerate() {
-        let glyph = &PIN_FONT[glyph as usize];
-        for (row, text) in rows.iter_mut().enumerate() {
-            if index > 0 {
-                text.push_str(match (index, row) {
-                    (3, 1) => " ▀ ",
-                    (3, _) => "   ",
-                    _ => " ",
-                });
-            }
-            let upper = glyph[2 * row].as_bytes();
-            let lower = glyph.get(2 * row + 1).map(|pixels| pixels.as_bytes());
-            for column in 0..3 {
-                let up = upper[column] == b'#';
-                let down = lower.is_some_and(|pixels| pixels[column] == b'#');
-                text.push(match (up, down) {
-                    (true, true) => '█',
-                    (true, false) => '▀',
-                    (false, true) => '▄',
-                    (false, false) => ' ',
-                });
-            }
-        }
-    }
-    rows
-}
-
 /// The bytes that put `text` on the clipboard through the terminal: OSC 52,
 /// which the terminal emulator answers, so it reaches the clipboard of the
 /// machine whose screen this is, through SSH. iTerm2, kitty, WezTerm, Ghostty,
@@ -1037,47 +990,35 @@ fn dashed(digits: &str) -> String {
     }
 }
 
-/// The access panel's three rows, `inner` columns wide: the PIN a browser logs
-/// in with, in digits three rows tall beside what it is when they fit, or why no
-/// PIN can log anyone in.
-fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
+/// The access panel's three rows: the PIN a browser logs in with, in a colour
+/// of its own beside its label, or why no new browser can log in with one.
+fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
     let hint = ("press P for a new PIN · c copies it".to_owned(), Some(Color::DarkGrey), false);
-    let (heading, color, detail) = match pin {
+    // Browsers already logged in stay in whatever the PIN's state; only a new
+    // login needs it.
+    let refused = "no new browser can log in · logged-in ones stay in";
+    let (heading, detail) = match pin {
         PinState::Open {
             digits,
             expires_at,
             minutes_left,
         } => (
-            format!("PIN {}", dashed(digits)),
-            Color::Green,
+            vec![
+                ("PIN ".to_owned(), Some(Color::Green), true),
+                (dashed(digits), Some(Color::Magenta), true),
+            ],
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
         PinState::Expired => (
-            "PIN expired".to_owned(),
-            Color::Yellow,
-            "no browser can log in".to_owned(),
+            vec![("PIN expired".to_owned(), Some(Color::Yellow), true)],
+            refused.to_owned(),
         ),
         PinState::Withdrawn => (
-            format!("PIN withdrawn after {MAX_WRONG} wrong entries"),
-            Color::Red,
-            "no browser can log in".to_owned(),
+            vec![(format!("PIN withdrawn after {MAX_WRONG} wrong entries"), Some(Color::Red), true)],
+            refused.to_owned(),
         ),
     };
-    let text = [(heading, Some(color), true), (detail, None, false), hint];
-    let PinState::Open { digits, .. } = pin else {
-        return text.map(|run| vec![run]);
-    };
-    let big = big_digits(digits);
-    let gap = "   ";
-    let longest = text.iter().map(|(text, _, _)| text.chars().count()).max().unwrap_or_default();
-    if inner < big[0].chars().count() + gap.len() + longest {
-        return text.map(|run| vec![run]);
-    }
-    let mut rows = big.into_iter().zip(text);
-    std::array::from_fn(|_| {
-        let (digits, run) = rows.next().expect("three rows of each");
-        vec![(digits, Some(Color::Green), true), (gap.to_owned(), None, false), run]
-    })
+    [heading, vec![(detail, None, false)], vec![hint]]
 }
 
 /// The rows above the list: the title, the instances directory, a blank row,
@@ -1119,7 +1060,7 @@ fn render(
         Some(Color::DarkGrey),
         false,
     )?;
-    let access = access_rows(pin, panel_inner(width));
+    let access = access_rows(pin);
     panel(&mut frame, 3, width, "access PIN", &access)?;
     line(
         &mut frame,
@@ -2659,10 +2600,7 @@ mod tests {
         };
         let frame = render((80, 24), &options, &pin, &instances, 0, &View::List, "started work").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        for row in big_digits("123456") {
-            assert!(frame.contains(&row), "the PIN three rows tall: {frame}");
-        }
-        assert!(frame.contains("PIN 123-456"), "{frame}");
+        assert!(frame.contains("123-456") && !frame.contains('█'), "{frame}");
         assert!(frame.contains("press P for a new PIN · c copies it"), "{frame}");
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access PIN "), "{frame}");
@@ -2677,14 +2615,28 @@ mod tests {
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
+    }
 
-        // Too narrow for the tall digits beside every row of text, the PIN is
-        // still there in the terminal's own, and so is when it expires.
-        for width in [36, 50] {
-            let frame = render((width, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
-            let frame = String::from_utf8(frame).unwrap();
-            assert!(frame.contains("PIN 123-456") && !frame.contains('█'), "{width}: {frame}");
-            assert!(frame.contains("expires 14:32 · 10 min left"), "{width}: {frame}");
+    /// The PIN is drawn in a colour of its own, apart from its label, and a PIN
+    /// that cannot log anyone in says that only new logins are refused.
+    #[test]
+    fn the_access_panel_sets_the_pin_apart() {
+        let open = PinState::Open {
+            digits: "123456".to_owned(),
+            expires_at: "14:32".to_owned(),
+            minutes_left: 10,
+        };
+        let [heading, ..] = access_rows(&open);
+        assert_eq!(
+            heading,
+            vec![
+                ("PIN ".to_owned(), Some(Color::Green), true),
+                ("123-456".to_owned(), Some(Color::Magenta), true),
+            ]
+        );
+        for pin in [PinState::Expired, PinState::Withdrawn] {
+            let [_, detail, _] = access_rows(&pin);
+            assert_eq!(detail[0].0, "no new browser can log in · logged-in ones stay in");
         }
     }
 
@@ -2695,26 +2647,6 @@ mod tests {
     fn the_pin_is_copied_through_the_terminal() {
         assert_eq!(dashed("123456"), "123-456");
         assert_eq!(clipboard_write(&dashed("123456")), b"\x1b]52;c;MTIzLTQ1Ng==\x07");
-    }
-
-    /// Every digit of the PIN's font is drawn differently, so none reads as
-    /// another.
-    #[test]
-    fn each_digit_is_drawn_its_own_way() {
-        let glyphs: Vec<_> = (0..10).map(|digit| big_digits(&digit.to_string())).collect();
-        for (digit, glyph) in glyphs.iter().enumerate() {
-            assert!(glyph.iter().all(|row| row.chars().count() == 3), "{digit}: {glyph:?}");
-            assert_eq!(glyphs.iter().filter(|other| *other == glyph).count(), 1, "{digit}: {glyph:?}");
-        }
-        assert_eq!(big_digits("88"), ["█▀█ █▀█", "█▀█ █▀█", "▀▀▀ ▀▀▀"]);
-        // The gap between the halves, after three digits and their two columns
-        // apart, holds the dash on the middle row only.
-        let rows = big_digits("123456");
-        assert_eq!(rows[0].chars().count(), 6 * 3 + 4 + 3);
-        let gap = |row: &String| row.chars().skip(3 * 3 + 2).take(3).collect::<String>();
-        assert_eq!(gap(&rows[0]), "   ", "{}", rows[0]);
-        assert_eq!(gap(&rows[1]), " ▀ ", "{}", rows[1]);
-        assert_eq!(gap(&rows[2]), "   ", "{}", rows[2]);
     }
 
     /// The specs page answers from the config the instance would start on, and
