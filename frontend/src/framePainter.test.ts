@@ -2010,25 +2010,52 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
       "4 64x64 at 0,0",
     ]);
     assert.equal(made, 1, "one decoder for the picture");
-    // One that does not decode asks for the whole picture, and the rest are drawn.
+    // One that does not decode asks for the whole picture once and gives the
+    // decoder back: what it holds is not what wlshare's next blocks are coded
+    // against, so none is decoded, in this batch or the next, until the picture
+    // starts over.
+    const decoded = calls.length;
     await p.draw(
       tileFrame([
         { format: 3, at: [0, 0, 64, 64], image: [0xee] },
         { format: 3, at: [64, 0, 36, 64], image: [5] },
       ]),
     );
-    assert.equal(put.at(-1), "5 36x64 at 64,0");
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [7] }]));
+    await waited(0);
+    assert.deepEqual(
+      calls.slice(decoded),
+      ["100x80 0,0 64x64 [238]"],
+      "nothing decoded after the failure",
+    );
+    assert.equal(put.at(-1), "4 64x64 at 0,0");
     assert.equal(videoKeyframeAsks.length, 1);
     assert.match(videoKeyframeAsks[0], /a progressive tile did not decode/);
-    // A picture that starts over gives the decoder back; the next tile makes one.
+    assert.equal(closed, 1, "the decoder given back at the failure");
+    assert.equal(made, 1);
+    // The picture that starts over makes a decoder again at the next tile.
     p.startTiles();
-    await waited(0);
-    assert.equal(closed, 1);
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [6] }]));
     assert.equal(made, 2);
+    assert.equal(put.at(-1), "6 64x64 at 0,0");
+    // A batch dropped malformed may have held blocks the decoder never saw: it
+    // is given back the same way, until the next start.
+    await p.draw(
+      new Uint8Array([0x02, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0x06, 0x03])
+        .buffer,
+    );
+    await waited(0);
+    assert.equal(closed, 2, "the decoder given back at the dropped batch");
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [8] }]));
+    assert.equal(made, 2, "no decoder made before the start");
+    assert.equal(put.at(-1), "6 64x64 at 0,0");
+    p.startTiles();
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
+    assert.equal(put.at(-1), "9 64x64 at 0,0");
+    assert.equal(made, 3);
     p.clear();
     await waited(0);
-    assert.equal(closed, 2, "the attachment's end gives it back too");
+    assert.equal(closed, 3, "the attachment's end gives it back too");
   } finally {
     globals.ImageData = undefined;
   }

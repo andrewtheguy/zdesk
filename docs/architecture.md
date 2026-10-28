@@ -560,7 +560,11 @@ composes an RDP host's pipeline, its RemoteFX Progressive decoder over the
 desktop, each block put in a stream of its own with the protocol's tables
 (`wlshare_proto::progressive`), which never cross the link: so they need no
 video decoder, and a page that cannot compose the pipeline cannot take them
-either. A server that ignores the listing is sent as tiles
+either. Each block is coded against what the decoder holds of its tile, so
+one that does not decode, or a batch dropped with blocks in it, leaves the
+decoder holding what wlshare's next blocks are not coded against: it is given
+back, the whole picture is asked for, and no block is decoded until that
+picture starts. A server that ignores the listing is sent as tiles
 from its ZRLE. Do not transcode a passed frame, pass one at a chroma other than
 the plan's, ask wlshare for the plan with a client message, or add a key that
 selects the picture, or a key or a choice that selects its chroma. See
