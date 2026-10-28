@@ -2,6 +2,13 @@ import { type FormEvent, useEffect, useState } from "react";
 import { AppVersion } from "./AppVersion.tsx";
 import { gatewayFetch } from "./gateway.ts";
 
+// The TUI shows and copies the PIN as 123-456. The field keeps what was typed,
+// a dash or spaces included, and only the entry it sends drops them: rewriting
+// the text while it is typed moves the caret and is read out as fragments.
+export function pinOf(entered: string): string {
+  return entered.replace(/[\s\-\u2010-\u2015\u2212]/g, "");
+}
+
 // The TUI control plane's login gate: the PIN its access panel shows, entered
 // on whichever of its origins the browser is at. POST /api/auth/pin sets the
 // login cookie for the landing origin and every instance origin, and the page
@@ -51,6 +58,9 @@ export default function PinLogin({
     };
   }, []);
 
+  const digits = pinOf(pin);
+  const complete = /^\d{6}$/.test(digits);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (loggedIn) {
@@ -63,7 +73,7 @@ export default function PinLogin({
       const res = await gatewayFetch("/api/auth/pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin: digits }),
       });
       if (res.ok) {
         globalThis.location.reload();
@@ -94,8 +104,9 @@ export default function PinLogin({
           </>
         ) : (
           <>
-            <p className="login-hint pin-hint">
-              Enter the PIN shown in the access panel of the zDesk TUI.
+            <p id="login-pin-hint" className="login-hint pin-hint">
+              Enter the 6-digit PIN shown in the access panel of the zDesk TUI,
+              as 123-456 or 123456.
             </p>
             {error && (
               <p className="login-error" role="alert">
@@ -108,21 +119,19 @@ export default function PinLogin({
               className="pin-input"
               type="text"
               value={pin}
-              // The TUI shows and copies the PIN as 123-456; the field keeps the
-              // digits and sends those. No maxLength: a browser cuts a paste to it
-              // before this runs, which would lose the last digit of 123-456.
-              onChange={(e) =>
-                setPin(e.target.value.replace(/\D/g, "").slice(0, 6))
-              }
+              // No maxLength or pattern: the PIN may come with a dash or spaces,
+              // and a browser cuts a paste to maxLength before it is read.
+              onChange={(e) => setPin(e.target.value)}
+              aria-describedby="login-pin-hint"
               inputMode="numeric"
               autoComplete="one-time-code"
-              pattern="[0-9]{6}"
+              spellCheck={false}
               required
               // biome-ignore lint/a11y/noAutofocus: the PIN is the only thing this screen asks for
               autoFocus
               disabled={submitting}
             />
-            <button type="submit" disabled={submitting || pin.length !== 6}>
+            <button type="submit" disabled={submitting || !complete}>
               {submitting ? "Logging in…" : "Log in"}
             </button>
           </>
