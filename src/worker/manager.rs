@@ -845,7 +845,7 @@ const BINDINGS: &[Binding] = &[
         action: Action::NewPin,
         codes: &[KeyCode::Char('P')],
         label: "new PIN",
-        about: "show a new login PIN for the next browser, its time started again; logged-in browsers stay in",
+        about: "generate a new PIN",
         group: Group::ControlPlane,
         bar: false,
     },
