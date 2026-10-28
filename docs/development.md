@@ -76,7 +76,7 @@ tiles with motion.
 `ZDESK_TEST_CONTAINER_RUNTIME` forces Docker
 or Podman when both work.
 
-Its desktop is still, but in the test of a moving one, which plays GStreamer's
+Its desktop is still, except in the test of a moving one, which plays GStreamer's
 snow on it, or the video `ZDESK_TEST_WLSHARE_VIDEO` names, any file GStreamer
 decodes, copied into the container. A video for it should move over most of
 the desktop, since the test holds the tiles to many records a batch.
