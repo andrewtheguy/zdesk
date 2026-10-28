@@ -3894,7 +3894,7 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
                             media.lock().unwrap().want_keyframe(d.view.active);
                         }
                     }
-                    send(&uplink, &update_request(false, size)).await
+                    send_all(&uplink, &repaint_request(shared_here.passthrough.as_deref(), size)).await
                 } else if matches!(input, ClientMsg::ClipboardRequest) {
                     if apple {
                         // Unlike standard RFB, Apple's pasteboard can be read on
@@ -7935,6 +7935,24 @@ fn push_interval_us(media_stream: bool) -> u32 {
 }
 
 /// FramebufferUpdateRequest for the whole desktop.
+/// What a repaint asks of the server: the whole `size` framebuffer, and ahead
+/// of it, where the session lists wlshare's tiles, that the page holds nothing
+/// of their cache. wlshare keeps its record of the cache through a picture that
+/// starts over, and the page a repaint is for holds no slot it can count on:
+/// one attached anew has none, and one that missed messages may have missed a
+/// store. Said first, so the whole picture draws from no slot stored before it.
+fn repaint_request(passthrough: Option<&Listing>, size: (u16, u16)) -> Vec<Vec<u8>> {
+    let mut msgs = Vec::new();
+    #[cfg(feature = "wlshare")]
+    if passthrough.is_some_and(|l| l.picture(ENCODING_TILES)) {
+        msgs.push(wlshare_proto::tiles::cache_empty().to_vec());
+    }
+    #[cfg(not(feature = "wlshare"))]
+    let _ = passthrough;
+    msgs.push(update_request(false, size).to_vec());
+    msgs
+}
+
 fn update_request(incremental: bool, size: (u16, u16)) -> [u8; 10] {
     let mut msg = [0u8; 10];
     msg[0] = 3; // message type
@@ -10683,6 +10701,18 @@ mod tests {
             chroma: crate::vp9::Chroma::Yuv444,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
+    }
+
+    /// A repaint of a session that lists wlshare's tiles says first that the
+    /// page holds nothing of their cache; one that lists its VP9, or nothing of
+    /// wlshare's, asks for the whole framebuffer alone.
+    #[cfg(feature = "wlshare")]
+    #[test]
+    fn a_repaint_of_wlshares_tiles_empties_their_cache_first() {
+        let full = update_request(false, (8, 4)).to_vec();
+        assert_eq!(repaint_request(Some(&test_tiles_listing()), (8, 4)), [vec![0xE6], full.clone()]);
+        assert_eq!(repaint_request(Some(&test_listing()), (8, 4)), [full.clone()]);
+        assert_eq!(repaint_request(None, (8, 4)), [full]);
     }
 
     /// The lists of a session that may be sent wlshare's tiles in place of its VP9.
