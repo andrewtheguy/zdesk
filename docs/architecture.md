@@ -3854,7 +3854,12 @@ page elsewhere on the web cannot spend the PIN's tries.
 So a browser enters the PIN once, wherever it started, and stays where it was
 going. The TUI's `o` opens the instance's own origin. A PIN form in another tab
 asks `GET /api/auth/status` again whenever it is shown or focused, and once the
-answer says the browser is in, it offers to continue in place of the field. On
+answer says the browser is in, it offers to continue in place of the field.
+Otherwise the form shows the answer's reason no PIN can log anyone in, or none,
+so it learns that another browser used the PIN, and drops a refusal once `P`
+has replaced the PIN it was about. A browser already in that posts the PIN, as
+such a tab can before it asks, is answered as in without the entry being
+checked, so it never uses up the PIN meant for another browser. On
 an instance origin that answer is the worker's, which says the same. A page already open on an
 instance origin whose login is gone, as after the TUI restarts, asks
 `GET /api/auth/status` when its requests are refused, and the master's answer

@@ -2109,7 +2109,7 @@ async fn route_connection(
     // The PIN is entered on whichever origin the browser is at, and its login is
     // set for the landing origin's domain, so one entry reaches them all.
     if path == PIN_PATH {
-        return log_in(client, &access, &parsed, &request).await;
+        return log_in(client, &access, login.is_some(), &parsed, &request).await;
     }
 
     // The master answers the page's questions on the landing origin, and on an
@@ -2226,9 +2226,13 @@ struct PinEntry {
 /// sends on one: otherwise any page on the web could post wrong entries until the
 /// PIN is withdrawn. A local process can claim any origin, as it can post at all,
 /// and then it can only use up the PIN's tries, not get in.
+///
+/// A browser already in is answered as in and its entry is not checked, so a
+/// stale tab cannot use up the one-time PIN meant for another browser.
 async fn log_in(
     mut client: tokio::net::TcpStream,
     access: &Access,
+    logged_in: bool,
     parsed: &ParsedRequest,
     request: &[u8],
 ) -> anyhow::Result<()> {
@@ -2244,6 +2248,9 @@ async fn log_in(
         let refusal = serde_json::json!({ "error": "the body is not {\"pin\": \"…\"}" });
         return write_json(&mut client, "400 Bad Request", &refusal, &[]).await;
     };
+    if logged_in {
+        return write_json(&mut client, "200 OK", &serde_json::json!({ "ok": true }), &[]).await;
+    }
     match access.log_in(&entry.pin) {
         Ok(login) => {
             let cookie = access.set_cookie(&login);
@@ -3027,6 +3034,16 @@ mod tests {
 
             let again = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
             assert!(again.starts_with("HTTP/1.1 401 Unauthorized") && again.contains("already logged a browser in"), "{host}: {again}");
+
+            // A browser already in, as a stale tab, is answered as in and leaves
+            // the next browser's PIN open.
+            access.generate();
+            let next = pin_of(&access);
+            let stale = post(host, format!("http://{host}:{port}"), &next)
+                .replacen("Connection: close\r\n", &format!("Cookie: {login}\r\nConnection: close\r\n"), 1);
+            let response = send(port, &stale).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK") && !response.contains("Set-Cookie"), "{host}: {response}");
+            assert_eq!(pin_of(&access), next, "the PIN is not used by a browser already in");
 
             let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
             assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{host}: {status}");
