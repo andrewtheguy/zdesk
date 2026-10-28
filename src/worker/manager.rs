@@ -1120,7 +1120,7 @@ fn render(
         false,
     )?;
     let access = access_rows(pin, panel_inner(width));
-    panel(&mut frame, 3, width, "access", &access)?;
+    panel(&mut frame, 3, width, "access PIN", &access)?;
     line(
         &mut frame,
         LIST_TOP - 1,
@@ -2665,7 +2665,7 @@ mod tests {
         assert!(frame.contains("PIN 123-456"), "{frame}");
         assert!(frame.contains("press P for a new PIN · c copies it"), "{frame}");
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
-        assert!(frame.contains("┌ access "), "{frame}");
+        assert!(frame.contains("┌ access PIN "), "{frame}");
         assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
         for (key, label) in list_bar(80) {
             assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
