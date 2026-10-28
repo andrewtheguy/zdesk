@@ -656,8 +656,9 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
 
 /// A video to play on the desktop of the test that wants it moving: a file on this
 /// machine, of anything GStreamer decodes, played from its start in the one window
-/// sway tiles over the whole output. Unset, the desktop plays GStreamer's test
-/// pattern of a ball moving.
+/// sway tiles over the whole output, and moving over most of it, so that an update
+/// is many tiles. Unset, the desktop plays GStreamer's snow, every pixel new each
+/// frame.
 const VIDEO_ENV: &str = "ZDESK_TEST_WLSHARE_VIDEO";
 
 /// Play [`VIDEO_ENV`]'s video, or the test pattern, on the desktop, and fail where
@@ -669,7 +670,7 @@ async fn play_video(container: &Arc<common::Container>) {
             container.copy_in(std::path::Path::new(&path), "/tmp/video");
             "filesrc location=/tmp/video ! decodebin"
         }
-        None => "videotestsrc is-live=true pattern=ball ! video/x-raw,width=1024,height=768,framerate=30/1",
+        None => "videotestsrc is-live=true pattern=snow ! video/x-raw,width=1024,height=768,framerate=30/1",
     };
     exec(
         container,
@@ -685,8 +686,10 @@ async fn play_video(container: &Arc<common::Container>) {
 
 /// A desktop playing a video is sent wlshare's progressive tiles a batch to an
 /// update, each batch acknowledged as soon as it lands, as the fastest page would:
-/// a batch to a tile, as the tiles were passed once, was thousands of
-/// acknowledgments a second from the browser.
+/// a batch to a tile or two, as the tiles were passed once, was thousands of
+/// acknowledgments a second from the browser. Held by the records a batch carries,
+/// which a batch to an update makes the many tiles of an update over most of the
+/// desktop, whatever rate the machine plays and codes it at.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
 async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
@@ -728,7 +731,7 @@ async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
         mbit(acks)
     );
     assert!(records as f64 / secs > 100.0, "the desktop hardly moved: {records} records in {secs} s");
-    assert!(batches as f64 / secs < 150.0, "{batches} batches in {secs} s, for {records} records");
+    assert!(records >= 32 * batches, "{records} records in {batches} batches: not a batch to an update");
 }
 
 /// How long the desktop's application records the microphone.
