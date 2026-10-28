@@ -43,8 +43,11 @@ type Gate =
 
 type AuthStatus = {
   authenticated: boolean;
-  /** "pin" on the TUI control plane's own origin; absent on a gateway. */
-  login?: "pin";
+  /**
+   * "pin" on the TUI control plane's own origin, "landing" on an instance
+   * origin whose login is gone; absent on a gateway.
+   */
+  login?: "pin" | "landing";
   /** Why no PIN can log anyone in right now, if so. */
   problem?: string | null;
 };
@@ -92,13 +95,20 @@ export default function App() {
 
   // Asked on load, and again whenever the answer may have changed: after a
   // logout, and on a 401 mid-session, when a restart wiped the in-memory
-  // logins — which, behind the TUI, is the control plane asking for the PIN
-  // where the instance's gateway had been answering.
+  // logins. Behind the TUI that is the control plane answering where the
+  // instance's gateway had been, and the PIN is entered on its landing page:
+  // a reload is sent there, and back here once the PIN is in.
   const check = useCallback(() => {
     setGate({ kind: "checking" });
     gatewayFetch("/api/auth/status")
       .then((res) => res.json() as Promise<AuthStatus>)
-      .then((status) => setGate(gateOf(status)))
+      .then((status) => {
+        if (status.login === "landing") {
+          globalThis.location.reload();
+          return;
+        }
+        setGate(gateOf(status));
+      })
       .catch(() => setGate({ kind: "password" }));
   }, []);
 

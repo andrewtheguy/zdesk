@@ -3829,7 +3829,9 @@ There the PIN form is shown, and once the browser is in, its reload is a 303 to
 `<path>` on that instance's origin, which is then the worker's page. So a
 browser enters the PIN once, wherever it started, and is taken back to where it
 was going. The TUI's `o` opens the instance's own origin and goes through the
-same. After
+same. A page already open on an instance origin whose login is gone, as after
+the TUI restarts, asks `GET /api/auth/status` when its requests are refused. The
+master answers `"login": "landing"`, and the page reloads into that redirect. After
 five wrong entries the PIN is withdrawn, and every entry is refused until a new
 one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
 each PIN the person at the terminal chooses to draw. A local process can force

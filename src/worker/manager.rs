@@ -1005,7 +1005,8 @@ fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
     };
     let big = big_digits(digits);
     let gap = "   ";
-    if inner < big[0].chars().count() + gap.len() + text[0].0.chars().count() {
+    let longest = text.iter().map(|(text, _, _)| text.chars().count()).max().unwrap_or_default();
+    if inner < big[0].chars().count() + gap.len() + longest {
         return text.map(|run| vec![run]);
     }
     let mut rows = big.into_iter().zip(text);
@@ -2119,8 +2120,20 @@ async fn route_connection(
     }
 
     if login.is_none() {
+        // A page already open on an instance origin asks this when its requests
+        // start failing, as after the TUI restarts: the answer has it reload,
+        // which the redirect below takes to the PIN.
+        if instance.is_some() && parsed.method == "GET" && path == "/api/auth/status" {
+            let status = serde_json::json!({ "authenticated": false, "login": "landing" });
+            return write_json(&mut client, "200 OK", &status, &[]).await;
+        }
+        // The refusal states the version, as a worker's does, since it is the
+        // same build's: a page takes a refusal without one for a gateway it
+        // was not loaded from, and asks to be reloaded rather than logged in.
         if is_api(path) {
-            return write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": "not logged in" }), &[]).await;
+            let refusal = serde_json::json!({ "error": "not logged in" });
+            let version = [("X-Zdesk-Version", env!("CARGO_PKG_VERSION"))];
+            return write_json(&mut client, "401 Unauthorized", &refusal, &version).await;
         }
         // An instance origin sends the browser to the landing page, which asks
         // for the PIN and, once it is in, sends the browser back to where it was.
@@ -2600,11 +2613,14 @@ mod tests {
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
 
-        // Too narrow for the tall digits beside it, the PIN is still there in
-        // the terminal's own.
-        let frame = render((36, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
-        let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains("PIN 123 456") && !frame.contains('█'), "{frame}");
+        // Too narrow for the tall digits beside every row of text, the PIN is
+        // still there in the terminal's own, and so is when it expires.
+        for width in [36, 50] {
+            let frame = render((width, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
+            let frame = String::from_utf8(frame).unwrap();
+            assert!(frame.contains("PIN 123 456") && !frame.contains('█'), "{width}: {frame}");
+            assert!(frame.contains("expires 14:32 · 10 min left"), "{width}: {frame}");
+        }
     }
 
     /// Every digit of the PIN's font is drawn differently, so none reads as
@@ -2915,9 +2931,13 @@ mod tests {
                 "{host}: {sent}"
             );
             assert!(!sent.contains("launch-token") && !sent.contains("Set-Cookie"), "{host}: {sent}");
-            for path in ["/api/auth/status", "/api/config", PIN_PATH, "/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+            let status = get(port, host, "/api/auth/status", Some("zdesk_session=launch-token")).await;
+            assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"landing\"}", "{host}: {status}");
+            for path in ["/api/config", PIN_PATH, "/api/targets", "/api/instances", "/ws", "/ws/audio"] {
                 let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
                 assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
+                let version = format!("\r\nX-Zdesk-Version: {}\r\n", env!("CARGO_PKG_VERSION"));
+                assert!(refused.contains(&version), "{host}{path}: {refused}");
             }
         }
         for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
