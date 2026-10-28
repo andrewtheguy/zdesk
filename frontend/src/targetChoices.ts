@@ -432,7 +432,7 @@ function pictureOptions(
     },
     "wlshare-tiles-progressive": {
       value: "wlshare-tiles-progressive",
-      label: "Progressive tiles (beta), passed through",
+      label: "Progressive tiles (experimental), passed through",
       note: abilities.rdpGraphics
         ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Decoded by this page, with no video decoder; never lossless."
         : NO_PROGRESSIVE,

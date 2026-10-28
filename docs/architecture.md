@@ -2353,7 +2353,7 @@ and `GET /api/targets` carries it:
   passthrough at all. A `wlshare` target's Picture group is Video, passed
   through, wlshare's VP9, which `connect` names as `wlshare-vp9` and which a
   session that names none is sent, taken first, Tiles with motion, passed
-  through, `wlshare-tiles-motion`, and Progressive tiles (beta), passed
+  through, `wlshare-tiles-motion`, and Progressive tiles (experimental), passed
   through, `wlshare-tiles-progressive`.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the

@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its progressive tiles (beta), always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its progressive tiles (experimental), always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -120,7 +120,7 @@ config key.
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
   VP9 of the whole desktop, *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN, or *Progressive tiles (beta), passed through*, its
+  own tiles, for a LAN, or *Progressive tiles (experimental), passed through*, its
   tiles fitted to the link as a Windows host draws without H.264: see
   [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
