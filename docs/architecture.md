@@ -3826,11 +3826,11 @@ for a port — an ephemeral one is a control plane nobody can be told how to
 reach, and `SharedPort::bind` refuses `0` on every path, tests included.
 
 The boundary is whoever can see the TUI's terminal, not the machine, with one
-accepted gap set out below (`src/worker/access.rs`). The master draws a six-digit PIN from the system's
+accepted gap set out below (`src/worker/access.rs`). The master generates a six-digit PIN from the system's
 random source when it starts and shows it in the TUI's access panel, with the
 clock time it expires, ten minutes on, and the minutes left. The panel prints
-the PIN as `123-456` in a colour of its own, apart from its label. `P` draws a
-new one and starts its time again.
+the PIN as `123-456` in a colour of its own, apart from its label. `P` generates
+a new one and starts its time again.
 
 The PIN is entered on whichever origin the browser is at, with no redirect, as
 a served gateway's username and password are. Until the browser logs in, the
@@ -3854,22 +3854,32 @@ page elsewhere on the web cannot spend the PIN's tries.
 So a browser enters the PIN once, wherever it started, and stays where it was
 going. The TUI's `o` opens the instance's own origin. A PIN form in another tab
 asks `GET /api/auth/status` again whenever it is shown or focused, and once the
-answer says the browser is in, it offers to continue in place of the field. On
+answer says the browser is in, it offers to continue in place of the field.
+Otherwise the form shows the answer's reason no PIN can log anyone in, or none,
+so it learns that another browser used the PIN, and drops a refusal once `P`
+has replaced the PIN it was about. A browser already in that posts the PIN, as
+such a tab can before it asks, is answered as in without the entry being
+checked, so it never uses up the PIN meant for another browser. On
 an instance origin that answer is the worker's, which says the same. A page already open on an
 instance origin whose login is gone, as after the TUI restarts, asks
 `GET /api/auth/status` when its requests are refused, and the master's answer
-has it show the PIN form in place. After
-five wrong entries the PIN is withdrawn, and every entry is refused until a new
-one is drawn at the TUI's keyboard. Guessing is then limited to five tries for
-each PIN the person at the terminal chooses to draw. A local process can force
-a new draw, but it never gets in. An entry that is not six digits cannot be the
-PIN and is not counted.
+has it show the PIN form in place.
+
+The PIN is one-time: it admits one new browser. Once it has, it leaves the access panel, which says
+in its place that a browser logged in and when, and every entry is refused until
+a new one is generated at the TUI's keyboard, so a PIN read off the screen
+after it was entered lets nobody else in. After five wrong entries the PIN is
+withdrawn, and a PIN past its ten minutes has expired: each is refused the same
+way, and the panel and the PIN form each say which happened. Guessing is then
+limited to five tries for each PIN the person at the terminal chooses to
+generate. A local process can force a new PIN, but it never gets in. An entry
+that is not six digits cannot be the PIN and is not counted.
 
 A right entry is a login: 32 random bytes the master keeps in memory, sent back
 as an HttpOnly `SameSite=Lax` cookie named for the master's port,
 `zdesk_login_<port>`, so two control planes on one machine keep separate logins.
 The PIN guards only new logins. A
-login outlives the PIN's expiry, a new draw and a withdrawal, and every
+login outlives the PIN's use, its expiry, a new PIN and a withdrawal, and every
 instance's restarts. Logins are kept in the master's memory only, so quitting
 the TUI is the only way to log out. The cookie is set with
 `Domain=zdesk.localhost` on whichever origin the PIN was entered, so one login

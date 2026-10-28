@@ -24,7 +24,7 @@ export default function PinLogin({
 }: {
   /** Display name shown as the form heading. */
   branding: string;
-  /** Why no PIN can log anyone in right now (expired, withdrawn), if so. */
+  /** Why no PIN can log anyone in right now (used, expired, withdrawn), if so. */
   problem: string | null;
 }) {
   const [pin, setPin] = useState("");
@@ -34,18 +34,29 @@ export default function PinLogin({
 
   // A tab nobody looks at need not know, so it asks when it is looked at again.
   // Logged in, the answer is the instance's gateway's rather than the control
-  // plane's, which says the same. One that is not JSON, as from an instance
-  // that is stopped, says nothing either way and leaves the form as it is.
+  // plane's, which says the same. Not logged in, the answer says why no PIN can
+  // log anyone in now, if none can: the PIN was used by another browser, or a
+  // new one has replaced the one this form last refused. One that is not JSON,
+  // as from an instance that is stopped, says nothing either way and leaves the
+  // form as it is.
   useEffect(() => {
     const ask = () => {
       if (document.visibilityState !== "visible") {
         return;
       }
       gatewayFetch("/api/auth/status")
-        .then((res) => res.json() as Promise<{ authenticated?: boolean }>)
+        .then(
+          (res) =>
+            res.json() as Promise<{
+              authenticated?: boolean;
+              problem?: string | null;
+            }>,
+        )
         .then((status) => {
           if (status.authenticated) {
             setLoggedIn(true);
+          } else {
+            setError(status.problem ?? null);
           }
         })
         .catch(() => {});

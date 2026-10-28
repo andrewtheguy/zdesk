@@ -53,7 +53,7 @@ async fn instances_start_stop_and_share_the_master_port() {
 
     // A restarted worker has a new token, which the master presents for the
     // browser: the login stands, whatever happened to the PIN since.
-    access.draw();
+    access.generate();
     supervisor.restart("two", None).await.unwrap();
     let restarted = request(router.port(), "two", "/api/config", Some(&login)).await;
     assert!(restarted.contains("\"branding\":\"two\""), "{restarted}");

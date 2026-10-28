@@ -1,19 +1,22 @@
 //! Who may use the control plane's port: a browser that has entered the PIN the
 //! TUI shows.
 //!
-//! The master draws a six-digit PIN when it starts and shows it in the TUI's
+//! The master generates a six-digit PIN when it starts and shows it in the TUI's
 //! access panel, so the boundary is whoever can see the terminal the TUI runs in,
 //! not the machine. A browser that enters it gets a login: a random ID the master
 //! keeps in memory and hands back as a cookie named for the master's port,
 //! `zdesk_login_<port>`. The PIN
-//! guards only new logins. A login outlives the PIN it was made with — its
-//! expiry, a new draw, a withdrawal — and every restart of every instance, and
+//! guards only new logins. A login outlives the PIN it was made with — its use,
+//! its expiry, a new one, a withdrawal — and every restart of every instance, and
 //! ends only with the master, so quitting the TUI is the one way to log out.
 //!
-//! A PIN takes [`MAX_WRONG`] wrong entries and is then withdrawn: every entry is
-//! refused until the person at the terminal draws a new one. Guessing is limited
-//! to those few tries per PIN drawn, however fast a local process can post. Such a
-//! process can force a new draw, but it never gets in.
+//! The PIN is one-time: it admits one new browser and is then used: the panel says so in its place,
+//! and every entry is refused until the person at the terminal generates a new
+//! one, so a PIN read off the screen afterwards lets nobody else in. A PIN that
+//! expires, or takes [`MAX_WRONG`] wrong entries and is withdrawn, is refused the
+//! same way, each with its own message. Guessing is limited to those few tries per
+//! PIN generated, however fast a local process can post. Such a process can force
+//! a new PIN, but it never gets in.
 //!
 //! The PIN is entered on whichever origin the browser is at, the landing origin
 //! `zdesk.localhost` or an instance's, and the login is set for that domain, so
@@ -40,7 +43,7 @@
 //! who runs such a listener and gets a link followed takes the login and can
 //! replay it past the PIN. Such a listener can also set a cookie of the same name
 //! for the domain, which logs the browser out but never in. No browser offers a
-//! cookie bound to a port; a host nobody else can name, drawn per run, would close
+//! cookie bound to a port; a host nobody else can name, chosen per run, would close
 //! it at the cost of the TUI's stable addresses.
 //!
 //! The browser never holds a worker's token: the master adds it to each request
@@ -63,7 +66,7 @@ use crate::auth::secrets_match;
 /// for the landing origin's domain, so every instance origin is sent it too.
 /// Never `zdesk_session`, which is a served gateway's.
 pub const LOGIN_COOKIE_PREFIX: &str = "zdesk_login_";
-/// How long a PIN logs browsers in after it is drawn.
+/// How long a PIN can log a browser in after it is generated.
 pub const PIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// Wrong entries a PIN takes before it is withdrawn.
 pub const MAX_WRONG: u32 = 5;
@@ -84,22 +87,29 @@ struct State {
 struct Pin {
     digits: String,
     expires: Instant,
-    /// The local clock time it expires at, written when it is drawn so the panel
-    /// does not tick over between two frames of the same minute.
+    /// The local clock time it expires at, written when it is generated so the
+    /// panel does not tick over between two frames of the same minute.
     expires_at: String,
     wrong: u32,
+    /// The local clock time it logged a browser in at, once it has.
+    used_at: Option<String>,
+}
+
+/// The local clock time `after` from now, as the panel prints it.
+fn clock(after: Duration) -> String {
+    jiff::Zoned::now()
+        .checked_add(after)
+        .map_or_else(|_| "?".to_owned(), |time| time.strftime("%H:%M").to_string())
 }
 
 impl Pin {
-    fn draw() -> Self {
-        let expires_at = jiff::Zoned::now()
-            .checked_add(PIN_LIFETIME)
-            .map_or_else(|_| "?".to_owned(), |time| time.strftime("%H:%M").to_string());
+    fn generate() -> Self {
         Self {
             digits: format!("{:06}", rand::rng().random_range(0..1_000_000u32)),
             expires: Instant::now() + PIN_LIFETIME,
-            expires_at,
+            expires_at: clock(PIN_LIFETIME),
             wrong: 0,
+            used_at: None,
         }
     }
 }
@@ -113,6 +123,8 @@ pub enum PinState {
         /// Whole minutes left, rounded up, so the last minute reads as one.
         minutes_left: u64,
     },
+    /// It logged a browser in, at this local clock time.
+    Used { at: String },
     Expired,
     Withdrawn,
 }
@@ -123,6 +135,7 @@ pub enum Refusal {
     /// Not six digits, so it cannot be the PIN and is not counted against it.
     NotSixDigits,
     Wrong { left: u32 },
+    Used,
     Withdrawn,
     Expired,
 }
@@ -135,6 +148,9 @@ impl Refusal {
                 "That is not the PIN. {left} more wrong {} and it is withdrawn.",
                 if left == 1 { "entry" } else { "entries" }
             ),
+            Self::Used => {
+                "The PIN has already logged a browser in. Press P in the zDesk TUI for a new one.".to_owned()
+            }
             Self::Withdrawn => format!(
                 "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI for a new one."
             ),
@@ -144,12 +160,12 @@ impl Refusal {
 }
 
 impl Access {
-    /// The access of the control plane on `port`, opened with its first PIN drawn
-    /// and nobody logged in.
+    /// The access of the control plane on `port`, opened with its first PIN
+    /// generated and nobody logged in.
     pub fn open(port: u16) -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
-                pin: Pin::draw(),
+                pin: Pin::generate(),
                 logins: Vec::new(),
             })),
             cookie: format!("{LOGIN_COOKIE_PREFIX}{port}").into(),
@@ -173,13 +189,16 @@ impl Access {
 
     /// Replace the PIN with a new one whose time starts now. Logins already made
     /// are kept.
-    pub fn draw(&self) {
-        self.state().pin = Pin::draw();
+    pub fn generate(&self) {
+        self.state().pin = Pin::generate();
     }
 
     pub fn pin(&self) -> PinState {
         let state = self.state();
         let pin = &state.pin;
+        if let Some(at) = &pin.used_at {
+            return PinState::Used { at: at.clone() };
+        }
         if pin.wrong >= MAX_WRONG {
             return PinState::Withdrawn;
         }
@@ -201,6 +220,9 @@ impl Access {
             return Err(Refusal::NotSixDigits);
         }
         let mut state = self.state();
+        if state.pin.used_at.is_some() {
+            return Err(Refusal::Used);
+        }
         if state.pin.wrong >= MAX_WRONG {
             return Err(Refusal::Withdrawn);
         }
@@ -214,6 +236,7 @@ impl Access {
                 left => Refusal::Wrong { left },
             });
         }
+        state.pin.used_at = Some(clock(Duration::ZERO));
         let login = secret();
         state.logins.push(login.clone());
         Ok(login)
@@ -255,6 +278,7 @@ pub fn cookie_values<'a>(cookie: Option<&'a str>, name: &'a str) -> impl Iterato
 pub fn pin_problem(state: &PinState) -> Option<String> {
     match state {
         PinState::Open { .. } => None,
+        PinState::Used { .. } => Some(Refusal::Used.message()),
         PinState::Expired => Some(Refusal::Expired.message()),
         PinState::Withdrawn => Some(Refusal::Withdrawn.message()),
     }
@@ -284,6 +308,8 @@ mod tests {
         assert!(pin.bytes().all(|byte| byte.is_ascii_digit()), "{pin}");
 
         let login = access.log_in(&pin).unwrap();
+        assert!(matches!(access.pin(), PinState::Used { .. }), "{:?}", access.pin());
+        assert_eq!(access.log_in(&pin), Err(Refusal::Used), "a PIN logs one browser in");
         let cookie = format!("other=1; zdesk_login_52380={login}");
         assert_eq!(access.login_in(Some(&cookie)).as_deref(), Some(login.as_str()));
         assert_eq!(access.login_in(Some("zdesk_login_52380=forged")), None);
@@ -313,19 +339,22 @@ mod tests {
         assert_eq!(access.pin(), PinState::Withdrawn);
         assert_eq!(access.log_in(&pin), Err(Refusal::Withdrawn), "not even the PIN itself");
 
-        access.draw();
+        access.generate();
         let pin = digits(&access);
         access.log_in(&pin).expect("a new PIN starts with every try");
     }
 
     /// The PIN guards only new logins: a browser that has logged in stays logged
-    /// in after the PIN expires, is drawn again or is withdrawn.
+    /// in after its PIN is used, expires, is replaced or is withdrawn.
     #[tokio::test(start_paused = true)]
     async fn a_login_outlives_its_pin() {
         let access = Access::open(52380);
         let login = access.log_in(&digits(&access)).unwrap();
         let cookie = format!("zdesk_login_52380={login}");
 
+        assert!(matches!(access.pin(), PinState::Used { .. }), "{:?}", access.pin());
+
+        access.generate();
         let PinState::Open { minutes_left, .. } = access.pin() else { unreachable!() };
         assert_eq!(minutes_left, PIN_LIFETIME.as_secs() / 60);
         tokio::time::advance(PIN_LIFETIME - Duration::from_secs(30)).await;
@@ -341,7 +370,7 @@ mod tests {
         assert_eq!(access.log_in(&pin), Err(Refusal::Expired));
         assert!(access.login_in(Some(&cookie)).is_some());
 
-        access.draw();
+        access.generate();
         for _ in 0..MAX_WRONG {
             let _ = access.log_in(&not(&digits(&access)));
         }
