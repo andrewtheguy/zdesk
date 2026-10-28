@@ -64,11 +64,15 @@ export default function PinLogin({
           className="pin-input"
           type="text"
           value={pin}
-          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+          // The TUI shows and copies the PIN as 123-456; the field keeps the
+          // digits and sends those. No maxLength: a browser cuts a paste to it
+          // before this runs, which would lose the last digit of 123-456.
+          onChange={(e) =>
+            setPin(e.target.value.replace(/\D/g, "").slice(0, 6))
+          }
           inputMode="numeric"
           autoComplete="one-time-code"
           pattern="[0-9]{6}"
-          maxLength={6}
           required
           // biome-ignore lint/a11y/noAutofocus: the PIN is the only thing this screen asks for
           autoFocus
