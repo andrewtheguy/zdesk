@@ -226,13 +226,10 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     }
                     Action::CopyPin => {
                         message = match access.pin() {
-                            PinState::Open { digits, .. } => {
-                                let mut out = std::io::stdout().lock();
-                                out.write_all(&clipboard_write(&dashed(&digits)))
-                                    .and_then(|()| out.flush())
-                                    .context("cannot write to the terminal")?;
-                                copied_message()
-                            }
+                            PinState::Open { digits, .. } => match copy_pin(&dashed(&digits)).await {
+                                Ok(()) => UNCONFIRMED_COPY.to_owned(),
+                                Err(error) => format!("cannot copy the PIN: {error:#}"),
+                            },
                             _ => "no PIN is open; press P for a new one".to_owned(),
                         };
                     }
@@ -856,7 +853,7 @@ const BINDINGS: &[Binding] = &[
         action: Action::CopyPin,
         codes: &[KeyCode::Char('c')],
         label: "copy PIN",
-        about: "copy the PIN to the clipboard through the terminal (OSC 52); Apple's Terminal.app ignores that",
+        about: "send the PIN to the clipboard through the terminal (OSC 52, or a tmux buffer); Apple's Terminal.app drops it",
         group: Group::ControlPlane,
         bar: false,
     },
@@ -993,24 +990,43 @@ fn big_digits(digits: &str) -> [String; 3] {
 
 /// The bytes that put `text` on the clipboard through the terminal: OSC 52,
 /// which the terminal emulator answers, so it reaches the clipboard of the
-/// machine whose screen this is, through SSH and tmux alike. iTerm2, kitty,
-/// WezTerm, Ghostty, Alacritty, foot and Windows Terminal take it; Apple's
-/// Terminal.app drops it, which is what the plain PIN on screen is for.
+/// machine whose screen this is, through SSH. iTerm2, kitty, WezTerm, Ghostty,
+/// Alacritty, foot and Windows Terminal take it; Apple's Terminal.app drops it,
+/// which is what the plain PIN on screen is for.
 fn clipboard_write(text: &str) -> Vec<u8> {
     let encoded = base64::engine::general_purpose::STANDARD.encode(text);
     format!("\x1b]52;c;{encoded}\x07").into_bytes()
 }
 
-/// What the status line says once the clipboard write has gone out. The
-/// terminal does not answer it, so the one emulator known to drop it is named
-/// by its own environment rather than left to look as if it copied.
-fn copied_message() -> String {
-    if std::env::var_os("TERM_PROGRAM").is_some_and(|program| program == "Apple_Terminal") {
-        "Terminal.app does not take a clipboard write; select the PIN instead".to_owned()
-    } else {
-        "PIN copied to the clipboard".to_owned()
+/// Put `text` on the clipboard. Inside tmux, through a tmux buffer: tmux's
+/// default `set-clipboard external` drops an application's OSC 52 but sends
+/// tmux's own copies on to the outer terminal, which `set-buffer -w` asks for.
+/// Elsewhere, OSC 52 straight to the terminal.
+async fn copy_pin(text: &str) -> anyhow::Result<()> {
+    if std::env::var_os("TMUX").is_some_and(|value| !value.is_empty()) {
+        let output = Command::new("tmux")
+            .args(["set-buffer", "-w", "--", text])
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .context("cannot run tmux")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "tmux set-buffer -w failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return Ok(());
     }
+    let mut out = std::io::stdout().lock();
+    out.write_all(&clipboard_write(text))
+        .and_then(|()| out.flush())
+        .context("cannot write to the terminal")
 }
+
+/// What the status line says once the clipboard write has gone out. No terminal
+/// answers it, and the environment here says nothing sure about the terminal at
+/// the other end of an SSH session, so the write is reported as sent, not done.
+const UNCONFIRMED_COPY: &str = "PIN sent to the clipboard; if a paste does not give it, select the PIN instead";
 
 /// A six-digit PIN as it is read out and typed: `123-456`. The dash keeps it one
 /// word for a double-click, and the landing page's field drops it.

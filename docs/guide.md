@@ -581,11 +581,13 @@ each password again with `p`.
 A browser logs in with a PIN. The TUI's access panel, above the instance list,
 shows a six-digit PIN in large digits and the clock time it expires, ten
 minutes after it is drawn. Beside the large digits the PIN is printed as
-`123-456`, one word for a double-click, and `c` copies it in that form to the
+`123-456`, one word for a double-click, and `c` sends it in that form to the
 clipboard through the terminal (OSC 52), which reaches your own clipboard over
-SSH and inside tmux. Apple's Terminal.app ignores that write, so there select
-the PIN instead. The landing page's field takes the PIN with or without its
-dash. The PIN is entered once, on the landing page: an
+SSH. Inside tmux it goes into a tmux buffer, which tmux passes on to the
+terminal's clipboard under its default `set-clipboard` setting. No terminal
+confirms the write, and Apple's Terminal.app drops it, so if a paste does not
+give the PIN, select it instead. The landing page's field takes the PIN with or
+without its dash. The PIN is entered once, on the landing page: an
 instance sends a browser without a login there for it, and back to the instance
 once it is in. That one login reaches every instance. `P` draws a new PIN and
 starts its time again. After five wrong entries the PIN is withdrawn, and every
