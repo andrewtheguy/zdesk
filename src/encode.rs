@@ -31,6 +31,7 @@ use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painte
 use crate::shadow::Rect;
 use crate::tiles::{Coded, Format, LEVELS, Round, Tiles};
 use crate::video;
+use crate::wire::MAX_BATCH_BYTES;
 
 /// Maximum queued items ahead of the one currently collected: rounds, which are
 /// serial with each other, and the control messages between them.
@@ -539,6 +540,20 @@ struct Shared {
     ahead: Arc<PaintAhead>,
     /// What the last round came to, which the next is taken at.
     round_bytes: AtomicU64,
+    /// The records of wlshare's tiles passed since the FramebufferUpdate carrying them
+    /// began, not yet queued: they go as one [`ServerMsg::Run`] when it ends
+    /// ([`VideoSink::frame`]), ahead of anything queued after them, or sooner at a
+    /// batch's worth of bytes. A `tokio` mutex held across the queueing, so what is
+    /// queued after a run cannot overtake it.
+    gathered: tokio::sync::Mutex<Gathered>,
+}
+
+/// See [`Shared::gathered`].
+#[derive(Default)]
+struct Gathered {
+    records: Vec<ServerMsg>,
+    /// What the records' images come to.
+    bytes: usize,
 }
 
 impl Shared {
@@ -596,6 +611,7 @@ impl Shared {
             budget: Arc::new(Semaphore::new(QUEUE_BUDGET as usize)),
             ahead: Arc::new(PaintAhead::new(feedback)),
             round_bytes: AtomicU64::new(0),
+            gathered: tokio::sync::Mutex::default(),
         }
     }
 }
@@ -696,6 +712,7 @@ impl VideoSink {
     /// occur, but must also call it when [`Self::due_at`] or [`Self::round_returned`]
     /// says to — see there for why that second half is not optional.
     pub async fn frame(&self) -> anyhow::Result<()> {
+        self.queue_gathered().await?;
         if self.oversized() {
             return Ok(());
         }
@@ -947,13 +964,14 @@ impl VideoSink {
     pub async fn pass_tile(&self, x: u16, y: u16, w: u16, h: u16, format: Format, image: Vec<u8>) -> anyhow::Result<()> {
         self.tiles_begin().await?;
         let bytes = image.len();
+        self.gather_room(bytes).await?;
         let held = self.hold(bytes).await;
         self.shared.feedback.handed(tokio::time::Instant::now());
         let (count, total) = self.shared.tally(format);
         count.fetch_add(1, Ordering::Relaxed);
         total.fetch_add(bytes as u64, Ordering::Relaxed);
         let unit = TileUnit { x, y, w, h, format, data: image, held, painted: Painted::default() };
-        self.push(Pending::Msg(ServerMsg::Tile(unit))).await?;
+        self.gather(ServerMsg::Tile(unit), bytes).await;
         self.uncover_behind().await
     }
 
@@ -967,7 +985,7 @@ impl VideoSink {
         self.tiles_begin().await?;
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.copies.fetch_add(1, Ordering::Relaxed);
-        self.push(Pending::Msg(ServerMsg::Copy(CopyUnit { sx, sy, x, y, w, h }))).await?;
+        self.gather(ServerMsg::Copy(CopyUnit { sx, sy, x, y, w, h }), 0).await;
         self.uncover_behind().await
     }
 
@@ -982,7 +1000,7 @@ impl VideoSink {
         if !store {
             self.shared.cached.fetch_add(1, Ordering::Relaxed);
         }
-        self.push(Pending::Msg(ServerMsg::Cache(CacheUnit { store, slot, x, y }))).await?;
+        self.gather(ServerMsg::Cache(CacheUnit { store, slot, x, y }), 0).await;
         self.uncover_behind().await
     }
 
@@ -1031,6 +1049,7 @@ impl VideoSink {
             self.push(Pending::Msg(ServerMsg::RegionFormat { stream, decode, engine: 0 })).await?;
         }
         let bytes = frame.len();
+        self.gather_room(bytes).await?;
         let held = self.hold(bytes).await;
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.units.fetch_add(1, Ordering::Relaxed);
@@ -1040,7 +1059,7 @@ impl VideoSink {
             self.shared.keyframe_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
         }
         let unit = RegionUnit { stream, x, y, w, h, keyframe, data: frame, held };
-        self.push(Pending::Msg(ServerMsg::Region(unit))).await?;
+        self.gather(ServerMsg::Region(unit), bytes).await;
         self.uncover_behind().await
     }
 
@@ -1274,13 +1293,57 @@ impl VideoSink {
     /// wait for. Shutdown wants [`Self::finish`] instead; this is for a caller that
     /// needs to *read* what it pushed, which in practice means a test.
     pub async fn flush(&self) {
+        if self.queue_gathered().await.is_err() {
+            return;
+        }
         let (ack_tx, ack_rx) = oneshot::channel();
         if self.tx.send(Pending::Flush(ack_tx)).await.is_ok() {
             let _ = ack_rx.await;
         }
     }
 
+    /// Queue `item` behind the records gathered so far ([`Shared::gathered`]).
     async fn push(&self, item: Pending) -> anyhow::Result<()> {
+        let mut gathered = self.shared.gathered.lock().await;
+        self.send_run(&mut gathered).await?;
+        self.send(item).await
+    }
+
+    /// Queue the records of wlshare's tiles gathered so far as one run.
+    async fn queue_gathered(&self) -> anyhow::Result<()> {
+        let mut gathered = self.shared.gathered.lock().await;
+        self.send_run(&mut gathered).await
+    }
+
+    /// Make room in the run being gathered for a record of `bytes`, before its share
+    /// of [`QUEUE_BUDGET`] is taken: a run that would pass a batch's worth is queued
+    /// first. A batch cuts there anyway, and a run gathered past the budget would wait
+    /// on room only its own queueing frees.
+    async fn gather_room(&self, bytes: usize) -> anyhow::Result<()> {
+        let mut gathered = self.shared.gathered.lock().await;
+        if gathered.bytes + bytes > MAX_BATCH_BYTES {
+            self.send_run(&mut gathered).await?;
+        }
+        Ok(())
+    }
+
+    /// Add a record of wlshare's tiles, whose image is `bytes`, to the run of its
+    /// update ([`Shared::gathered`]).
+    async fn gather(&self, record: ServerMsg, bytes: usize) {
+        let mut gathered = self.shared.gathered.lock().await;
+        gathered.records.push(record);
+        gathered.bytes += bytes;
+    }
+
+    async fn send_run(&self, gathered: &mut Gathered) -> anyhow::Result<()> {
+        if gathered.records.is_empty() {
+            return Ok(());
+        }
+        gathered.bytes = 0;
+        self.send(Pending::Msg(ServerMsg::Run(std::mem::take(&mut gathered.records)))).await
+    }
+
+    async fn send(&self, item: Pending) -> anyhow::Result<()> {
         let started = Instant::now();
         let result = self.tx.send(item).await;
         // Sub-microsecond sends truncate to zero, so this counts only real waiting.
@@ -1655,6 +1718,14 @@ mod tests {
         out
     }
 
+    /// The records of a run of wlshare's tiles ([`ServerMsg::Run`]).
+    fn run(msg: &ServerMsg) -> &[ServerMsg] {
+        match msg {
+            ServerMsg::Run(records) => records,
+            other => panic!("expected a run, got {other:?}"),
+        }
+    }
+
     /// Take the next round's tiles, stepping over the starts among them, up to the
     /// next message that is neither: what one round sent.
     async fn drain_tiles(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<TileUnit> {
@@ -2010,7 +2081,8 @@ mod tests {
     /// wlshare's tiles go out as they came, the first behind the `TilesStart` that
     /// begins the picture, a region's first frame behind the format, read off its
     /// own parameter sets, that builds its decoder, and its end said once; the
-    /// picture is passed, so its fences are held.
+    /// picture is passed, so its fences are held. The records between those go
+    /// together, as a run.
     #[tokio::test]
     async fn wlshares_tiles_and_regions_go_out_as_they_came() {
         use crate::h264::sample::{FRAME, KEYFRAME};
@@ -2030,19 +2102,23 @@ mod tests {
         sink.flush().await;
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
-        let out = drain(&mut frame_rx, 7).await;
+        let out = drain(&mut frame_rx, 6).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Tile(unit) if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50]));
+        assert!(matches!(run(&out[1]), [ServerMsg::Tile(unit)] if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50]));
         assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "avc1.64000D"), "{:?}", out[2]);
-        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (64, 64, 320, 192) && unit.data == KEYFRAME));
-        assert!(matches!(&out[4], ServerMsg::Region(unit) if !unit.keyframe && unit.data == FRAME));
-        assert!(matches!(&out[5], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe: {:?}", out[5]);
-        assert!(matches!(out[6], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[6]);
-        let out = drain(&mut frame_rx, 4).await;
-        assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]), "the end was said twice: {:?}", out[0]);
-        assert!(matches!(out[1], ServerMsg::Copy(CopyUnit { sx: 0, sy: 40, x: 0, y: 0, w: 1280, h: 600 })), "{:?}", out[1]);
-        assert!(matches!(out[2], ServerMsg::Cache(CacheUnit { store: true, slot: 9, x: 64, y: 64 })), "{:?}", out[2]);
-        assert!(matches!(out[3], ServerMsg::Cache(CacheUnit { store: false, slot: 9, x: 128, y: 64 })), "{:?}", out[3]);
+        let [ServerMsg::Region(first), ServerMsg::Region(second), ServerMsg::Region(third)] = run(&out[3]) else {
+            panic!("the region's three frames: {:?}", out[3]);
+        };
+        assert!(first.keyframe && (first.x, first.y, first.w, first.h) == (64, 64, 320, 192) && first.data == KEYFRAME);
+        assert!(!second.keyframe && second.data == FRAME);
+        assert!(third.keyframe, "a later IDR is a keyframe");
+        assert!(matches!(out[4], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[4]);
+        let records = run(&out[5]);
+        assert_eq!(records.len(), 4, "the end was said twice: {records:?}");
+        assert!(matches!(&records[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]), "{:?}", records[0]);
+        assert!(matches!(records[1], ServerMsg::Copy(CopyUnit { sx: 0, sy: 40, x: 0, y: 0, w: 1280, h: 600 })), "{:?}", records[1]);
+        assert!(matches!(records[2], ServerMsg::Cache(CacheUnit { store: true, slot: 9, x: 64, y: 64 })), "{:?}", records[2]);
+        assert!(matches!(records[3], ServerMsg::Cache(CacheUnit { store: false, slot: 9, x: 128, y: 64 })), "{:?}", records[3]);
         assert_eq!((Totals::of(&sink.shared).copies, Totals::of(&sink.shared).cached), (1, 1));
 
         assert!(frame_rx.try_recv().is_err());
@@ -2067,10 +2143,38 @@ mod tests {
         sink.flush().await;
         let out = drain(&mut frame_rx, 4).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Tile(_)), "{:?}", out[1]);
+        assert!(matches!(run(&out[1]), [ServerMsg::Tile(_)]), "{:?}", out[1]);
         assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 1, .. }), "{:?}", out[2]);
-        assert!(matches!(&out[3], ServerMsg::Region(unit) if unit.keyframe && unit.x == 64));
+        assert!(matches!(run(&out[3]), [ServerMsg::Region(unit)] if unit.keyframe && unit.x == 64));
         assert!(frame_rx.try_recv().is_err(), "a region from before the start went out");
+    }
+
+    /// wlshare's tiles wait for the end of the update that carried them, and go then
+    /// as one run, which the wire puts in one batch; a run reaching a batch's worth
+    /// goes without waiting, before the next tile takes its share of the queue.
+    #[tokio::test]
+    async fn wlshares_tiles_go_as_one_run_an_update() {
+        let (sink, mut frame_rx) = video_sink_at(1280, 800, PASSED).await;
+        for x in (0..1280).step_by(64) {
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; 100]).await.unwrap();
+        }
+        sink.pass_copy(0, 0, 0, 64, 64, 64).await.unwrap();
+        assert!(matches!(frame_rx.recv().await, Some(ServerMsg::TilesStart { .. })));
+        sink.frame().await.unwrap();
+        sink.flush().await;
+        let out = drain(&mut frame_rx, 1).await;
+        assert_eq!(run(&out[0]).len(), 21, "the update's 20 tiles and its copy");
+        assert!(frame_rx.try_recv().is_err());
+
+        let half = MAX_BATCH_BYTES / 2;
+        for x in [0, 64, 128] {
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; half]).await.unwrap();
+        }
+        sink.frame().await.unwrap();
+        sink.flush().await;
+        let out = drain(&mut frame_rx, 2).await;
+        assert_eq!((run(&out[0]).len(), run(&out[1]).len()), (2, 1), "cut at a batch's worth");
+        assert!(frame_rx.try_recv().is_err());
     }
 
     /// A region is held to what wlshare promises of one: H.264 starting at an IDR

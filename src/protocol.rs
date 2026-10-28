@@ -1293,6 +1293,13 @@ pub enum ServerMsg {
     /// A tile of wlshare's tiles kept in the page's cache, or drawn from it. A
     /// binary record like [`ServerMsg::Video`], ordered the same way.
     Cache(CacheUnit),
+    /// The records of wlshare's tiles one FramebufferUpdate carried, in order — its
+    /// [`ServerMsg::Tile`], [`ServerMsg::Region`], [`ServerMsg::Copy`] and
+    /// [`ServerMsg::Cache`] records, and nothing else — which [`crate::wire`] puts
+    /// in a batch of their own. Passed one at a time, an update's records each went
+    /// in a batch of their own on a link that kept up, each acknowledged by the
+    /// browser: thousands of acknowledgments a second for a picture of small tiles.
+    Run(Vec<ServerMsg>),
     /// Build the decoder for moving region `stream` of wlshare's tiles with this
     /// configuration: ahead of the stream's first [`ServerMsg::Region`], and of the
     /// first of a new stream on an id that was ended. `engine` is the engine that
@@ -1752,6 +1759,7 @@ impl ServerMsg {
                 | ServerMsg::Region(_)
                 | ServerMsg::Copy(_)
                 | ServerMsg::Cache(_)
+                | ServerMsg::Run(_)
                 | ServerMsg::RegionFormat { .. }
                 | ServerMsg::RegionEnd { .. }
                 | ServerMsg::VideoFormat { .. }
@@ -1782,6 +1790,7 @@ impl ServerMsg {
             | ServerMsg::Region(_)
             | ServerMsg::Copy(_)
             | ServerMsg::Cache(_)
+            | ServerMsg::Run(_)
             | ServerMsg::Audio(_)
             | ServerMsg::AudioGap => {
                 return None;

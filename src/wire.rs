@@ -6,7 +6,7 @@ use crate::protocol::{self, CacheUnit, CopyUnit, GraphicsUnit, Held, RegionUnit,
 
 /// Record bytes per batch, below client WebSocket limits and large enough to
 /// amortize per-frame overhead.
-const MAX_BATCH_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_BATCH_BYTES: usize = 256 * 1024;
 
 /// Records per batch, bounded below the `u16` wire limit and client work limit.
 const MAX_BATCH_RECORDS: usize = 4096;
@@ -80,6 +80,20 @@ impl Wire {
                     ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
                     ServerMsg::Copy(unit) => self.push(Record::Copy(unit), &mut frames)?,
                     ServerMsg::Cache(unit) => self.push(Record::Cache(unit), &mut frames)?,
+                    // One update of wlshare's tiles ends its batch, as an RDP frame
+                    // does: acknowledged once, however many tiles it was.
+                    ServerMsg::Run(records) => {
+                        for record in records {
+                            match record {
+                                ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
+                                ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
+                                ServerMsg::Copy(unit) => self.push(Record::Copy(unit), &mut frames)?,
+                                ServerMsg::Cache(unit) => self.push(Record::Cache(unit), &mut frames)?,
+                                other => log::warn!("wire: dropping {other:?}, which is not a record of a run"),
+                            }
+                        }
+                        self.flush(&mut frames)?;
+                    }
                     // A frame's last run is its batch's last record: the browser
                     // shows a batch once it has drawn all of it, and acknowledges
                     // it then, which is this frame's acknowledgement to the host.
@@ -661,6 +675,36 @@ mod tests {
             })
             .collect();
         assert_eq!(shape, vec![(2, 1), (1, 1), (2, 0)], "records, and frames owed, in each batch");
+    }
+
+    /// A run of wlshare's tiles ends its batch, as a frame's last run does: one
+    /// update, one batch, one acknowledgment, however many tiles it was.
+    #[test]
+    fn a_run_of_wlshares_tiles_ends_its_batch() {
+        use crate::protocol::{CacheUnit, CopyUnit, Painted, TileUnit};
+        let tile = |x: u16| {
+            ServerMsg::Tile(TileUnit {
+                x,
+                y: 0,
+                w: 64,
+                h: 64,
+                format: crate::tiles::Format::Progressive,
+                data: vec![0xC6; 10],
+                held: Held::default(),
+                painted: Painted::default(),
+            })
+        };
+        let run = |xs: std::ops::Range<u16>| {
+            let mut records: Vec<ServerMsg> = xs.map(|i| tile(i * 64)).collect();
+            records.push(ServerMsg::Copy(CopyUnit { sx: 0, sy: 0, x: 0, y: 64, w: 64, h: 64 }));
+            records.push(ServerMsg::Cache(CacheUnit { store: true, slot: 1, x: 0, y: 0 }));
+            ServerMsg::Run(records)
+        };
+        let mut wire = Wire::default();
+        let frames = wire.encode(vec![run(0..20), run(20..23)]).unwrap();
+        let counts: Vec<u16> = binary(&frames).iter().map(|bytes| u16::from_le_bytes([bytes[2], bytes[3]])).collect();
+        assert_eq!(counts, vec![22, 5], "records in each batch");
+        assert_eq!(wire.totals.tile, 23 + 4, "the tiles, the copies and the caches");
     }
 
     /// A unit's share of the queue budget rides the batch it went out in.

@@ -2506,7 +2506,12 @@ STORE    op 0x0A: u16 slot | u16 x | u16 y
 
 One frame carries every record ready at once, so a backlog does not cost one
 WebSocket event per record — save that a `GRAPHICS` record ending a frame ends
-its batch, since a batch is shown once. Receivers reject unknown operations and truncated
+its batch, since a batch is shown once, and so does the last record of one
+FramebufferUpdate of wlshare's tiles. The engine gathers an update's records and
+hands them on together, cutting them at a batch's 256 KiB. Handed on as they
+were read, they went one or two to a batch on a link that kept up, and every
+batch is acknowledged: a picture of small progressive tiles cost thousands of
+acknowledgments a second, megabits a second from the browser. Receivers reject unknown operations and truncated
 records, and reject a nonzero frame flags byte. A `VIDEO` record's own flags byte
 is `0x01` for a keyframe, and for a unit that is one strip of the picture
 ([in strips](#apples-media-stream-passed-through)) `0x02`, with the strip's
