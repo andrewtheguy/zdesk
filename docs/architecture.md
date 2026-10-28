@@ -3847,7 +3847,10 @@ browser is in. The PIN post is taken only with its own origin's `Origin`, so a
 page elsewhere on the web cannot spend the PIN's tries.
 
 So a browser enters the PIN once, wherever it started, and stays where it was
-going. The TUI's `o` opens the instance's own origin. A page already open on an
+going. The TUI's `o` opens the instance's own origin. A PIN form in another tab
+asks `GET /api/auth/status` again whenever it is shown or focused, and once the
+answer says the browser is in, it offers to continue in place of the field. On
+an instance origin that answer is the worker's, which says the same. A page already open on an
 instance origin whose login is gone, as after the TUI restarts, asks
 `GET /api/auth/status` when its requests are refused, and the master's answer
 has it show the PIN form in place. After

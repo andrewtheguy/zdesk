@@ -595,7 +595,8 @@ confirms the write, and Apple's Terminal.app drops it, so if a paste does not
 give the PIN, select it instead. The PIN field takes the PIN with or
 without its dash. The PIN is entered once, on whichever page the browser opened,
 the landing page or an instance, and the browser stays there. That one login
-reaches the landing page and every instance. `P` draws a new PIN and
+reaches the landing page and every instance. A PIN page left open in another
+tab offers to continue instead once you switch back to it. `P` draws a new PIN and
 starts its time again. After five wrong entries the PIN is withdrawn, and every
 entry is refused until `P` draws a new one. The PIN guards only new logins. A
 browser that has logged in stays logged in when the PIN expires or is drawn
