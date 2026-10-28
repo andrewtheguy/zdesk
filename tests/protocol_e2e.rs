@@ -1582,6 +1582,7 @@ async fn expect_fake_tiles(ws: &mut Ws, starts: bool) {
                             common::BatchRecord::Video(_) => panic!("a passed record in a session of the gateway's tiles"),
                             common::BatchRecord::Region(_) => panic!("a region in a session of the gateway's tiles"),
                             common::BatchRecord::Copy(_) => panic!("a copy in a session of the gateway's tiles"),
+                            common::BatchRecord::Cache(_) => panic!("a cache's tile in a session of the gateway's tiles"),
                         }
                     }
                     ws.display_socket().send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");

@@ -345,6 +345,16 @@ pub struct BatchCopy {
     pub h: u16,
 }
 
+/// A `STORE` record, keeping the tile the page holds at `(x, y)` in slot `slot` of
+/// its cache, or a `CACHED` one, drawing what slot `slot` keeps at `(x, y)`.
+#[allow(dead_code)]
+pub struct BatchCache {
+    pub store: bool,
+    pub slot: u16,
+    pub x: u16,
+    pub y: u16,
+}
+
 /// One picture record of a batch frame.
 #[allow(dead_code)]
 pub enum BatchRecord {
@@ -352,6 +362,7 @@ pub enum BatchRecord {
     Tile(BatchTile),
     Region(BatchRegion),
     Copy(BatchCopy),
+    Cache(BatchCache),
 }
 
 /// The acknowledgment a browser's painter sends once it has drawn the batch `frame`,
@@ -442,6 +453,10 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                 records.push(BatchRecord::Copy(copy));
                 at += batch::COPY_LEN;
             }
+            op @ (batch::OP_STORE | batch::OP_CACHED) => {
+                records.push(BatchRecord::Cache(BatchCache { store: op == batch::OP_STORE, slot: le(1), x: le(3), y: le(5) }));
+                at += batch::CACHE_LEN;
+            }
             op => panic!("unknown record op {op}"),
         }
     }
@@ -460,6 +475,7 @@ pub fn batch_units(frame: &[u8]) -> Vec<BatchUnit> {
             BatchRecord::Tile(tile) => panic!("a tile at ({}, {}) in a passed stream's batch", tile.x, tile.y),
             BatchRecord::Region(region) => panic!("region {}'s unit in a passed stream's batch", region.stream),
             BatchRecord::Copy(copy) => panic!("a copy to ({}, {}) in a passed stream's batch", copy.x, copy.y),
+            BatchRecord::Cache(cache) => panic!("a cache's slot {} in a passed stream's batch", cache.slot),
         })
         .collect()
 }
@@ -779,6 +795,19 @@ impl Container {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8(out.stdout).expect("container exec output is UTF-8")
+    }
+
+    /// Copy the file at `from` on this machine to `to` in the container. A copy
+    /// rather than a mount, which a remote engine would look for on its own host.
+    #[allow(dead_code)]
+    pub fn copy_in(&self, from: &Path, to: &str) {
+        let out = Command::new(self.runtime)
+            .arg("cp")
+            .arg(from)
+            .arg(format!("{}:{to}", self.name))
+            .output()
+            .expect("run container cp");
+        assert!(out.status.success(), "copying {} in failed:\n{}", from.display(), String::from_utf8_lossy(&out.stderr));
     }
 
     /// What the container's server has written to its stdout and stderr, together:

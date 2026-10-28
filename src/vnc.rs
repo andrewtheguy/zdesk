@@ -13378,8 +13378,9 @@ mod tests {
         msg
     }
 
-    /// wlshare's tiles are read rectangle by rectangle and passed as they came, and the
-    /// update's fence is echoed as a passed picture's is.
+    /// wlshare's tiles are read rectangle by rectangle and passed as they came, the
+    /// records between the update's messages together as a run, and the update's
+    /// fence is echoed as a passed picture's is.
     #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn wlshares_tiles_are_passed_rectangle_by_rectangle() {
@@ -13390,14 +13391,18 @@ mod tests {
         let task = open_read_loop(wlshare_tiles_update(320, b"t1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Tile(unit)) if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e]));
+        let Some(ServerMsg::Run(tile)) = rx.recv().await else { panic!("the tile's run") };
+        assert!(matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e]));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D"));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if unit.keyframe && (unit.x, unit.y, unit.w, unit.h) == (0, 16, 320, 192)));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Region(unit)) if !unit.keyframe));
+        let Some(ServerMsg::Run(region)) = rx.recv().await else { panic!("the region's run") };
+        assert!(matches!(&region[..], [ServerMsg::Region(first), ServerMsg::Region(next)]
+            if first.keyframe && (first.x, first.y, first.w, first.h) == (0, 16, 320, 192) && !next.keyframe));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Copy(unit)) if unit == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Cache(unit)) if unit == crate::protocol::CacheUnit { store: true, slot: 5, x: 0, y: 0 }));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::Cache(unit)) if unit == crate::protocol::CacheUnit { store: false, slot: 5, x: 0, y: 0 }));
+        let Some(ServerMsg::Run(rest)) = rx.recv().await else { panic!("the copy's and the cache's run") };
+        assert!(matches!(&rest[..], [ServerMsg::Copy(copy), ServerMsg::Cache(store), ServerMsg::Cache(drawn)]
+            if *copy == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }
+                && *store == crate::protocol::CacheUnit { store: true, slot: 5, x: 0, y: 0 }
+                && *drawn == crate::protocol::CacheUnit { store: false, slot: 5, x: 0, y: 0 }));
         let echo = client_fence(0, b"t1");
         tokio::time::timeout(Duration::from_secs(2), async {
             while written(&sent) != echo {
@@ -13469,8 +13474,9 @@ mod tests {
     }
 
     /// wlshare's progressive tiles are passed as tiles of their own format, each one
-    /// tile on the grid cut by the desktop's edge whose block is that tile's; one off
-    /// the grid, of another size, or whose block is another tile's, is fatal.
+    /// tile on the grid cut by the desktop's edge whose block is that tile's, an
+    /// update's as one run; one off the grid, of another size, or whose block is
+    /// another tile's, is fatal.
     #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn wlshares_progressive_tiles_are_passed_one_tile_each() {
@@ -13482,8 +13488,10 @@ mod tests {
         let wire = wlshare_progressive_update(&[((0, 0, 64, 64), (0, 0)), ((64, 0, 36, 64), (1, 0)), ((64, 64, 36, 16), (1, 1))], b"p1");
         let task = open_read_loop(wire, shared, sink);
         assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        for place in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)] {
-            let Some(ServerMsg::Tile(unit)) = rx.recv().await else { panic!("a tile") };
+        let Some(ServerMsg::Run(tiles)) = rx.recv().await else { panic!("the update's run") };
+        assert_eq!(tiles.len(), 3, "the update's tiles together");
+        for (place, tile) in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)].into_iter().zip(tiles) {
+            let ServerMsg::Tile(unit) = tile else { panic!("a tile") };
             assert_eq!((unit.format, (unit.x, unit.y, unit.w, unit.h)), (crate::tiles::Format::Progressive, place));
             assert_eq!(wlshare_proto::progressive::tile_of(&unit.data), Some((place.0 / 64, place.1 / 64)), "the block as it came");
         }

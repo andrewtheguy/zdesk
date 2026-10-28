@@ -249,6 +249,10 @@ impl View {
                     let inside = |x: u16, y: u16| u64::from(x) + u64::from(copy.w) <= size.w && u64::from(y) + u64::from(copy.h) <= size.h;
                     assert!(inside(copy.sx, copy.sy) && inside(copy.x, copy.y), "a copy not inside the {}x{} desktop", size.w, size.h);
                 }
+                common::BatchRecord::Cache(cache) => {
+                    let inside = u64::from(cache.x) + 64 <= size.w.next_multiple_of(64) && u64::from(cache.y) + 64 <= size.h.next_multiple_of(64);
+                    assert!(inside, "a cache's tile at ({}, {}) not on the {}x{} desktop", cache.x, cache.y, size.w, size.h);
+                }
             }
         }
     }
@@ -648,6 +652,86 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the exact one");
     let logs = container.logs();
     assert!(logs.contains("asked for progressive tiles up to quality 90, walked by its lag"), "wlshare was not asked for its progressive tiles:\n{logs}");
+}
+
+/// A video to play on the desktop of the test that wants it moving: a file on this
+/// machine, of anything GStreamer decodes, played from its start in the one window
+/// sway tiles over the whole output, and moving over most of it, so that an update
+/// is many tiles. Unset, the desktop plays GStreamer's snow, every pixel new each
+/// frame.
+const VIDEO_ENV: &str = "ZDESK_TEST_WLSHARE_VIDEO";
+
+/// Play [`VIDEO_ENV`]'s video, or the test pattern, on the desktop, and fail where
+/// its player is not running two seconds on. Not `waylandsink fullscreen=true`,
+/// which stops at its first frame on sway with "Window has no size set".
+async fn play_video(container: &Arc<common::Container>) {
+    let source = match std::env::var_os(VIDEO_ENV) {
+        Some(path) => {
+            container.copy_in(std::path::Path::new(&path), "/tmp/video");
+            "filesrc location=/tmp/video ! decodebin"
+        }
+        None => "videotestsrc is-live=true pattern=snow ! video/x-raw,width=1024,height=768,framerate=30/1",
+    };
+    exec(
+        container,
+        format!(
+            "XDG_RUNTIME_DIR=/tmp/xdg WAYLAND_DISPLAY=wayland-1 nohup gst-launch-1.0 -q {source} \
+             ! videoconvert ! waylandsink > /tmp/video.log 2>&1 & echo $! > /tmp/video.pid"
+        ),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    exec(container, "kill -0 \"$(cat /tmp/video.pid)\" || { cat /tmp/video.log >&2; exit 1; }".to_owned()).await;
+}
+
+/// A desktop playing a video is sent wlshare's progressive tiles a batch to an
+/// update, each batch acknowledged as soon as it lands, as the fastest page would:
+/// a batch to a tile or two, as the tiles were passed once, was thousands of
+/// acknowledgments a second from the browser. Held by the records a batch carries,
+/// which a batch to an update makes the many tiles of an update over most of the
+/// desktop, whatever rate the machine plays and codes it at.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+    play_video(&container).await;
+    let addr = spawn_app(vnc_port).await;
+    let cookie = common::login(addr).await;
+    let token = common::claim_session(addr, &cookie).await;
+    let mut ws = common::connect_ws(addr, &token, &cookie).await;
+    ws.send(Message::text(format!(
+        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"wlshare-tiles-progressive"}}}}"#
+    )))
+    .await
+    .unwrap();
+    let (mut batches, mut records, mut bytes, mut acks) = (0u64, 0u64, 0u64, 0u64);
+    let secs = 10.0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+    while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
+        match msg.expect("websocket receive") {
+            Message::Text(text) => assert!(!text.contains(r#""type":"error""#), "session failed: {text}"),
+            Message::Binary(frame) => {
+                batches += 1;
+                records += common::batch_records(&frame).len() as u64;
+                bytes += frame.len() as u64;
+                let ack = common::paint_ack(&frame);
+                // On the wire: two bytes of header, four of mask, and the text.
+                acks += 6 + ack.len() as u64;
+                ws.send(Message::text(ack)).await.expect("acknowledge a batch");
+            }
+            _ => {}
+        }
+    }
+    let mbit = |bytes: u64| bytes as f64 * 8.0 / secs / 1e6;
+    eprintln!(
+        "{batches} batches of {records} records, {:.1} a batch: {:.1} Mbit/s down, {:.3} Mbit/s of acknowledgments up",
+        records as f64 / batches.max(1) as f64,
+        mbit(bytes),
+        mbit(acks)
+    );
+    assert!(records as f64 / secs > 100.0, "the desktop hardly moved: {records} records in {secs} s");
+    assert!(records >= 32 * batches, "{records} records in {batches} batches: not a batch to an update");
 }
 
 /// How long the desktop's application records the microphone.
