@@ -166,7 +166,8 @@ levels of subdomain in Chrome and Safari. Chromium's virtual authenticator
 headless, so a Playwright spec can hold the behaviour under the usual rules.
 
 The master would serve the registration and login ceremonies on the landing
-page and on any instance origin. It would verify each ceremony itself before it
+page, where the PIN is entered, and its login cookie would carry the result to
+every instance origin as the PIN's does. It would verify each ceremony itself before it
 keeps a credential or logs a browser in, checking:
 
 - `type` in the client data: `webauthn.create` for a registration and
@@ -174,8 +175,8 @@ keeps a credential or logs a browser in, checking:
 - The challenge: one the master issued for this ceremony, at least 128 random
   bits, expiring after a few minutes, and consumed by its first use, whether
   that use succeeded or not.
-- An origin of `http://zdesk.localhost:<port>` or one of its subdomains, and
-  the ID's hash in the authenticator data.
+- An origin of `http://zdesk.localhost:<port>`, and the ID's hash in the
+  authenticator data.
 - The user-present flag on every ceremony, and the user-verified flag too,
   with `userVerification: "required"` asked for. A passkey stands in for the
   PIN, so the authenticator must check its holder.

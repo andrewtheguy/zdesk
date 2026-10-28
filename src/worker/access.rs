@@ -4,8 +4,8 @@
 //! The master draws a six-digit PIN when it starts and shows it in the TUI's
 //! access panel, so the boundary is whoever can see the terminal the TUI runs in,
 //! not the machine. A browser that enters it gets a login: a random ID the master
-//! keeps in memory and hands back as a host-only cookie named for the master's
-//! port, `zdesk_login_<port>`. The PIN
+//! keeps in memory and hands back as a cookie named for the master's port,
+//! `zdesk_login_<port>`. The PIN
 //! guards only new logins. A login outlives the PIN it was made with — its
 //! expiry, a new draw, a withdrawal — and every restart of every instance, and
 //! ends only with the master, so quitting the TUI is the one way to log out.
@@ -15,25 +15,31 @@
 //! to those few tries per PIN drawn, however fast a local process can post. Such a
 //! process can force a new draw, but it never gets in.
 //!
-//! A login made on one origin reaches another through a handoff rather than a
-//! cookie shared across subdomains: the landing page's link to an instance mints a
-//! one-time code for that instance, and the instance's origin exchanges it for the
-//! same login under its own host-only cookie.
+//! The PIN is entered on the landing origin, `zdesk.localhost`, and the login is
+//! set for that domain, so one login reaches every instance subdomain: an
+//! instance origin sends a browser without one to the landing page, which sends
+//! it back once the PIN is in. The cookie is `SameSite=Lax`, not `Strict`:
+//! WebKit takes `zdesk.localhost` and its subdomains for different sites, and
+//! keeps a `Strict` cookie off the navigation from an instance origin to the
+//! landing page and back. `Lax` adds only a top-level navigation from another
+//! site arriving logged in: a page the user sees and that site cannot read. The
+//! site's own `POST`s and sockets are still not sent the cookie.
 //!
 //! A cookie is scoped by host and ignores the port, so where the login is set
-//! decides who else is sent it. The master sets it only on `zdesk.localhost` and
-//! its instance subdomains, never on `localhost` or a numeric loopback, which every
-//! local development server shares: it answers those names with a redirect to
+//! decides who else is sent it. The master sets it only for `zdesk.localhost` and
+//! its subdomains, never on `localhost` or a numeric loopback, which every local
+//! development server shares: it answers those names with a redirect to
 //! `zdesk.localhost`. The name carries the port, so two control planes on one
 //! machine keep separate logins rather than overwriting each other's.
 //!
 //! What remains, and is accepted, is anything else serving `zdesk.localhost` or
-//! one of its subdomains on another port. `SameSite=Strict` does not stop it: it
-//! keeps the cookie off a navigation another site starts, but the page such a
-//! listener serves is same-site with the master, so its next request to itself
-//! carries every cookie of the host, this login among them. Any site can send the
-//! browser there, so another local user who runs such a listener and gets a link
-//! followed takes the login and can replay it past the PIN. No browser offers a
+//! one of its subdomains on another port, a served gateway sent to
+//! `<label>.zdesk.localhost` among them. `SameSite` does not stop it: the page
+//! such a listener serves is same-site with the master, so its next request to
+//! itself carries the login. Any site can send the browser there, so another local user
+//! who runs such a listener and gets a link followed takes the login and can
+//! replay it past the PIN. Such a listener can also set a cookie of the same name
+//! for the domain, which logs the browser out but never in. No browser offers a
 //! cookie bound to a port; a host nobody else can name, drawn per run, would close
 //! it at the cost of the TUI's stable addresses.
 //!
@@ -50,22 +56,19 @@ use base64::Engine as _;
 use rand::RngExt as _;
 use tokio::time::Instant;
 
+use super::manager::MASTER_HOST;
 use crate::auth::secrets_match;
 
-/// The start of the master's login cookie's name, which ends in its port: on the
-/// landing origin and on each instance origin a login has reached. Never
-/// `zdesk_session`, which is a served gateway's.
+/// The start of the master's login cookie's name, which ends in its port: set
+/// for the landing origin's domain, so every instance origin is sent it too.
+/// Never `zdesk_session`, which is a served gateway's.
 pub const LOGIN_COOKIE_PREFIX: &str = "zdesk_login_";
 /// How long a PIN logs browsers in after it is drawn.
 pub const PIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// Wrong entries a PIN takes before it is withdrawn.
 pub const MAX_WRONG: u32 = 5;
-/// How long a handoff code waits to be exchanged. It is followed by a redirect,
-/// so it is used within a second or not at all.
-const HANDOFF_LIFETIME: Duration = Duration::from_secs(30);
 
-/// The PIN, the logins it has made and the handoffs in flight, shared by the TUI
-/// and the router.
+/// The PIN and the logins it has made, shared by the TUI and the router.
 #[derive(Clone)]
 pub struct Access {
     state: Arc<Mutex<State>>,
@@ -76,7 +79,6 @@ pub struct Access {
 struct State {
     pin: Pin,
     logins: Vec<String>,
-    handoffs: Vec<Handoff>,
 }
 
 struct Pin {
@@ -100,13 +102,6 @@ impl Pin {
             wrong: 0,
         }
     }
-}
-
-struct Handoff {
-    code: String,
-    login: String,
-    instance: String,
-    expires: Instant,
 }
 
 /// The PIN as the TUI's access panel shows it.
@@ -141,9 +136,9 @@ impl Refusal {
                 if left == 1 { "entry" } else { "entries" }
             ),
             Self::Withdrawn => format!(
-                "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI to draw a new one."
+                "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI for a new one."
             ),
-            Self::Expired => "The PIN has expired. Press P in the zDesk TUI to draw a new one.".to_owned(),
+            Self::Expired => "The PIN has expired. Press P in the zDesk TUI for a new one.".to_owned(),
         }
     }
 }
@@ -156,7 +151,6 @@ impl Access {
             state: Arc::new(Mutex::new(State {
                 pin: Pin::draw(),
                 logins: Vec::new(),
-                handoffs: Vec::new(),
             })),
             cookie: format!("{LOGIN_COOKIE_PREFIX}{port}").into(),
         }
@@ -171,9 +165,10 @@ impl Access {
         &self.cookie
     }
 
-    /// The `Set-Cookie` value for `login` on the origin it is sent from.
+    /// The `Set-Cookie` value for `login`, for the landing origin and every
+    /// instance subdomain under it.
     pub fn set_cookie(&self, login: &str) -> String {
-        format!("{}={login}; HttpOnly; SameSite=Strict; Path=/", self.cookie)
+        format!("{}={login}; Domain={MASTER_HOST}; HttpOnly; SameSite=Lax; Path=/", self.cookie)
     }
 
     /// Replace the PIN with a new one whose time starts now. Logins already made
@@ -235,37 +230,9 @@ impl Access {
                 .cloned()
         })
     }
-
-    /// A one-time code that carries `login` to `instance`'s origin.
-    pub fn hand_off(&self, login: &str, instance: &str) -> String {
-        let mut state = self.state();
-        let now = Instant::now();
-        state.handoffs.retain(|handoff| handoff.expires > now);
-        let code = secret();
-        state.handoffs.push(Handoff {
-            code: code.clone(),
-            login: login.to_owned(),
-            instance: instance.to_owned(),
-            expires: now + HANDOFF_LIFETIME,
-        });
-        code
-    }
-
-    /// Exchange a handoff code on `instance`'s origin for the login it carries.
-    /// A code is spent by its first use, whatever that use's outcome, and is good
-    /// only for the instance it was minted for.
-    pub fn take_handoff(&self, code: &str, instance: &str) -> Option<String> {
-        let mut state = self.state();
-        let index = state
-            .handoffs
-            .iter()
-            .position(|handoff| secrets_match(&handoff.code, code))?;
-        let handoff = state.handoffs.swap_remove(index);
-        (handoff.instance == instance && handoff.expires > Instant::now()).then_some(handoff.login)
-    }
 }
 
-/// 32 random bytes, base64url: a login or a handoff code.
+/// 32 random bytes, base64url: a login.
 fn secret() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes);
@@ -326,7 +293,7 @@ mod tests {
             None,
             "the login of the control plane on another port is that one's"
         );
-        assert_eq!(access.set_cookie(&login), format!("zdesk_login_52380={login}; HttpOnly; SameSite=Strict; Path=/"));
+        assert_eq!(access.set_cookie(&login), format!("zdesk_login_52380={login}; Domain=zdesk.localhost; HttpOnly; SameSite=Lax; Path=/"));
         assert_eq!(access.login_in(None), None);
     }
 
@@ -380,25 +347,5 @@ mod tests {
         }
         assert_eq!(access.pin(), PinState::Withdrawn);
         assert!(access.login_in(Some(&cookie)).is_some());
-    }
-
-    /// A handoff code carries a login to the one instance it was minted for, once,
-    /// and not after its time.
-    #[tokio::test(start_paused = true)]
-    async fn a_handoff_is_spent_once_and_only_on_its_instance() {
-        let access = Access::open(52380);
-        let login = access.log_in(&digits(&access)).unwrap();
-
-        let code = access.hand_off(&login, "work");
-        assert_eq!(access.take_handoff(&code, "work").as_deref(), Some(login.as_str()));
-        assert_eq!(access.take_handoff(&code, "work"), None, "spent");
-
-        let code = access.hand_off(&login, "work");
-        assert_eq!(access.take_handoff(&code, "home"), None, "another instance");
-        assert_eq!(access.take_handoff(&code, "work"), None, "spent by the wrong use too");
-
-        let code = access.hand_off(&login, "work");
-        tokio::time::advance(HANDOFF_LIFETIME).await;
-        assert_eq!(access.take_handoff(&code, "work"), None, "expired");
     }
 }

@@ -46,8 +46,10 @@ async fn instances_start_stop_and_share_the_master_port() {
     assert!(two.contains("\"branding\":\"two\""), "{two}");
 
     let landing = request_master(router.port(), "/api/instances", &login).await;
-    assert!(landing.contains("\"open\":\"/__zdesk/open/one\""), "{landing}");
-    assert!(landing.contains("\"open\":\"/__zdesk/open/two\""), "{landing}");
+    for name in ["one", "two"] {
+        let open = format!("\"open\":\"http://{name}.zdesk.localhost:{port}\"");
+        assert!(landing.contains(&open), "{landing}");
+    }
 
     // A restarted worker has a new token, which the master presents for the
     // browser: the login stands, whatever happened to the PIN since.

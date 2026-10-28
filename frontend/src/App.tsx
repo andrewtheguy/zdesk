@@ -32,8 +32,8 @@ if (TAB_DISPLAY !== null) {
 //
 // Which login is the gateway's to say, on /api/auth/status: a served gateway's
 // username and password, or, behind the TUI's control plane, the PIN its access
-// panel shows. The control plane's own origin is its landing page, the list of
-// its instances, rather than a desktop.
+// panel shows, which only the control plane's own origin asks for. That origin
+// is its landing page, the list of its instances, rather than a desktop.
 type Gate =
   | { kind: "checking" }
   | { kind: "password" }
@@ -43,21 +43,22 @@ type Gate =
 
 type AuthStatus = {
   authenticated: boolean;
-  /** "pin" behind the TUI's control plane; absent on a served gateway. */
-  login?: "pin";
-  /** Whether this is the control plane's own origin. */
-  landing?: boolean;
+  /**
+   * "pin" on the TUI control plane's own origin, "landing" on an instance
+   * origin whose login is gone; absent on a gateway.
+   */
+  login?: "pin" | "landing";
   /** Why no PIN can log anyone in right now, if so. */
   problem?: string | null;
 };
 
 function gateOf(status: AuthStatus): Gate {
-  if (status.authenticated) {
-    return status.landing ? { kind: "instances" } : { kind: "desktop" };
+  if (status.login === "pin") {
+    return status.authenticated
+      ? { kind: "instances" }
+      : { kind: "pin", problem: status.problem ?? null };
   }
-  return status.login === "pin"
-    ? { kind: "pin", problem: status.problem ?? null }
-    : { kind: "password" };
+  return status.authenticated ? { kind: "desktop" } : { kind: "password" };
 }
 
 export default function App() {
@@ -94,13 +95,20 @@ export default function App() {
 
   // Asked on load, and again whenever the answer may have changed: after a
   // logout, and on a 401 mid-session, when a restart wiped the in-memory
-  // logins — which, behind the TUI, is the control plane asking for the PIN
-  // where the instance's gateway had been answering.
+  // logins. Behind the TUI that is the control plane answering where the
+  // instance's gateway had been, and the PIN is entered on its landing page:
+  // a reload is sent there, and back here once the PIN is in.
   const check = useCallback(() => {
     setGate({ kind: "checking" });
     gatewayFetch("/api/auth/status")
       .then((res) => res.json() as Promise<AuthStatus>)
-      .then((status) => setGate(gateOf(status)))
+      .then((status) => {
+        if (status.login === "landing") {
+          globalThis.location.reload();
+          return;
+        }
+        setGate(gateOf(status));
+      })
       .catch(() => setGate({ kind: "password" }));
   }, []);
 
