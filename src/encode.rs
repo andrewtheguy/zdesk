@@ -515,14 +515,12 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG, as PNG, as WebP and as progressive tile
-    /// blocks, and their bytes.
+    /// Rectangles of tiles sent as JPEG, as PNG and as progressive tile blocks,
+    /// and their bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
-    webp: AtomicU64,
-    webp_bytes: AtomicU64,
     progressive: AtomicU64,
     progressive_bytes: AtomicU64,
     /// Rectangles of wlshare's tiles drawn from what the browser holds.
@@ -549,7 +547,6 @@ impl Shared {
         match format {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
-            Format::Webp => (&self.webp, &self.webp_bytes),
             Format::Progressive => (&self.progressive, &self.progressive_bytes),
         }
     }
@@ -589,8 +586,6 @@ impl Shared {
             jpeg_bytes: AtomicU64::new(0),
             png: AtomicU64::new(0),
             png_bytes: AtomicU64::new(0),
-            webp: AtomicU64::new(0),
-            webp_bytes: AtomicU64::new(0),
             progressive: AtomicU64::new(0),
             progressive_bytes: AtomicU64::new(0),
             copies: AtomicU64::new(0),
@@ -937,9 +932,9 @@ impl VideoSink {
     }
 
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
-    /// record, untouched: a PNG of the desktop's pixels there exactly, or a lossy WebP
-    /// of them while wlshare's walk of this link stands below its ceiling, which
-    /// wlshare sends exact once the link has room; `format` says which.
+    /// record, untouched: a PNG of the desktop's pixels there exactly, or one
+    /// progressive tile's block, a first pass or an upgrade against what the page
+    /// holds of the tile; `format` says which.
     ///
     /// wlshare's tiles are a passed picture, as its VP9 is ([`Self::pass`]): wlshare
     /// decides what is sent, codes it and paces it by the fences the engine echoes once
@@ -1526,8 +1521,6 @@ struct Totals {
     jpeg_bytes: u64,
     png: u64,
     png_bytes: u64,
-    webp: u64,
-    webp_bytes: u64,
     progressive: u64,
     progressive_bytes: u64,
     copies: u64,
@@ -1576,8 +1569,6 @@ impl Totals {
             jpeg_bytes: load(&shared.jpeg_bytes),
             png: load(&shared.png),
             png_bytes: load(&shared.png_bytes),
-            webp: load(&shared.webp),
-            webp_bytes: load(&shared.webp_bytes),
             progressive: load(&shared.progressive),
             progressive_bytes: load(&shared.progressive_bytes),
             copies: load(&shared.copies),
@@ -1595,7 +1586,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes{}, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} WebP / {} bytes and {} progressive / {} bytes, {} copied, {} cached, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} progressive / {} bytes, {} copied, {} cached, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1611,8 +1602,6 @@ impl fmt::Display for Totals {
             self.jpeg_bytes,
             self.png,
             self.png_bytes,
-            self.webp,
-            self.webp_bytes,
             self.progressive,
             self.progressive_bytes,
             self.copies,
@@ -1684,7 +1673,7 @@ mod tests {
         }
     }
 
-    const VIDEO: RenderPlan = RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv420 };
+    const VIDEO: RenderPlan = RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv420 };
 
     /// A `wlshare` target's plan for a browser that decodes 4:4:4, whose stream wlshare
     /// passes at that chroma.
@@ -2034,7 +2023,7 @@ mod tests {
         sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec()).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
-        sink.pass_tile(64, 64, 320, 64, Format::Webp, vec![b'R', b'I']).await.unwrap();
+        sink.pass_tile(64, 64, 64, 64, Format::Progressive, vec![0xC6, 0xCC]).await.unwrap();
         sink.pass_copy(0, 40, 0, 0, 1280, 600).await.unwrap();
         sink.pass_cache(true, 9, 64, 64).await.unwrap();
         sink.pass_cache(false, 9, 128, 64).await.unwrap();
@@ -2050,7 +2039,7 @@ mod tests {
         assert!(matches!(&out[5], ServerMsg::Region(unit) if unit.keyframe), "a later IDR is a keyframe: {:?}", out[5]);
         assert!(matches!(out[6], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[6]);
         let out = drain(&mut frame_rx, 4).await;
-        assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.format == Format::Webp && unit.data == *b"RI"), "the end was said twice: {:?}", out[0]);
+        assert!(matches!(&out[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]), "the end was said twice: {:?}", out[0]);
         assert!(matches!(out[1], ServerMsg::Copy(CopyUnit { sx: 0, sy: 40, x: 0, y: 0, w: 1280, h: 600 })), "{:?}", out[1]);
         assert!(matches!(out[2], ServerMsg::Cache(CacheUnit { store: true, slot: 9, x: 64, y: 64 })), "{:?}", out[2]);
         assert!(matches!(out[3], ServerMsg::Cache(CacheUnit { store: false, slot: 9, x: 128, y: 64 })), "{:?}", out[3]);

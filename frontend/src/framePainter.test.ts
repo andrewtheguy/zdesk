@@ -1834,11 +1834,11 @@ test("a malformed batch ends a Mac's own picture", async () => {
 });
 
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
-// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 WebP, 4 a progressive
-// tile), x, y, w and h as u16, a u32 length, the image, little-endian.
+// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile),
+// x, y, w and h as u16, a u32 length, the image, little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4;
+    format: 1 | 2 | 3;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1870,7 +1870,6 @@ test("the gateway's tiles are drawn in wire order where they say, behind their s
     tileFrame([
       { format: 1, at: [0, 0, 64, 64], image: [1, 0xff] },
       { format: 2, at: [64, 0, 128, 64], image: [2, 0x89] },
-      { format: 3, at: [192, 0, 64, 64], image: [3, 0x52] },
     ]),
   );
   assert.deepEqual(
@@ -1878,13 +1877,11 @@ test("the gateway's tiles are drawn in wire order where they say, behind their s
     [
       [0, 0],
       [64, 0],
-      [192, 0],
     ],
   );
   assert.deepEqual(bitmaps.map(({ type }) => type).sort(), [
     "image/jpeg",
     "image/png",
-    "image/webp",
   ]);
 
   assert.ok(
@@ -1988,17 +1985,17 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
   };
 
   try {
-    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [1] }]));
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [1] }]));
     assert.deepEqual(put, [], "a progressive tile before the tiles' start");
     assert.equal(made, 0);
     p.startTiles();
     // The decoder loads on the first, and each waits its turn behind it.
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 64, 64], image: [1] },
-        { format: 4, at: [64, 64, 36, 16], image: [2] },
+        { format: 3, at: [0, 0, 64, 64], image: [1] },
+        { format: 3, at: [64, 64, 36, 16], image: [2] },
         { format: 2, at: [0, 64, 64, 16], image: [3] },
-        { format: 4, at: [0, 0, 64, 64], image: [4] },
+        { format: 3, at: [0, 0, 64, 64], image: [4] },
       ]),
     );
     assert.deepEqual(calls, [
@@ -2016,8 +2013,8 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     // One that does not decode asks for the whole picture, and the rest are drawn.
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 64, 64], image: [0xee] },
-        { format: 4, at: [64, 0, 36, 64], image: [5] },
+        { format: 3, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 3, at: [64, 0, 36, 64], image: [5] },
       ]),
     );
     assert.equal(put.at(-1), "5 36x64 at 64,0");
@@ -2027,7 +2024,7 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     p.startTiles();
     await waited(0);
     assert.equal(closed, 1);
-    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [6] }]));
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [6] }]));
     assert.equal(made, 2);
     p.clear();
     await waited(0);

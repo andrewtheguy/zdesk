@@ -200,8 +200,8 @@ pub struct RenderPlan {
     pub quality: u8,
     /// Whether wlshare's picture walks its dial on the browser's lag, on a
     /// `wlshare` target and nowhere else: its VP9 where
-    /// [`TargetConfig::render_adaptive`] says so, its adaptive tiles always
-    /// ([`Passthrough::WlshareTilesAdaptive`]) and its tiles with motion never. The
+    /// [`TargetConfig::render_adaptive`] says so, its progressive tiles always
+    /// ([`Passthrough::WlshareTilesProgressive`]) and its tiles with motion never. The
     /// tiles coded here follow the browser's painting at the one quality, with a
     /// coarse first pass on a slow link.
     pub adaptive: bool,
@@ -212,21 +212,16 @@ pub struct RenderPlan {
     /// that ignores the listing is coded here too.
     pub wlshare: bool,
     /// wlshare's picture is its tiles rather than its VP9, either of the two chosen
-    /// at the picker: still tiles where the desktop is still and a video stream of
-    /// its own, 4:2:0, for each region that moves, H.264 by the host's hardware
-    /// encoder where it has one and libx264 otherwise — asked of the server and
-    /// passed as it comes. Set only with [`Self::wlshare`]. With [`Self::adaptive`]
-    /// they are its adaptive tiles ([`Passthrough::WlshareTilesAdaptive`]): the dial
-    /// walks on the browser's lag as the VP9's does, the regions following it and
-    /// every still a lossy WebP at it, never owed exact.
-    /// Without it they are its tiles with motion ([`Passthrough::WlshareTilesMotion`]):
-    /// the regions held at [`Self::quality`] and every still exact.
-    pub wlshare_tiles: bool,
-    /// wlshare's tiles are its progressive ones
+    /// at the picker, asked of the server and passed as it comes. Set only with
+    /// [`Self::wlshare`]. With [`Self::adaptive`] they are its progressive tiles
     /// ([`Passthrough::WlshareTilesProgressive`]): every tile RemoteFX
-    /// Progressive, still or moving, and no stream, the dial walked. Set only
-    /// with [`Self::wlshare_tiles`] and [`Self::adaptive`].
-    pub wlshare_progressive: bool,
+    /// Progressive, still or moving, and no stream, the dial walked on the
+    /// browser's lag as the VP9's is. Without it they are its tiles with motion
+    /// ([`Passthrough::WlshareTilesMotion`]): exact PNG where the desktop is
+    /// still and a video stream of its own, 4:2:0, for each region that moves,
+    /// H.264 by the host's hardware encoder where it has one and libx264
+    /// otherwise, the regions held at [`Self::quality`] and every still exact.
+    pub wlshare_tiles: bool,
     /// The Mac's picture passes as it came, its HEVC:
     /// [`Passthrough::AppleMedia`], chosen at the picker. None of the fields
     /// above reach such a picture.
@@ -339,18 +334,11 @@ pub enum Passthrough {
     /// wlshare's tiles with motion: the desktop as exact PNG where it is still and an
     /// H.264 stream of its own, 4:2:0, for each region that moves, passed as they come
     /// for the page to decode and sent exact again once it stops. Offered by a
-    /// `wlshare` target beside its VP9 and its adaptive tiles, and chosen at the
+    /// `wlshare` target beside its VP9 and its progressive tiles, and chosen at the
     /// picker: wlshare's picture for a link with room to spare, a fraction of the
     /// VP9's encoder time and a picture that ends exact, for several times the
     /// bytes. Its dial is held, whatever `render_adaptive` says.
     WlshareTilesMotion,
-    /// wlshare's adaptive tiles: its tiles with motion with the dial walked on the
-    /// browser's lag as the VP9's is, the regions following it, and every still a
-    /// lossy WebP at the dial, which nothing makes exact later. Offered and chosen as its tiles with motion are: a fraction of the
-    /// VP9's encoder time for a link that is not always wide, where a picture that
-    /// ends exact matters less than one that keeps up. It walks whatever
-    /// `render_adaptive` says.
-    WlshareTilesAdaptive,
     /// wlshare's progressive tiles: every tile, still or moving, RemoteFX
     /// Progressive as a Windows host draws its desktop without H.264 — a coarse
     /// first pass, refined in place once it is still, a changed tile as the
@@ -358,7 +346,9 @@ pub enum Passthrough {
     /// the browser's lag. Decoded by this page's own module, the one that
     /// composes an RDP host's pipeline, so it needs no video decoder; a slow
     /// link gets fewer frames rather than coarser ones, and it is never
-    /// lossless. Offered and chosen as the other two tiles are.
+    /// lossless. Offered and chosen as its tiles with motion are: for a link
+    /// that is not always wide, where a picture that ends exact matters less
+    /// than one that keeps up. It walks whatever `render_adaptive` says.
     WlshareTilesProgressive,
 }
 
@@ -391,7 +381,6 @@ impl Passthrough {
             Self::AppleAdaptive => "apple-adaptive",
             Self::WlshareVp9 => "wlshare-vp9",
             Self::WlshareTilesMotion => "wlshare-tiles-motion",
-            Self::WlshareTilesAdaptive => "wlshare-tiles-adaptive",
             Self::WlshareTilesProgressive => "wlshare-tiles-progressive",
         }
     }
@@ -405,7 +394,7 @@ impl Passthrough {
     pub fn chosen(self) -> bool {
         match self {
             Self::RdpGraphics | Self::WlshareVp9 => false,
-            Self::AppleMedia | Self::AppleH264 | Self::AppleAdaptive | Self::WlshareTilesMotion | Self::WlshareTilesAdaptive | Self::WlshareTilesProgressive => true,
+            Self::AppleMedia | Self::AppleH264 | Self::AppleAdaptive | Self::WlshareTilesMotion | Self::WlshareTilesProgressive => true,
         }
     }
 
@@ -417,7 +406,7 @@ impl Passthrough {
         match self {
             Self::RdpGraphics | Self::AppleAdaptive => false,
             // wlshare starts over at a keyframe, or sends the whole desktop again.
-            Self::AppleMedia | Self::AppleH264 | Self::WlshareVp9 | Self::WlshareTilesMotion | Self::WlshareTilesAdaptive | Self::WlshareTilesProgressive => true,
+            Self::AppleMedia | Self::AppleH264 | Self::WlshareVp9 | Self::WlshareTilesMotion | Self::WlshareTilesProgressive => true,
         }
     }
 
@@ -430,7 +419,6 @@ impl Passthrough {
             Self::AppleAdaptive => "the Mac's Adaptive picture",
             Self::WlshareVp9 => "wlshare's VP9",
             Self::WlshareTilesMotion => "wlshare's tiles with motion",
-            Self::WlshareTilesAdaptive => "wlshare's adaptive tiles",
             Self::WlshareTilesProgressive => "wlshare's progressive tiles",
         }
     }
@@ -775,7 +763,7 @@ impl Decoders {
             Passthrough::AppleAdaptive => true,
             // The page asks its own decoder about VP9 and cannot start a `wlshare`
             // target where that refuses it; the gateway is not told.
-            Passthrough::WlshareVp9 | Passthrough::WlshareTilesMotion | Passthrough::WlshareTilesAdaptive => true,
+            Passthrough::WlshareVp9 | Passthrough::WlshareTilesMotion => true,
             // Decoded by the module that composes the pipeline, on its threads.
             Passthrough::RdpGraphics | Passthrough::WlshareTilesProgressive => self.rdp_graphics,
         }
@@ -805,10 +793,8 @@ impl RenderPlan {
             Some(Passthrough::AppleAdaptive)
         } else if self.rdp_graphics {
             Some(Passthrough::RdpGraphics)
-        } else if self.wlshare_progressive {
-            Some(Passthrough::WlshareTilesProgressive)
         } else if self.wlshare_tiles {
-            Some(if self.adaptive { Passthrough::WlshareTilesAdaptive } else { Passthrough::WlshareTilesMotion })
+            Some(if self.adaptive { Passthrough::WlshareTilesProgressive } else { Passthrough::WlshareTilesMotion })
         } else if self.wlshare {
             Some(Passthrough::WlshareVp9)
         } else {
@@ -825,12 +811,11 @@ impl RenderPlan {
     /// dial, so the card names the dial and, of its VP9, the browser's chroma and
     /// whether the walk runs.
     pub fn describe(&self) -> String {
-        if self.wlshare_progressive {
-            return format!("progressive tiles q{}", self.quality);
-        }
         if self.wlshare_tiles {
-            let tiles = if self.adaptive { "adaptive tiles" } else { "tiles with motion" };
-            return format!("{tiles} q{} · {}", self.quality, self.chroma.name());
+            if self.adaptive {
+                return format!("progressive tiles q{}", self.quality);
+            }
+            return format!("tiles with motion q{} · {}", self.quality, self.chroma.name());
         }
         if self.wlshare {
             // The walk as a suffix: the quality named before it is a ceiling the
@@ -1037,7 +1022,7 @@ pub struct TargetConfig {
     /// unless the operator turned it off. A `wlshare` target's key alone: the tiles
     /// coded here follow the browser's painting at the one quality, and have no
     /// walk. wlshare's tiles do not read it: whether they walk is the picker's
-    /// choice between its tiles with motion and its adaptive tiles.
+    /// choice between its tiles with motion and its progressive tiles.
     ///
     /// The configured quality stays the *ceiling* — a link with room to spare
     /// never earns a better picture than the one asked for — and the walk's floor
@@ -1158,10 +1143,8 @@ impl TargetConfig {
         let passthrough = self.passthrough(choices);
         // wlshare's picture is the one the session was started with, its VP9 where
         // none was named, which walks its dial where the target's key says so; of
-        // its tiles, the adaptive and the progressive ones walk and those with
-        // motion are held.
-        let wlshare_progressive = passthrough == Some(Passthrough::WlshareTilesProgressive);
-        let tiles_adaptive = wlshare_progressive || passthrough == Some(Passthrough::WlshareTilesAdaptive);
+        // its tiles, the progressive ones walk and those with motion are held.
+        let tiles_adaptive = passthrough == Some(Passthrough::WlshareTilesProgressive);
         let wlshare_tiles = tiles_adaptive || passthrough == Some(Passthrough::WlshareTilesMotion);
         let wlshare = wlshare_tiles || passthrough == Some(Passthrough::WlshareVp9);
         let adaptive = if wlshare_tiles { tiles_adaptive } else { wlshare && self.render_adaptive() };
@@ -1183,7 +1166,6 @@ impl TargetConfig {
             adaptive,
             wlshare,
             wlshare_tiles,
-            wlshare_progressive,
             apple_media,
             apple_h264,
             hevc_instead,
@@ -1236,13 +1218,13 @@ impl TargetConfig {
                 microphone: false,
             },
             // Its picture is wlshare's own, passed: its VP9, the picture of a
-            // session that names none, or its tiles with motion, its adaptive
-            // tiles or its progressive tiles, chosen at the picker. Its camera
+            // session that names none, or its tiles with motion or its
+            // progressive tiles, chosen at the picker. Its camera
             // and microphone extensions take the browser's.
             (Protocol::Vnc, Some(Subtype::Wlshare)) => Offers {
                 resize: true,
                 audio: true,
-                passthrough: &[Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesAdaptive, Passthrough::WlshareTilesProgressive],
+                passthrough: &[Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive],
                 placement: false,
                 pipeline: false,
                 standard_view: false,
@@ -1371,7 +1353,7 @@ impl TargetConfig {
         let plan = self.render_plan(Choices::default(), decoders).describe();
         if self.wlshare() {
             let tiles = |passthrough| self.render_plan(Choices { passthrough: Some(passthrough), ..Choices::default() }, decoders).describe();
-            return format!("{plan}, or {}, or {}, or {}", tiles(Passthrough::WlshareTilesMotion), tiles(Passthrough::WlshareTilesAdaptive), tiles(Passthrough::WlshareTilesProgressive));
+            return format!("{plan}, or {}, or {}", tiles(Passthrough::WlshareTilesMotion), tiles(Passthrough::WlshareTilesProgressive));
         }
         if offered.is_empty() || self.passthrough(Choices::default()).is_some() {
             return plan;
@@ -3544,7 +3526,7 @@ mod tests {
                 apple_standard: None, apple_combined: false,
                 rdp_graphics: false,
                 rdp_h264: false,
-                wlshare: false, wlshare_tiles: false, wlshare_progressive: false,
+                wlshare: false, wlshare_tiles: false,
                 chroma: crate::vp9::Chroma::Yuv420,
             }
         );
@@ -3564,7 +3546,7 @@ mod tests {
                 apple_standard: None, apple_combined: false,
                 rdp_graphics: false,
                 rdp_h264: false,
-                wlshare: false, wlshare_tiles: false, wlshare_progressive: false,
+                wlshare: false, wlshare_tiles: false,
                 chroma: crate::vp9::Chroma::Yuv420,
             }
         );
@@ -3591,8 +3573,8 @@ mod tests {
         let wlshare = |extra: &str| {
             ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\nvideo_quality = 60\n{extra}"))).unwrap().targets.remove(0)
         };
-        assert_eq!(wlshare("").render_summary(), "VP9 q60 · 4:4:4 · adaptive, or tiles with motion q60 · 4:2:0, or adaptive tiles q60 · 4:2:0, or progressive tiles q60");
-        assert_eq!(wlshare("render_adaptive = false").render_summary(), "VP9 q60 · 4:4:4, or tiles with motion q60 · 4:2:0, or adaptive tiles q60 · 4:2:0, or progressive tiles q60");
+        assert_eq!(wlshare("").render_summary(), "VP9 q60 · 4:4:4 · adaptive, or tiles with motion q60 · 4:2:0, or progressive tiles q60");
+        assert_eq!(wlshare("render_adaptive = false").render_summary(), "VP9 q60 · 4:4:4, or tiles with motion q60 · 4:2:0, or progressive tiles q60");
     }
 
     /// wlshare's VP9 follows the browser: 4:4:4 where its own decoder takes it, 4:2:0
@@ -4806,7 +4788,7 @@ vnc_password_ref = \"x\"")).unwrap();
         for (key, adaptive) in [("render_adaptive = true", true), ("render_adaptive = false", false), ("", true)] {
             let cfg = ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\nvideo_quality = 80\n{key}"))).expect("a wlshare target");
             let plan = cfg.targets[0].render_plan(Choices::default(), Decoders::ALL);
-            assert_eq!(plan, RenderPlan { quality: 80, adaptive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, wlshare_progressive: false, chroma: crate::vp9::Chroma::Yuv444 }, "{key}");
+            assert_eq!(plan, RenderPlan { quality: 80, adaptive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv444 }, "{key}");
         }
     }
 
@@ -4824,12 +4806,12 @@ vnc_password_ref = \"x\"")).unwrap();
         assert!(parse_target("render_adaptive = true").is_err(), "the bitmap path took the key");
     }
 
-    /// wlshare's three tiles are chosen at the picker, against its VP9: a session
-    /// started with any asks wlshare for its tiles, their regions at 4:2:0
-    /// whatever the browser takes, their codec H.264, held at the dial for its tiles
-    /// with motion and walked for its adaptive and its progressive tiles whatever
-    /// the key says, the progressive ones with no region at all; one that names its
-    /// VP9, or nothing, is sent the VP9, walked as the key says.
+    /// wlshare's two tiles are chosen at the picker, against its VP9: a session
+    /// started with either asks wlshare for its tiles, held at the dial for its
+    /// tiles with motion, their regions H.264 at 4:2:0 whatever the browser
+    /// takes, and walked for its progressive tiles whatever the key says, with
+    /// no region at all; one that names its VP9, or nothing, is sent the VP9,
+    /// walked as the key says.
     #[cfg(feature = "wlshare")]
     #[test]
     fn wlshares_tiles_are_a_choice_at_the_picker() {
@@ -4837,16 +4819,15 @@ vnc_password_ref = \"x\"")).unwrap();
         for key in ["", "render_adaptive = true", "render_adaptive = false"] {
             let cfg = ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\nvideo_quality = 80\n{key}"))).expect("a wlshare target");
             let target = &cfg.targets[0];
-            assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesAdaptive, Passthrough::WlshareTilesProgressive], "{key}");
-            for (passthrough, adaptive, wlshare_progressive, describe) in [
-                (Passthrough::WlshareTilesMotion, false, false, "tiles with motion q80 · 4:2:0"),
-                (Passthrough::WlshareTilesAdaptive, true, false, "adaptive tiles q80 · 4:2:0"),
-                (Passthrough::WlshareTilesProgressive, true, true, "progressive tiles q80"),
+            assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive], "{key}");
+            for (passthrough, adaptive, describe) in [
+                (Passthrough::WlshareTilesMotion, false, "tiles with motion q80 · 4:2:0"),
+                (Passthrough::WlshareTilesProgressive, true, "progressive tiles q80"),
             ] {
                 let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
                 target.accepts(tiles).expect("the tiles are offered");
                 let plan = target.render_plan(tiles, Decoders::ALL);
-                assert_eq!(plan, RenderPlan { quality: 80, adaptive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, wlshare_progressive, chroma: crate::vp9::Chroma::Yuv420 }, "{key} {passthrough:?}");
+                assert_eq!(plan, RenderPlan { quality: 80, adaptive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, chroma: crate::vp9::Chroma::Yuv420 }, "{key} {passthrough:?}");
                 assert_eq!(plan.describe(), describe, "{key}");
                 assert_eq!(plan.passthrough(), Some(passthrough), "{key}");
             }
@@ -4856,7 +4837,7 @@ vnc_password_ref = \"x\"")).unwrap();
             let moduleless = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, vp9_444: true };
             assert_eq!(target.beyond(progressive, moduleless), Some(Passthrough::WlshareTilesProgressive), "{key}");
             assert_eq!(target.beyond(progressive, Decoders::ALL), None, "{key}");
-            assert_eq!(target.beyond(Choices { passthrough: Some(Passthrough::WlshareTilesAdaptive), ..Choices::default() }, moduleless), None, "{key}");
+            assert_eq!(target.beyond(Choices { passthrough: Some(Passthrough::WlshareTilesMotion), ..Choices::default() }, moduleless), None, "{key}");
             for choices in [vp9, Choices::default()] {
                 let plan = target.render_plan(choices, Decoders::ALL);
                 assert!(plan.wlshare && !plan.wlshare_tiles, "{key}: {choices:?}");
@@ -4874,7 +4855,7 @@ vnc_password_ref = \"x\"")).unwrap();
         let plain = ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets.remove(0);
         let rdp = parse_target("").unwrap().targets.remove(0);
         for target in [&plain, &rdp] {
-            for passthrough in [Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesAdaptive, Passthrough::WlshareTilesProgressive] {
+            for passthrough in [Passthrough::WlshareVp9, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive] {
                 let err = target.accepts(Choices { passthrough: Some(passthrough), ..Choices::default() }).unwrap_err();
                 assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
             }

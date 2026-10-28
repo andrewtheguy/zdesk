@@ -535,10 +535,10 @@ since neither end keeps an older layout. That version is also what
 leaves the extensions alone is no reason to move the pin; one that changes
 them is a new version and a new tag.
 
-A `wlshare` target lists one of wlshare's four pictures for every browser,
+A `wlshare` target lists one of wlshare's three pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
 (`Passthrough::WlshareVp9`, `Passthrough::WlshareTilesMotion`,
-`Passthrough::WlshareTilesAdaptive`, `Passthrough::WlshareTilesProgressive`), and passes its
+`Passthrough::WlshareTilesProgressive`), and passes its
 frames untouched. Its VP9, *Video*, is the picture of a session that names
 none, listed with the plan's dial, walk and chroma as pseudo-encodings beside
 it. Its tiles with motion, exact PNG tiles where the desktop is still and a
@@ -546,15 +546,13 @@ it. Its tiles with motion, exact PNG tiles where the desktop is still and a
 hardware encoder where it has one and libx264 otherwise, are wlshare's picture
 for a link with room to spare — a fraction of the VP9's encoder time and a
 picture that ends exact, for several times its bytes — listed with the dial
-and `WLSD`, every region held at it and every still exact. Its adaptive
-tiles are the same tiles listed with the dial alone, so that wlshare walks it
-as it walks the VP9, the regions following it and every still a lossy WebP at
-it, never made exact: the tiles' encoder time for a link that is not always
-wide. Neither selects a chroma, 4:2:0 for every browser. Its progressive tiles
-are the adaptive tiles' walk listed with `WLSP` beside it: every tile, still or
-moving, one RemoteFX Progressive tile block, as a Windows host draws its desktop
-where it has no H.264 — a coarse first pass refined in place once it is still,
-a changed tile the difference from what the page holds — and no stream. Each
+and `WLSD`, every region held at it and every still exact; it selects no
+chroma, 4:2:0 for every browser. Its progressive tiles are the same encoding
+listed with the dial alone, so that wlshare walks it as it walks the VP9, for
+a link that is not always wide: every tile, still or moving, one RemoteFX
+Progressive tile block, as a Windows host draws its desktop where it has no
+H.264 — a coarse first pass refined in place once it is still, a changed tile
+the difference from what the page holds — and no stream, never lossless. Each
 is checked to be one 64×64 tile on the grid, cut by the desktop's edge, whose
 block names that tile, and passed as a `TILE` record of its own format
 (`TILE_PROGRESSIVE`). The page decodes them in wire order with the module that
@@ -1160,29 +1158,29 @@ listing sends.
 
 wlshare has a second picture encoding, `WLST` (`0x574c5354`), which a `wlshare`
 session started with its tiles, chosen at the picker as *Tiles with motion* or
-*Adaptive tiles* against its VP9, lists in place of `WLSV`. Both are a video
-stream of its own, 4:2:0, for each region that moves, at most four at once —
-H.264, by the wlshare host's hardware encoder where it has one and libx264
-otherwise — and stills where the desktop is still. Its tiles with motion
-send the stills as exact PNG, and every tile a stream carried again as PNG
-once it is still, so the picture ends exact; its adaptive tiles send every
-still as a lossy WebP instead, never made exact. It is Motion, which this gateway removed because here
+*Progressive tiles* against its VP9, lists in place of `WLSV`. Its tiles with
+motion are a video stream of its own, 4:2:0, for each region that moves, at
+most four at once — H.264, by the wlshare host's hardware encoder where it has
+one and libx264 otherwise — and exact PNG stills where the desktop is still,
+every tile a stream carried sent again as PNG once it is still, so the picture
+ends exact. Its progressive tiles are every tile a RemoteFX Progressive tile
+block instead, and no stream (above). The tiles with motion are Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of eight kinds: a PNG of it, a lossy WebP
-of it, a region stream's first frame, its next, its end, a copy of what the
-page holds elsewhere, a scroll or a window moved, a tile of it kept in the
-page's cache of tiles, or a tile drawn from that cache, a window switched back
-to or a page scrolled back.
+Every rectangle of an update is one of eight kinds: a PNG of it, a region
+stream's first frame, its next, its end, a copy of what the page holds
+elsewhere, a scroll or a window moved, a tile of it kept in the page's cache
+of tiles, a tile drawn from that cache, a window switched back to or a page
+scrolled back, or a progressive tile.
 Nothing is coded here.
 
 - **Listed with the dial beside it.** `WLST` goes at the head of the list with
   `WLQ` plus `video_quality`, the ceiling, as the VP9 is. For its tiles with
   motion `WLSD` beside it holds every region's stream at the dial and every
-  still is exact; for its adaptive tiles, the plan's `adaptive`, wlshare walks
-  the regions' dial down from it on the browser's lag and sends every still as
-  a lossy WebP at the dial, again at the ceiling once the link has room.
+  still is exact; for its progressive tiles, the plan's `adaptive`, wlshare
+  walks the dial down from it on the browser's lag, the first passes following
+  it, and refines every tile once the link has room.
   `render_adaptive` reaches neither. There is no `WLSS`, since every region is 4:2:0
   for every browser. Every region is H.264, which wlshare codes with its host's
   hardware encoder where it found one at its startup, the GPU's fixed-function
@@ -1198,8 +1196,8 @@ Nothing is coded here.
   resize, refused in one started with it. A desktop within it is what holds every
   region to it, so wlshare splits or drops none for its size.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
-  `pass_region_end`, `pass_copy`, `pass_cache`). A PNG or a WebP becomes a `TILE` record, painted as
-  `image/png` or `image/webp`, a copy a `COPY` record, its source held to the
+  `pass_region_end`, `pass_copy`, `pass_cache`). A PNG becomes a `TILE` record, painted as
+  `image/png`, a copy a `COPY` record, its source held to the
   desktop as its rectangle is, a tile stored in the page's cache a `STORE`
   record and one drawn from it a `CACHED` record, each held to one 64×64 tile
   and a store to the tile grid, the slot to the cache's 4096 by the parser
@@ -2050,7 +2048,7 @@ six, the Mac's HEVC and H.264 in one row:
 |---|---|---|---|
 | wlshare's VP9 (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: quality, then frame rate | Each fence echo is held for the queue ahead of the frame on the browser's link (`VideoSink::fence_hold`) | `video_quality` as its ceiling (`WLQ`); `render_adaptive = false` holds it at the dial (`WLSD`) |
 | wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at the dial | Each fence echo is held as the VP9's is, and nothing adapts to it | `video_quality` as what the regions are held at (`WLQ`, `WLSD`); `render_adaptive` reaches nothing of it |
-| wlshare's adaptive tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`, as its VP9's: the regions' dial and the stills' WebP | Each fence echo is held as the VP9's is | `video_quality` as its ceiling (`WLQ`); `render_adaptive` reaches nothing of it |
+| wlshare's progressive tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`, as its VP9's: the stage of each first pass, then frame rate | Each fence echo is held as the VP9's is | `video_quality` as its ceiling (`WLQ`); `render_adaptive` reaches nothing of it |
 | An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; with Adaptive, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; with Adaptive, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more | None: always on, and `video_quality` and `render_adaptive` reach nothing of it |
 | A High Performance Mac's HEVC or H.264 (beta), always passed | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway | None: the video keys are refused on the target |
 | A Standard Mac's Adaptive picture (passed where chosen) | The Mac: how many updates it sends, and whether it refines them while the screen moves | Its connection, read as the page paints, through a small receive buffer | None: `render_adaptive` is refused on the target, and `video_quality` reaches its tiles alone |
@@ -2351,9 +2349,8 @@ and `GET /api/targets` carries it:
   passthrough at all. A `wlshare` target's Picture group is Video, passed
   through, wlshare's VP9, which `connect` names as `wlshare-vp9` and which a
   session that names none is sent, taken first, Tiles with motion, passed
-  through, `wlshare-tiles-motion`, Adaptive tiles, passed through,
-  `wlshare-tiles-adaptive`, and Progressive tiles (beta), passed through,
-  `wlshare-tiles-progressive`.
+  through, `wlshare-tiles-motion`, and Progressive tiles (beta), passed
+  through, `wlshare-tiles-progressive`.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
