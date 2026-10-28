@@ -342,6 +342,11 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
     "This browser cannot compose the host's graphics pipeline, which this target always passes: that needs WebGL 2 and a cross-origin isolated page. Use a browser that can, or a target with egfx disabled.",
 };
 
+// Why wlshare's progressive tiles are greyed: the module that composes an RDP
+// host's pipeline decodes them, and this page cannot run it.
+const NO_PROGRESSIVE =
+  "This page cannot decode wlshare's progressive tiles: that needs WebGL 2 and a cross-origin isolated page.";
+
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
   "This browser decodes none of wlshare's pictures: its VP9, the H.264 of its tiles with motion, or its progressive tiles, which need WebGL 2 and a cross-origin isolated page. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
@@ -427,10 +432,10 @@ function pictureOptions(
     },
     "wlshare-tiles-progressive": {
       value: "wlshare-tiles-progressive",
-      label: "Progressive tiles (beta), passed through",
+      label: "Progressive tiles (experimental), passed through",
       note: abilities.rdpGraphics
         ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Decoded by this page, with no video decoder; never lossless."
-        : RDP_GRAPHICS.blocked,
+        : NO_PROGRESSIVE,
       disabled: !abilities.rdpGraphics,
     },
   };

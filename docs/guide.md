@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its progressive tiles (beta), always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its progressive tiles (experimental), always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -120,7 +120,7 @@ config key.
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
   VP9 of the whole desktop, *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN, or *Progressive tiles (beta), passed through*, its
+  own tiles, for a LAN, or *Progressive tiles (experimental), passed through*, its
   tiles fitted to the link as a Windows host draws without H.264: see
   [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
@@ -585,17 +585,18 @@ does not open under this one: remove its `[master]` and `[passwords]` and set
 each password again with `p`.
 
 A browser logs in with a PIN. The TUI's access panel, above the instance list,
-shows a six-digit PIN in large digits and the clock time it expires, ten
-minutes after it is drawn. Beside the large digits the PIN is printed as
-`123-456`, one word for a double-click, and `c` sends it in that form to the
+shows a six-digit PIN and the clock time it expires, ten minutes after it is
+drawn. The PIN is printed as `123-456` in a colour of its own, one word for a
+double-click, and `c` sends it in that form to the
 clipboard through the terminal (OSC 52), which reaches your own clipboard over
 SSH. Inside tmux it goes into a tmux buffer, which tmux passes on to the
 terminal's clipboard under its default `set-clipboard` setting. No terminal
 confirms the write, and Apple's Terminal.app drops it, so if a paste does not
-give the PIN, select it instead. The landing page's field takes the PIN with or
-without its dash. The PIN is entered once, on the landing page: an
-instance sends a browser without a login there for it, and back to the instance
-once it is in. That one login reaches every instance. `P` draws a new PIN and
+give the PIN, select it instead. The PIN field takes the PIN with or
+without its dash. The PIN is entered once, on whichever page the browser opened,
+the landing page or an instance, and the browser stays there. That one login
+reaches the landing page and every instance. A PIN page left open in another
+tab offers to continue instead once you switch back to it. `P` draws a new PIN and
 starts its time again. After five wrong entries the PIN is withdrawn, and every
 entry is refused until `P` draws a new one. The PIN guards only new logins. A
 browser that has logged in stays logged in when the PIN expires or is drawn

@@ -637,6 +637,13 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-progressive", true],
   ]);
+  // The progressive tiles' reason is wlshare's, not an RDP host's egfx.
+  const progressive =
+    unable.pictures?.find(
+      (option) => option.value === "wlshare-tiles-progressive",
+    )?.note ?? "";
+  assert.match(progressive, /WebGL 2 and a cross-origin isolated page/);
+  assert.doesNotMatch(progressive, /egfx/);
   assert.match(unable.blocked ?? "", /none of wlshare's pictures/);
   // A plain target, read through the RFB baseline, is sent the tiles.
   assert.equal(targetOptions(target({}), undefined, UNABLE).blocked, null);

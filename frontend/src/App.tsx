@@ -32,8 +32,9 @@ if (TAB_DISPLAY !== null) {
 //
 // Which login is the gateway's to say, on /api/auth/status: a served gateway's
 // username and password, or, behind the TUI's control plane, the PIN its access
-// panel shows, which only the control plane's own origin asks for. That origin
-// is its landing page, the list of its instances, rather than a desktop.
+// panel shows, which the control plane asks for on any of its origins until the
+// browser is in. Logged in, its own origin is its landing page, the list of its
+// instances, and an instance origin is that instance's gateway.
 type Gate =
   | { kind: "checking" }
   | { kind: "password" }
@@ -43,11 +44,8 @@ type Gate =
 
 type AuthStatus = {
   authenticated: boolean;
-  /**
-   * "pin" on the TUI control plane's own origin, "landing" on an instance
-   * origin whose login is gone; absent on a gateway.
-   */
-  login?: "pin" | "landing";
+  /** "pin" where the TUI control plane answers; absent on a gateway. */
+  login?: "pin";
   /** Why no PIN can log anyone in right now, if so. */
   problem?: string | null;
 };
@@ -96,19 +94,12 @@ export default function App() {
   // Asked on load, and again whenever the answer may have changed: after a
   // logout, and on a 401 mid-session, when a restart wiped the in-memory
   // logins. Behind the TUI that is the control plane answering where the
-  // instance's gateway had been, and the PIN is entered on its landing page:
-  // a reload is sent there, and back here once the PIN is in.
+  // instance's gateway had been, and the PIN is entered here, in place.
   const check = useCallback(() => {
     setGate({ kind: "checking" });
     gatewayFetch("/api/auth/status")
       .then((res) => res.json() as Promise<AuthStatus>)
-      .then((status) => {
-        if (status.login === "landing") {
-          globalThis.location.reload();
-          return;
-        }
-        setGate(gateOf(status));
-      })
+      .then((status) => setGate(gateOf(status)))
       .catch(() => setGate({ kind: "password" }));
   }, []);
 

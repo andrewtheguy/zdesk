@@ -548,7 +548,7 @@ fn editor_command(editor: &str, path: &Path) -> Command {
 }
 
 /// The instance's origin on the shared port. A browser without a login there is
-/// sent to the landing origin for the PIN, and then back.
+/// asked for the PIN on it.
 fn instance_url(name: &str, port: u16) -> String {
     format!("http://{name}.{MASTER_HOST}:{port}")
 }
@@ -941,53 +941,6 @@ fn bar_width(bindings: &[&Binding]) -> usize {
 /// A run of text in its colour and weight, as a row of the screen is drawn.
 type Run = (String, Option<Color>, bool);
 
-/// The digits in a font three pixels wide and five tall, a row of pixels to a
-/// string, so the PIN reads at a glance in a terminal's small type.
-const PIN_FONT: [[&str; 5]; 10] = [
-    ["###", "#.#", "#.#", "#.#", "###"],
-    ["##.", ".#.", ".#.", ".#.", "###"],
-    ["###", "..#", "###", "#..", "###"],
-    ["###", "..#", "###", "..#", "###"],
-    ["#.#", "#.#", "###", "..#", "..#"],
-    ["###", "#..", "###", "..#", "###"],
-    ["###", "#..", "###", "#.#", "###"],
-    ["###", "..#", "..#", "..#", "..#"],
-    ["###", "#.#", "###", "#.#", "###"],
-    ["###", "#.#", "###", "..#", "###"],
-];
-
-/// `digits` in [`PIN_FONT`], drawn in half blocks two rows of pixels to a row
-/// of the screen: three rows, a column between digits, and three between the
-/// halves of a six-digit PIN, the dash of `123-456` on the middle row of pixels.
-fn big_digits(digits: &str) -> [String; 3] {
-    let mut rows: [String; 3] = Default::default();
-    for (index, glyph) in digits.chars().filter_map(|digit| digit.to_digit(10)).enumerate() {
-        let glyph = &PIN_FONT[glyph as usize];
-        for (row, text) in rows.iter_mut().enumerate() {
-            if index > 0 {
-                text.push_str(match (index, row) {
-                    (3, 1) => " ▀ ",
-                    (3, _) => "   ",
-                    _ => " ",
-                });
-            }
-            let upper = glyph[2 * row].as_bytes();
-            let lower = glyph.get(2 * row + 1).map(|pixels| pixels.as_bytes());
-            for column in 0..3 {
-                let up = upper[column] == b'#';
-                let down = lower.is_some_and(|pixels| pixels[column] == b'#');
-                text.push(match (up, down) {
-                    (true, true) => '█',
-                    (true, false) => '▀',
-                    (false, true) => '▄',
-                    (false, false) => ' ',
-                });
-            }
-        }
-    }
-    rows
-}
-
 /// The bytes that put `text` on the clipboard through the terminal: OSC 52,
 /// which the terminal emulator answers, so it reaches the clipboard of the
 /// machine whose screen this is, through SSH. iTerm2, kitty, WezTerm, Ghostty,
@@ -1029,7 +982,7 @@ async fn copy_pin(text: &str) -> anyhow::Result<()> {
 const UNCONFIRMED_COPY: &str = "PIN sent to the clipboard; if a paste does not give it, select the PIN instead";
 
 /// A six-digit PIN as it is read out and typed: `123-456`. The dash keeps it one
-/// word for a double-click, and the landing page's field drops it.
+/// word for a double-click, and the PIN field drops it.
 fn dashed(digits: &str) -> String {
     match digits.split_at_checked(3) {
         Some((first, second)) => format!("{first}-{second}"),
@@ -1037,47 +990,35 @@ fn dashed(digits: &str) -> String {
     }
 }
 
-/// The access panel's three rows, `inner` columns wide: the PIN a browser logs
-/// in with, in digits three rows tall beside what it is when they fit, or why no
-/// PIN can log anyone in.
-fn access_rows(pin: &PinState, inner: usize) -> [Vec<Run>; 3] {
+/// The access panel's three rows: the PIN a browser logs in with, in a colour
+/// of its own beside its label, or why no new browser can log in with one.
+fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
     let hint = ("press P for a new PIN · c copies it".to_owned(), Some(Color::DarkGrey), false);
-    let (heading, color, detail) = match pin {
+    // Browsers already logged in stay in whatever the PIN's state; only a new
+    // login needs it.
+    let refused = "no new browser can log in · logged-in ones stay in";
+    let (heading, detail) = match pin {
         PinState::Open {
             digits,
             expires_at,
             minutes_left,
         } => (
-            format!("PIN {}", dashed(digits)),
-            Color::Green,
+            vec![
+                ("PIN ".to_owned(), Some(Color::Green), true),
+                (dashed(digits), Some(Color::Magenta), true),
+            ],
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
         PinState::Expired => (
-            "PIN expired".to_owned(),
-            Color::Yellow,
-            "no browser can log in".to_owned(),
+            vec![("PIN expired".to_owned(), Some(Color::Yellow), true)],
+            refused.to_owned(),
         ),
         PinState::Withdrawn => (
-            format!("PIN withdrawn after {MAX_WRONG} wrong entries"),
-            Color::Red,
-            "no browser can log in".to_owned(),
+            vec![(format!("PIN withdrawn after {MAX_WRONG} wrong entries"), Some(Color::Red), true)],
+            refused.to_owned(),
         ),
     };
-    let text = [(heading, Some(color), true), (detail, None, false), hint];
-    let PinState::Open { digits, .. } = pin else {
-        return text.map(|run| vec![run]);
-    };
-    let big = big_digits(digits);
-    let gap = "   ";
-    let longest = text.iter().map(|(text, _, _)| text.chars().count()).max().unwrap_or_default();
-    if inner < big[0].chars().count() + gap.len() + longest {
-        return text.map(|run| vec![run]);
-    }
-    let mut rows = big.into_iter().zip(text);
-    std::array::from_fn(|_| {
-        let (digits, run) = rows.next().expect("three rows of each");
-        vec![(digits, Some(Color::Green), true), (gap.to_owned(), None, false), run]
-    })
+    [heading, vec![(detail, None, false)], vec![hint]]
 }
 
 /// The rows above the list: the title, the instances directory, a blank row,
@@ -1119,7 +1060,7 @@ fn render(
         Some(Color::DarkGrey),
         false,
     )?;
-    let access = access_rows(pin, panel_inner(width));
+    let access = access_rows(pin);
     panel(&mut frame, 3, width, "access PIN", &access)?;
     line(
         &mut frame,
@@ -2160,12 +2101,15 @@ async fn route_connection(
     let login = access.login_in(parsed.cookie.as_deref());
     let path = parsed.target.split('?').next().unwrap_or_default();
 
-    // The master answers its own questions on the landing origin, the one place a
-    // browser enters the PIN; an instance origin is its worker's.
-    if landing {
-        if path == PIN_PATH {
-            return log_in(client, &access, &parsed, &request).await;
-        }
+    // The PIN is entered on whichever origin the browser is at, and its login is
+    // set for the landing origin's domain, so one entry reaches them all.
+    if path == PIN_PATH {
+        return log_in(client, &access, &parsed, &request).await;
+    }
+
+    // The master answers the page's questions on the landing origin, and on an
+    // instance origin until the browser is in: then they are its worker's.
+    if landing || login.is_none() {
         match (parsed.method.as_str(), path) {
             ("GET", "/api/auth/status") => {
                 let status = serde_json::json!({
@@ -2184,13 +2128,6 @@ async fn route_connection(
     }
 
     if login.is_none() {
-        // A page already open on an instance origin asks this when its requests
-        // start failing, as after the TUI restarts: the answer has it reload,
-        // which the redirect below takes to the PIN.
-        if instance.is_some() && parsed.method == "GET" && path == "/api/auth/status" {
-            let status = serde_json::json!({ "authenticated": false, "login": "landing" });
-            return write_json(&mut client, "200 OK", &status, &[]).await;
-        }
         // The refusal states the version, as a worker's does, since it is the
         // same build's: a page takes a refusal without one for a gateway it
         // was not loaded from, and asks to be reloaded rather than logged in.
@@ -2199,30 +2136,14 @@ async fn route_connection(
             let version = [("X-Zdesk-Version", env!("CARGO_PKG_VERSION"))];
             return write_json(&mut client, "401 Unauthorized", &refusal, &version).await;
         }
-        // An instance origin sends the browser to the landing page, which asks
-        // for the PIN and, once it is in, sends the browser back to where it was.
-        if let Some(name) = &instance
-            && parsed.method == "GET"
-            && parsed.target.starts_with('/')
-        {
-            let location = format!("http://{MASTER_HOST}:{public_port}{OPEN_PATH}{name}{}", parsed.target);
-            write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
-            return Ok(());
-        }
+        // Any origin's page is the PIN form until the browser is in. On an
+        // instance origin its reload is then the worker's page, at the same
+        // address. A name with no instance is shown the form too, so the form
+        // does not say which instances exist.
         return write_bundle(&mut client, &parsed, path).await;
     }
 
     let Some(name) = instance else {
-        if let Some(rest) = parsed.target.strip_prefix(OPEN_PATH) {
-            let (name, back) = rest.find('/').map_or((rest, "/"), |slash| rest.split_at(slash));
-            if !routes.inner.read().await.contains_key(name) {
-                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
-                return Ok(());
-            }
-            let location = format!("{}{back}", instance_url(name, public_port));
-            write_response(&mut client, "303 See Other", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
-            return Ok(());
-        }
         if parsed.method == "GET" && path == "/api/instances" {
             let snapshot = routes.inner.read().await.clone();
             let instances: Vec<_> = snapshot
@@ -2276,11 +2197,7 @@ async fn route_connection(
     Ok(())
 }
 
-/// Where an instance origin sends a browser without a login:
-/// `/__zdesk/open/<name><path>` on the landing origin asks for the PIN, and once
-/// the browser is in, sends it to `<path>` on that instance's origin.
-const OPEN_PATH: &str = "/__zdesk/open/";
-/// Where the page posts the PIN, on the landing origin.
+/// Where the page posts the PIN, on any of the master's origins.
 const PIN_PATH: &str = "/api/auth/pin";
 /// The most a PIN entry's body may be. It holds six digits and a field name.
 const MAX_LOGIN_BODY: usize = 1024;
@@ -2296,8 +2213,9 @@ struct PinEntry {
     pin: String,
 }
 
-/// `POST /api/auth/pin` with `{"pin": "123456"}` on the landing origin: a login
-/// cookie for it and every instance origin, or what was wrong with the entry.
+/// `POST /api/auth/pin` with `{"pin": "123456"}` on any of the master's origins:
+/// a login cookie for the landing origin's domain, and so for it and every
+/// instance origin, or what was wrong with the entry.
 ///
 /// A post is taken only with its own origin's `Origin`, which a browser always
 /// sends on one: otherwise any page on the web could post wrong entries until the
@@ -2659,10 +2577,7 @@ mod tests {
         };
         let frame = render((80, 24), &options, &pin, &instances, 0, &View::List, "started work").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        for row in big_digits("123456") {
-            assert!(frame.contains(&row), "the PIN three rows tall: {frame}");
-        }
-        assert!(frame.contains("PIN 123-456"), "{frame}");
+        assert!(frame.contains("123-456") && !frame.contains('█'), "{frame}");
         assert!(frame.contains("press P for a new PIN · c copies it"), "{frame}");
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access PIN "), "{frame}");
@@ -2677,14 +2592,28 @@ mod tests {
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
+    }
 
-        // Too narrow for the tall digits beside every row of text, the PIN is
-        // still there in the terminal's own, and so is when it expires.
-        for width in [36, 50] {
-            let frame = render((width, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
-            let frame = String::from_utf8(frame).unwrap();
-            assert!(frame.contains("PIN 123-456") && !frame.contains('█'), "{width}: {frame}");
-            assert!(frame.contains("expires 14:32 · 10 min left"), "{width}: {frame}");
+    /// The PIN is drawn in a colour of its own, apart from its label, and a PIN
+    /// that cannot log anyone in says that only new logins are refused.
+    #[test]
+    fn the_access_panel_sets_the_pin_apart() {
+        let open = PinState::Open {
+            digits: "123456".to_owned(),
+            expires_at: "14:32".to_owned(),
+            minutes_left: 10,
+        };
+        let [heading, ..] = access_rows(&open);
+        assert_eq!(
+            heading,
+            vec![
+                ("PIN ".to_owned(), Some(Color::Green), true),
+                ("123-456".to_owned(), Some(Color::Magenta), true),
+            ]
+        );
+        for pin in [PinState::Expired, PinState::Withdrawn] {
+            let [_, detail, _] = access_rows(&pin);
+            assert_eq!(detail[0].0, "no new browser can log in · logged-in ones stay in");
         }
     }
 
@@ -2695,26 +2624,6 @@ mod tests {
     fn the_pin_is_copied_through_the_terminal() {
         assert_eq!(dashed("123456"), "123-456");
         assert_eq!(clipboard_write(&dashed("123456")), b"\x1b]52;c;MTIzLTQ1Ng==\x07");
-    }
-
-    /// Every digit of the PIN's font is drawn differently, so none reads as
-    /// another.
-    #[test]
-    fn each_digit_is_drawn_its_own_way() {
-        let glyphs: Vec<_> = (0..10).map(|digit| big_digits(&digit.to_string())).collect();
-        for (digit, glyph) in glyphs.iter().enumerate() {
-            assert!(glyph.iter().all(|row| row.chars().count() == 3), "{digit}: {glyph:?}");
-            assert_eq!(glyphs.iter().filter(|other| *other == glyph).count(), 1, "{digit}: {glyph:?}");
-        }
-        assert_eq!(big_digits("88"), ["█▀█ █▀█", "█▀█ █▀█", "▀▀▀ ▀▀▀"]);
-        // The gap between the halves, after three digits and their two columns
-        // apart, holds the dash on the middle row only.
-        let rows = big_digits("123456");
-        assert_eq!(rows[0].chars().count(), 6 * 3 + 4 + 3);
-        let gap = |row: &String| row.chars().skip(3 * 3 + 2).take(3).collect::<String>();
-        assert_eq!(gap(&rows[0]), "   ", "{}", rows[0]);
-        assert_eq!(gap(&rows[1]), " ▀ ", "{}", rows[1]);
-        assert_eq!(gap(&rows[2]), "   ", "{}", rows[2]);
     }
 
     /// The specs page answers from the config the instance would start on, and
@@ -2973,11 +2882,11 @@ mod tests {
         second.1.await.unwrap();
     }
 
-    /// A browser without a login is asked for the PIN on the landing origin only:
-    /// an instance origin sends it there, keeping where it was going, and gives
-    /// nothing of the instance — no API, and never a worker's token.
+    /// A browser without a login is asked for the PIN where it is: every origin's
+    /// page is the PIN form, and an instance origin gives nothing of the
+    /// instance — no API, and never a worker's token.
     #[tokio::test]
-    async fn a_browser_without_a_login_is_asked_for_the_pin_on_the_landing_origin() {
+    async fn a_browser_without_a_login_is_asked_for_the_pin_where_it_is() {
         let routes = RouteTable::default();
         routes.inner.write().await.insert(
             "one".to_owned(),
@@ -2992,38 +2901,26 @@ mod tests {
         let port = free_port();
         let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
 
-        let page = request(port, "zdesk.localhost", Some("zdesk_session=launch-token")).await;
-        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
-        assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{page}");
-        assert!(page.contains("<div id=\"root\">"), "the bundle's document: {page}");
-        assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {page}");
-        assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{page}");
-        let status = get(port, "zdesk.localhost", "/api/auth/status", None).await;
-        assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"pin\",\"problem\":null}", "{status}");
-        let opening = get(port, "zdesk.localhost", &format!("{OPEN_PATH}one/display/2?x=1"), None).await;
-        assert!(opening.starts_with("HTTP/1.1 200 OK") && opening.contains("<div id=\"root\">"), "the PIN form: {opening}");
-
-        for host in ["one.zdesk.localhost", "nothing.zdesk.localhost"] {
-            let name = host.split('.').next().unwrap();
-            let sent = get(port, host, "/display/2?x=1", Some("zdesk_session=launch-token")).await;
-            assert!(sent.starts_with("HTTP/1.1 303 See Other"), "{host}: {sent}");
-            assert!(
-                sent.contains(&format!("Location: http://zdesk.localhost:{port}{OPEN_PATH}{name}/display/2?x=1\r\n")),
-                "{host}: {sent}"
-            );
-            assert!(!sent.contains("launch-token") && !sent.contains("Set-Cookie"), "{host}: {sent}");
+        for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
+            for path in ["/", "/display/2?x=1"] {
+                let page = get(port, host, path, Some("zdesk_session=launch-token")).await;
+                assert!(page.starts_with("HTTP/1.1 200 OK"), "{host}{path}: {page}");
+                assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{host}{path}: {page}");
+                assert!(page.contains("<div id=\"root\">"), "the bundle's document: {host}{path}: {page}");
+                assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {page}");
+                assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{host}{path}: {page}");
+                assert!(!page.contains("Location"), "never sent elsewhere: {host}{path}: {page}");
+            }
             let status = get(port, host, "/api/auth/status", Some("zdesk_session=launch-token")).await;
-            assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"landing\"}", "{host}: {status}");
-            for path in ["/api/config", PIN_PATH, "/api/targets", "/api/instances", "/ws", "/ws/audio"] {
+            assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"pin\",\"problem\":null}", "{host}: {status}");
+            let config = get(port, host, "/api/config", Some("zdesk_session=launch-token")).await;
+            assert!(body_of(&config).contains(&format!("\"branding\":\"{DEFAULT_BRANDING}\"")), "{host}: {config}");
+            for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
                 let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
                 assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
                 let version = format!("\r\nX-Zdesk-Version: {}\r\n", env!("CARGO_PKG_VERSION"));
                 assert!(refused.contains(&version), "{host}{path}: {refused}");
             }
-        }
-        for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
-            let refused = get(port, "zdesk.localhost", path, Some("zdesk_session=launch-token")).await;
-            assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{path}: {refused}");
         }
         drop(router);
     }
@@ -3035,10 +2932,10 @@ mod tests {
         let port = free_port();
         let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
         for host in ["localhost", "127.0.0.1", "[::1]"] {
-            let response = send(port, &format!("GET /__zdesk/open/work?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n")).await;
+            let response = send(port, &format!("GET /display/2?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n")).await;
             assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{host}: {response}");
             assert!(
-                response.contains(&format!("Location: http://zdesk.localhost:{port}/__zdesk/open/work?x=1\r\n")),
+                response.contains(&format!("Location: http://zdesk.localhost:{port}/display/2?x=1\r\n")),
                 "{host}: {response}"
             );
             assert!(!response.contains("Set-Cookie"), "{host}: {response}");
@@ -3077,52 +2974,60 @@ mod tests {
         drop(router);
     }
 
-    /// The page's PIN logs the browser in, for the landing origin's domain; a post
-    /// from another origin is not taken, and does not count against the PIN.
+    /// The page's PIN logs the browser in, on the landing origin or an instance's,
+    /// for the landing origin's domain; a post from another origin is not taken,
+    /// and does not count against the PIN.
     #[tokio::test]
     async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
         let port = free_port();
         let access = Access::open(port);
         let _router = SharedPort::bind(port, RouteTable::default(), access.clone()).await.unwrap();
-        let pin = pin_of(&access);
-        let post = |origin: String, pin: String| {
+        let post = |host: &str, origin: String, pin: &str| {
             let body = format!("{{\"pin\":\"{pin}\"}}");
             format!(
-                "POST {PIN_PATH} HTTP/1.1\r\nHost: zdesk.localhost:{port}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "POST {PIN_PATH} HTTP/1.1\r\nHost: {host}:{port}\r\nOrigin: {origin}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
         };
 
-        let response = send(port, &post("http://evil.example".to_owned(), "000000".to_owned())).await;
-        assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
-        assert!(response.contains("its own origin"), "{response}");
+        let mut wrong_entries = 0;
+        for host in ["zdesk.localhost", "one.zdesk.localhost"] {
+            let pin = pin_of(&access);
+            for origin in ["http://evil.example".to_owned(), format!("http://{host}"), format!("http://other.zdesk.localhost:{port}")] {
+                let response = send(port, &post(host, origin.clone(), "000000")).await;
+                assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host} from {origin}: {response}");
+                assert!(response.contains("its own origin"), "{response}");
+            }
 
-        let wrong = if pin == "000000" { "000001" } else { "000000" };
-        let response = send(port, &post(format!("http://zdesk.localhost:{port}"), wrong.to_owned())).await;
-        assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{response}");
-        assert!(response.contains(&format!("{} more wrong entries", MAX_WRONG - 1)), "only this one counted: {response}");
+            let wrong = if pin == "000000" { "000001" } else { "000000" };
+            wrong_entries += 1;
+            let response = send(port, &post(host, format!("http://{host}:{port}"), wrong)).await;
+            assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{host}: {response}");
+            let left = MAX_WRONG - wrong_entries;
+            assert!(response.contains(&format!("{left} more wrong entries")), "only this one counted: {host}: {response}");
 
-        let response = send(port, &post(format!("http://zdesk.localhost:{port}"), pin)).await;
-        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-        let cookie = response
-            .lines()
-            .find_map(|line| line.strip_prefix("Set-Cookie: "))
-            .expect("a login cookie");
-        assert!(cookie.starts_with(&format!("zdesk_login_{port}=")), "{cookie}");
-        assert!(cookie.contains("; Domain=zdesk.localhost;") && cookie.contains("; HttpOnly; SameSite=Lax;"), "{cookie}");
-        let login = cookie.split(';').next().unwrap();
+            let response = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK"), "{host}: {response}");
+            let cookie = response
+                .lines()
+                .find_map(|line| line.strip_prefix("Set-Cookie: "))
+                .expect("a login cookie");
+            assert!(cookie.starts_with(&format!("zdesk_login_{port}=")), "{cookie}");
+            assert!(cookie.contains("; Domain=zdesk.localhost;") && cookie.contains("; HttpOnly; SameSite=Lax;"), "{cookie}");
+            let login = cookie.split(';').next().unwrap();
 
-        let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
-        assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{status}");
-        let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
-        assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{instances}");
+            let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
+            assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{host}: {status}");
+            let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
+            assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{host}: {instances}");
+        }
     }
 
-    /// A login made on the landing origin is sent back to the instance that asked
-    /// for it, keeping the path, and reaches that instance's worker with the
-    /// worker's token in its place.
+    /// A login, wherever its PIN was entered, lists the instances on the landing
+    /// origin and reaches each instance's worker with the worker's token in its
+    /// place.
     #[tokio::test]
-    async fn a_login_on_the_landing_origin_reaches_every_instance() {
+    async fn a_login_reaches_the_landing_origin_and_every_instance() {
         let routes = RouteTable::default();
         let worker = fake_gateway("one").await;
         routes.inner.write().await.insert(
@@ -3146,17 +3051,8 @@ mod tests {
             format!("[{{\"name\":\"one\",\"open\":\"http://one.zdesk.localhost:{port}\",\"state\":\"running\"}}]"),
             "{listed}"
         );
-
-        for (opened, back) in [("one", "/"), ("one/display/2?x=1", "/display/2?x=1")] {
-            let sent = get(port, "zdesk.localhost", &format!("{OPEN_PATH}{opened}"), Some(&login)).await;
-            assert!(sent.starts_with("HTTP/1.1 303 See Other"), "{sent}");
-            assert!(sent.contains(&format!("Location: http://one.zdesk.localhost:{port}{back}\r\n")), "{sent}");
-            assert!(!sent.contains("Set-Cookie"), "the login is already the instance's: {sent}");
-        }
-        for unknown in ["two", "two/display/2", "one?x=1"] {
-            let refused = get(port, "zdesk.localhost", &format!("{OPEN_PATH}{unknown}"), Some(&login)).await;
-            assert!(refused.starts_with("HTTP/1.1 404 Not Found"), "{unknown}: {refused}");
-        }
+        let unknown = get(port, "two.zdesk.localhost", "/", Some(&login)).await;
+        assert!(unknown.starts_with("HTTP/1.1 404 Not Found"), "{unknown}");
 
         let reached = request(port, "one.zdesk.localhost", Some(&login)).await;
         let seen = body_of(&reached);
