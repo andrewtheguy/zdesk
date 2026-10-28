@@ -4,7 +4,7 @@
 
 在浏览器中使用远程桌面，连接 Windows 和 macOS 自带的远程桌面服务器，以及 Linux 上的 wlshare。zDesk 是一个小型网关，运行在你的机器旁边。它可以连接：
 
-- **Windows 10 和 11 自带的远程桌面**，通过 RDP 及其现代图形管道。
+- **Windows 10 和 11 自带的远程桌面**，通过 RDP 及其现代图形管道。专业版、企业版和教育版可作为远程桌面主机，家庭版不能。
 - **macOS 内置的屏幕共享**，两种模式都支持：标准（Standard）和高性能（High Performance）。
 - **Linux**，通过 [wlshare](https://github.com/andrewtheguy/wlshare/blob/main/README.zh-CN.md)，这是我们自己为 wlroots 合成器编写的 VNC 服务器。
 - 其他 RDP 和 VNC 服务器，通过各协议的基础功能。
