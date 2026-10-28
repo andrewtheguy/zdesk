@@ -10711,7 +10711,7 @@ mod tests {
     fn a_repaint_of_wlshares_tiles_empties_their_cache_first() {
         let full = update_request(false, (8, 4)).to_vec();
         assert_eq!(repaint_request(Some(&test_tiles_listing()), (8, 4)), [vec![0xE6], full.clone()]);
-        assert_eq!(repaint_request(Some(&test_listing()), (8, 4)), [full.clone()]);
+        assert_eq!(repaint_request(Some(&test_listing()), (8, 4)), std::slice::from_ref(&full));
         assert_eq!(repaint_request(None, (8, 4)), [full]);
     }
 
