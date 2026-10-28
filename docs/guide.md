@@ -241,8 +241,7 @@ password_ref = "workstation"
 The RDP client is the gateway's own, tested against Windows 10 and 11's Remote
 Desktop over NLA. It carries the desktop, pointer, keyboard, mouse, resize, the
 clipboard, sound, and the browser's camera and microphone. It does not carry
-touch. Windows Home cannot be reached: only the Pro, Enterprise and Education
-editions host Remote Desktop.
+touch. Windows Home cannot be reached: it does not host Remote Desktop.
 
 - The host draws through the graphics pipeline (MS-RDPEGFX), which every
   session passes to the browser to compose. That takes nearly all of the

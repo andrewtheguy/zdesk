@@ -7,7 +7,7 @@ servers, and for Linux through wlshare. zDesk is a small gateway you run next
 to your machines. It connects to:
 
 - **Windows 10 and 11's own Remote Desktop**, over RDP with its modern graphics
-  pipeline. The Pro, Enterprise and Education editions host it; Home does not.
+  pipeline. Windows Home cannot host it.
 - **macOS's built-in Screen Sharing**, in both of its modes: Standard and High
   Performance.
 - **Linux**, through [wlshare](https://github.com/andrewtheguy/wlshare), our own
