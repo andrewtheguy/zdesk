@@ -1205,9 +1205,11 @@ Nothing is coded here.
   desktop as its rectangle is, a tile stored in the page's cache a `STORE`
   record and one drawn from it a `CACHED` record, each held to one 64×64 tile
   and a store to the tile grid, the slot to the cache's 4096 by the parser
-  (wlshare keeps the record of what each slot holds, and the page an
-  `OffscreenCanvas` of the 4096 tiles, 64 MiB, made at the first store and let
-  go with the attachment), a region's frame a `REGION`
+  (wlshare keeps the record of what each slot holds, through every picture
+  that starts over, and the page an `OffscreenCanvas` of the 4096 tiles,
+  64 MiB, made at the first store and let go with the attachment; every
+  repaint asked of wlshare is preceded by its `CacheEmpty`, since the page
+  that asked holds no slot wlshare can count on), a region's frame a `REGION`
   record, behind a `regionFormat` for the first of its stream, whose
   configuration is `avc1.` and the profile, constraints and level its own
   sequence parameter set names (`src/h264.rs`); its end becomes a
@@ -2538,8 +2540,10 @@ in slot `slot` of the page's cache of 4096 tiles, over whatever the slot held,
 and a `CACHED` record draws the tile slot `slot` keeps at `(x, y)` in its turn;
 a slot past the cache is rejected, and a draw from a slot nothing was stored
 in drops the batch, since the page and wlshare's record of the cache disagree.
-The cache outlives a `tilesStart`, whose slots wlshare only writes over, and
-ends with the attachment. A `tilesStart` ends every region
+The cache outlives a `tilesStart`, and wlshare draws from the slots it stored
+before one: an output switched back to, a new size or another dial is drawn
+from them. It ends with the attachment, and a repaint, which a page attached
+anew or one that missed messages is given, tells wlshare so first. A `tilesStart` ends every region
 ([wlshare's tiles with motion, passed through](#wlshares-tiles-with-motion-passed-through)). A session's records are `VIDEO` where its picture is a
 passed stream. Where its target passes an RDP host's
 [graphics pipeline](#rdps-graphics-pipeline-passed-through), a `GRAPHICS` record

@@ -191,8 +191,8 @@ dependencies = [
 
 [[package]]
 name = "wlshare-proto"
-version = "6.0.0"
-source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v6#6f8c977054c73d07451b3d17f89ff2d7a2b5def8"
+version = "7.0.0"
+source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v7#6224d1766456e9b9ed2a772c4a9ee5aeecd9caf2"
 dependencies = [
  "thiserror",
 ]

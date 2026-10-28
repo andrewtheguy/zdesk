@@ -305,9 +305,10 @@ export function createFramePainter(options: {
 
   // The cache of wlshare's tiles: `CACHE_SLOTS` tiles in a grid `CACHE_SIDE` wide
   // on one canvas, each slot's place its number along the grid, and which slots
-  // hold a tile. wlshare keeps the record of it and only ever draws from a slot
-  // it stored since its picture last started over, so a `tilesStart` leaves the
-  // slots as they are, to be written over; the attachment's end lets the canvas go.
+  // hold a tile. wlshare keeps the record of it, through every picture that
+  // starts over, so a `tilesStart` leaves the slots as they are, to be drawn
+  // from again; the attachment's end lets the canvas go, and the gateway tells
+  // wlshare the cache is empty with the repaint the next attachment is given.
   const CACHE_SIDE = Math.ceil(Math.sqrt(CACHE_SLOTS));
   const makeCache =
     options.makeCache ??
