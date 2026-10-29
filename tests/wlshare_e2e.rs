@@ -747,7 +747,7 @@ async fn start_wlshare() -> (Arc<common::Container>, u16) {
     let wlshare = std::env::var_os(WLSHARE_DIR_ENV)
         .map_or_else(|| manifest.join("../wlshare"), std::path::PathBuf::from);
     assert!(
-        wlshare.join("crates/wlshare").is_dir(),
+        wlshare.join("crates/wlshare-proto").is_dir(),
         "no wlshare checkout at {}; clone it beside this repository or set {WLSHARE_DIR_ENV}",
         wlshare.display()
     );
