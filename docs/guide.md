@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its H.264 video, its tiles with motion, or its progressive tiles (experimental), always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its H.264 video, its tiles with motion, or its progressive tiles (alpha), always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -120,7 +120,7 @@ config key.
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
   H.264 of the whole desktop, *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN, or *Progressive tiles (experimental), passed through*, its
+  own tiles, for a LAN, or *Progressive tiles (alpha), passed through*, its
   tiles fitted to the link as a Windows host draws without H.264: see
   [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
@@ -453,7 +453,7 @@ server is read as any VNC server is.
   stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
   tiles are for a link with room to spare: the picture ends exact, for several
   times the video's bytes — tens of Mbit/s while something large moves. Or *Progressive tiles
-  (experimental), passed through*, for a link that is not always wide: every tile,
+  (alpha), passed through*, for a link that is not always wide: every tile,
   still or moving, RemoteFX Progressive, as a Windows host draws its desktop
   over RDP without H.264 — coarse first and refined in place once still, what
   moves sent as the change from what the page holds — following the link, coarser
