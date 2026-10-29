@@ -155,8 +155,8 @@ test("a channel count that is neither mono nor stereo still names itself", () =>
 test("the video row waits for the format, then names it and its decoder", () => {
   assert.equal(videoLabel(null, null), "Waiting for the video format");
   assert.equal(
-    videoLabel({ decode: "vp09.00.40.08" }, null),
-    "vp09.00.40.08 · passthrough from the remote · decoded by the browser's native decoder",
+    videoLabel({ decode: "avc1.640033" }, null),
+    "avc1.640033 · passthrough from the remote · decoded by the browser's native decoder",
   );
   assert.equal(
     videoLabel({ decode: "hev1.4.10.L150.BE.8" }, null),
@@ -185,7 +185,7 @@ test("the video row waits for the format, then names it and its decoder", () => 
     "Not in use: the tiles are images this page decodes",
   );
   assert.equal(
-    videoLabel({ decode: "vp09.00.40.08" }, "size"),
+    videoLabel({ decode: "avc1.640033" }, "size"),
     "Not in use: the desktop is past what its video stream carries",
   );
   // A Mac's own picture has no ceiling, and is decoded whatever is said of a hold.
@@ -203,10 +203,10 @@ test("wlshare's tiles with motion say what is drawn where once a region has move
   );
 });
 
-test("the Render row waits for the target, then names its dial", () => {
+test("the Render row waits for the target, then names its picture", () => {
   assert.equal(renderLabel(""), "Waiting for the target");
   // The gateway's tiles, and wlshare's: the plan is said as it came.
-  for (const plan of ["tiles q90", "tiles with motion q90 · 4:2:0"]) {
+  for (const plan of ["tiles", "tiles with motion", "H.264 video"]) {
     assert.equal(renderLabel(plan), plan);
   }
 });

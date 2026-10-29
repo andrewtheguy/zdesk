@@ -114,7 +114,7 @@ function streams() {
     },
     STALL_MS,
   );
-  table.setFormat({ decode: "vp09.00.40.08" });
+  table.setFormat({ decode: "avc1.640033" });
   return { table, errors, stalls, decoder: () => built[built.length - 1] };
 }
 
@@ -259,17 +259,17 @@ test("a stream is decoded by the page where the browser's own decoder does not t
     postMessage() {}
     terminate() {}
   };
-  const VP9_444 = "vp09.01.40.08.03.06.06.06.00";
-  const VP9_420 = "vp09.00.40.08.01.06.06.06.00";
+  const HIGH = "avc1.640033";
+  const BASELINE = "avc1.42C033";
   const HEVC = "hev1.4.10.L150.BE.8";
   const RUNS = { hevc: true };
   try {
     // The format, how the page decodes, then the worker started, or "browser"
     // for its own decoder, or null for a stream said and not decoded.
     const cases: [{ decode: string }, PageDecoding, string | null][] = [
-      // The VP9 is the browser's, at either profile: the page has no module for it.
-      [{ decode: VP9_444 }, { runs: RUNS, nativeHevc: false }, "browser"],
-      [{ decode: VP9_420 }, { runs: RUNS, nativeHevc: false }, "browser"],
+      // H.264 is the browser's, at either profile: the page has no module for it.
+      [{ decode: HIGH }, { runs: RUNS, nativeHevc: false }, "browser"],
+      [{ decode: BASELINE }, { runs: RUNS, nativeHevc: false }, "browser"],
       // A Mac's HEVC is the page's where the browser's own decoder does not take it.
       [{ decode: HEVC }, { runs: RUNS, nativeHevc: false }, "hevc-decoder"],
       [{ decode: HEVC }, { runs: RUNS, nativeHevc: true }, "browser"],

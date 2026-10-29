@@ -152,7 +152,7 @@ which the gateway pins too, for the FLAC it codes of an RDP host's sound.
 
 Audio shares the TCP stream with the pixels, which is the one cost of carrying
 it in band. wlshare drains its capture queue before every framebuffer update, so
-sound is never held behind a ZRLE or VP9 frame it was ready before; the browser's
+sound is never held behind a ZRLE or video frame it was ready before; the browser's
 300 ms lead clamp absorbs what is left.
 
 ## Measured

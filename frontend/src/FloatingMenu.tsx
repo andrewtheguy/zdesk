@@ -636,7 +636,7 @@ function ScreenHelp({
         </div>
         <div className="help-item">
           <dt>Render</dt>
-          {/* The dial the gateway resolved, which is the one property of a session that
+          {/* The picture the gateway resolved, which is the one property of a session that
               decides how the picture looks and costs and that nothing else reveals: it
               lives in the operator's config file, which whoever is looking at the screen
               usually does not have. Empty only before `connected`. */}
@@ -956,7 +956,7 @@ export default function FloatingMenu({
   // What this session is speaking, one line, from `connected` — the protocol and
   // the target's subtype where it has one. See connectionLabel.ts.
   connection: string;
-  // The render dial this session resolved to, one line, from `connected`.
+  // The render plan this session resolved to, one line, from `connected`.
   renderPlan: string;
   // Why the desktop has no picture, from `oversize`.
   oversize: HoldCause | null;
@@ -1230,7 +1230,7 @@ export default function FloatingMenu({
                 modalOpenerRef.current = e.currentTarget;
                 setModal("info");
               }}
-              title="This session's displays, density, render dial and decoders, with the shortcuts and gestures under Help"
+              title="This session's displays, density, render plan and decoders, with the shortcuts and gestures under Help"
             >
               Info
             </button>

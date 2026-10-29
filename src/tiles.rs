@@ -3,7 +3,7 @@
 //!
 //! A changed tile goes as PNG where it holds few enough colours to be one exactly
 //! ([`PALETTE`]), which is most of a desktop: text, rules and flat panels. Any other,
-//! a photograph or a gradient, goes as JPEG at the plan's quality, and is owed its
+//! a photograph or a gradient, goes as JPEG at [`QUALITY`], and is owed its
 //! exact picture: once it has gone a whole [settle tick](Tiles::tick) without
 //! changing, it is sent again as PNG, as TigerVNC's server refreshes what it sent
 //! lossy, region by region rather than when the whole screen is still. Every tile is
@@ -19,7 +19,7 @@
 //! What paces the rounds is [`crate::encode`]'s: the browser's painting, which a
 //! slow link holds back, so damage merges in the mirror.
 //!
-//! A round the link would take too long to carry at the plan's quality goes coarse
+//! A round the link would take too long to carry at [`QUALITY`] goes coarse
 //! instead ([`Round::coarse`]): every changed tile a JPEG at 20, or coarser still
 //! where even that would take too long ([`COARSE_QUALITIES`]), text and panels
 //! included, which the settle tick makes exact once they are still. So a slow link shows a
@@ -35,6 +35,13 @@ use crate::video::Mirror;
 /// The side of a tile, in pixels. A tile at the right or bottom edge of a desktop
 /// whose side is not a multiple of it is cut there.
 pub const TILE: u16 = 64;
+
+/// The JPEG quality a changed tile of many colours is sent at until it is still
+/// and sent exactly, on every target: high enough that a link with room to spare
+/// shows a desktop worth looking at, and no key's to change. A link that would
+/// take too long to carry a round at it gets one coarser first
+/// ([`COARSE_QUALITIES`]).
+pub const QUALITY: u8 = 90;
 
 /// The most colours a tile may hold to be sent exactly as it changes: a PNG of a
 /// palette, which a tile of text, rules and flat panels fits, and which costs less
@@ -52,13 +59,13 @@ const JPEG_SAMPLING: jpeg_encoder::SamplingFactor = jpeg_encoder::SamplingFactor
 const EXACT_GUESS: u64 = 8 * 1024;
 
 /// The JPEG qualities a coarse round may go at ([`Round::coarse`]), none finer than
-/// the plan's: 20 first, a whole desktop in a fifth of what it is at 90, and
+/// the tiles' own: 20 first, a whole desktop in a fifth of what it is at 90, and
 /// coarser only where the link would take too long to carry even that. A 1440×900
 /// photograph, 495 KiB at 90, is 98, 59 and 41 KiB at these, and below 5 a JPEG
 /// saves little more: its blocks' means and its headers are still 34 KiB at 1.
 const COARSE_QUALITIES: [u8; 3] = [20, 10, 5];
 
-/// How many ways a round of changed tiles may be coded: at the plan's quality, its
+/// How many ways a round of changed tiles may be coded: at the tiles' quality, its
 /// level 0, then at each of [`COARSE_QUALITIES`] in turn.
 pub const LEVELS: usize = 1 + COARSE_QUALITIES.len();
 
@@ -70,7 +77,7 @@ const CHANGED_GUESS: [u64; LEVELS] = [EXACT_GUESS, EXACT_GUESS / 5, EXACT_GUESS 
 /// The image a coded rectangle is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// A JPEG at the plan's quality, or at one of [`COARSE_QUALITIES`] in a coarse
+    /// A JPEG at [`QUALITY`], or at one of [`COARSE_QUALITIES`] in a coarse
     /// round, its colour at [`JPEG_SAMPLING`]: lossy, and so owed its exact picture
     /// once its tiles are still.
     Jpeg,
@@ -110,7 +117,7 @@ struct Tile {
 
 /// The desktop's pixels and what the browser is owed of them.
 pub struct Tiles {
-    /// The JPEG quality, 1–100: the plan's ([`crate::config::RenderPlan::quality`]).
+    /// The JPEG quality, 1–100: [`QUALITY`], or a test's.
     quality: u8,
     /// The desktop, learned from [`crate::protocol::ServerMsg::Resize`]. `None` until
     /// the engine has announced one, which it always does before any damage.
@@ -410,7 +417,7 @@ impl Round {
     /// Whether this round sends its changed tiles coarse: every one a JPEG at
     /// [`Self::quality`], one of [`COARSE_QUALITIES`], but a tile of one colour, whose
     /// PNG is exact and smaller, because the link would take too long to carry them at
-    /// the plan's quality. Each is owed its exact picture once it is still, as any
+    /// the tiles' quality. Each is owed its exact picture once it is still, as any
     /// JPEG tile is.
     pub fn coarse(&self) -> bool {
         self.level > 0
@@ -756,7 +763,7 @@ mod tests {
         assert_eq!(unpng(&coded[0].data).2, text);
     }
 
-    /// A coarse level is never finer than the plan's quality, and a level past the
+    /// A coarse level is never finer than the tiles' quality, and a level past the
     /// last is the last.
     #[test]
     fn a_coarse_level_is_never_finer_than_the_plan() {

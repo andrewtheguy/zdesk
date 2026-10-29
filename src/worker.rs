@@ -428,13 +428,13 @@ mod tests {
     }
 
     /// The whole point of `check`: it refuses what the gateway would refuse to
-    /// start on, not merely what fails to parse. `video_quality` on a High
-    /// Performance Mac is well-formed TOML and a refused config — its picture is
-    /// passed as the Mac made it, and no dial here reaches it.
+    /// start on, not merely what fails to parse. Two displays on an RDP target
+    /// with its pipeline off is well-formed TOML and a refused config — two
+    /// displays are passed as the pipeline, which it does not have.
     #[test]
     fn checking_goes_as_far_as_starting_would() {
-        let text = "[[targets]]\nname = \"box\"\nprotocol = \"vnc\"\nsubtype = \"ard-high-performance\"\nhost = \"::1\"\nusername = \"a\"\npassword_ref = \"b\"\nvideo_quality = 50\n";
-        let error = check(&crate::config::vaulted(text)).expect_err("a dial is refused on a High Performance Mac");
-        assert!(format!("{error:#}").contains("video_quality"), "{error:#}");
+        let text = "[[targets]]\nname = \"box\"\nprotocol = \"rdp\"\nhost = \"::1\"\nusername = \"a\"\npassword_ref = \"b\"\negfx = false\nvirtual_displays = 2\n";
+        let error = check(&crate::config::vaulted(text)).expect_err("two displays are refused without the pipeline");
+        assert!(format!("{error:#}").contains("virtual_displays = 2 with egfx = false"), "{error:#}");
     }
 }

@@ -407,9 +407,7 @@ pub enum ClientMsg {
 /// with the strip's number in `0x0C` and `0x10` on the last of its frame
 /// ([`batch::VIDEO_STRIP`]); a receiver rejects any other bit, as it does for the frame's own
 /// flags byte. The encoder knows which frames are
-/// keyframes, so telling the client costs one byte and saves it parsing a bitstream — which is
-/// what it used to do, and which VP9 does not offer: VP9 carries no parameter sets, so there is
-/// nothing in the payload to read.
+/// keyframes, so telling the client costs one byte and saves it parsing a bitstream.
 ///
 /// A `GRAPHICS` record is a run of an RDP host's graphics pipeline commands, as the host sent
 /// them — see [`GraphicsUnit`]. A receiver rejects one with no payload.
@@ -774,15 +772,16 @@ impl Strip {
 /// The contract every client implements:
 ///
 /// - The payload is **one whole access unit** — exactly one picture's worth, never a partial one
-///   and never two: VP9, HEVC or H.264 as the remote's encoder emitted it.
+///   and never two: HEVC or H.264 as the remote's encoder emitted it.
 /// - **[`ServerMsg::VideoFormat`] arrives first**, before the stream's first record, and names
 ///   the exact WebCodecs configuration string to build the decoder with. The client does not
-///   derive it from payloads: VP9 has no parameter sets, while the gateway has already parsed a
-///   passed HEVC stream's sequence parameters.
+///   derive it from payloads: the gateway has already parsed the passed stream's sequence
+///   parameters, and a unit without them is decoded by the last.
 /// - `keyframe` is on the wire, as bit 0 of the record's flags. The source path decides it.
-/// - `(w, h)` is the **true desktop size**, in framebuffer pixels, which a VP9 picture is
-///   exactly, odd sides included: a client draws the top-left `w`×`h` of what
-///   it decodes and ignores anything past it. A record whose size differs from the last one means the decoder is
+/// - `(w, h)` is the **true desktop size**, in framebuffer pixels, odd sides included, which
+///   a decoded picture may be a pixel wider or taller than, a 4:2:0 picture being cropped in
+///   pairs: a client draws the top-left `w`×`h` of what it decodes and ignores anything past
+///   it. A record whose size differs from the last one means the decoder is
 ///   starting over on a differently sized picture, and a fresh `VideoFormat` precedes it.
 /// - Every access unit matters and their order matters: each is a link in a chain, where
 ///   losing any link decodes wrongly until the next keyframe.
@@ -1380,12 +1379,12 @@ pub enum ServerMsg {
         /// was started with. The camera's twin: enabled afresh each session by
         /// opening `/ws/mic`.
         microphone: bool,
-        /// The render dial this session resolved to, as one line — see
+        /// The picture this session resolved to, as one line — see
         /// [`crate::config::RenderPlan::describe`].
         ///
-        /// Carried because it was invisible from a client: which of the dial's
-        /// combinations a target runs decides how the picture looks and what it costs, and
-        /// nothing on the wire said which one. Answering "why is this soft" or "why is
+        /// Carried because it was invisible from a client: which picture a target
+        /// runs decides how it looks and what it costs, and nothing on the wire
+        /// said which one. Answering "why is this soft" or "why is
         /// this slow" began with reading the operator's config file, which the person
         /// looking at the screen generally does not have.
         render: String,
@@ -1553,14 +1552,13 @@ pub enum ServerMsg {
     /// size-derived level, and a browser that just attached has seen none.
     ///
     /// `decode` is the exact WebCodecs configuration string to hand `VideoDecoder.configure` —
-    /// `vp09.01.40.08.03.06.06.06.00`, read from the passed stream: its VP9 profile and size,
-    /// or a Mac's HEVC or H.264 parameter sets. Every stream is the remote's own, passed to the
-    /// browser untouched: wlshare's VP9 or a High Performance Mac's HEVC or H.264.
+    /// `avc1.640033`, read from the passed stream's sequence parameter set: wlshare's H.264
+    /// or a Mac's HEVC or H.264. Every stream is the remote's own, passed to the browser
+    /// untouched.
     ///
     /// Which decoder takes the stream is each page's own to say, and the gateway is not told:
     /// the browser's `VideoDecoder` where it takes the stream, and the page's WebAssembly one
-    /// for a Mac's HEVC where it does not. Every VP9 is the browser's own decoder's, at a
-    /// chroma the browser said it takes ([`crate::config::RenderPlan::chroma`]).
+    /// for a Mac's HEVC where it does not. Every H.264 is the browser's own decoder's.
     ///
     /// `strips` says how many strips each picture of the stream comes in, a unit
     /// each ([`Strip`]): [`Strip::COUNT`] for a High Performance Mac's passed in
@@ -2278,13 +2276,13 @@ mod tests {
             passthrough: None,
             camera: false,
             microphone: false,
-            render: "tiles q90".to_owned(),
+            render: "tiles".to_owned(),
         })
         .text_frame()
         {
             Some(json) => assert_eq!(
                 json,
-                r#"{"type":"connected","name":"mac","protocol":"vnc","subtype":"ard","resize":false,"audio":false,"passthrough":null,"camera":false,"microphone":false,"render":"tiles q90"}"#
+                r#"{"type":"connected","name":"mac","protocol":"vnc","subtype":"ard","resize":false,"audio":false,"passthrough":null,"camera":false,"microphone":false,"render":"tiles"}"#
             ),
             None => panic!("connected must be a text frame"),
         }
@@ -2310,17 +2308,17 @@ mod tests {
             None => panic!("connected must be a text frame"),
         }
         // How to decode the stream, which is the message a client cannot work out for
-        // itself: VP9 carries no parameter sets, so every field here is the gateway's
-        // answer and a renamed one is a decoder that never gets configured.
+        // itself in time: every field here is the gateway's answer, and a renamed one
+        // is a decoder that never gets configured.
         // The engine is what the session layer stamped in, which the page fences a
         // late start of an ended session on.
-        match (ServerMsg::VideoFormat { decode: "vp09.01.40.08".to_owned(), strips: 1, engine: 0 })
+        match (ServerMsg::VideoFormat { decode: "avc1.640033".to_owned(), strips: 1, engine: 0 })
             .stamped(7)
             .text_frame()
         {
             Some(json) => assert_eq!(
                 json,
-                r#"{"type":"videoFormat","decode":"vp09.01.40.08","strips":1,"engine":7}"#
+                r#"{"type":"videoFormat","decode":"avc1.640033","strips":1,"engine":7}"#
             ),
             None => panic!("videoFormat must be a text frame"),
         }
@@ -2728,11 +2726,11 @@ mod tests {
     /// as a picture's start is.
     #[test]
     fn a_regions_format_and_end_are_stamped_display_messages() {
-        let format = ServerMsg::RegionFormat { stream: 2, decode: "vp09.00.40.08.01.06.06.06.00".to_owned(), engine: 0 }.stamped(7);
+        let format = ServerMsg::RegionFormat { stream: 2, decode: "avc1.42C01F".to_owned(), engine: 0 }.stamped(7);
         assert!(format.is_display());
         assert_eq!(
             format.text_frame().as_deref(),
-            Some(r#"{"type":"regionFormat","stream":2,"decode":"vp09.00.40.08.01.06.06.06.00","engine":7}"#)
+            Some(r#"{"type":"regionFormat","stream":2,"decode":"avc1.42C01F","engine":7}"#)
         );
         let end = ServerMsg::RegionEnd { stream: 2, engine: 0 }.stamped(7);
         assert!(end.is_display());

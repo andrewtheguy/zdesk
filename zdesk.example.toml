@@ -270,8 +270,9 @@ site_passwd = ""
 # Passthrough sends the remote's own stream to the browser as it came: an
 # "ard-high-performance" Mac's HEVC, for a LAN, where it is a choice greyed for a
 # browser that cannot take it, or its H.264 (beta), greyed for a browser without
-# `VideoDecoder`; a "wlshare" target's VP9, its tiles
-# with motion, or its progressive tiles; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
+# `VideoDecoder`; a "wlshare" target's H.264 video, its tiles
+# with motion, both greyed for a browser without `VideoDecoder`, or its
+# progressive tiles; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
 # pipeline for the page to compose, which is no choice: with `egfx` on every
 # session passes it, and a browser that cannot compose it cannot start the
 # target. Each is described with its target below. An owning browser that comes
@@ -362,8 +363,8 @@ password_ref = "example"
 #
 # With the pipeline on, every session passes it to the browser, which composes
 # it; the gateway composes none, and a browser that cannot is not sent tiles in
-# its place. What the host draws with is sent as it is, so `video_quality`
-# further down does nothing here: nothing of the picture is coded here. A host that does not start the pipeline within 20 seconds
+# its place. What the host draws with is sent as it is: nothing of the picture is
+# coded here. A host that does not start the pipeline within 20 seconds
 # ends the session, and needs `egfx = false`. How the host draws it, high quality or
 # adaptive H.264, is chosen at the picker (Graphics, above). It takes the encoding
 # and the decoding off the gateway — a few percent of a core are left, whatever
@@ -456,7 +457,7 @@ password_ref = "example"
 
 # A wlroots-based Wayland desktop behind the wlshare VNC server says so with
 # `subtype = "wlshare"`, which makes the gateway list wlshare's extensions: its own
-# VP9 stream, passed to the browser untouched; its pixel density, so a `scale 2`
+# H.264 stream of the whole desktop, passed to the browser untouched; its pixel density, so a `scale 2`
 # output is shown at 2x and a window it follows is asked for in points × scale; its
 # output list; its sound, in a session started with it; and, in a session started
 # with them at the picker, the camera and the microphone.
@@ -498,9 +499,8 @@ password_ref = "example"
 # page to decode, paced by the browser's link, and never lossless. "Gateway
 # adaptive, settles to lossless", the one a session that names no passthrough gets,
 # asks the Mac for its Full quality, the lossless zlib, which the gateway inflates
-# and codes as its tiles: JPEG at `video_quality` while a region changes, exact
-# once it has settled. No key selects either; `video_quality` is the only video
-# key the target takes.
+# and codes as its tiles: JPEG while a region changes, exact once it has
+# settled. No key selects either.
 # [[targets]]
 # name = "mac-screen-sharing"
 # protocol = "vnc"
@@ -600,33 +600,15 @@ password_ref = "example"
 # username = "andrew"
 # password_ref = "mac"
 
-# How this target's picture is configured. Where the gateway codes the picture —
-# plain VNC, and RDP's bitmap path — it is tiles: the desktop in 64×64 tiles, a
-# changed tile of few colours sent exactly as PNG and any other as JPEG, sent again
-# exactly as PNG once it has stopped changing. Tiles go as fast as the browser
-# paints them, and a change the link would take too long to carry comes first as a
-# coarse JPEG that sharpens to the exact picture once it is still. A `wlshare` target's picture is wlshare's own, passed through: its VP9, its tiles with motion, or its progressive tiles, chosen at the picker.
-# A passed Mac media stream or RDP graphics pipeline keeps the remote's own quality,
-# so the keys are refused on "ard-high-performance", but for `video_quality` on an
-# "ard" target, which is the quality of the gateway's tiles of the Mac's Full
-# quality, and on RDP apply only to the bitmap path. Every key below is per target, so it belongs *inside* a [[targets]] table
-# and not in a section of their own — uncommented here they would attach to
-# whichever [[targets]] block precedes them, which is the "example" one at the top
-# of this file. There is no global render setting, and every key has a default.
-#
-# video_quality is 1-100 and defaults to 90. On tiles it is the JPEG quality of a
-# changed tile of many colours, a photograph or a gradient, until it is still and
-# sent exactly. On a `wlshare` target it is a *ceiling*: on a link that can carry it
-# you get exactly that quality, and a link that cannot makes wlshare's picture
-# coarser until it can, then sends fewer frames.
-#video_quality = 90
-
-# `subtype = "wlshare"` only: wlshare's VP9 walks `video_quality` on the browser's
-# queueing — on unless this turns it off, which holds wlshare at `video_quality`.
-# The configured quality remains the ceiling, and a desktop that has gone quiet is
-# sharpened back at it. Refused on every other target: tiles have no walk, and
-# nor have wlshare's tiles with motion, chosen at the picker, which hold their
-# regions at `video_quality` whatever this says; its progressive tiles walk
-# whatever it says.
-#render_adaptive = true
+# How a target's picture is coded is not configured: each picture has one way.
+# Where the gateway codes the picture — plain VNC, a Standard Mac's Full quality
+# and RDP's bitmap path — it is tiles: the desktop in 64×64 tiles, a changed tile
+# of few colours sent exactly as PNG and any other as JPEG at quality 90, sent
+# again exactly as PNG once it has stopped changing. Tiles go as fast as the
+# browser paints them, and a change the link would take too long to carry comes
+# first as a coarse JPEG that sharpens to the exact picture once it is still. A
+# `wlshare` target's picture is wlshare's own, passed through: its H.264 video,
+# its tiles with motion, or its progressive tiles, chosen at the picker, each
+# coded and paced by wlshare. A passed Mac media stream or RDP graphics pipeline
+# keeps the remote's own quality.
 

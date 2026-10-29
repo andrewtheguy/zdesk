@@ -170,7 +170,7 @@ export function micLabel(row: DeviceRow): string {
   );
 }
 
-/** The Render row: the dial this session resolved to. */
+/** The Render row: the picture this session resolved to. */
 export function renderLabel(plan: string): string {
   return plan || "Waiting for the target";
 }

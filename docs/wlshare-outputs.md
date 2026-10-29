@@ -137,7 +137,7 @@ What the gateway does:
 - **The tab's socket opens the second connection**, with the target's login and
   `0xB5` as its ClientInit byte, and wlshare shows it the output the first is
   not on. It is a session of its own into that socket: wlshare's picture passed,
-  its VP9 or its tiles with motion as the session was started, with a walk of
+  its video or one of its tiles as the session was started, with a walk of
   the tab's own link, the cursor, the size and the density. On a
   session that follows the window the tab's window sizes a headless second
   output at the density of the screen that window is on, which the tab states

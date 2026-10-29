@@ -1351,7 +1351,7 @@ fn describe_offers(target: &TargetConfig) -> String {
         choices.push("microphone".to_owned());
     }
     // One passed in every session is no choice, and the render line names it;
-    // one passed where no other is named, wlshare's VP9, is part of the choice.
+    // one passed where no other is named, wlshare's video, is part of the choice.
     let chosen = offers.passthrough.len() > 1;
     for passthrough in offers.passthrough.iter().filter(|passthrough| chosen || passthrough.chosen()) {
         choices.push(format!("{} passed through", passthrough.stream()));
@@ -2659,8 +2659,7 @@ mod tests {
             instance.config_path(),
             crate::config::vaulted("[branding]\ntext = \"work laptop\"\n\n\
              [[targets]]\nname = \"win\"\nprotocol = \"rdp\"\nhost = \"192.168.1.20\"\n\
-             username = \"andrew\"\npassword_ref = \"win11\"\n\
-             video_quality = 70\n\n\
+             username = \"andrew\"\npassword_ref = \"win11\"\n\n\
              [[targets]]\nname = \"desk\"\nprotocol = \"vnc\"\nsubtype = \"wlshare\"\n\
              host = \"192.168.1.21\"\n"),
         )
@@ -2686,8 +2685,8 @@ mod tests {
             "what a session's starter chooses is the type's to offer, and the pipeline is passed unasked: {page}"
         );
         assert!(
-            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's VP9 passed through, wlshare's tiles with motion passed through")),
-            "a wlshare target's picture is one of its two, the VP9 where none is named: {page}"
+            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's H.264 video passed through, wlshare's tiles with motion passed through")),
+            "a wlshare target's picture is one of its three, the video where none is named: {page}"
         );
 
         // A config the gateway would refuse says so, instead of a page of

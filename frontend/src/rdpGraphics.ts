@@ -13,7 +13,7 @@
 // Where the answer is no the picker will not start such a target, and it rides every
 // session socket this page opens (`gateway.ts`), so a page that comes back to its
 // session saying no is returned to the picker instead of being sent a stream it
-// cannot compose. Nothing is rebuilt for a page that says no, and no VP9 stands in.
+// cannot compose. Nothing is rebuilt for a page that says no, and nothing stands in.
 
 let answer: boolean | null = null;
 

@@ -186,7 +186,7 @@ test("the picture and the sound are answered apart", async () => {
     /does not decode the Mac's AAC-ELD/,
   );
 
-  // And the sound plays in one sent VP9 for its picture.
+  // And the sound plays in one sent H.264 for its picture.
   const asked = browser(
     async () => ({ supported: false }),
     () => "sound",
@@ -201,7 +201,7 @@ test("the picture and the sound are answered apart", async () => {
   assert.equal(hex(config.description as Uint8Array), CONFIG);
 });
 
-test("anything but a definite yes keeps VP9", async () => {
+test("anything but a definite yes keeps the H.264", async () => {
   browser(
     async () => {
       throw new TypeError("isConfigSupported disliked the string");

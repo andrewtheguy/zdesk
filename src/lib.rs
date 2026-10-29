@@ -51,6 +51,5 @@ pub mod vnc_encodings;
 pub mod vnc_mic;
 pub mod vnc_record;
 pub mod vnc_rsa_aes;
-pub mod vp9;
 pub mod wire;
 pub mod ws;

@@ -1,20 +1,21 @@
 // A WebCodecs `VideoDecoder` for the desktop's one stream.
 //
-// This decodes the whole desktop as one inter-frame stream: normally VP9, or the
-// HEVC a High Performance Mac made when that stream is passed through (see
-// `VideoUnit` in src/protocol.rs). The decoder is the browser's `VideoDecoder`,
-// or for a stream the page decodes itself, a decoder of the same shape over a
-// WebAssembly module (softwareDecoder.ts): a Mac's HEVC where the browser's own
-// decoder does not take it. The VP9 is always the browser's own decoder's, which
-// the gateway sends 4:4:4 only where it takes it (nativeVp9.ts). The units arrive as VIDEO records in the batches
+// This decodes the whole desktop as one inter-frame stream, passed through as the
+// remote coded it: wlshare's H.264, or the HEVC or H.264 a High Performance Mac
+// made (see `VideoUnit` in src/protocol.rs). The decoder is the browser's
+// `VideoDecoder`, or for a stream the page decodes itself, a decoder of the same
+// shape over a WebAssembly module (softwareDecoder.ts): a Mac's HEVC where the
+// browser's own decoder does not take it. H.264 is always the browser's own
+// decoder's. The units arrive as VIDEO records in the batches
 // and are painted onto the canvas. What is not ordinary is that the stream is a
 // *chain* — every frame means "what changed since the one before it" — so none of
 // them may be dropped, reordered, or decoded twice.
 //
 // **Nothing here parses a bitstream.** The gateway says how to decode a stream in a
 // `videoFormat` control message before its first unit, and marks each unit's keyframe
-// bit on the wire. VP9 has no in-band parameter sets at all; for passed HEVC the
-// gateway has already parsed the stream's sequence parameters.
+// bit on the wire: the gateway has already parsed the passed stream's sequence
+// parameters, and each unit is Annex B, its parameter sets ahead of every IDR, which
+// is what a decoder configured with no `description` takes.
 //
 // The awkward part is the shape of the API rather than the codec. `decode()` is
 // fire-and-forget and frames come back on a callback, while the paint path wants
@@ -49,7 +50,7 @@ import type { PageDecoding } from "./softwareSupport.ts";
 /**
  * How to decode the stream, from the gateway's `videoFormat` message.
  *
- * `decode` is the exact string to hand `VideoDecoder.configure`: `vp09.00.40.08.01.06.06.06.00`. It
+ * `decode` is the exact string to hand `VideoDecoder.configure`: `avc1.640033`. It
  * is also what an error message names.
  */
 export interface VideoFormat {
@@ -497,23 +498,19 @@ export function createVideoStream(
     codec: format.decode,
     optimizeForLatency: true,
     // `hardwareAcceleration` is deliberately left out, so a browser decodes this
-    // however it decodes VP9. (The one thing this page asks of its decoder is
-    // whether it takes a 4:4:4 stream at all, once at load, which decides whether
-    // a wlshare target is sent one — see nativeVp9.ts.) Asking for software here is a
-    // hint by specification — WebKit
-    // falls back past it, Firefox disregards it — and on iOS and iPadOS it is a hint
-    // with nothing behind it at all: WebKit maps `prefer-software` to
-    // `HardwareAcceleration::No`, the clause routing that to a local software decoder
-    // is compiled `#if PLATFORM(MAC)`, and iOS has no software VP9 decoder to route to
-    // — `isVP9DecoderAvailable` there *is* `vp9HardwareDecoderAvailable`. So VP9 on
-    // iOS is VideoToolbox or nothing (measured against WebKit main, 2026-08-21), and
-    // a preference stated here buys one platform's decoder at most.
+    // however it decodes the codec. Asking for software here is a hint by
+    // specification — WebKit falls back past it, Firefox disregards it — and on iOS
+    // and iPadOS it is a hint with nothing behind it at all: WebKit maps
+    // `prefer-software` to `HardwareAcceleration::No`, and the clause routing that to
+    // a local software decoder is compiled `#if PLATFORM(MAC)` (measured against
+    // WebKit main, 2026-08-21), so a preference stated here buys one platform's
+    // decoder at most.
     //
     // What makes a hardware decoder safe on this dial is the gateway rather than a
     // hint. The decoder that goes quiet is the GPU-process one — that is the signature
     // of every stall, silence where a decode error belongs and then a failed
-    // end-of-stream flush (see `stalled`), where software libvpx answers every chunk
-    // on the calling thread, error and all — and what it goes quiet under is churn:
+    // end-of-stream flush (see `stalled`), where a software decoder answers every
+    // chunk on the calling thread, error and all — and what it goes quiet under is churn:
     // decode sessions built and torn down in quick succession. The desktop's one
     // stream is rebuilt only by a resize. The stall backstop above stands whatever
     // ends up decoding.

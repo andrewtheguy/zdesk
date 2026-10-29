@@ -1,33 +1,33 @@
-// Whether this browser's own `VideoDecoder` takes the pictures a target sends
-// with nothing of this page's to stand in: wlshare's VP9 at 4:2:0, and H.264, a
-// High Performance Mac's and wlshare's tiles' moving regions'. The VP9 is asked once, before the client mounts, beside
-// the questions about VP9 at 4:4:4 (nativeVp9.ts), the Mac's HEVC (appleMedia.ts)
-// and an RDP host's H.264 (rdpH264.ts). The H.264 is not asked: a browser with a
-// `VideoDecoder` and no H.264 is too unlikely to grey for, so having one is the
-// answer, and a decoder that refuses it says so in the session.
+// Whether this browser's own `VideoDecoder` takes the H.264 a target sends with
+// nothing of this page's to stand in: a High Performance Mac's, and wlshare's,
+// its video of the whole desktop and its tiles' moving regions'. Read once,
+// before the client mounts, beside the questions about the Mac's HEVC
+// (appleMedia.ts) and an RDP host's H.264 (rdpH264.ts).
+//
+// The Mac's is not asked of the decoder: a browser with a `VideoDecoder` and no
+// H.264 is too unlikely to grey for, so having one is the answer, and a decoder
+// that refuses the stream says so in the session. wlshare's is asked, since its
+// video is the target's default picture and a browser whose decoder refuses it
+// would show nothing where the progressive tiles would draw: both profiles
+// wlshare codes, as a doubt reads as no, a missing `VideoDecoder` among them.
 //
 // A browser without a `VideoDecoder` at all starts like any other: everything it
 // cannot decode is greyed at the picker with the reason, and what it can — the
-// gateway's tiles, a Standard Mac's Adaptive picture and an RDP host's pipeline
-// without H.264, each decoded by the page — still starts. So these answers say no
-// for it, and the picker greys by them (targetChoices.ts): the Mac's H.264, and
-// wlshare's VP9 and its tiles with motion.
-//
-// A doubt about the VP9 reads as no, as the other questions read one: a picture
-// this browser's decoder then refuses has nothing to fall back on, so only a
-// definite "yes" offers it, and anything that throws, a missing `VideoDecoder`
-// among them, reads as "no". The gateway is not told: it is sent no choice the
-// picker greys.
+// gateway's tiles, a Standard Mac's Adaptive picture, wlshare's progressive tiles
+// and an RDP host's pipeline without H.264, each decoded by the page — still
+// starts. So the answers say no for it, and the picker greys by them
+// (targetChoices.ts): the Mac's H.264, and wlshare's video and its tiles with
+// motion. The gateway is not told: it is sent no choice the picker greys.
 
 /**
- * wlshare's VP9 at 4:2:0, profile 0, level 4.0, eight bits, BT.601 studio swing —
- * a 1080p desktop, in the shape the gateway announces it (`codec_string` in
- * src/vp9.rs). 4:2:0 is what every wlshare session can be sent, so it is the one
- * asked about.
+ * wlshare's H.264 of a 1080p desktop at the 60 fps its level is figured at
+ * (level 4.2), in the shape the gateway announces it: Constrained Baseline,
+ * libx264's, and High, a VA-API encoder's. Which one a session gets is the
+ * host's, so both are asked.
  */
-const VP9_PROBE = "vp09.00.40.08.01.06.06.06.00";
+const WLSHARE_PROBES = ["avc1.42C02A", "avc1.64002A"];
 
-let answers: { vp9: boolean; appleH264: boolean } | null = null;
+let answers: { appleH264: boolean; wlshareH264: boolean } | null = null;
 
 async function decodes(codec: string): Promise<boolean> {
   try {
@@ -38,18 +38,19 @@ async function decodes(codec: string): Promise<boolean> {
   }
 }
 
-/** Ask the browser once, and remember the answers. */
+/** Read the browser once, and remember the answers. */
 export async function askVideoCodecs(): Promise<void> {
   if (answers !== null) {
     return;
   }
+  const wlshare = await Promise.all(WLSHARE_PROBES.map(decodes));
   answers = {
-    vp9: await decodes(VP9_PROBE),
     appleH264: typeof VideoDecoder !== "undefined",
+    wlshareH264: wlshare.every(Boolean),
   };
 }
 
-function answered(): { vp9: boolean; appleH264: boolean } {
+function answered(): { appleH264: boolean; wlshareH264: boolean } {
   if (answers === null) {
     throw new Error("video codecs read before askVideoCodecs() resolved");
   }
@@ -57,16 +58,17 @@ function answered(): { vp9: boolean; appleH264: boolean } {
 }
 
 /**
- * Whether the browser's own decoder takes wlshare's VP9. Only valid after
- * `askVideoCodecs` has resolved, which `main.tsx` awaits before mounting.
+ * Whether it has a `VideoDecoder`, which is taken to decode the Mac's H.264. Only
+ * valid after `askVideoCodecs` has resolved, which `main.tsx` awaits before
+ * mounting.
  */
-export function decodesVp9(): boolean {
-  return answered().vp9;
-}
-
-/** Whether it has a `VideoDecoder`, which is taken to decode the Mac's H.264. */
 export function decodesAppleH264(): boolean {
   return answered().appleH264;
+}
+
+/** Whether its decoder said it takes both of wlshare's H.264 profiles. */
+export function decodesWlshareH264(): boolean {
+  return answered().wlshareH264;
 }
 
 /** Test seam: forget the answers so the question can be asked again. */

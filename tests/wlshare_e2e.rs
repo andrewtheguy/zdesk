@@ -107,8 +107,6 @@ fn wlshare_target(vnc_port: u16) -> TargetConfig {
         egfx: None,
         // The second output is wlshare's to make on sway, asked for here.
         virtual_displays: 2,
-        video_quality: None,
-        render_adaptive: None,
         virtual_display: false,
     }
 }
@@ -359,15 +357,15 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
         (1600, 1200, 2.0),
         "the output left behind keeps what it was set to"
     );
-    // Every access unit above was wlshare's own VP9 passed through at 4:4:4, across
-    // a density change, a resize and an output switch.
+    // Every access unit above was wlshare's own H.264 passed through, across a
+    // density change, a resize and an output switch.
     assert!(
-        container.logs().contains("asked for VP9"),
-        "wlshare was not asked for its VP9 encoding:\n{}",
+        container.logs().contains("asked for video"),
+        "wlshare was not asked for its video encoding:\n{}",
         container.logs()
     );
     let decode = view.decode.as_deref().expect("a video format was announced");
-    assert!(decode.starts_with("vp09.01."), "the stream was announced as {decode}");
+    assert!(decode.starts_with("avc1."), "the stream was announced as {decode}");
 }
 
 /// The entry that shows both outputs, as the gateway lists it.
@@ -444,7 +442,7 @@ async fn all_displays_shows_the_second_output_in_a_tab_of_its_own() {
 }
 
 /// The same server behind a plain `vnc` target is read as any VNC server is: the
-/// gateway lists nothing of wlshare's, so wlshare is never asked for its VP9 and
+/// gateway lists nothing of wlshare's, so wlshare is never asked for its video and
 /// sends ZRLE, which is sent as tiles; the 2x browser is shown the output at the
 /// 1x generic VNC is presented at, and no output list arrives. Its size is the
 /// server's own: a plain target is never sent a SetDesktopSize.
@@ -492,45 +490,15 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
     assert_eq!(sway_output(&container, "HEADLESS-1"), (first.w, first.h, 1.0), "the output is at its own size, at its own 1x");
     assert!(view.displays.is_none(), "a plain target is sent no output list");
     assert!(
-        !container.logs().contains("asked for VP9"),
-        "a plain target asked wlshare for its VP9 encoding:\n{}",
-        container.logs()
-    );
-}
-
-/// A browser whose own decoder takes no 4:4:4 VP9 is sent wlshare's own stream
-/// at 4:2:0: the gateway lists `WLSS` beside the encoding, and wlshare codes the
-/// profile 0 stream the browser is told of, which is passed as it came.
-#[tokio::test]
-#[ignore = "requires Docker or Podman"]
-async fn a_browser_without_4_4_4_is_sent_wlshares_vp9_at_4_2_0() {
-    common::init_logging();
-    let (container, vnc_port) = start_wlshare().await;
-
-    let addr = spawn_app(vnc_port).await;
-    let cookie = common::login(addr).await;
-    let token = common::claim_session(addr, &cookie).await;
-    let mut ws = common::connect_ws_decoding(addr, &token, &cookie, false, false).await;
-    let mut view = View::new();
-    ws.send(Message::text(format!(
-        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1728,"h":1117,"scale":200}},"choices":{{"size":"target"}}}}"#
-    )))
-    .await
-    .unwrap();
-    view.until(&mut ws, "wlshare's stream at 4:2:0", |v| v.decode.is_some()).await;
-
-    let decode = view.decode.as_deref().expect("a video format was announced");
-    assert!(decode.starts_with("vp09.00.") && decode.contains(".08.01."), "the stream was announced as {decode}");
-    assert!(
-        container.logs().contains("asked for VP9 at 4:2:0"),
-        "wlshare was not asked for its VP9 at 4:2:0:\n{}",
+        !container.logs().contains("asked for video"),
+        "a plain target asked wlshare for its video encoding:\n{}",
         container.logs()
     );
 }
 
 /// A session started with wlshare's tiles with motion is sent wlshare's own tiles,
 /// passed: the picture starts behind a `tilesStart`, its first update is the whole
-/// desktop as exact PNG, and wlshare was asked for its tiles rather than its VP9.
+/// desktop as exact PNG, and wlshare was asked for its tiles rather than its video.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
 async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
@@ -551,8 +519,8 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 
     assert!(view.decode.is_none(), "a session on the tiles was announced a stream: {:?}", view.decode);
     let logs = container.logs();
-    assert!(logs.contains("asked for tiles up to quality 90, held there"), "wlshare was not asked for its tiles with motion:\n{logs}");
-    assert!(!logs.contains("asked for VP9"), "wlshare was asked for its VP9 as well:\n{logs}");
+    assert!(logs.contains("asked for tiles at quality"), "wlshare was not asked for its tiles with motion:\n{logs}");
+    assert!(!logs.contains("asked for video"), "wlshare was asked for its video as well:\n{logs}");
 }
 
 /// What a session started with `passthrough` shows of the desktop after `secs`:
@@ -651,7 +619,7 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     let psnr = if se == 0.0 { f64::INFINITY } else { 10.0 * (255.0f64.powi(2) * exact.len() as f64 / se).log10() };
     assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the exact one");
     let logs = container.logs();
-    assert!(logs.contains("asked for progressive tiles up to quality 90, walked by its lag"), "wlshare was not asked for its progressive tiles:\n{logs}");
+    assert!(logs.contains("asked for progressive tiles up to quality"), "wlshare was not asked for its progressive tiles:\n{logs}");
 }
 
 /// A video to play on the desktop of the test that wants it moving: a file on this

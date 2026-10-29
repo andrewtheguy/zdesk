@@ -288,7 +288,7 @@ function announced(
   ctx: CanvasRenderingContext2D | null = context,
 ): FramePainter {
   const p = painter(ctx);
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   return p;
 }
 
@@ -350,7 +350,7 @@ test("strips held of an attachment that ended are closed, and never drawn", asyn
   await p.draw(batchFrame([first]));
   p.clear();
   assert.ok(decoded.every((frame) => frame.closed));
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(batchFrame([{ ...first, strip: { index: 1, ends: true } }]));
   assert.equal(cropped.length, 1, "only the strip of the attachment that is");
 });
@@ -396,13 +396,12 @@ test("strips held give way to a whole picture, and to a stream announced", async
   assert.equal(cropped.length, 1, "the whole picture alone");
 
   await p.draw(batchFrame([first]));
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   assert.ok(decoded.every((frame) => frame.closed));
 });
 
 test("a record's keyframe flag decides the chunk type, both ways", async () => {
-  // The flag comes from the encoder, and VP9 — which has no parameter sets — offers a
-  // client nothing to work it out from.
+  // The flag comes from the encoder: the client parses no bitstream to work it out.
   await announced().draw(
     batchFrame([
       { w: 64, h: 64, payload: KEYFRAME },
@@ -449,7 +448,7 @@ test("units that arrive before their format are dropped, not reported", async ()
   assert.deepEqual(chunkTypes, []);
   assert.deepEqual(cropped, []);
 
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(batchFrame([{ w: 64, h: 64, payload: KEYFRAME }]));
   assert.deepEqual(
     chunkTypes,
@@ -587,21 +586,21 @@ test("a unit decode() throws on cuts the chain without misplacing a frame", asyn
 });
 
 test("a refusal gives way to a configuration the browser takes", async () => {
-  // The announced VP9 level follows the desktop's size, so a browser that refused a
+  // The announced level follows the desktop's size, so a browser that refused a
   // large picture may decode the smaller one a resize brings.
   refused = 0xbd;
   const p = painter();
-  p.setVideoFormat({ decode: "vp09.01.51.08" });
+  p.setVideoFormat({ decode: "avc1.640034" });
   await p.draw(batchFrame([{ w: 64, h: 64, payload: [...KEYFRAME, 0xbd] }]));
   assert.match(String(videoErrors.at(-1)), /cannot decode/);
 
   // The same configuration again changes nothing.
-  p.setVideoFormat({ decode: "vp09.01.51.08" });
+  p.setVideoFormat({ decode: "avc1.640034" });
   await p.draw(batchFrame([{ w: 64, h: 64, payload: [3], keyframe: false }]));
   assert.match(String(videoErrors.at(-1)), /cannot decode/);
 
   refused = null;
-  p.setVideoFormat({ decode: "vp09.01.40.08" });
+  p.setVideoFormat({ decode: "avc1.640028" });
   assert.match(
     String(videoErrors.at(-1)),
     /cannot decode/,
@@ -614,7 +613,7 @@ test("a refusal gives way to a configuration the browser takes", async () => {
     null,
     "the refusal outlived its configuration",
   );
-  assert.equal(configured.at(-1), "vp09.01.40.08");
+  assert.equal(configured.at(-1), "avc1.640028");
 });
 
 // The byte the fake compositor's messages start with, which its `unwrap` takes off:
@@ -1190,7 +1189,7 @@ test("a video format takes the display back from a tab's mirror", async () => {
     pixels: new ArrayBuffer(32 * 48 * 4),
   });
   assert.deepEqual(shown, [true]);
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(batchFrame([{ w: 64, h: 64, payload: KEYFRAME }]));
   assert.deepEqual(chunkTypes, ["key"]);
   assert.deepEqual(shown, [true, false]);
@@ -1423,7 +1422,7 @@ test("a video format takes the picture back from a pipeline", async () => {
   const p = graphicsPainter(load);
   p.startGraphics();
   await p.draw(graphicsFrame([[1]]));
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(graphicsFrame([[2]]));
   await p.draw(batchFrame([{ w: 64, h: 64, payload: KEYFRAME }]));
   assert.deepEqual(made[0].fed, [[1]]);
@@ -1608,7 +1607,7 @@ test("a stream encoded here takes the picture back from the software decoder's",
   await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
   // The Mac's stream gives way across a display change, and comes back.
   planar = false;
-  p.setVideoFormat({ decode: "vp09.00.40.08" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(batchFrame([{ w: 800, h: 600, payload: KEYFRAME }]));
   assert.equal(cropped.length, 1);
   assert.deepEqual(shown, [true, false]);
@@ -1901,7 +1900,7 @@ test("a tile is drawn only while the picture is tiles", async () => {
   await p.draw(tile());
   assert.equal(cropped.length, 1);
   // A passed stream takes the picture, and a tile late behind it is not drawn.
-  p.setVideoFormat({ decode: "vp09.00.40.08.01.06.06.06.00" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   await p.draw(tile());
   assert.equal(cropped.length, 1, "a tile drawn under a stream");
   p.startTiles();
@@ -2395,7 +2394,7 @@ test("a tiles picture started over ends every region of the one before, and a vi
   p.setRegionFormat(3, { decode: REGION });
   await p.draw(region(3));
   assert.equal(draws.length, 3);
-  p.setVideoFormat({ decode: "vp09.00.40.08.01.06.06.06.00" });
+  p.setVideoFormat({ decode: "avc1.640033" });
   assert.equal(closes, 3);
   p.setRegionFormat(3, { decode: REGION });
   await p.draw(region(3));

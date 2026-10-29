@@ -2,9 +2,9 @@
 // not take: `hevc`, a High Performance Mac's passed HEVC, andrewtheguy/hevc-wasm's
 // decoder, which the gateway serves where it has the release archive. Which
 // decodes that is each page's to say: the browser's own decoder where it takes
-// the Mac's HEVC, and this one where it does not (appleMedia.ts). The VP9 has no
-// module: the gateway sends 4:4:4 only to a browser whose own decoder takes it,
-// and 4:2:0, which every decoder takes, to the rest (nativeVp9.ts).
+// the Mac's HEVC, and this one where it does not (appleMedia.ts). H.264, a Mac's
+// or wlshare's, has no module: it is the browser's own decoder's, and greyed at
+// the picker where there is none (videoCodecs.ts).
 //
 // `pageModuleFor` says which, and `videoDecoder.ts` builds it.
 //

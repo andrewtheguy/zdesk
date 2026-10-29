@@ -236,7 +236,7 @@ export type ControlMsg =
       resize: boolean;
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
-      // "apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9" or
+      // "apple-media", "apple-h264", "apple-adaptive", "wlshare-video" or
       // "wlshare-tiles-motion", "wlshare-tiles-progressive" — or null for a desktop
       // the gateway encodes.
       passthrough: string | null;
@@ -249,8 +249,8 @@ export type ControlMsg =
       // was started with. The camera's twin: enabled afresh each session by
       // opening /ws/mic.
       microphone: boolean;
-      // The picture this session resolved to, in one line — `tiles q90`, or
-      // `VP9 q90 · 4:4:4 · adaptive` for wlshare's. The *resolved plan* rather than the config keys,
+      // The picture this session resolved to, in one line — `tiles`, or
+      // `H.264 video` for wlshare's video. The *resolved plan* rather than the config keys,
       // which the reader may not have: defaults are already applied.
       render: string;
     }
@@ -280,9 +280,9 @@ export type ControlMsg =
   // a size-derived level, and a browser that just attached has seen none.
   //
   // `decode` is the exact WebCodecs string to configure with, for example
-  // `vp09.00.40.08.01.06.06.06.00`. Nothing here parses a bitstream to find it out:
-  // VP9 has no parameter sets, and the gateway already parsed a passed HEVC stream's.
-  // Every stream is the remote's own, passed through untouched: wlshare's VP9, or a
+  // `avc1.640033`. Nothing here parses a bitstream to find it out: the gateway
+  // already parsed the passed stream's parameter sets.
+  // Every stream is the remote's own, passed through untouched: wlshare's H.264, or a
   // High Performance Mac's HEVC or H.264. Which decoder takes it is this page's own
   // to say (softwareDecoder.ts), and the gateway is not told.
   | {
@@ -316,10 +316,10 @@ export type ControlMsg =
   // picture starts over, a reattach or a resize.
   | { type: "tilesStart"; engine: number }
   // Build the decoder for moving region `stream` of wlshare's tiles with this
-  // WebCodecs string: `vp09.00.LL.08.01.06.06.06.00`, VP9 profile 0 at 4:2:0, or
-  // `avc1.PPCCLL` from the stream's own parameter sets where wlshare's host coded
-  // the region with its hardware H.264 encoder, which is wlshare's choice, Annex
-  // B with the parameter sets in the stream. In order
+  // WebCodecs string: `avc1.PPCCLL`, from the stream's own sequence parameter
+  // set, the region H.264 at 4:2:0 by wlshare's host's hardware encoder where it
+  // has one and libx264 otherwise, Annex B with the parameter sets in the stream.
+  // In order
   // on the display socket, as a `videoFormat` is, ahead of the stream's first
   // REGION record, which is a keyframe. The stream's rectangle is fixed for its
   // life. `engine` as a format's.
@@ -421,8 +421,8 @@ export type ControlMsg =
 // One link in a chain, where losing any link decodes wrongly until the next
 // keyframe — so none may be dropped, reordered, or decoded twice.
 //
-// `(w, h)` is the true desktop size, which a VP9 picture is exactly, odd sides
-// included: draw the top-left w×h of what is decoded. A size that differs from the last unit's
+// `(w, h)` is the true desktop size, odd sides included, which a decoded picture
+// may be a pixel wider or taller than: draw the top-left w×h of what is decoded. A size that differs from the last unit's
 // means the stream started over on a differently sized picture.
 //
 // `keyframe` comes from the record's flags byte, decided by the source path.

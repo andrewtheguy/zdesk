@@ -62,7 +62,7 @@ Watch more demos on the [zDesk site](https://zdesk.dev/demo).
   macOS 26 offers no dynamic resolution with two virtual displays.
 - **The remote's own picture, decoded in the browser.** Windows' graphics
   pipeline, a High Performance Mac's HEVC or H.264, a Standard Mac's Adaptive
-  picture and wlshare's VP9 are passed through untouched, and all but the High
+  picture and wlshare's H.264 are passed through untouched, and all but the High
   Performance Mac's are paced to the browser link.
 - **Tiles that settle to lossless.** Where the gateway codes the picture itself,
   it sends 64×64 tiles: PNG where they are exact, JPEG where they move, and
@@ -112,8 +112,8 @@ seamlessly of the three, since what RFB lacks is added to it.
 - **wlshare on Linux** (`vnc`, `subtype = "wlshare"`). Because the server is
   ours, what RFB lacks is added to it: it switches outputs, follows the window
   at its density, carries Opus or FLAC sound and the browser's camera and
-  microphone, and codes its own VP9 for the gateway to pass through, adapting
-  to the browser's link — or, for a link with room to spare, its own exact
+  microphone, and codes its own H.264 of the whole desktop for the gateway to
+  pass through, paced to the browser's link — or, for a link with room to spare, its own exact
   tiles with a video stream for each region that moves, H.264 from hardware or
   libx264. Two outputs can be shown at once, the second
   in a browser tab of its own (beta).

@@ -298,7 +298,7 @@ async fn the_status_route_answers_for_the_token() {
 #[tokio::test]
 async fn the_socket_upgrade_takes_the_cookie() {
     let worker = Worker::start(one_target());
-    let url = "ws://worker.zdesk.localhost/ws?session=not-a-claim&apple_media=false&page_hevc=false&rdp_graphics=false&rdp_h264=false&vp9_444=false";
+    let url = "ws://worker.zdesk.localhost/ws?session=not-a-claim&apple_media=false&page_hevc=false&rdp_graphics=false&rdp_h264=false";
 
     let stream = transport::connect(&worker.endpoint).await.unwrap();
     let err = tokio_tungstenite::client_async(url, stream)

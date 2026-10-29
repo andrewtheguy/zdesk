@@ -293,7 +293,7 @@ test.describe("a target whose picture the gateway codes", () => {
       .poll(() => seen.acked.length, { timeout: 10_000 })
       .toBeGreaterThan(0);
 
-    expect(seen.connected?.render).toMatch(/^tiles q\d+$/);
+    expect(seen.connected?.render).toBe("tiles");
     expect(seen.starts).toBeGreaterThan(0);
     assertTheEnvelopeHolds(seen);
   });

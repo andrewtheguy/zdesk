@@ -435,7 +435,7 @@ export function createFramePainter(options: {
   // this client is showing nothing, so a frame is it ceasing to be true. A refusal is
   // not: the browser will not take that configuration, and nothing painted under it
   // says otherwise — the banner stays until the attachment ends or the gateway
-  // announces a different configuration. That can happen: the announced VP9 level
+  // announces a different configuration. That can happen: the announced level
   // follows the desktop's size, so a browser that refused a large picture may take
   // the smaller one a resize brings, and then its first painted frame is the answer.
   let videoComplained = false;

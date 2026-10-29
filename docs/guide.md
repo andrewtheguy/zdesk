@@ -19,18 +19,18 @@ It needs:
   name) or through a TLS-terminating reverse proxy. A LAN address over plain
   `http://` is refused, by name.
 - **WebCodecs** for the pictures a remote sends as video: `VideoDecoder` for
-  wlshare's VP9, a High Performance Mac's HEVC or H.264 and an RDP host's
+  wlshare's H.264, a High Performance Mac's HEVC or H.264 and an RDP host's
   H.264. The client still starts without it, and the gateway's tiles, a
-  Standard Mac's Adaptive picture and an RDP pipeline without H.264 work
-  anywhere. The page asks the browser's decoder beforehand about the Mac's HEVC,
-  the RDP host's H.264 and wlshare's VP9: the picker greys the first two, with
-  the reason, where the decoder refuses them, and where it refuses the VP9 it
-  greys a `wlshare` target's Video, leaving its tiles with motion, whose
-  moving regions are H.264, which a browser with `VideoDecoder` is taken to
-  decode, and its progressive tiles, which the page decodes itself. The Mac's H.264 is not
-  asked about: it is offered to every browser with `VideoDecoder` and greyed
-  without one, and a decoder that refuses it says so in the session, by its
-  error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
+  Standard Mac's Adaptive picture, wlshare's progressive tiles and an RDP
+  pipeline without H.264 work anywhere. The page asks the browser's decoder
+  beforehand about the Mac's HEVC and the RDP host's H.264: the picker greys
+  them, with the reason, where the decoder refuses them. It asks about
+  wlshare's H.264 too, in both profiles wlshare codes: where the decoder
+  refuses either, a `wlshare` target's Video and its tiles with motion are
+  greyed, leaving its progressive tiles, which the page decodes itself. The
+  Mac's H.264 is not asked about: it is offered to every browser with
+  `VideoDecoder` and greyed without one, and a decoder that refuses it says so
+  in the session, by its error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
   without it (Safari 16.4 to 18) plays no sound, and a later Safari, whose
   `AudioDecoder` fails FLAC, plays Opus and the Mac's sound.
 
@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its VP9, its tiles with motion, or its progressive tiles (experimental), always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its H.264 video, its tiles with motion, or its progressive tiles (experimental), always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -114,12 +114,12 @@ config key.
   never reaches lossless. A session started with it is started over, not
   resumed, when the browser comes back, as a passed RDP pipeline is. Gateway
   adaptive is the Mac's lossless Full quality, which the gateway inflates and
-  sends as its tiles at `video_quality`, as it sends any VNC server's desktop:
+  sends as its tiles, as it sends any VNC server's desktop:
   JPEG while a region changes, exact once it has settled, fitted to the link,
   and resumed when the browser comes back. Apple's Adaptive is greyed under
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
   target the Picture group is *Video, passed through*, the default, wlshare's
-  VP9 of the whole desktop, *Tiles with motion, passed through*, wlshare's
+  H.264 of the whole desktop, *Tiles with motion, passed through*, wlshare's
   own tiles, for a LAN, or *Progressive tiles (experimental), passed through*, its
   tiles fitted to the link as a Windows host draws without H.264: see
   [wlshare](#wlshare-vnc-subtype--wlshare).
@@ -128,7 +128,7 @@ config key.
   display menu, in the picture chosen above; *Combined* (alpha) shows every
   screen at once, as Apple's viewer's Combined Display, and offers no single
   screen. Combined Display asks the Mac for its Full quality, which the gateway
-  decodes, composes and sends as its tiles at `video_quality`, following the
+  decodes, composes and sends as its tiles, following the
   browser's link as any picture coded here does. On a 1x browser a 2x screen is
   scaled down to 1x by the gateway, so it costs the link a quarter of its own
   pixels; a 2x browser is sent the Mac's own pixels and draws a 1x screen up
@@ -354,8 +354,8 @@ connection with the same error as wrong credentials. See
   displays, one at a time or all of them, at their own density. A session of
   one screen at a time is started with the picker's Adaptive (beta), the
   default, which passes the Mac's own Adaptive picture for the page to decode,
-  or Gateway adaptive, the gateway's tiles of the Mac's lossless Full quality,
-  which `video_quality` reaches. Both have been tried on a virtual Mac alone. A
+  or Gateway adaptive, the gateway's tiles of the Mac's lossless Full quality.
+  Both have been tried on a virtual Mac alone. A
   session of Combined Display (alpha) is the gateway's tiles of every screen at
   once. It has no resize and no sound; the Mac keeps playing on its own output.
   - **A Mac with more than one display connected is best given
@@ -439,29 +439,28 @@ password_ref = "wayland"
 
 [wlshare](https://github.com/andrewtheguy/wlshare) is this project's own VNC
 server for wlroots-based Wayland desktops. The subtype makes the gateway list
-wlshare's private RFB extensions: its VP9 stream, which is passed through
-untouched and adapts to the browser's link, pixel density, the output list,
+wlshare's private RFB extensions: its H.264 stream of the whole desktop, which
+is passed through untouched and paced to the browser's link, pixel density, the output list,
 sound, and, in a session started with them, the browser's camera and
 microphone as PipeWire devices on the desktop. Without the subtype the same
 server is read as any VNC server is.
 
 - **Picture.** The picker's Picture group is *Video, passed through*, the
-  default: wlshare's VP9 of the whole desktop, which it fits to the browser's
-  link. Or *Tiles with motion, passed through*: what is still as exact PNG, and a
+  default: wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare
+  decides, a slower link getting fewer frames rather than coarser ones; never
+  lossless. Or *Tiles with motion, passed through*: what is still as exact PNG, and a
   video stream of its own for each region that moves, sent exact again once it
   stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
-  tiles are for a link with room to spare: wlshare
-  spends a fraction of the VP9's time on them and the picture ends exact, for several times the
-  bytes — tens of Mbit/s while something large moves. Or *Progressive tiles
-  (beta), passed through*, for a link that is not always wide: every tile,
+  tiles are for a link with room to spare: the picture ends exact, for several
+  times the video's bytes — tens of Mbit/s while something large moves. Or *Progressive tiles
+  (experimental), passed through*, for a link that is not always wide: every tile,
   still or moving, RemoteFX Progressive, as a Windows host draws its desktop
   over RDP without H.264 — coarse first and refined in place once still, what
-  moves sent as the change from what the page holds — following the link as
-  the VP9 does, the dial walking down from `video_quality` and a slower link
-  getting fewer frames. The page decodes
+  moves sent as the change from what the page holds — following the link, coarser
+  first passes and fewer frames on a slower one. The page decodes
   them itself, as it composes an RDP host's pipeline, so they need no video
   decoder, and are greyed where the page cannot compose one; never lossless.
-  `render_adaptive` walks the VP9 alone.
+  No key tunes any of the three: wlshare codes each one way.
 
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
