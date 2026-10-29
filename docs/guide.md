@@ -24,12 +24,13 @@ It needs:
   Standard Mac's Adaptive picture, wlshare's progressive tiles and an RDP
   pipeline without H.264 work anywhere. The page asks the browser's decoder
   beforehand about the Mac's HEVC and the RDP host's H.264: the picker greys
-  them, with the reason, where the decoder refuses them. H.264, the Mac's and
-  wlshare's, is not asked about: it is offered to every browser with
-  `VideoDecoder` and greyed without one — a `wlshare` target's Video and its
-  tiles with motion, leaving its progressive tiles, which the page decodes
-  itself — and a decoder that refuses it says so in the session, by its
-  error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
+  them, with the reason, where the decoder refuses them. It asks about
+  wlshare's H.264 too, in both profiles wlshare codes: where the decoder
+  refuses either, a `wlshare` target's Video and its tiles with motion are
+  greyed, leaving its progressive tiles, which the page decodes itself. The
+  Mac's H.264 is not asked about: it is offered to every browser with
+  `VideoDecoder` and greyed without one, and a decoder that refuses it says so
+  in the session, by its error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
   without it (Safari 16.4 to 18) plays no sound, and a later Safari, whose
   `AudioDecoder` fails FLAC, plays Opus and the Mac's sound.
 

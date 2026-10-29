@@ -20,6 +20,7 @@ const ABLE: Abilities = {
   rdpGraphics: true,
   rdpH264: true,
   appleH264: true,
+  wlshareH264: true,
   audio: true,
   lossless: true,
   runsHevc: true,
@@ -30,6 +31,7 @@ const UNABLE: Abilities = {
   rdpGraphics: false,
   rdpH264: false,
   appleH264: false,
+  wlshareH264: false,
   audio: false,
   lossless: false,
   runsHevc: false,
@@ -594,13 +596,13 @@ test("the camera and the microphone are offered where the remote can take them, 
 
 test("a wlshare target needs a browser that decodes one of its pictures", () => {
   assert.equal(targetOptions(WLSHARE, undefined, ABLE).blocked, null);
-  // With no `VideoDecoder`, neither the video nor the tiles with motion, both
+  // With no decoder of wlshare's H.264, neither the video nor the tiles with motion, both
   // H.264: the progressive tiles, which this page decodes, are the picture,
   // whatever was remembered.
   const videoless = targetOptions(
     WLSHARE,
     { passthrough: "wlshare-video" },
-    { ...ABLE, appleH264: false },
+    { ...ABLE, wlshareH264: false },
   );
   assert.deepEqual(pictures(videoless), [
     ["wlshare-video", true],
@@ -616,7 +618,7 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
   // And with no module to decode those either, nothing.
   const unable = targetOptions(WLSHARE, undefined, {
     ...ABLE,
-    appleH264: false,
+    wlshareH264: false,
     rdpGraphics: false,
   });
   assert.deepEqual(pictures(unable), [

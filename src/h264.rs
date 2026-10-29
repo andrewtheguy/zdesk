@@ -109,7 +109,14 @@ impl Whole {
     pub fn pass(&mut self, w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Passed> {
         let frame = pass(w, h, unit)?;
         if let Some(decode) = frame.decode {
-            self.stream = Some((decode, (w, h)));
+            let stream = (decode, (w, h));
+            // A decoder starts only at an IDR: parameter sets anywhere else may
+            // repeat the stream's, never begin another.
+            anyhow::ensure!(
+                frame.keyframe || self.stream.as_ref() == Some(&stream),
+                "the server's video frame changes its parameter sets without an IDR picture"
+            );
+            self.stream = Some(stream);
         }
         let Some((decode, size)) = &self.stream else {
             anyhow::bail!("the server's video stream does not start at an IDR picture with its parameter sets");
@@ -220,6 +227,26 @@ mod tests {
         );
         assert!(whole.pass(640, 384, KEYFRAME).is_err(), "a keyframe of another picture than the rectangle");
         assert!(Whole::default().pass(5376, 2288, KEYFRAME).is_err(), "past the ceiling");
+    }
+
+    /// Parameter sets ahead of a P frame start no stream and change none: the
+    /// browser's decoder could not start at the frame. The stream's own again
+    /// pass with it.
+    #[test]
+    fn the_whole_desktops_parameter_sets_change_only_at_an_idr() {
+        use super::sample::{BASELINE_FRAME, BASELINE_KEYFRAME};
+        let idr = KEYFRAME.windows(5).position(|w| w == [0, 0, 0, 1, 0x65]).unwrap();
+        let p_with_params = [&KEYFRAME[..idr], FRAME].concat();
+        let refused = Whole::default().pass(320, 192, &p_with_params).unwrap_err();
+        assert_eq!(refused.to_string(), "the server's video frame changes its parameter sets without an IDR picture");
+        let mut whole = Whole::default();
+        whole.pass(320, 192, KEYFRAME).unwrap();
+        let repeated = whole.pass(320, 192, &p_with_params).unwrap();
+        assert_eq!(repeated, Passed { decode: "avc1.64000D".to_owned(), keyframe: false, strip: None });
+        let mut baseline = Whole::default();
+        baseline.pass(320, 192, BASELINE_KEYFRAME).unwrap();
+        assert!(baseline.pass(320, 192, &p_with_params).is_err(), "another stream's parameter sets");
+        assert_eq!(baseline.pass(320, 192, BASELINE_FRAME).unwrap().decode, "avc1.42C00C", "the stream it had is kept");
     }
 
     #[test]

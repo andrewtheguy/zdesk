@@ -192,10 +192,14 @@ export interface Abilities {
   rdpH264: boolean;
   /**
    * Whether it has a `VideoDecoder`, taken to decode a High Performance Mac's
-   * H.264 and wlshare's, its video and its tiles' moving regions, without asking
-   * (videoCodecs.ts).
+   * H.264 without asking (videoCodecs.ts).
    */
   appleH264: boolean;
+  /**
+   * Whether its `VideoDecoder` takes wlshare's H.264, its video and its tiles'
+   * moving regions, in both profiles wlshare codes (videoCodecs.ts).
+   */
+  wlshareH264: boolean;
   /** Whether this browser has an audio decoder, which every sound needs. */
   audio: boolean;
   /**
@@ -417,18 +421,18 @@ function pictureOptions(
     "wlshare-video": {
       value: "wlshare-video",
       label: "Video, passed through",
-      note: abilities.appleH264
+      note: abilities.wlshareH264
         ? "wlshare's H.264 of the whole desktop, which it paces to this browser's link. For any link; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's video.",
-      disabled: !abilities.appleH264,
+      disabled: !abilities.wlshareH264,
     },
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",
       label: "Tiles with motion, passed through",
-      note: abilities.appleH264
+      note: abilities.wlshareH264
         ? "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. Several times the bytes. For a LAN."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
-      disabled: !abilities.appleH264,
+      disabled: !abilities.wlshareH264,
     },
     "wlshare-tiles-progressive": {
       value: "wlshare-tiles-progressive",

@@ -464,9 +464,13 @@ The other two say which passthrough the browser
 can take. The Mac's greys its HEVC at the picker, where a browser that says
 no can instead choose H.264 if it has `VideoDecoder`; without either path it
 cannot start the target. The pipeline's, which is no choice, disables Start for
-an RDP target with the pipeline on. No question is asked about H.264, a
-Mac's or wlshare's: it is offered to every browser with a `VideoDecoder`, and one
-whose decoder does not take it finds out from that decoder, in the session. Nor about a Standard Mac's Adaptive
+an RDP target with the pipeline on. No question is asked about a Mac's
+H.264: it is offered to every browser with a `VideoDecoder`, and one whose
+decoder does not take it finds out from that decoder, in the session.
+wlshare's is asked, in both profiles wlshare codes (Constrained Baseline and
+High), since its video is that target's default picture: a browser whose
+decoder doubts either has the video and the tiles with motion greyed, leaving
+the progressive tiles. Nor is a question asked about a Standard Mac's Adaptive
 picture, which every page decodes in WebAssembly. Both refuse a `connect` whose
 session would pass what the browser cannot take, and end the session of an
 owner that comes back answering no, which lands on the picker
@@ -476,8 +480,8 @@ pipeline answer can leave a target unstartable on its own: an RDP target with
 the pipeline on, for a browser that cannot compose it. The page's own decoder
 checks, which the socket does not state, leave two more unstartable: a High
 Performance Mac for a browser with neither an HEVC path nor `VideoDecoder`, and
-a `wlshare` target for one with neither `VideoDecoder` nor the module that
-decodes its progressive tiles. Do not grow the answers into
+a `wlshare` target for one with neither a decoder of wlshare's H.264 nor the
+module that decodes its progressive tiles. Do not grow the answers into
 a wider capability negotiation, and do not let either rebuild a session with
 choices nobody made.
 Preserve the announced configuration and color-space behavior in
