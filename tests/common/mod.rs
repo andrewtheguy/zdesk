@@ -34,7 +34,7 @@ pub fn test_auth() -> zdesk::auth::GatewayAuth {
 /// real device. The config is gitignored and machine-local, which is the
 /// point: the hosts and credentials of real devices stay out of the
 /// repository, and the same file that drives manual QA drives these tests.
-/// The caller overrides whatever dial settings its assertions need.
+/// The caller overrides whatever settings its assertions need.
 #[allow(dead_code)]
 pub fn uat_target(name: &str) -> zdesk::config::TargetConfig {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp/test_uat.toml");
@@ -599,21 +599,14 @@ pub async fn connect_ws(addr: SocketAddr, token: &str, cookie: &str) -> Ws {
 
 /// [`connect_ws`] stating whether this browser decodes a High Performance Mac's
 /// stream, which a session started with it passed is served to no other. It
-/// composes an RDP host's graphics pipeline either way, decodes no H.264 on
-/// one, and decodes 4:4:4 VP9.
+/// composes an RDP host's graphics pipeline either way, and decodes no H.264 on
+/// one.
 #[allow(dead_code)]
 pub async fn connect_ws_stating(addr: SocketAddr, token: &str, cookie: &str, apple_media: bool) -> Ws {
-    connect_ws_decoding(addr, token, cookie, apple_media, true).await
-}
-
-/// [`connect_ws_stating`] stating too whether this browser's own decoder takes
-/// 4:4:4 VP9, which decides the chroma a `wlshare` target's stream is sent at.
-#[allow(dead_code)]
-pub async fn connect_ws_decoding(addr: SocketAddr, token: &str, cookie: &str, apple_media: bool, vp9_444: bool) -> Ws {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 
     let mut request = format!(
-        "ws://{addr}/ws?session={token}&apple_media={apple_media}&page_hevc=false&rdp_graphics=true&rdp_h264=false&vp9_444={vp9_444}"
+        "ws://{addr}/ws?session={token}&apple_media={apple_media}&page_hevc=false&rdp_graphics=true&rdp_h264=false"
     )
         .into_client_request()
         .unwrap();

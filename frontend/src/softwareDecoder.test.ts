@@ -12,22 +12,21 @@ import {
 } from "./softwareDecoder.ts";
 
 const HEVC = "hev1.4.10.L150.BE.8";
-const VP9_444 = "vp09.01.50.08.03.06.06.06.00";
-const VP9_420 = "vp09.00.40.08.01.06.06.06.00";
+const HIGH = "avc1.640033";
+const BASELINE = "avc1.42C033";
 
-test("the module decodes its own stream, HEVC, and no VP9 of either profile", () => {
+test("the module decodes its own stream, HEVC, and no H.264 of either profile", () => {
   assert.equal(softwareModuleFor(HEVC), "hevc");
   assert.equal(softwareModuleFor("hvc1.1.6.L93.B0"), "hevc");
-  assert.equal(softwareModuleFor(VP9_444), null);
-  assert.equal(softwareModuleFor(VP9_420), null);
-  assert.equal(softwareModuleFor("avc1.64002a"), null);
+  assert.equal(softwareModuleFor(HIGH), null);
+  assert.equal(softwareModuleFor(BASELINE), null);
 });
 
 test("another codec is refused as VideoDecoder refuses one: asynchronously, NotSupportedError", async () => {
   const errors: Error[] = [];
   for (const [module, other] of [
-    ["hevc", VP9_444],
-    ["hevc", VP9_420],
+    ["hevc", HIGH],
+    ["hevc", BASELINE],
   ] as [SoftwareModule, string][]) {
     const decoder = createSoftwareDecoder(module, {
       output: () => assert.fail("no output"),

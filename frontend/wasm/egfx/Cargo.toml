@@ -22,7 +22,8 @@ crate-type = ["cdylib"]
 zdesk-rdp-graphics = { path = "../../../crates/zdesk-rdp-graphics" }
 # The tables and the stream of wlshare's progressive tiles, which the page decodes
 # here, at the gateway's pin.
-wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v7" }
+# TEMPORARY: the local checkout until wlshare tags proto-v8; never on main.
+wlshare-proto = { path = "../../../../wlshare/crates/wlshare-proto" }
 rayon = "1"
 wasm-bindgen = "0.2"
 

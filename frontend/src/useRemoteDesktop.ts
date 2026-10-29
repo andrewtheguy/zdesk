@@ -54,7 +54,6 @@ import {
   mosaicSender,
   mosaicView,
 } from "./mosaic.ts";
-import { nativeVp9 } from "./nativeVp9.ts";
 import { createSender } from "./outbound.ts";
 import { advancePaintGeneration, sendPaintAck } from "./paintAck.ts";
 import { createRectCache } from "./pointerRect.ts";
@@ -711,7 +710,7 @@ export function useRemoteDesktop(
   // What an RDP host's pipeline has drawn with (`hostPicture`), for the card's
   // Host's picture row: null on any other session, and emptied with the desktop.
   const [hostPicture, setHostPicture] = useState<HostPicture | null>(null);
-  // The render dial this session resolved to, from `connected`. Empty in the picker.
+  // The render plan this session resolved to, from `connected`. Empty in the picker.
   const [renderPlan, setRenderPlan] = useState("");
   // Why the desktop has no picture, from `oversize`: past what a video stream
   // encodes. Null in the picker and at
@@ -1794,7 +1793,6 @@ export function useRemoteDesktop(
           pageHevc: runnableDecoders().hevc,
           rdpGraphics: composesRdpGraphics(),
           rdpH264: decodesRdpH264(),
-          vp9444: nativeVp9(),
         }),
       );
       ws = socket;
@@ -3311,7 +3309,7 @@ export function useRemoteDesktop(
     audioError,
     videoError,
     // What the sound and the picture actually are, for the card's Audio and Video
-    // rows: the codec each decoder was built with, which the render dial does not
+    // rows: the codec each decoder was built with, which the render plan does not
     // say and which nothing else on screen writes down.
     audioStream,
     videoStream,

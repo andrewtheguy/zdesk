@@ -859,11 +859,10 @@ struct ClaimResponse {
 
 /// Claim the single session slot. Returns the token the WebSocket
 /// must present as
-/// `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&vp9_444=true|false`;
+/// `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false`;
 /// 409 while another browser is attached (retry with `force` to take over). The media sockets
-/// present the token alone — `chroma`, the most colour this browser's video
-/// decoder takes, is the session socket's and is required there
-/// ([`crate::ws`]).
+/// present the token alone — what this browser can take is the session socket's
+/// to say, and is required there ([`crate::ws`]).
 ///
 /// The claim remembers the login cookie it was made with: the display sockets
 /// carry no token and attach by that login instead ([`crate::ws`]).
@@ -1091,8 +1090,6 @@ mod tests {
                 size: Some((1280, 800)),
                 egfx: None,
                 virtual_displays: 1,
-                video_quality: None,
-                render_adaptive: None,
                 virtual_display: false,
             }],
             auth: crate::auth::GatewayAuth::Login(
@@ -1291,8 +1288,7 @@ mod tests {
             r#"{"name":"win","protocol":"rdp","subtype":null,"host":"192.0.2.11","port":3389,"resize":true,"size":{"w":1920,"h":1080},"defaultSize":{"w":1440,"h":900},"audio":true,"software":false,"passthroughs":["rdp-graphics"],"placement":false,"pipeline":true,"standardView":false,"camera":true,"microphone":true}"#
         );
         // High Performance's sound is always carried, so it is not offered. Its
-        // picture is, in either codec, and is always passed, so it has no VP9 to
-        // choose an encoder for.
+        // picture is, in either codec, and is always passed.
         let fast = entry("fast");
         assert!(
             fast.ends_with(
@@ -1302,8 +1298,8 @@ mod tests {
         );
         // Where the second display sits is offered by a host asked for two.
         assert!(entry("two").ends_with(r#""placement":true,"pipeline":true,"standardView":false,"camera":true,"microphone":true}"#));
-        // wlshare's picture is its VP9, or one of its three tiles, all passed.
-        assert!(entry("sway").ends_with(r#""passthroughs":["wlshare-vp9","wlshare-tiles-motion","wlshare-tiles-progressive"],"placement":false,"pipeline":false,"standardView":false,"camera":true,"microphone":true}"#), "{}", entry("sway"));
+        // wlshare's picture is its video, or one of its two tiles, all passed.
+        assert!(entry("sway").ends_with(r#""passthroughs":["wlshare-video","wlshare-tiles-motion","wlshare-tiles-progressive"],"placement":false,"pipeline":false,"standardView":false,"camera":true,"microphone":true}"#), "{}", entry("sway"));
         // The page's HEVC decoder is a choice where the gateway has it and the
         // target has a Mac's picture to pass.
         assert!(entry("fast").contains(r#""software":false,"#));

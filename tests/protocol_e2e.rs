@@ -1354,8 +1354,6 @@ fn target(protocol: Protocol, port: u16) -> TargetConfig {
         size: Some((1280, 800)),
         egfx: None,
         virtual_displays: 1,
-        video_quality: None,
-        render_adaptive: None,
         virtual_display: false,
     }
 }
@@ -1884,7 +1882,7 @@ async fn an_oversize_plain_vnc_desktop_is_shown() {
     expect_frame(&mut ws).await;
 }
 
-/// On a `wlshare` target the window does not size, a desktop past what its VP9
+/// On a `wlshare` target the window does not size, a desktop past what its video
 /// stream encodes holds the session open without a picture: the browser is told,
 /// is sent nothing of the desktop, and is told again when it reattaches. The fake
 /// ignores the listing and is coded here, held all the same.

@@ -53,7 +53,7 @@ use wlshare_proto::outputs::{self, EntryHeader, ListHeader};
 #[cfg(feature = "wlshare")]
 use wlshare_proto::tiles::TileHeader;
 #[cfg(feature = "wlshare")]
-use wlshare_proto::{ENCODING_DENSITY, ENCODING_OUTPUTS, ENCODING_TILES, ENCODING_VP9, density};
+use wlshare_proto::{ENCODING_DENSITY, ENCODING_OUTPUTS, ENCODING_TILES, ENCODING_VIDEO, density};
 
 use crate::combined::{Composition, Compositor};
 use crate::config::{Choices, Passthrough, RenderPlan, StandardQuality, Subtype, TargetConfig};
@@ -1968,7 +1968,7 @@ const BESIDE_DISPLAY: u32 = 2;
 /// output the session's connection is not on ([`wlshare_proto::CLIENT_INIT_BESIDE`]),
 /// run as a session of its own into the display socket the session handed over.
 /// Everything a display has is then that connection's: its size and density,
-/// its pointer, its VP9 stream and the walk of its own link. The sound, the
+/// its pointer, its video stream and the walk of its own link. The sound, the
 /// clipboard, the camera and the microphone are the session's, on the first.
 ///
 /// Dropping it closes its input, which ends that session as the session layer
@@ -2009,7 +2009,7 @@ impl BesidePlan {
         let spawned = std::thread::Builder::new().name("vnc-display".into()).spawn(move || {
             match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime.block_on(async {
-                    let sink = VideoSink::new("vnc", feed.frames, plan, feed.feedback, oversize);
+                    let sink = VideoSink::new("vnc", feed.frames, feed.feedback, oversize);
                     session(config, choices, screen, plan, input_rx, None, None, None, true, &sink).await;
                     sink.finish().await;
                 }),
@@ -2250,7 +2250,7 @@ pub async fn run(
     // gateway asks for every size and holds each under it, and a remote that
     // answers past it is refused. So is High Performance's, whose virtual display
     // is held under the ceiling too. A `wlshare` target the window does not size
-    // holds the session open without a picture past it, its VP9 off the list: only
+    // holds the session open without a picture past it, its video off the list: only
     // the remote can bring it back within. A plain server's desktop, coded here as
     // tiles, and a Standard Mac's own rectangles, passed one by one, are no stream
     // and have no ceiling: they are shown at whatever size the remote has.
@@ -2261,11 +2261,11 @@ pub async fn run(
     } else {
         Oversize::Shown
     };
-    // Every browser is sent wlshare's own VP9 as it comes on a `wlshare` target,
-    // asked for at the plan's dial and walk; a plain target's server but a Mac is
+    // Every browser is sent wlshare's own picture as it comes on a `wlshare` target,
+    // its H.264 video or its tiles, as the session was started with; a plain target's server but a Mac is
     // encoded here from ZRLE. A High Performance session is sent the Mac's HEVC or
     // H.264, and a Standard one the Mac's own picture, each passed.
-    let sink = VideoSink::new("vnc", frame_tx, plan, feedback, oversize);
+    let sink = VideoSink::new("vnc", frame_tx, feedback, oversize);
     session(config, choices, display, plan, input_rx, audio, camera, microphone, false, &sink).await;
     sink.finish().await;
 }
@@ -2469,7 +2469,7 @@ struct Connected {
     /// Performance session has one, and every other session `None`.
     media: Option<(MediaStream, Vec<PassedUnits>)>,
     /// The encodings a `wlshare` target lists, with and without
-    /// [`ENCODING_VP9`]: what the read loop lists on its own while the
+    /// wlshare's picture: what the read loop lists on its own while the
     /// desktop is past the video ceiling, and with it again once it is back.
     /// `None` on every other target, which lists nothing of wlshare's.
     passthrough: Option<Arc<Listing>>,
@@ -2780,7 +2780,7 @@ fn encoding_label(encoding: i32) -> String {
 }
 
 /// The RFB 3.8 tail: force our pixel format and the encoding set. A `wlshare`
-/// target's has wlshare's extensions in it, with its VP9 and the plan it is asked
+/// target's has wlshare's extensions in it, with its picture and the plan it is asked
 /// for at their head for a desktop within the ceiling. A plain target's has none
 /// of them, so a wlshare server reached as one serves it as it serves any VNC
 /// client: ZRLE, coded here as tiles.
@@ -2843,7 +2843,7 @@ struct Listing {
     /// The encodings alone, for a desktop past the ceiling.
     plain: Vec<i32>,
     /// The same with wlshare's picture and the plan it is asked for at their head:
-    /// its VP9 ([`with_wlshare_vp9`]), or its tiles for a plan that asks for them
+    /// its video ([`with_wlshare_video`]), or its tiles for a plan that asks for them
     /// ([`with_wlshare_tiles`]).
     wlshare: Vec<i32>,
 }
@@ -2851,12 +2851,12 @@ struct Listing {
 impl Listing {
     #[cfg(feature = "wlshare")]
     fn new(plain: Vec<i32>, plan: RenderPlan) -> Self {
-        let wlshare = if plan.wlshare_tiles { with_wlshare_tiles(&plain, plan) } else { with_wlshare_vp9(&plain, plan) };
+        let wlshare = if plan.wlshare_tiles { with_wlshare_tiles(&plain, plan) } else { with_wlshare_video(&plain) };
         Self { plain, wlshare }
     }
 
     /// Whether wlshare's picture is listed for a desktop of this size: only within
-    /// the video ceiling. The VP9 is a stream of the whole desktop, and one past the
+    /// the video ceiling. The video is a stream of the whole desktop, and one past the
     /// ceiling is not video; the tiles' moving regions are streams up to the whole
     /// desktop, so a desktop within it is what holds every region to it. Past it the
     /// desktop comes as ZRLE, held or refused, and the read loop lists the encoding
@@ -2870,8 +2870,8 @@ impl Listing {
         if self.lists(size) { &self.wlshare } else { &self.plain }
     }
 
-    /// Whether `encoding` is the wlshare picture this session lists, its VP9 or its
-    /// tiles, which [`with_wlshare_vp9`] and [`with_wlshare_tiles`] put at the head:
+    /// Whether `encoding` is the wlshare picture this session lists, its video or its
+    /// tiles, which [`with_wlshare_video`] and [`with_wlshare_tiles`] put at the head:
     /// the other is never listed, so the server sending it is a protocol violation.
     #[cfg(feature = "wlshare")]
     fn picture(&self, encoding: i32) -> bool {
@@ -2879,32 +2879,23 @@ impl Listing {
     }
 }
 
-/// `encodings` with wlshare's tiles encoding ahead of them, and beside it what
-/// the picture is to be, from the plan: the dial as the ceiling, the same `WLQ`
-/// the VP9 is asked at, and `WLSD` for its tiles with motion, which hold the
-/// dial rather than walking it, as the VP9's list says it; its progressive
-/// tiles walk.
+/// `encodings` with wlshare's tiles encoding ahead of them, and beside it which
+/// tiles they are to be, from the plan: `WLSD` for its tiles with motion, which
+/// hold wlshare's dial rather than walking it; its progressive tiles walk.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let picture = wlshare_proto::tiles::TilesPicture { quality: plan.quality, progressive: plan.adaptive };
+    let picture = wlshare_proto::tiles::TilesPicture { progressive: plan.progressive };
     let mut listed = picture.encodings();
     listed.extend_from_slice(encodings);
     listed
 }
 
-/// `encodings` with wlshare's VP9 encoding ahead of them, where a list read as a
+/// `encodings` with wlshare's video encoding ahead of them, where a list read as a
 /// preference puts what it would rather have — wlshare takes it wherever it is —
-/// and beside it what the stream is to be, from the plan: the dial as the ceiling
-/// wlshare's walk never goes above, and `WLSD` for a plan that holds the dial rather
-/// than walking it, so the target's keys reach the passed stream; and `WLSS` for a
-/// plan at 4:2:0 ([`RenderPlan::chroma`]).
+/// and nothing beside it: there is one way to code the stream, wlshare's.
 #[cfg(feature = "wlshare")]
-fn with_wlshare_vp9(encodings: &[i32], plan: RenderPlan) -> Vec<i32> {
-    let chroma = match plan.chroma {
-        crate::vp9::Chroma::Yuv444 => wlshare_proto::vp9::Chroma::Yuv444,
-        crate::vp9::Chroma::Yuv420 => wlshare_proto::vp9::Chroma::Yuv420,
-    };
-    let mut listed = wlshare_proto::vp9::Vp9Stream { quality: plan.quality, adaptive: plan.adaptive, chroma }.encodings();
+fn with_wlshare_video(encodings: &[i32]) -> Vec<i32> {
+    let mut listed = vec![ENCODING_VIDEO];
     listed.extend_from_slice(encodings);
     listed
 }
@@ -3583,7 +3574,7 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
                         continue;
                     }
                     ClientMsg::DisplayShown { display, feed } => {
-                        hp_tab_shown(&shared_here, display, feed, plan, macos).await;
+                        hp_tab_shown(&shared_here, display, feed, macos).await;
                         continue;
                     }
                     other => other,
@@ -4441,7 +4432,7 @@ async fn pass_unit(
         uncover(shared, sink);
     }
     let (w, h) = unit.size;
-    let passed = crate::vp9::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
+    let passed = crate::video::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
     if !sink.pass_media(w, h, unit.data, passed).await? {
         media.lock().unwrap().want_keyframe(leg);
     }
@@ -4478,7 +4469,7 @@ async fn tab_unit(shared: &Shared, leg: usize, unit: PassedUnit, media: &SharedM
         tab_uncover(&shared.tab, &shared.desktop);
     }
     let (w, h) = unit.size;
-    let passed = crate::vp9::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
+    let passed = crate::video::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
     match sink.pass_media(w, h, unit.data, passed).await {
         Ok(true) => {}
         Ok(false) => media.lock().unwrap().want_keyframe(leg),
@@ -4650,7 +4641,7 @@ struct Shared {
     /// else tells apart, and which a passed stream's decoder cannot take.
     switch: Arc<tokio::sync::Mutex<()>>,
     /// See [`Connected::passthrough`]. `Some` is a session that may be sent
-    /// [`ENCODING_VP9`], and the only one that reads it.
+    /// wlshare's picture, and the only one that reads it.
     passthrough: Option<Arc<Listing>>,
 }
 
@@ -4723,11 +4714,11 @@ async fn read_loop<R: AsyncRead + Unpin>(
     let offers = media.as_ref().map(|m| m.lock().unwrap().offered());
     // Whether wlshare's picture is on the list the server holds: as the preface
     // listed it, and then by [`Listing::lists`] at the end of each update.
-    let mut vp9_listed = passthrough.as_ref().is_some_and(|lists| lists.lists(desktop.lock().unwrap().size));
-    // The fences owed an echo, in order, while the picture is wlshare's VP9. Each
+    let mut picture_listed = passthrough.as_ref().is_some_and(|lists| lists.lists(desktop.lock().unwrap().size));
+    // The fences owed an echo, in order, while the picture is wlshare's. Each
     // is held for what the browser's link makes of a frame beyond its distance
     // ([`VideoSink::fence_hold`]): wlshare holds one frame in flight and walks its
-    // quality by the fence's round trip, which an immediate echo would make the round
+    // frame rate by the fence's round trip, which an immediate echo would make the round
     // trip to this gateway alone. Every fence waits in the one queue, so none
     // overtakes another, and each carries the instant it is due, figured when it was
     // queued and at most [`FENCE_HOLD_LIMIT`] on: the loop turns on every server
@@ -4975,15 +4966,15 @@ async fn read_loop<R: AsyncRead + Unpin>(
                     stream_carries(&shared).await?;
                 }
                 cycle.framed();
-                // wlshare's VP9 is a picture of the whole desktop, which past the
+                // wlshare's video is a picture of the whole desktop, which past the
                 // ceiling is not video: off the list there, so wlshare does not code
                 // a stream nothing sends, and back on the list within it,
                 // where wlshare starts its stream again at a keyframe.
                 if let Some(lists) = passthrough {
                     let size = desktop.lock().unwrap().size;
                     let wanted = lists.lists(size);
-                    if wanted != vp9_listed {
-                        vp9_listed = wanted;
+                    if wanted != picture_listed {
+                        picture_listed = wanted;
                         send(uplink, &set_encodings(lists.listed(size))).await?;
                     }
                 }
@@ -5346,7 +5337,7 @@ async fn read_loop<R: AsyncRead + Unpin>(
             // which is how it measures this end and paces itself. Echoed from the
             // read task, so the answer is not queued behind anything the input side is
             // doing — a fence that waited would report a link slower than it is.
-            // While the picture is wlshare's VP9 the link it should report is the
+            // While the picture is wlshare's the link it should report is the
             // browser's, so then it waits in `held_fences` for that.
             MSG_FENCE => {
                 let mut padding = [0u8; 3];
@@ -6179,35 +6170,35 @@ async fn read_rect<R: AsyncRead + Unpin>(
         vnc_apple::ENCODING_ZLIB if desktop.lock().unwrap().standard == Some(StandardQuality::Full) => {
             payload = Payload::Zlib
         }
-        // A frame of wlshare's VP9, which is the whole desktop: passed to the browser
+        // A frame of wlshare's video, which is the whole desktop: passed to the browser
         // untouched, or dropped while the desktop is past the ceiling, until the list
         // the read loop sends without the encoding brings the desktop again as ZRLE.
         #[cfg(feature = "wlshare")]
-        ENCODING_VP9 if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_VP9)) => {
-            let mut header = [0u8; wlshare_proto::vp9::FRAME_HEADER_LEN];
+        ENCODING_VIDEO if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_VIDEO)) => {
+            let mut header = [0u8; wlshare_proto::video::FRAME_HEADER_LEN];
             reader.read_exact(&mut header).await?;
-            let (quality, len) = wlshare_proto::vp9::parse_frame_header(&header).context("the server's VP9 rectangle")?;
+            let len = wlshare_proto::video::parse_frame_header(&header).context("the server's video rectangle")?;
             let mut frame = vec![0u8; len];
             reader.read_exact(&mut frame).await?;
             let size = desktop.lock().unwrap().size;
             anyhow::ensure!(
                 (x, y, w, h) == (0, 0, size.0, size.1),
-                "server sent a VP9 frame of {w}x{h}+{x}+{y}, not the whole {}x{} desktop",
+                "server sent a video frame of {w}x{h}+{x}+{y}, not the whole {}x{} desktop",
                 size.0,
                 size.1
             );
             if sink.oversized() {
-                debug!("vnc: dropping a {w}x{h} VP9 frame past the video ceiling");
+                debug!("vnc: dropping a {w}x{h} video frame past the video ceiling");
                 return Ok(RectEffect::NOTHING);
             }
-            sink.pass(w, h, quality, frame).await?;
+            sink.pass(w, h, frame).await?;
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
         // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
         // stream over it, that stream's end, a copy of what the browser holds
         // elsewhere, or a progressive tile, each passed to the browser untouched.
         // Past the ceiling, those wlshare sent of the resized desktop before the list
-        // without them reached it are dropped while the picture is held, as the VP9's
+        // without them reached it are dropped while the picture is held, as the video's
         // are, and refused in a session that sized the remote; the list it answers
         // brings the whole desktop again as ZRLE.
         #[cfg(feature = "wlshare")]
@@ -7044,7 +7035,6 @@ async fn hp_tab_shown(
     shared: &Shared,
     display: u32,
     feed: Option<crate::session::DisplayFeed>,
-    plan: RenderPlan,
     macos: bool,
 ) {
     let media = shared.media.as_ref();
@@ -7071,7 +7061,7 @@ async fn hp_tab_shown(
     info!("vnc: showing display {display} in a tab of its own");
     *shared.tab.lock().unwrap() = Some(TabFeed {
         display,
-        sink: VideoSink::new("vnc", feed.frames, plan, feed.feedback, Oversize::Refuse),
+        sink: VideoSink::new("vnc", feed.frames, feed.feedback, Oversize::Refuse),
         live: false,
         covered: true,
         withheld: false,
@@ -8433,6 +8423,8 @@ pub(crate) async fn discard<R: AsyncRead + Unpin>(reader: &mut R, n: u64) -> any
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "wlshare")]
+    use crate::h264::sample::{FRAME, KEYFRAME};
     use crate::protocol::WheelUnit;
 
     // Vectors generated from a reference VNC auth implementation
@@ -9329,7 +9321,7 @@ mod tests {
     fn a_plain_target_lists_no_wlshare_extension() {
         let plain = rfb38_encoding_list();
         for encoding in [
-            ENCODING_VP9,
+            ENCODING_VIDEO,
             ENCODING_DENSITY,
             ENCODING_OUTPUTS,
             wlshare_proto::ENCODING_AUDIO,
@@ -9341,33 +9333,18 @@ mod tests {
         assert!(plain.contains(&ENCODING_ZRLE));
     }
 
-    /// The stream wlshare is asked for is the plan, listed beside its encoding at
-    /// the head of the list: the dial as the ceiling always, `WLSD` for a plan
-    /// that holds the dial — not for one that walks, which is what a list without
-    /// it means to wlshare — and `WLSS` for a plan at 4:2:0, not for one at 4:4:4.
+    /// wlshare's video is asked for by its encoding alone, at the head of the list:
+    /// there is one way to code it, wlshare's.
     #[cfg(feature = "wlshare")]
     #[test]
-    fn the_vp9_stream_asked_of_wlshare_is_the_plan() {
-        use crate::config::RenderPlan;
-        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_HELD, i32::from_be_bytes(*b"WLSD"));
-        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_QUALITY_BASE, i32::from_be_bytes(*b"WLQ\0"));
-        let rest = [ENCODING_ZRLE, ENCODING_DENSITY];
-        let walked = RenderPlan { quality: 60, adaptive: true, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv444 };
-        assert_eq!(with_wlshare_vp9(&rest, walked), [ENCODING_VP9, 0x574c_513c, ENCODING_ZRLE, ENCODING_DENSITY]);
-        let held = RenderPlan { quality: 90, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv444 };
-        assert_eq!(
-            with_wlshare_vp9(&rest, held),
-            [ENCODING_VP9, 0x574c_515a, wlshare_proto::vp9::ENCODING_VP9_HELD, ENCODING_ZRLE, ENCODING_DENSITY]
-        );
-        assert_eq!(wlshare_proto::vp9::ENCODING_VP9_SUBSAMPLED, i32::from_be_bytes(*b"WLSS"));
-        assert_eq!(
-            with_wlshare_vp9(&rest, RenderPlan { chroma: crate::vp9::Chroma::Yuv420, ..held }),
-            [ENCODING_VP9, 0x574c_515a, wlshare_proto::vp9::ENCODING_VP9_HELD, wlshare_proto::vp9::ENCODING_VP9_SUBSAMPLED, ENCODING_ZRLE, ENCODING_DENSITY]
-        );
+    fn the_video_asked_of_wlshare_is_its_encoding_alone() {
+        assert_eq!(ENCODING_VIDEO, i32::from_be_bytes(*b"WLSV"));
+        assert_eq!(with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY]), [ENCODING_VIDEO, ENCODING_ZRLE, ENCODING_DENSITY]);
     }
 
-    /// A plan that asks for wlshare's tiles lists them in place of its VP9, with the
-    /// dial beside them, and off the list past the ceiling as the VP9 is: a moving
+    /// A plan that asks for wlshare's tiles lists them in place of its video, with
+    /// `WLSD` beside its tiles with motion, and off the list past the ceiling as the
+    /// video is: a moving
     /// region may be the whole desktop.
     #[cfg(feature = "wlshare")]
     #[test]
@@ -9375,16 +9352,17 @@ mod tests {
         use crate::config::RenderPlan;
         assert_eq!(ENCODING_TILES, i32::from_be_bytes(*b"WLST"));
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
-        let tiles = RenderPlan { quality: 80, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, chroma: crate::vp9::Chroma::Yuv420 };
+        assert_eq!(wlshare_proto::ENCODING_HELD, i32::from_be_bytes(*b"WLSD"));
+        let tiles = RenderPlan { progressive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true };
         let lists = Listing::new(rest.clone(), tiles);
-        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "held: WLSD beside the dial");
+        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "with motion: WLSD beside it");
         assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
-        let progressive = Listing::new(rest.clone(), RenderPlan { adaptive: true, ..tiles });
-        assert_eq!(progressive.listed((1280, 800)), [ENCODING_TILES, 0x574c_5150, ENCODING_ZRLE, ENCODING_DENSITY], "progressive: no WLSD, the dial walked");
+        let progressive = Listing::new(rest.clone(), RenderPlan { progressive: true, ..tiles });
+        assert_eq!(progressive.listed((1280, 800)), [ENCODING_TILES, ENCODING_ZRLE, ENCODING_DENSITY], "progressive: no WLSD");
 
-        let vp9 = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: false, ..tiles });
-        assert_eq!(vp9.listed((1280, 800))[0], ENCODING_VP9);
-        assert_eq!(vp9.listed((7680, 4320)), rest, "the VP9 past the ceiling");
+        let video = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: false, ..tiles });
+        assert_eq!(video.listed((1280, 800))[0], ENCODING_VIDEO);
+        assert_eq!(video.listed((7680, 4320)), rest, "the video past the ceiling");
     }
 
     // ── The outputs extension ───────────────────────────────────────────────
@@ -10684,13 +10662,12 @@ mod tests {
         }
     }
 
-    /// The lists of a session that may be sent wlshare's VP9, at the plan the test
-    /// sinks are built on: a `wlshare` target's for a browser that decodes 4:4:4.
+    /// The lists of a session that may be sent wlshare's video, at the plan the test
+    /// sinks are built on: a `wlshare` target's.
     #[cfg(feature = "wlshare")]
     fn test_listing() -> Arc<Listing> {
         let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
+            progressive: false,
             apple_media: false,
             apple_h264: false,
             hevc_instead: false,
@@ -10698,13 +10675,12 @@ mod tests {
             rdp_graphics: false,
             rdp_h264: false,
             wlshare: true, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv444,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
     }
 
     /// A repaint of a session that lists wlshare's tiles says first that the
-    /// page holds nothing of their cache; one that lists its VP9, or nothing of
+    /// page holds nothing of their cache; one that lists its video, or nothing of
     /// wlshare's, asks for the whole framebuffer alone.
     #[cfg(feature = "wlshare")]
     #[test]
@@ -10715,12 +10691,11 @@ mod tests {
         assert_eq!(repaint_request(None, (8, 4)), [full]);
     }
 
-    /// The lists of a session that may be sent wlshare's tiles in place of its VP9.
+    /// The lists of a session that may be sent wlshare's tiles in place of its video.
     #[cfg(feature = "wlshare")]
     fn test_tiles_listing() -> Arc<Listing> {
         let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
+            progressive: false,
             apple_media: false,
             apple_h264: false,
             hevc_instead: false,
@@ -10728,7 +10703,6 @@ mod tests {
             rdp_graphics: false,
             rdp_h264: false,
             wlshare: true, wlshare_tiles: true,
-            chroma: crate::vp9::Chroma::Yuv420,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
     }
@@ -10757,19 +10731,7 @@ mod tests {
     /// what the link is doing.
     fn test_sink_on(feedback: Arc<crate::feedback::LinkFeedback>) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, frame_rx) = mpsc::channel(8);
-        let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
-            apple_media: false,
-            apple_h264: false,
-            hevc_instead: false,
-            apple_standard: None, apple_combined: false,
-            rdp_graphics: false,
-            rdp_h264: false,
-            wlshare: true, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv444,
-        };
-        let sink = VideoSink::new("vnc", frame_tx, plan, feedback, Oversize::Refuse);
+        let sink = VideoSink::new("vnc", frame_tx, feedback, Oversize::Refuse);
         // Larger than any desktop these tests paint, so a rectangle lands in the
         // mirror without the `Resize` a live engine would have sent first.
         sink.presize(256, 256);
@@ -13338,28 +13300,27 @@ mod tests {
         assert_eq!(written(&sent), client_fence(FENCE_BLOCK_BEFORE, b"marker"));
     }
 
-    /// One FramebufferUpdate of a `w`×`h` wlshare VP9 frame whose opening byte is
-    /// `first`, coded at the dial, then a fence asking for `marker` back.
+    /// One FramebufferUpdate of a `w`×`h` frame of wlshare's video, the access unit
+    /// `unit`, then a fence asking for `marker` back.
     #[cfg(feature = "wlshare")]
-    fn wlshare_vp9_update(w: u16, h: u16, first: u8, marker: &[u8]) -> Vec<u8> {
-        wlshare_vp9_update_at(w, h, 60, first, marker)
+    fn wlshare_video_update(w: u16, h: u16, unit: &[u8], marker: &[u8]) -> Vec<u8> {
+        let mut msg = wlshare_video_header(w, h, unit.len() as u32);
+        msg.extend_from_slice(unit);
+        msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
+        msg
     }
 
-    /// [`wlshare_vp9_update`] with the frame said to be coded at `quality`.
+    /// A FramebufferUpdate of one `w`×`h` video rectangle, up to its length word,
+    /// which says `len`.
     #[cfg(feature = "wlshare")]
-    fn wlshare_vp9_update_at(w: u16, h: u16, quality: u8, first: u8, marker: &[u8]) -> Vec<u8> {
+    fn wlshare_video_header(w: u16, h: u16, len: u32) -> Vec<u8> {
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&1u16.to_be_bytes());
         for field in [0, 0, w, h] {
             msg.extend_from_slice(&field.to_be_bytes());
         }
-        msg.extend_from_slice(&ENCODING_VP9.to_be_bytes());
-        msg.push(quality);
-        let mut frame = vec![0u8; 100];
-        frame[0] = first;
-        msg.extend_from_slice(&(frame.len() as u32).to_be_bytes());
-        msg.extend_from_slice(&frame);
-        msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
+        msg.extend_from_slice(&ENCODING_VIDEO.to_be_bytes());
+        msg.extend_from_slice(&wlshare_proto::video::frame_header(len));
         msg
     }
 
@@ -13376,7 +13337,6 @@ mod tests {
     /// [`wlshare_tiles_update`] with the copy from `from`, and the store of `stored`.
     #[cfg(feature = "wlshare")]
     fn wlshare_tiles_update_copying(w: u16, from: (u16, u16), stored: (u16, u16, u16, u16), marker: &[u8]) -> Vec<u8> {
-        use crate::h264::sample::{FRAME, KEYFRAME};
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&7u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
@@ -13541,13 +13501,13 @@ mod tests {
     }
 
     /// A session lists one of wlshare's pictures, and the other arriving is refused as
-    /// any encoding not listed is: tiles in a VP9 session, VP9 in a tiles session.
+    /// any encoding not listed is: tiles in a video session, video in a tiles session.
     #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn the_wlshare_picture_not_listed_is_refused() {
         for (listing, wire) in [
             (test_listing(), wlshare_tiles_update(64, b"t1")),
-            (test_tiles_listing(), wlshare_vp9_update(64, 32, 0xa0, b"f1")),
+            (test_tiles_listing(), wlshare_video_update(64, 32, KEYFRAME, b"f1")),
         ] {
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = sized_sink((64, 32)).await;
@@ -13568,8 +13528,7 @@ mod tests {
         for oversize in [Oversize::Hold, Oversize::Refuse] {
             let (uplink, sent) = test_uplink();
             let (frame_tx, mut rx) = mpsc::channel(64);
-            let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true, chroma: crate::vp9::Chroma::Yuv420 };
-            let sink = VideoSink::new("vnc", frame_tx, plan, Arc::new(crate::feedback::LinkFeedback::new()), oversize);
+            let sink = VideoSink::new("vnc", frame_tx, Arc::new(crate::feedback::LinkFeedback::new()), oversize);
             sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
             let mut shared = test_shared(uplink, shared_desktop(small, None, None), test_shadow(small));
             shared.passthrough = Some(test_tiles_listing());
@@ -13607,24 +13566,25 @@ mod tests {
         })
     }
 
-    /// A VP9 frame that says it was coded off the 1–100 dial is a server that has
-    /// lost its framing, and is refused before its frame is read.
+    /// A video frame longer than one can be is a server that has lost its framing,
+    /// and is refused before its frame is read.
     #[cfg(feature = "wlshare")]
     #[tokio::test]
-    async fn a_wlshare_frame_coded_off_the_dial_is_refused() {
+    async fn a_wlshare_frame_past_the_longest_is_refused() {
         let (uplink, _sent) = test_uplink();
         let (sink, _rx) = sized_sink((64, 32)).await;
         let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
         shared.passthrough = Some(test_listing());
-        let err = read_loop(std::io::Cursor::new(wlshare_vp9_update_at(64, 32, 0, 0xa0, b"f1")), shared, false, None, sink)
+        let over = wlshare_proto::MAX_BODY as u32 + 1;
+        let err = read_loop(std::io::Cursor::new(wlshare_video_header(64, 32, over)), shared, false, None, sink)
             .await
             .unwrap_err();
-        assert!(format!("{err:#}").contains("coded at q0, which is not on the 1 to 100 dial"), "{err:#}");
+        assert!(format!("{err:#}").contains(&format!("a video frame of {over} bytes, past the")), "{err:#}");
     }
 
-    /// wlshare's VP9 goes to the browser as it came, and the fence behind a frame is
+    /// wlshare's video goes to the browser as it came, and the fence behind a frame is
     /// held for what the browser's link makes of a frame beyond its distance:
-    /// wlshare walks its quality by that round trip, and must see the browser's
+    /// wlshare walks its frame rate by that round trip, and must see the browser's
     /// delivery in it.
     #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
@@ -13632,17 +13592,17 @@ mod tests {
         let (uplink, sent) = test_uplink();
         // Two batches owed, the older for 250 ms beyond the distance.
         let feedback = queued_for(Duration::from_millis(250)).await;
-        let (sink, mut rx) = sized_sink_on((64, 32), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_vp9_update(64, 32, 0xa0, b"f1"), shared, sink);
+        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
         let Some(ServerMsg::Video(unit)) = rx.recv().await else {
             panic!("the frame was not passed");
         };
-        assert!(unit.keyframe && unit.data.len() == 100 && unit.data[0] == 0xa0);
+        assert!(unit.keyframe && unit.data == KEYFRAME);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(written(&sent).is_empty(), "the fence was echoed before the browser's delivery");
 
@@ -13677,11 +13637,11 @@ mod tests {
     #[tokio::test]
     async fn a_passed_frames_fence_goes_at_once_on_a_link_with_room() {
         let (uplink, sent) = test_uplink();
-        let (sink, mut rx) = sized_sink((64, 32)).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink((320, 192)).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_vp9_update(64, 32, 0xa0, b"f1"), shared, sink);
+        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
         let _kept = rx.recv().await;
@@ -13706,11 +13666,11 @@ mod tests {
         let (uplink, sent) = test_uplink();
         // A queue seconds deep ahead of the frame.
         let feedback = queued_for(Duration::from_secs(2)).await;
-        let (sink, mut rx) = sized_sink_on((64, 32), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_vp9_update(64, 32, 0xa0, b"f1"), shared, sink);
+        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
         let _kept = rx.recv().await;
@@ -13734,11 +13694,11 @@ mod tests {
     async fn a_held_fence_goes_at_its_deadline_while_the_server_keeps_talking() {
         let (uplink, sent) = test_uplink();
         let feedback = queued_for(Duration::from_secs(2)).await;
-        let (sink, mut rx) = sized_sink_on((64, 32), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
         shared.passthrough = Some(test_listing());
         let (mut server, client) = tokio::io::duplex(1 << 16);
-        server.write_all(&wlshare_vp9_update(64, 32, 0xa0, b"f1")).await.unwrap();
+        server.write_all(&wlshare_video_update(320, 192, KEYFRAME, b"f1")).await.unwrap();
         let talking = tokio::spawn(async move {
             for _ in 0..40 {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -13774,16 +13734,16 @@ mod tests {
         let (small, big) = ((64, 32), (5376, 2288));
         let (uplink, sent) = test_uplink();
         let (frame_tx, mut rx) = mpsc::channel(64);
-        let plan = crate::config::RenderPlan { quality: 60, adaptive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false, chroma: crate::vp9::Chroma::Yuv420 };
+        let plan = crate::config::RenderPlan { progressive: false, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: false };
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());
-        let sink = VideoSink::new("vnc", frame_tx, plan, feedback, Oversize::Hold);
+        let sink = VideoSink::new("vnc", frame_tx, feedback, Oversize::Hold);
         sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
         let mut shared = test_shared(uplink, shared_desktop(small, None, None), test_shadow(small));
         let encodings = wlshare_encoding_list(None, false, false);
         let lists = Arc::new(Listing::new(encodings, plan));
         shared.passthrough = Some(Arc::clone(&lists));
         let mut wire = update(&[geometry(0, 0, big.0, big.1, ENCODING_DESKTOP_SIZE)]);
-        wire.extend_from_slice(&wlshare_vp9_update(big.0, big.1, 0xa0, b"f1"));
+        wire.extend_from_slice(&wlshare_video_update(big.0, big.1, KEYFRAME, b"f1"));
         wire.extend_from_slice(&update(&[geometry(0, 0, small.0, small.1, ENCODING_DESKTOP_SIZE)]));
         let _ = read_loop(
             std::io::Cursor::new(wire),
@@ -13845,13 +13805,13 @@ mod tests {
     async fn a_held_block_after_fence_stops_the_reading_until_it_goes() {
         let (uplink, sent) = test_uplink();
         let feedback = queued_for(Duration::from_millis(250)).await;
-        let (sink, mut rx) = sized_sink_on((64, 32), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
+        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
         shared.passthrough = Some(test_listing());
-        let mut wire = wlshare_vp9_update(64, 32, 0xa0, b"f1");
+        let mut wire = wlshare_video_update(320, 192, KEYFRAME, b"f1");
         wire.truncate(wire.len() - server_fence(FENCE_REQUEST, b"f1").len());
         wire.extend_from_slice(&server_fence(FENCE_REQUEST | FENCE_BLOCK_AFTER, b"f1"));
-        wire.extend_from_slice(&wlshare_vp9_update(64, 32, 0xa4, b"f2"));
+        wire.extend_from_slice(&wlshare_video_update(320, 192, FRAME, b"f2"));
         let task = open_read_loop(wire, shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
@@ -13868,7 +13828,7 @@ mod tests {
         let next = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
             .expect("the frame behind the fence was read once it went back");
-        assert!(matches!(next, Some(ServerMsg::Video(unit)) if !unit.keyframe && unit.data[0] == 0xa4));
+        assert!(matches!(next, Some(ServerMsg::Video(unit)) if !unit.keyframe && unit.data == FRAME));
         assert_eq!(written(&sent), client_fence(FENCE_BLOCK_AFTER, b"f1"));
         task.abort();
     }
@@ -14364,21 +14324,9 @@ mod tests {
         hp_select(&shared, DisplayState::COMBINED, &sink).await.unwrap();
         assert_eq!(withheld_said(&sink, &mut rx).await, [false], "the first display is back on it");
 
-        let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
-            apple_media: false,
-            apple_h264: false,
-            hevc_instead: false,
-            apple_standard: None, apple_combined: false,
-            rdp_graphics: false,
-            rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv420,
-        };
         let (frames, mut tab_rx) = mpsc::channel(8);
         let feed = crate::session::DisplayFeed { frames, feedback: Arc::new(crate::feedback::LinkFeedback::new()) };
-        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(feed), plan, true).await;
+        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(feed), true).await;
         let tab_sink = tab_sink(&shared.tab).expect("the tab is fed");
         assert_eq!(withheld_said(&tab_sink, &mut tab_rx).await, [true], "said as the tab attaches");
         tell_withheld(&desktop, &media, &sink, &shared.tab).await.unwrap();
@@ -14407,18 +14355,6 @@ mod tests {
         let two = layout_payload(None, &[(9, (160, 100), (160, 100), 0x01), (10, (128, 80), (128, 80), 0x00)]);
         read_display_layout(&mut two.as_slice(), &shared, true, &sink).await.unwrap();
 
-        let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
-            apple_media: false,
-            apple_h264: false,
-            hevc_instead: false,
-            apple_standard: None, apple_combined: false,
-            rdp_graphics: false,
-            rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv420,
-        };
         let feed = || {
             let (frames, rx) = mpsc::channel(8);
             (
@@ -14432,12 +14368,12 @@ mod tests {
         // No tab while one display is chosen: the list names none.
         hp_select(&shared, 0, &sink).await.unwrap();
         let (early, _early_rx) = feed();
-        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(early), plan, true).await;
+        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(early), true).await;
         assert!(shared.tab.lock().unwrap().is_none());
 
         hp_select(&shared, DisplayState::COMBINED, &sink).await.unwrap();
         let (shown, mut tab_rx) = feed();
-        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(shown), plan, true).await;
+        hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(shown), true).await;
         let tab_sink = tab_sink(&shared.tab).expect("the tab is fed");
         tab_sink.flush().await;
         assert!(matches!(tab_rx.try_recv(), Ok(ServerMsg::Resize { w: 128, h: 80, .. })));

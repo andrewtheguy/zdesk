@@ -172,7 +172,7 @@ pub async fn run(
     // passed to the browser: every layout is held under it, and a host that answers
     // past it is refused. The bitmap path's tiles are coded here at any size.
     let oversize = if config.egfx() { Oversize::Refuse } else { Oversize::Shown };
-    let sink = VideoSink::new("rdp", frame_tx, plan, feedback, oversize);
+    let sink = VideoSink::new("rdp", frame_tx, feedback, oversize);
     session(config, choices, plan, display, input_rx, audio, uplinks, &sink).await;
     sink.finish().await;
 }
@@ -282,7 +282,6 @@ async fn session(
             restates: config.egfx(),
             ceiling: config.egfx(),
             pass_graphics: plan.rdp_graphics,
-            plan,
             monitors: narrow(asked),
         },
         applied,
@@ -467,8 +466,6 @@ struct Flags {
     /// Whether the host's graphics pipeline is on, and so passed to the browser
     /// ([`RenderPlan::rdp_graphics`]): its frames are never in the framebuffer.
     pass_graphics: bool,
-    /// The render dial, for the sink of a display shown in a tab ([`Tab`]).
-    plan: RenderPlan,
     /// How many monitors every layout asks for: the target's `virtual_displays`.
     monitors: u16,
 }
@@ -1424,7 +1421,7 @@ async fn active_loop(
     mut input_rx: mpsc::UnboundedReceiver<ClientMsg>,
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    let Flags { resize, kept, restates, ceiling, pass_graphics, plan, monitors } = flags;
+    let Flags { resize, kept, restates, ceiling, pass_graphics, monitors } = flags;
     let input = session.input();
     let framebuffer = session.framebuffer();
 
@@ -1899,7 +1896,7 @@ async fn active_loop(
                             info!("rdp: showing display {display} in a tab of its own");
                             let mut shown = Tab {
                                 display,
-                                sink: VideoSink::new("rdp", feed.frames, plan, feed.feedback, Oversize::Refuse),
+                                sink: VideoSink::new("rdp", feed.frames, feed.feedback, Oversize::Refuse),
                                 failed: false,
                             };
                             shown.repaint(view, applied.of(shown.column()), pointer.current()).await;
@@ -2852,20 +2849,8 @@ mod tests {
     #[tokio::test]
     async fn a_clipboard_answer_nothing_is_waiting_on_is_not_published() {
         let (frame_tx, _frames) = mpsc::channel(4);
-        let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
-            apple_media: false,
-            apple_h264: false,
-            hevc_instead: false,
-            apple_standard: None, apple_combined: false,
-            rdp_graphics: false,
-            rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv420,
-        };
         let feedback = std::sync::Arc::new(crate::feedback::LinkFeedback::new());
-        let sink = VideoSink::new("test", frame_tx, plan, feedback, crate::encode::Oversize::Refuse);
+        let sink = VideoSink::new("test", frame_tx, feedback, crate::encode::Oversize::Refuse);
 
         // The remote copied and this end asked for the bytes.
         let mut clipboard = ClipboardState {

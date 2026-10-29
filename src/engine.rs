@@ -270,20 +270,8 @@ mod tests {
     /// own, so a test reads the channel only after [`VideoSink::flush`].
     fn sink() -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, frame_rx) = mpsc::channel(4);
-        let plan = crate::config::RenderPlan {
-            quality: 60,
-            adaptive: false,
-            apple_media: false,
-            apple_h264: false,
-            hevc_instead: false,
-            apple_standard: None, apple_combined: false,
-            rdp_graphics: false,
-            rdp_h264: false,
-            wlshare: false, wlshare_tiles: false,
-            chroma: crate::vp9::Chroma::Yuv420,
-        };
         let feedback = std::sync::Arc::new(crate::feedback::LinkFeedback::new());
-        (VideoSink::new("test", frame_tx, plan, feedback, crate::encode::Oversize::Refuse), frame_rx)
+        (VideoSink::new("test", frame_tx, feedback, crate::encode::Oversize::Refuse), frame_rx)
     }
 
     // The detection itself is not testable here, and the reason is the same one

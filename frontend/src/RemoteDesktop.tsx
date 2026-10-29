@@ -27,7 +27,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 
 // The notice over a desktop with no picture, offering every display but the one
 // being sent, which is the one held: past the ceiling of the video stream that
-// carries it, a wlshare output's VP9, in the pixels the remote sends (`size`
+// carries it, a wlshare output's video, in the pixels the remote sends (`size`
 // here). The tiles the gateway codes and a Mac's own rectangles have no ceiling,
 // so only a stream's desktop is ever held. A click sends a `selectDisplay` and
 // nothing else: the notice comes down when the gateway says the desktop has a

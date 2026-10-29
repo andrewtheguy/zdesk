@@ -212,7 +212,7 @@ async function assertTheTilesHold(
 
 /// What holds of a Combined Display session at either density.
 async function assertTheSessionHolds(page: Page, seen: Session): Promise<void> {
-  await assertTheTilesHold(page, seen, /^Combined Display, tiles q\d+$/);
+  await assertTheTilesHold(page, seen, /^Combined Display, tiles$/);
   expect(seen.controlTypes, "no screen to choose").not.toContain("displays");
 }
 
@@ -236,7 +236,7 @@ test.describe("a Standard Mac of one screen at a time, in the gateway's tiles", 
     await assertTheTilesHold(
       page,
       seen,
-      /^the Mac's Full quality, tiles q\d+$/,
+      /^the Mac's Full quality, tiles$/,
     );
     expect(
       seen.mosaics.every((regions) => regions.length === 0),

@@ -96,7 +96,7 @@ def batch_records(frame: bytes) -> int:
     ``0x06 | u8 format | u16 x | u16 y | u16 w | u16 h | u32 len | image``, the
     gateway's tiles or wlshare's; and a REGION one
     ``0x07 | u8 stream | u8 flags | u16 x | u16 y | u16 w | u16 h | u32 len | payload``,
-    an access unit of one moving region's VP9 in wlshare's tiles with motion."""
+    an access unit of one moving region's H.264 in wlshare's tiles with motion."""
     count = int.from_bytes(frame[2:4], "little")
     sequence = int.from_bytes(frame[4:8], "little")
     at = 8
@@ -179,13 +179,13 @@ async def main() -> int:
         "--passthrough",
         nargs="?",
         const="apple-media",
-        choices=["apple-media", "apple-h264", "apple-adaptive", "wlshare-vp9", "wlshare-tiles-motion", "wlshare-tiles-progressive"],
+        choices=["apple-media", "apple-h264", "apple-adaptive", "wlshare-video", "wlshare-tiles-motion", "wlshare-tiles-progressive"],
         help="start the session with the target's own stream passed, by its name: a "
         "High Performance Mac's HEVC (apple-media, the default, to a client that states "
         "--apple-media) or its H.264 (apple-h264), one of which such a target's session "
         "has to name, or a Standard Mac's Adaptive picture (apple-adaptive); a Standard "
         "session that names none is the gateway's tiles of the Mac's Full quality, or a "
-        "wlshare target's VP9 (wlshare-vp9, what a session that names none is sent), "
+        "wlshare target's H.264 video (wlshare-video, what a session that names none is sent), "
         "its tiles with motion (wlshare-tiles-motion) or its progressive tiles "
         "(wlshare-tiles-progressive). An RDP host's graphics pipeline "
         "passes in every session and is not named",
@@ -422,12 +422,6 @@ async def main() -> int:
         help="state that this client composes an RDP host's graphics pipeline",
     )
     parser.add_argument(
-        "--no-vp9-444",
-        action="store_true",
-        help="state that this client's decoder takes no VP9 at 4:4:4, as iOS Safari's "
-        "does not, so a wlshare target sends it 4:2:0",
-    )
-    parser.add_argument(
         "--records",
         action="store_true",
         help="print each screen batch's records: VIDEO, GRAPHICS, STANDARD, TILE and REGION",
@@ -451,19 +445,16 @@ async def main() -> int:
     token = claim.json()["sessionId"]
     print(f"  logged in, session {token[:12]}…")
 
-    # The session socket requires the browser's answers about itself; the probe stands
-    # in for a decoder that takes VP9 profile 1, as a desktop browser does, unless
-    # --no-vp9-444, takes the Mac's stream only with --apple-media or --page-hevc and
-    # composes an RDP pipeline only with --rdp-graphics. It decodes no H.264, so a
+    # The session socket requires the browser's answers about itself; the probe
+    # takes the Mac's stream only with --apple-media or --page-hevc and composes an
+    # RDP pipeline only with --rdp-graphics. It decodes no H.264 on a pipeline, so a
     # pipeline passed to it carries none.
-    vp9_444 = "false" if args.no_vp9_444 else "true"
     apple_media = "true" if args.apple_media else "false"
     page_hevc = "true" if args.page_hevc else "false"
     rdp_graphics = "true" if args.rdp_graphics else "false"
     url = (
         f"ws://127.0.0.1:{args.port}/ws?session={token}"
         f"&apple_media={apple_media}&page_hevc={page_hevc}&rdp_graphics={rdp_graphics}&rdp_h264=false"
-        f"&vp9_444={vp9_444}"
     )
     choices = {
         "size": "window" if args.resize else "target",

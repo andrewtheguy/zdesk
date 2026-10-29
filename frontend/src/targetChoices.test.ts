@@ -20,7 +20,6 @@ const ABLE: Abilities = {
   rdpGraphics: true,
   rdpH264: true,
   appleH264: true,
-  vp9: true,
   audio: true,
   lossless: true,
   runsHevc: true,
@@ -31,7 +30,6 @@ const UNABLE: Abilities = {
   rdpGraphics: false,
   rdpH264: false,
   appleH264: false,
-  vp9: false,
   audio: false,
   lossless: false,
   runsHevc: false,
@@ -86,14 +84,14 @@ const STANDARD = target({
   standardView: true,
 });
 
-// As the gateway lists a `wlshare` target: its VP9, its tiles with motion and its
+// As the gateway lists a `wlshare` target: its video, its tiles with motion and its
 // progressive tiles, all wlshare's own, passed.
 const WLSHARE = target({
   subtype: "wlshare",
   resize: true,
   audio: true,
   passthroughs: [
-    "wlshare-vp9",
+    "wlshare-video",
     "wlshare-tiles-motion",
     "wlshare-tiles-progressive",
   ],
@@ -205,14 +203,14 @@ test("only what the target's type offers has a row", () => {
   const plain = targetOptions(target({}), undefined, ABLE);
   assert.equal(plain.pictures, null);
   assert.equal(plain.soundRow, null);
-  // wlshare's picture is one of its three, its VP9 first, and its sound a choice.
+  // wlshare's picture is one of its three, its video first, and its sound a choice.
   const wlshare = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(wlshare), [
-    ["wlshare-vp9", false],
+    ["wlshare-video", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-progressive", false],
   ]);
-  assert.equal(wlshare.choices.passthrough, "wlshare-vp9");
+  assert.equal(wlshare.choices.passthrough, "wlshare-video");
   assert.deepEqual(formats(wlshare), ["opus", "flac"]);
   // Standard Screen Sharing on the Mac's physical displays offers its picture
   // alone: the Mac's Adaptive one passed, until the gateway's tiles are chosen.
@@ -528,16 +526,16 @@ test("a Mac neither of whose pictures this browser takes cannot start", () => {
   assert.match(options.blocked ?? "", /neither of the Mac's pictures/);
 });
 
-test("a wlshare target's picture is its VP9 or either of its tiles, passed", () => {
-  // The VP9 until the tiles are chosen, and the choice is remembered; neither is
-  // greyed in a browser that decodes both.
+test("a wlshare target's picture is its video or either of its tiles, passed", () => {
+  // The video until the tiles are chosen, and the choice is remembered; none is
+  // greyed in a browser that decodes them all.
   const options = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(options), [
-    ["wlshare-vp9", false],
+    ["wlshare-video", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-progressive", false],
   ]);
-  assert.equal(options.choices.passthrough, "wlshare-vp9", "the first");
+  assert.equal(options.choices.passthrough, "wlshare-video", "the first");
   const tiles = targetOptions(
     WLSHARE,
     { passthrough: "wlshare-tiles-motion" },
@@ -556,7 +554,7 @@ test("a wlshare target's picture is its VP9 or either of its tiles, passed", () 
   assert.equal(
     targetOptions(WLSHARE, { passthrough: "apple-media" }, ABLE).choices
       .passthrough,
-    "wlshare-vp9",
+    "wlshare-video",
   );
 });
 
@@ -596,44 +594,33 @@ test("the camera and the microphone are offered where the remote can take them, 
 
 test("a wlshare target needs a browser that decodes one of its pictures", () => {
   assert.equal(targetOptions(WLSHARE, undefined, ABLE).blocked, null);
-  // Without the VP9, its tiles with motion, whose regions are H.264, are the
-  // picture, whatever was remembered.
-  const tiles = targetOptions(
+  // With no `VideoDecoder`, neither the video nor the tiles with motion, both
+  // H.264: the progressive tiles, which this page decodes, are the picture,
+  // whatever was remembered.
+  const videoless = targetOptions(
     WLSHARE,
-    { passthrough: "wlshare-vp9" },
-    { ...ABLE, vp9: false },
+    { passthrough: "wlshare-video" },
+    { ...ABLE, appleH264: false },
   );
-  assert.deepEqual(pictures(tiles), [
-    ["wlshare-vp9", true],
-    ["wlshare-tiles-motion", false],
-    ["wlshare-tiles-progressive", false],
-  ]);
-  assert.match(tiles.pictures?.[0].note ?? "", /does not decode VP9/);
-  assert.equal(tiles.choices.passthrough, "wlshare-tiles-motion");
-  assert.equal(tiles.blocked, null);
-  // With no `VideoDecoder`, neither: the progressive tiles, which this page
-  // decodes, are the picture.
-  const videoless = targetOptions(WLSHARE, undefined, {
-    ...ABLE,
-    vp9: false,
-    appleH264: false,
-  });
   assert.deepEqual(pictures(videoless), [
-    ["wlshare-vp9", true],
+    ["wlshare-video", true],
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-progressive", false],
   ]);
+  assert.match(
+    videoless.pictures?.[0].note ?? "",
+    /no video decoder for the H.264 of wlshare's video/,
+  );
   assert.equal(videoless.choices.passthrough, "wlshare-tiles-progressive");
   assert.equal(videoless.blocked, null);
   // And with no module to decode those either, nothing.
   const unable = targetOptions(WLSHARE, undefined, {
     ...ABLE,
-    vp9: false,
     appleH264: false,
     rdpGraphics: false,
   });
   assert.deepEqual(pictures(unable), [
-    ["wlshare-vp9", true],
+    ["wlshare-video", true],
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-progressive", true],
   ]);
@@ -669,7 +656,7 @@ test("an RDP host's pipeline is always passed, and needs a page that composes it
   assert.equal(able.choices.passthrough, null, "passed without being named");
   assert.equal(able.blocked, null);
 
-  // A browser that cannot compose it cannot start the target: no VP9 stands in.
+  // A browser that cannot compose it cannot start the target: nothing stands in.
   const unable = targetOptions(RDP, undefined, UNABLE);
   assert.match(unable.blocked ?? "", /WebGL 2/);
   assert.ok(unable.passed);

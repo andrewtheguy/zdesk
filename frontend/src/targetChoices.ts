@@ -31,12 +31,13 @@
 //   no passthrough: see `pictureOptions`. The Adaptive one until the other is
 //   chosen, and neither greyed. Combined Display is the tiles of every screen, so
 //   the Adaptive picture is greyed under it.
-// - A `wlshare` target's picture is one of two, both wlshare's own, passed
-//   through: its VP9 of the whole desktop, which fits the link, or its tiles with
-//   motion, exact PNG where the desktop is still and video only where it moves, for
-//   a LAN: see `pictureOptions`. The VP9 until the other is chosen, each greyed
-//   in a browser that cannot decode it: the VP9 where the decoder refuses VP9,
-//   the tiles' H.264 where there is no `VideoDecoder`.
+// - A `wlshare` target's picture is one of three, all wlshare's own, passed
+//   through: its H.264 of the whole desktop, which it paces to the link, its tiles
+//   with motion, exact PNG where the desktop is still and video only where it
+//   moves, for a LAN, or its progressive tiles: see `pictureOptions`. The video
+//   until another is chosen, each greyed in a browser that cannot decode it: the
+//   video and the tiles' H.264 where there is no `VideoDecoder`, the progressive
+//   tiles where the page cannot compose an RDP host's pipeline.
 // - Sound is ticked or not where the target offers it, and a ticked one is Opus
 //   or lossless: see `soundRow`. Ticking takes Opus. A browser with no audio
 //   decoder has no sound to tick, and one whose decoder does not play FLAC is
@@ -55,9 +56,9 @@
 // - A target that can only be passed, in a browser that cannot take it, cannot
 //   start, and Start says so before the remote is dialled: an RDP host's
 //   pipeline in a page that cannot compose it, and a `wlshare` target's pictures,
-//   VP9 both, in a browser whose decoder refuses VP9.
+//   all three, in a browser with no `VideoDecoder` and no compositor.
 // - Which decoder takes the picture is no choice: the browser's own decodes the
-//   VP9, and the page a Mac's passed HEVC where the gateway serves the decoder
+//   H.264, and the page a Mac's passed HEVC where the gateway serves the decoder
 //   for it, in WebAssembly wherever the browser's own decoder does not take it
 //   (softwareDecoder.ts).
 
@@ -67,7 +68,7 @@ export type Passthrough =
   | "apple-media"
   | "apple-h264"
   | "apple-adaptive"
-  | "wlshare-vp9"
+  | "wlshare-video"
   | "wlshare-tiles-motion"
   | "wlshare-tiles-progressive";
 
@@ -102,7 +103,7 @@ export interface TargetInfo {
   /**
    * The streams this target can pass, in the picker's order: none, an RDP host's
    * graphics pipeline, a High Performance Mac's HEVC and its H.264, a Standard
-   * Mac's Adaptive picture, or wlshare's VP9 and its tiles with motion.
+   * Mac's Adaptive picture, or wlshare's video and its two tiles.
    */
   passthroughs: Passthrough[];
   /** Whether where the second virtual display sits is a choice. */
@@ -164,7 +165,7 @@ export interface Choices {
   audio: Sound;
   /**
    * The stream of the target's to pass, where which is a choice: a Mac's HEVC,
-   * its H.264 or its Adaptive picture, or wlshare's VP9 or its tiles with motion.
+   * its H.264 or its Adaptive picture, or wlshare's video or one of its tiles.
    * Null where none is passed: a target whose picture the gateway codes, a
    * Standard Mac's whose tiles were chosen over its Adaptive picture, or one that
    * passes a stream in every session, which is not named.
@@ -191,11 +192,10 @@ export interface Abilities {
   rdpH264: boolean;
   /**
    * Whether it has a `VideoDecoder`, taken to decode a High Performance Mac's
-   * H.264 and the H.264 of wlshare's tiles without asking, and whether that
-   * decoder takes wlshare's VP9 at 4:2:0 (videoCodecs.ts).
+   * H.264 and wlshare's, its video and its tiles' moving regions, without asking
+   * (videoCodecs.ts).
    */
   appleH264: boolean;
-  vp9: boolean;
   /** Whether this browser has an audio decoder, which every sound needs. */
   audio: boolean;
   /**
@@ -349,7 +349,7 @@ const NO_PROGRESSIVE =
 
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
-  "This browser decodes none of wlshare's pictures: its VP9, the H.264 of its tiles with motion, or its progressive tiles, which need WebGL 2 and a cross-origin isolated page. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser decodes none of wlshare's pictures: its H.264 video, the H.264 of its tiles with motion, or its progressive tiles, which need WebGL 2 and a cross-origin isolated page. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -370,7 +370,7 @@ function noHevc(target: TargetInfo): string {
  * The ways a Mac's or a wlshare desktop's picture can reach this browser, in the
  * order the picker shows them: a High Performance Mac's HEVC passed through, and
  * its H.264; a Standard Mac's Adaptive picture passed through, and the gateway's
- * tiles of its Full quality; wlshare's VP9 passed through, its tiles with
+ * tiles of its Full quality; wlshare's video passed through, its tiles with
  * motion, and its progressive tiles.
  *
  * - The HEVC is greyed in a browser whose own decoder does not take it, unless
@@ -381,10 +381,10 @@ function noHevc(target: TargetInfo): string {
  *   stands in for it. Any that has one is taken to decode it, unasked.
  * - The Mac's Adaptive picture is never greyed, which every page decodes in WebAssembly
  *   (standardPicture.ts), nor the gateway's tiles, images every page decodes.
- * - wlshare's VP9 is greyed in a browser whose own decoder refuses it, and its
- *   tiles with motion, whose regions are H.264, in one with no `VideoDecoder`,
- *   as the Mac's H.264 is; its progressive tiles in one that cannot compose an
- *   RDP host's pipeline, whose module decodes them.
+ * - wlshare's video and its tiles with motion, whose regions are H.264, are
+ *   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its
+ *   progressive tiles in one that cannot compose an RDP host's pipeline, whose
+ *   module decodes them.
  */
 function pictureOptions(
   target: TargetInfo,
@@ -414,13 +414,13 @@ function pictureOptions(
       note: "The Mac's own Adaptive quality, as Apple's viewer has it: a coarse pass and its refinement, the same on any link, where a slower link gets fewer updates. Decoded by this page, and never lossless.",
       disabled: false,
     },
-    "wlshare-vp9": {
-      value: "wlshare-vp9",
+    "wlshare-video": {
+      value: "wlshare-video",
       label: "Video, passed through",
-      note: abilities.vp9
-        ? "wlshare's VP9 of the whole desktop, which it fits to this browser's link. For any link; never lossless."
-        : "This browser does not decode VP9, which wlshare's video is coded in.",
-      disabled: !abilities.vp9,
+      note: abilities.appleH264
+        ? "wlshare's H.264 of the whole desktop, which it paces to this browser's link. For any link; never lossless."
+        : "This browser has no video decoder for the H.264 of wlshare's video.",
+      disabled: !abilities.appleH264,
     },
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",

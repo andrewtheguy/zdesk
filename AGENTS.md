@@ -20,7 +20,7 @@ belong in the linked documentation.
   where it integrates more seamlessly.
 - Because wlshare is ours, what RFB lacks can be added to it as an
   extension a `wlshare` target lists, as density, outputs, audio, camera,
-  microphone and its VP9 stream were, or as a message it sends, as the scroll
+  microphone and its video stream were, or as a message it sends, as the scroll
   distance was. A plain `vnc` target lists none of them and
   reads any server, wlshare included, through the RFB baseline.
 

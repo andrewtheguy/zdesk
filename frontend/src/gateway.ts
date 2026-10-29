@@ -40,8 +40,7 @@ export function gatewayFetch(
 /// `screen` (the same numbers `connect` carries), whether its own decoder takes a High Performance
 /// Mac's picture, whether its page runs the software HEVC decoder that decodes that picture
 /// where the browser's own does not, whether it composes an RDP host's graphics pipeline,
-/// whether it decodes the H.264 such a pipeline may carry, and whether its own decoder takes
-/// VP9 at 4:4:4, which a wlshare target is then sent.
+/// and whether it decodes the H.264 such a pipeline may carry.
 /// All are here for one reason — a
 /// gateway holding a target whose engine a claim change ended reconnects it at
 /// attach time, before any message this client could send, and it must build that
@@ -57,7 +56,6 @@ export function gatewaySocketUrl(
     pageHevc: boolean;
     rdpGraphics: boolean;
     rdpH264: boolean;
-    vp9444: boolean;
   },
 ): string {
   const url = new URL(gatewayUrl(path));
@@ -72,7 +70,6 @@ export function gatewaySocketUrl(
     url.searchParams.set("page_hevc", String(client.pageHevc));
     url.searchParams.set("rdp_graphics", String(client.rdpGraphics));
     url.searchParams.set("rdp_h264", String(client.rdpH264));
-    url.searchParams.set("vp9_444", String(client.vp9444));
   }
   return url.toString();
 }

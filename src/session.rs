@@ -326,7 +326,7 @@ struct EngineSlot {
     input_tx: mpsc::UnboundedSender<ClientMsg>,
     /// Guards the pump's cleanup against clearing a *newer* engine.
     generation: u64,
-    /// The render dial this engine resolved to, and the whole of it.
+    /// The render plan this engine resolved to, and the whole of it.
     ///
     /// Held rather than recomputed: it is resolved when the engine is built and
     /// cannot change while the engine runs, so a reattach reports what is
@@ -1037,14 +1037,6 @@ impl SessionManager {
         // running. It is given one that starts.
         if st.engine.as_ref().is_some_and(|engine| !engine.plan.resumes()) {
             info!("session: a passed stream drawn against the page cannot be resumed; starting it over");
-            st.take_engine();
-        }
-        // A VP9 at a chroma this browser would not be sent — a `wlshare` target's
-        // 4:4:4 for a page whose decoder takes no profile 1, or its 4:2:0 for one
-        // that would take more ([`RenderPlan::chroma`]) — is started over for it.
-        let chroma = st.selected.as_ref().map(|s| s.target.render_plan(s.choices, decoders).chroma);
-        if st.engine.as_ref().is_some_and(|engine| Some(engine.plan.chroma) != chroma) {
-            info!("session: the session's VP9 is at a chroma this browser is not sent; starting it over");
             st.take_engine();
         }
 
@@ -2349,17 +2341,7 @@ mod tests {
             size: Some((1, 1)),
             egfx: meta.bitmap.then_some(false),
             virtual_displays: 1,
-            video_quality: None,
-            render_adaptive: None,
             virtual_display: false,
-        }
-    }
-
-    /// A target that streams the whole desktop as video.
-    fn video_target(name: &str) -> TargetConfig {
-        TargetConfig {
-            video_quality: Some(60),
-            ..fake_target(name)
         }
     }
 
@@ -2402,7 +2384,7 @@ mod tests {
             // A target that streams. Nothing refuses it: the browser capability probe
             // that could is gone, and what a client can decode is answered by its own
             // decoder rather than by this connect.
-            video_target("video"),
+            fake_target("video"),
         ];
         (Arc::new(SessionManager::with_spawner(targets, spawner)), hook_rx)
     }
@@ -2460,10 +2442,10 @@ mod tests {
                 assert_eq!(got_resize, meta.resize, "resize metadata for {name}");
                 assert_eq!(got_audio, meta.audio, "audio metadata for {name}");
                 // An RDP fake with the pipeline on passes it in every session, and
-                // the wlshare fake its VP9, the picture of a session that named none.
+                // the wlshare fake its video, the picture of a session that named none.
                 let passed = match meta.protocol {
                     Protocol::Rdp if !meta.bitmap => Some("rdp-graphics"),
-                    Protocol::Vnc if name == "vnc-resize" => Some("wlshare-vp9"),
+                    Protocol::Vnc if name == "vnc-resize" => Some("wlshare-video"),
                     _ => None,
                 };
                 assert_eq!(got_passthrough, passed, "passthrough for {name}");
@@ -2684,7 +2666,7 @@ mod tests {
         assert!(matches!(mgr.connect(att.id + 999, "fake", None, Choices::default()).await, Err(ConnectError::NotCurrent)));
     }
 
-    // ---- the video render dial ------------------------------------------------
+    // ---- the render plan ------------------------------------------------------
 
     /// A video target connects like any other — nothing refuses a browser for what it
     /// said it can decode — and its connected status carries the resolved render line,
@@ -2700,7 +2682,7 @@ mod tests {
         assert!(hooks.try_recv().is_ok(), "engine spawned on connect");
         match recv(&mut att.events).await {
             AttachEvent::Msg(ServerMsg::Connected { render, .. }) => {
-                assert_eq!(render, "tiles q60")
+                assert_eq!(render, "tiles")
             }
             other => panic!("expected connected, got {other:?}"),
         }
@@ -2708,12 +2690,12 @@ mod tests {
 
     /// A High Performance Mac, which offers its media stream to pass.
     fn mac_target(name: &str) -> TargetConfig {
-        TargetConfig { subtype: Some(Subtype::ArdHighPerformance), ..video_target(name) }
+        TargetConfig { subtype: Some(Subtype::ArdHighPerformance), ..fake_target(name) }
     }
 
     /// A browser that takes the Mac's stream, and one that does not.
-    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false, vp9_444: true };
-    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, vp9_444: true };
+    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false };
+    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false };
 
     /// Assert the next event is the connected status of a Mac's session that passes
     /// its stream, sound included.
@@ -2888,7 +2870,7 @@ mod tests {
                 hook_tx.send(plan).unwrap();
             },
         );
-        let win = TargetConfig { protocol: Protocol::Rdp, ..video_target("win") };
+        let win = TargetConfig { protocol: Protocol::Rdp, ..fake_target("win") };
         let mgr = Arc::new(SessionManager::with_spawner(vec![win], spawner));
         let token = mgr.claim(false, None, "login").unwrap();
         let mut att = mgr.attach(&token, None, Decoders::ALL).await.unwrap();
@@ -2913,48 +2895,10 @@ mod tests {
 
         // A page that cannot compose it is not given one, nor the desktop encoded
         // here instead: the session ends for it to choose again.
-        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, vp9_444: true };
+        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false };
         let mut ended = mgr.attach(&token, None, cannot).await.unwrap();
         assert!(hook_rx.try_recv().is_err());
         expect_beyond_then_picker(&mut ended.events, "graphics pipeline").await;
-    }
-
-    /// A `wlshare` target's VP9 is at the chroma its browser takes: the same browser
-    /// coming back resumes it, and one whose decoder takes no 4:4:4 is given a
-    /// session that starts over at 4:2:0 rather than a stream it cannot decode.
-    #[tokio::test]
-    async fn a_reattach_at_another_chroma_starts_the_session_over() {
-        use crate::vp9::Chroma;
-        let (hook_tx, hook_rx) = std_mpsc::channel();
-        let spawner: EngineSpawner = Box::new(
-            move |_target, _choices, plan, _display, _input_rx, _frame_tx, _audio, _camera, _feedback| {
-                hook_tx.send(plan).unwrap();
-            },
-        );
-        let desk = TargetConfig { protocol: Protocol::Vnc, subtype: Some(Subtype::Wlshare), ..video_target("desk") };
-        let mgr = Arc::new(SessionManager::with_spawner(vec![desk], spawner));
-        let token = mgr.claim(false, None, "login").unwrap();
-        let mut att = mgr.attach(&token, None, Decoders::ALL).await.unwrap();
-        expect_picker(&mut att.events).await;
-        mgr.connect(att.id, "desk", None, Choices::default()).await.unwrap();
-        assert!(matches!(hook_rx.try_recv(), Ok(RenderPlan { chroma: Chroma::Yuv444, .. })));
-
-        let _back = mgr.attach(&token, None, Decoders::ALL).await.unwrap();
-        assert!(hook_rx.try_recv().is_err(), "the same browser coming back resumes the running session");
-
-        let subsampled = Decoders { vp9_444: false, ..Decoders::ALL };
-        let mut other = mgr.attach(&token, None, subsampled).await.unwrap();
-        match recv(&mut other.events).await {
-            AttachEvent::Msg(ServerMsg::Connected { name, render, .. }) => {
-                assert_eq!(name, "desk");
-                assert!(render.contains(" · 4:2:0 · "), "{render}");
-            }
-            other => panic!("expected connected(desk), got {other:?}"),
-        }
-        assert!(
-            matches!(hook_rx.try_recv(), Ok(RenderPlan { chroma: Chroma::Yuv420, .. })),
-            "a page that takes no 4:4:4 is given the session from its start at 4:2:0"
-        );
     }
 
     /// A Mac's passed Adaptive picture is never resumed either: each rectangle is
@@ -2971,7 +2915,7 @@ mod tests {
         let mac = TargetConfig {
             protocol: Protocol::Vnc,
             subtype: Some(crate::config::Subtype::Ard),
-            ..video_target("mac")
+            ..fake_target("mac")
         };
         let mgr = Arc::new(SessionManager::with_spawner(vec![mac], spawner));
         let token = mgr.claim(false, None, "login").unwrap();
@@ -3021,9 +2965,9 @@ mod tests {
         let mac = TargetConfig {
             protocol: Protocol::Vnc,
             subtype: Some(crate::config::Subtype::Ard),
-            ..video_target("mac")
+            ..fake_target("mac")
         };
-        let mgr = Arc::new(SessionManager::with_spawner(vec![video_target("desk"), mac], spawner));
+        let mgr = Arc::new(SessionManager::with_spawner(vec![fake_target("desk"), mac], spawner));
         let token = mgr.claim(false, None, "login").unwrap();
         let mut att = mgr.attach(&token, None, Decoders::ALL).await.unwrap();
         expect_picker(&mut att.events).await;
@@ -3081,7 +3025,7 @@ mod tests {
         let mac = TargetConfig {
             protocol: Protocol::Vnc,
             subtype: Some(crate::config::Subtype::Ard),
-            ..video_target("mac")
+            ..fake_target("mac")
         };
         let mgr = Arc::new(SessionManager::with_spawner(vec![mac], spawner));
         let token = mgr.claim(false, None, "login").unwrap();
@@ -3971,7 +3915,7 @@ mod tests {
                     hook_tx.send((input_rx, frame_tx, audio, camera)).unwrap();
                 },
             );
-            let target = TargetConfig { subtype: Some(Subtype::Wlshare), ..video_target("sway") };
+            let target = TargetConfig { subtype: Some(Subtype::Wlshare), ..fake_target("sway") };
             let mgr = Arc::new(SessionManager::with_spawner(vec![target], spawner));
             let token = mgr.claim(false, None, "login").unwrap();
             let mut att = mgr.attach(&token, None, TAKES).await.unwrap();

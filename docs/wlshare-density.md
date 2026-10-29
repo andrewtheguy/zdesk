@@ -15,10 +15,10 @@ output, through `tests/ws_probe.py`.
 
 The server side is [wlshare](https://github.com/andrewtheguy/wlshare), a VNC
 server written for this: RFB 3.8 with ZRLE as its standard lossless pixel encoding
-and two pictures of its own that the gateway passes through, chosen at the
-picker: a VP9 stream, 4:4:4 or, for a browser without it, 4:2:0, and tiles
-with motion, exact PNG tiles with an H.264 stream for each region that
-moves
+and three pictures of its own that the gateway passes through, chosen at the
+picker: an H.264 stream of the whole desktop, tiles with motion, exact PNG
+tiles with an H.264 stream for each region that moves, and progressive
+tiles
 ([wlshare's stream, passed through](architecture.md#wlshares-stream-passed-through)),
 wlr-screencopy capture, and this extension built in. It tracks each output's
 exact scale from wlr-output-management, with `wl_output.scale` as the fallback,

@@ -201,7 +201,7 @@ test("resize and videoFormat hold their place behind a stalled draw", async () =
   h.host.handle({ type: "resize", w: 640, h: 480, seq: 7, view: null });
   h.host.handle({
     type: "videoFormat",
-    format: { decode: "vp09.00.40.08" },
+    format: { decode: "avc1.640033" },
   });
   await settled();
   // The draw is still out; nothing behind it has run, and the echo the page's
@@ -216,7 +216,7 @@ test("resize and videoFormat hold their place behind a stalled draw", async () =
     "draw",
     "fill",
     "blank:640x480",
-    "format:vp09.00.40.08",
+    "format:avc1.640033",
   ]);
   assert.equal(h.canvas.width, 640);
   assert.equal(h.canvas.height, 480);

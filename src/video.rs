@@ -15,15 +15,6 @@
 
 use crate::shadow::Rect;
 
-/// The 1–100 quality dial, coarsest first.
-///
-/// The dial is the gateway's own scale: a tile's JPEG quality, which is the same 1–100,
-/// and the ceiling a `wlshare` target asks wlshare's VP9 for, which wlshare maps onto
-/// its own quantizer.
-pub const QUALITY_MIN: u8 = 1;
-/// See [`QUALITY_MIN`].
-pub const QUALITY_MAX: u8 = 100;
-
 /// The longest side a passed video stream's picture may have, and the longest the
 /// *other* side may then be.
 ///
@@ -32,7 +23,7 @@ pub const QUALITY_MAX: u8 = 100;
 /// h <= 2400` test would read almost the same and would refuse a portrait desktop.
 ///
 /// The ceiling is a *stream's*: a picture of the whole desktop that the remote codes
-/// and the gateway passes, wlshare's VP9, a High Performance Mac's HEVC or H.264,
+/// and the gateway passes, wlshare's H.264, a High Performance Mac's HEVC or H.264,
 /// and an RDP host's graphics pipeline. 4K is the *panel*, in either shape: 3840×2160
 /// is a 16:9 one and 3840×2400 the 16:10 one a 1920×1200 laptop at 2x is. 5K is
 /// past the line, and past the level a browser's decoder is asked for.
@@ -71,6 +62,17 @@ pub fn fit_ceiling((w, h): (u32, u32)) -> (u32, u32) {
     } else {
         (w.min(short), h.min(long))
     }
+}
+
+/// An access unit of a stream the remote encoded itself, wlshare's video or a High
+/// Performance Mac's, as the browser is told about it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Passed {
+    /// The configuration string a decoder for it is built with.
+    pub decode: String,
+    pub keyframe: bool,
+    /// Which strip of the picture it is, where it is not the whole of it.
+    pub strip: Option<crate::protocol::Strip>,
 }
 
 /// The whole framebuffer as packed RGB888, which the tiles are cut from: the desktop

@@ -1,16 +1,17 @@
-//! H.264 as this gateway meets it on a `wlshare` target: the moving regions of
-//! its tiles with motion, every one H.264, by the host's hardware encoder where
-//! it has one and libx264 otherwise, passed to the browser as wlshare coded them
-//! ([`pass`]). The gateway encodes no H.264 and decodes none.
+//! H.264 as this gateway meets it on a `wlshare` target: wlshare's video, the
+//! whole desktop as one stream ([`Whole`]), and the moving regions of its tiles
+//! with motion ([`pass`]), every one by the host's hardware encoder where it has
+//! one and libx264 otherwise, passed to the browser as wlshare coded them. The
+//! gateway encodes no H.264 and decodes none.
 //!
-//! What a passed region's frame needs here is what the browser cannot read out
-//! of it in time: whether a decoder can start at it, and the WebCodecs string
-//! its decoder is configured with, which H.264's own sequence parameter set
-//! names, as RFC 6381 writes it, `avc1.` and the profile, constraints and level.
-//! Each frame is one Annex B access unit, the parameter sets ahead of every
-//! IDR, which is what a `VideoDecoder` configured with no `description` takes.
+//! What a passed frame needs here is what the browser cannot read out of it in
+//! time: whether a decoder can start at it, and the WebCodecs string its decoder
+//! is configured with, which H.264's own sequence parameter set names, as RFC
+//! 6381 writes it, `avc1.` and the profile, constraints and level. Each frame is
+//! one Annex B access unit, the parameter sets ahead of every IDR, which is what
+//! a `VideoDecoder` configured with no `description` takes.
 
-use crate::video::check_picture;
+use crate::video::{Passed, check_picture};
 use crate::vnc_apple_media::parse_h264_sps;
 
 /// A frame of a region's H.264 stream, as the browser is told about it.
@@ -88,9 +89,44 @@ pub fn pass(w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Region> {
     Ok(Region { decode, keyframe })
 }
 
+/// wlshare's video stream as this gateway has passed it: the decoder the last
+/// sequence parameter set named, and the picture it was of, which every frame
+/// until the next is decoded by and held to. A region's stream announces its
+/// decoder once, at its start; the whole desktop's is announced again wherever
+/// it changes, so each of its frames is passed with the decoder it needs.
+#[derive(Debug, Default)]
+pub struct Whole {
+    stream: Option<(String, (u16, u16))>,
+}
+
+impl Whole {
+    /// Check a `w`×`h` frame of wlshare's video, as [`pass`] checks a region's,
+    /// and name the decoder it needs: its own sequence parameter set's, or the
+    /// last one's. The stream starts at an IDR with its parameter sets, and so
+    /// does every new size, so a frame with none ahead of it, or of a size other
+    /// than the one its parameter set was of, is refused: no decoder the browser
+    /// could be told of would draw it.
+    pub fn pass(&mut self, w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Passed> {
+        let frame = pass(w, h, unit)?;
+        if let Some(decode) = frame.decode {
+            self.stream = Some((decode, (w, h)));
+        }
+        let Some((decode, size)) = &self.stream else {
+            anyhow::bail!("the server's video stream does not start at an IDR picture with its parameter sets");
+        };
+        anyhow::ensure!(
+            *size == (w, h),
+            "the server sent a {w}x{h} video frame without the parameter sets of a new size, where its stream is {}x{}",
+            size.0,
+            size.1
+        );
+        Ok(Passed { decode: decode.clone(), keyframe: frame.keyframe, strip: None })
+    }
+}
+
 /// A 320×192 grey picture's first access unit as x264 codes it at High profile,
-/// level 1.3 — SPS, PPS and an IDR — and the P frame after it, for the tests here
-/// and the sink's.
+/// level 1.3 — SPS, PPS and an IDR — and the P frame after it, for the tests here,
+/// the sink's and the read loop's.
 #[cfg(test)]
 pub mod sample {
     pub const KEYFRAME: &[u8] = &[
@@ -135,7 +171,7 @@ mod tests {
         assert_eq!(units[0].len(), 23, "the SPS runs up to the next start code, its zero byte excluded");
         assert_eq!(nal_units(FRAME).len(), 1);
         assert!(nal_units(&[0, 0, 0, 1]).is_empty(), "a start code with nothing after it");
-        assert!(nal_units(&[0x80, 0x12]).is_empty(), "a VP9 frame is no access unit");
+        assert!(nal_units(&[0x80, 0x12]).is_empty(), "bytes with no start code are no access unit");
     }
 
     #[test]
@@ -156,9 +192,39 @@ mod tests {
         assert!(pass(640, 192, BASELINE_KEYFRAME).is_err(), "a picture of another size");
     }
 
+    /// The whole desktop's frames are each passed with the decoder they need:
+    /// a keyframe's own, and the last keyframe's for the frames after it.
+    #[test]
+    fn the_whole_desktops_frames_name_the_last_parameter_sets_decoder() {
+        use super::sample::{BASELINE_FRAME, BASELINE_KEYFRAME};
+        let mut whole = Whole::default();
+        let passed = |decode: &str, keyframe| Passed { decode: decode.to_owned(), keyframe, strip: None };
+        assert_eq!(whole.pass(320, 192, KEYFRAME).unwrap(), passed("avc1.64000D", true));
+        assert_eq!(whole.pass(320, 192, FRAME).unwrap(), passed("avc1.64000D", false));
+        assert_eq!(whole.pass(319, 191, BASELINE_KEYFRAME).unwrap(), passed("avc1.42C00C", true), "a desktop of odd sides");
+        assert_eq!(whole.pass(319, 191, BASELINE_FRAME).unwrap(), passed("avc1.42C00C", false));
+    }
+
+    /// A stream that starts on a frame no decoder can start at, and a frame of a
+    /// new size with no parameter sets ahead of it, are refused.
+    #[test]
+    fn the_whole_desktops_stream_starts_at_an_idr_and_restarts_at_a_new_size() {
+        let refused = Whole::default().pass(320, 192, FRAME).unwrap_err();
+        assert_eq!(refused.to_string(), "the server's video stream does not start at an IDR picture with its parameter sets");
+        let mut whole = Whole::default();
+        whole.pass(320, 192, KEYFRAME).unwrap();
+        let resized = whole.pass(640, 384, FRAME).unwrap_err();
+        assert_eq!(
+            resized.to_string(),
+            "the server sent a 640x384 video frame without the parameter sets of a new size, where its stream is 320x192"
+        );
+        assert!(whole.pass(640, 384, KEYFRAME).is_err(), "a keyframe of another picture than the rectangle");
+        assert!(Whole::default().pass(5376, 2288, KEYFRAME).is_err(), "past the ceiling");
+    }
+
     #[test]
     fn a_frame_that_is_not_what_wlshare_promised_is_refused() {
-        assert!(pass(320, 192, &[0x80, 0, 0, 0]).is_err(), "a VP9 frame");
+        assert!(pass(320, 192, &[0x80, 0, 0, 0]).is_err(), "bytes with no start code");
         assert!(pass(640, 192, KEYFRAME).is_err(), "a picture of another size");
         assert!(pass(318, 192, KEYFRAME).is_err(), "two pixels narrower is another picture");
         assert!(pass(5376, 2288, KEYFRAME).is_err(), "past the ceiling");
