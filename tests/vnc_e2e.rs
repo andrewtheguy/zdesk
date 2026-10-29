@@ -81,7 +81,9 @@ async fn spawn_app(vnc_port: u16) -> SocketAddr {
             password: String::new(),
             vnc_password: "secret42".to_owned(),
             password_ref: None,
-            vnc_password_ref: None,
+            // Naming the ref is what makes the gateway answer VncAuth; the
+            // password itself is the one opened from it.
+            vnc_password_ref: Some("tigervnc".to_owned()),
             domain: None,
             // A plain target states no size: it is shown at the server's own.
             size: None,
