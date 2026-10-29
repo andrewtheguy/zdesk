@@ -2224,7 +2224,7 @@ and `GET /api/targets` carries it:
 | `rdp` | yes | shown | said, not offered: the graphics pipeline, always passed | shown: high quality or adaptive H.264 | shown |
 | `rdp` with `egfx = false` | no | shown | hidden | hidden | shown |
 | `vnc` | no | hidden | hidden | hidden | hidden |
-| `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's H.264 video, passed, its tiles with motion, passed, or its progressive tiles (experimental), passed | hidden | shown |
+| `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's H.264 video, passed, its tiles with motion, passed, or its progressive tiles (alpha), passed | hidden | shown |
 | `vnc`, `ard` | no | hidden | shown, as Picture: the Mac's Adaptive picture, passed (beta), greyed under Combined Display, or the gateway's tiles of its Full quality; and as Displays: one at a time (beta) or Combined (alpha) | hidden | hidden |
 | `vnc`, `ard` with `virtual_display` | yes | hidden | shown, as Picture only, as for `ard`: a virtual display is one screen, so there is no Displays row | hidden | hidden |
 | `vnc`, `ard-high-performance` | yes | hidden: always carried | shown, as Picture: the Mac's HEVC or its H.264 (beta), always passed | hidden | hidden |
@@ -2278,7 +2278,7 @@ and `GET /api/targets` carries it:
   passthrough at all. A `wlshare` target's Picture group is Video, passed
   through, wlshare's H.264 of the whole desktop, which `connect` names as `wlshare-video` and which a
   session that names none is sent, taken first, Tiles with motion, passed
-  through, `wlshare-tiles-motion`, and Progressive tiles (experimental), passed
+  through, `wlshare-tiles-motion`, and Progressive tiles (alpha), passed
   through, `wlshare-tiles-progressive`.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
