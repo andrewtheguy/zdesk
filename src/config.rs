@@ -234,7 +234,7 @@ pub struct RenderPlan {
     /// passed as it came for the browser to decode ([`Passthrough::AppleAdaptive`],
     /// chosen at the picker), which none of the fields above reach; or Full, the
     /// Mac's lossless zlib inflated here and coded as the tiles at
-    /// [`Self::quality`], as any picture coded here is, on one screen at a time or
+    /// [`crate::tiles::QUALITY`], as any picture coded here is, on one screen at a time or
     /// on Combined Display.
     pub apple_standard: Option<StandardQuality>,
     /// A Standard Mac's Combined Display, every screen at once, asked of the Mac in

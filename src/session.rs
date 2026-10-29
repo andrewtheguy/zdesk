@@ -2381,10 +2381,13 @@ mod tests {
             fake_target_with("rdp-audio", Meta::of(Protocol::Rdp).bitmap()),
             fake_target_with("rdp-camera", Meta::of(Protocol::Rdp).camera()),
             fake_target_with("rdp-mic", Meta::of(Protocol::Rdp).microphone()),
-            // A target that streams. Nothing refuses it: the browser capability probe
-            // that could is gone, and what a client can decode is answered by its own
-            // decoder rather than by this connect.
-            fake_target("video"),
+            // A target that streams: wlshare's video. Nothing refuses it: the browser
+            // capability probe that could is gone, and what a client can decode is
+            // answered by its own decoder rather than by this connect.
+            TargetConfig {
+                subtype: Some(Subtype::Wlshare),
+                ..fake_target_with("video", Meta::of(Protocol::Vnc))
+            },
         ];
         (Arc::new(SessionManager::with_spawner(targets, spawner)), hook_rx)
     }
@@ -2682,7 +2685,7 @@ mod tests {
         assert!(hooks.try_recv().is_ok(), "engine spawned on connect");
         match recv(&mut att.events).await {
             AttachEvent::Msg(ServerMsg::Connected { render, .. }) => {
-                assert_eq!(render, "tiles")
+                assert_eq!(render, "H.264 video")
             }
             other => panic!("expected connected, got {other:?}"),
         }
