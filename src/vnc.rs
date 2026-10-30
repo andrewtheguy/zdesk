@@ -30,7 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aes::Aes128;
-#[cfg(feature = "wlshare")]
 use anyhow::Context as _;
 use des::Des;
 use des::cipher::generic_array::GenericArray;

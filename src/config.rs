@@ -1838,8 +1838,12 @@ impl ConfigFile {
                     target.name
                 );
                 let port = relay.rsplit_once(':').and_then(|(host, port)| {
-                    let bracketed = !host.contains(':') || (host.starts_with('[') && host.ends_with(']'));
-                    (!host.is_empty() && bracketed).then(|| port.parse::<u16>().ok()).flatten()
+                    // Brackets are an IPv6 literal's and nothing else's.
+                    let host_ok = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+                        Some(literal) => literal.parse::<std::net::Ipv6Addr>().is_ok(),
+                        None => !host.is_empty() && !host.contains([':', '[', ']']),
+                    };
+                    host_ok.then(|| port.parse::<u16>().ok()).flatten()
                 });
                 anyhow::ensure!(
                     port.is_some_and(|port| port != 0),
@@ -3782,7 +3786,17 @@ mod tests {
             let target = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap().targets[0];
             assert_eq!(target.relay.as_deref(), Some(relay));
         }
-        for relay in ["macwork.lan", "fdb8::1:15900", "macwork.lan:0", ":15900", "macwork.lan:x"] {
+        for relay in [
+            "macwork.lan",
+            "fdb8::1:15900",
+            "macwork.lan:0",
+            ":15900",
+            "macwork.lan:x",
+            "[localhost]:15900",
+            "[fdb8::zz]:15900",
+            "[10.0.0.1]:15900",
+            "mac]work:15900",
+        ] {
             let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap_err();
             assert!(format!("{err:#}").contains("is not host:port"), "{relay}: {err:#}");
         }
