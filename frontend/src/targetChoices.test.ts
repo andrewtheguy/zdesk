@@ -86,16 +86,16 @@ const STANDARD = target({
   standardView: true,
 });
 
-// As the gateway lists a `wlshare` target: its video, its tiles with motion and its
-// progressive tiles, all wlshare's own, passed.
+// As the gateway lists a `wlshare` target: its video, its progressive tiles and its
+// tiles with motion, all wlshare's own, passed.
 const WLSHARE = target({
   subtype: "wlshare",
   resize: true,
   audio: true,
   passthroughs: [
     "wlshare-video",
-    "wlshare-tiles-motion",
     "wlshare-tiles-progressive",
+    "wlshare-tiles-motion",
   ],
   camera: true,
   microphone: true,
@@ -209,8 +209,8 @@ test("only what the target's type offers has a row", () => {
   const wlshare = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(wlshare), [
     ["wlshare-video", false],
-    ["wlshare-tiles-motion", false],
     ["wlshare-tiles-progressive", false],
+    ["wlshare-tiles-motion", false],
   ]);
   assert.equal(wlshare.choices.passthrough, "wlshare-video");
   assert.deepEqual(formats(wlshare), ["opus", "flac"]);
@@ -534,8 +534,8 @@ test("a wlshare target's picture is its video or either of its tiles, passed", (
   const options = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(options), [
     ["wlshare-video", false],
-    ["wlshare-tiles-motion", false],
     ["wlshare-tiles-progressive", false],
+    ["wlshare-tiles-motion", false],
   ]);
   assert.equal(options.choices.passthrough, "wlshare-video", "the first");
   const tiles = targetOptions(
@@ -606,8 +606,8 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
   );
   assert.deepEqual(pictures(videoless), [
     ["wlshare-video", true],
-    ["wlshare-tiles-motion", true],
     ["wlshare-tiles-progressive", false],
+    ["wlshare-tiles-motion", true],
   ]);
   assert.match(
     videoless.pictures?.[0].note ?? "",
@@ -623,8 +623,8 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
   });
   assert.deepEqual(pictures(unable), [
     ["wlshare-video", true],
-    ["wlshare-tiles-motion", true],
     ["wlshare-tiles-progressive", true],
+    ["wlshare-tiles-motion", true],
   ]);
   // The progressive tiles' reason is wlshare's, not an RDP host's egfx.
   const progressive =

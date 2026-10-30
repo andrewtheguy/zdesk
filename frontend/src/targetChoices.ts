@@ -31,13 +31,14 @@
 //   no passthrough: see `pictureOptions`. The Adaptive one until the other is
 //   chosen, and neither greyed. Combined Display is the tiles of every screen, so
 //   the Adaptive picture is greyed under it.
-// - A `wlshare` target's picture is one of three, all wlshare's own, passed
-//   through: its H.264 of the whole desktop, which it paces to the link, its tiles
-//   with motion, exact PNG where the desktop is still and video only where it
-//   moves, for a LAN, or its progressive tiles: see `pictureOptions`. The video
-//   until another is chosen, each greyed in a browser that cannot decode it: the
-//   video and the tiles' H.264 where there is no `VideoDecoder`, the progressive
-//   tiles where the page cannot compose an RDP host's pipeline.
+// - A `wlshare` target's picture is one of three, all wlshare's own and passed
+//   through, which their labels leave unsaid: its H.264 of the whole desktop,
+//   which it paces to the link, its progressive tiles, or its tiles with motion,
+//   exact PNG where the desktop is still and video only where it moves, for a
+//   LAN: see `pictureOptions`. The video until another is chosen, each greyed
+//   in a browser that cannot decode it: the video and the tiles' H.264 where
+//   there is no `VideoDecoder`, the progressive tiles where the page cannot
+//   compose an RDP host's pipeline.
 // - Sound is ticked or not where the target offers it, and a ticked one is Opus
 //   or lossless: see `soundRow`. Ticking takes Opus. A browser with no audio
 //   decoder has no sound to tick, and one whose decoder does not play FLAC is
@@ -353,7 +354,7 @@ const NO_PROGRESSIVE =
 
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
-  "This browser decodes none of wlshare's pictures: its H.264 video, the H.264 of its tiles with motion, or its progressive tiles, which need WebGL 2 and a cross-origin isolated page. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser decodes none of wlshare's pictures: its H.264 video, its progressive tiles, which need WebGL 2 and a cross-origin isolated page, or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -374,8 +375,8 @@ function noHevc(target: TargetInfo): string {
  * The ways a Mac's or a wlshare desktop's picture can reach this browser, in the
  * order the picker shows them: a High Performance Mac's HEVC passed through, and
  * its H.264; a Standard Mac's Adaptive picture passed through, and the gateway's
- * tiles of its Full quality; wlshare's video passed through, its tiles with
- * motion, and its progressive tiles.
+ * tiles of its Full quality; wlshare's video, its progressive tiles and its
+ * tiles with motion, all passed through and labelled without saying so.
  *
  * - The HEVC is greyed in a browser whose own decoder does not take it, unless
  *   the page decodes it itself, which it then does (softwareDecoder.ts). The
@@ -420,27 +421,27 @@ function pictureOptions(
     },
     "wlshare-video": {
       value: "wlshare-video",
-      label: "Video, passed through",
+      label: "Adaptive video",
       note: abilities.wlshareH264
-        ? "wlshare's H.264 of the whole desktop, which it paces to this browser's link. For any link; never lossless."
+        ? "wlshare's H.264 of the whole desktop, paced to this browser's link: a slower link gets fewer frames, not coarser ones. For any link; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's video.",
-      disabled: !abilities.wlshareH264,
-    },
-    "wlshare-tiles-motion": {
-      value: "wlshare-tiles-motion",
-      label: "Tiles with motion, passed through",
-      note: abilities.wlshareH264
-        ? "wlshare's own tiles: exact PNG where the desktop is still, video only where it moves (H.264 by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. Several times the bytes. For a LAN."
-        : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
     },
     "wlshare-tiles-progressive": {
       value: "wlshare-tiles-progressive",
-      label: "Progressive tiles (alpha), passed through",
+      label: "Progressive tiles (alpha)",
       note: abilities.rdpGraphics
-        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Decoded by this page, with no video decoder; never lossless."
+        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. For a link that is not always wide. Decoded by this page, with no video decoder; never lossless."
         : NO_PROGRESSIVE,
       disabled: !abilities.rdpGraphics,
+    },
+    "wlshare-tiles-motion": {
+      value: "wlshare-tiles-motion",
+      label: "Tiles with motion (LAN)",
+      note: abilities.wlshareH264
+        ? "wlshare's own tiles: exact PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. A picture that ends exact, for several times the video's bytes."
+        : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
+      disabled: !abilities.wlshareH264,
     },
   };
   const offered = target.passthroughs.flatMap((passthrough) =>

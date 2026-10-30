@@ -2685,7 +2685,7 @@ mod tests {
             "what a session's starter chooses is the type's to offer, and the pipeline is passed unasked: {page}"
         );
         assert!(
-            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's H.264 video passed through, wlshare's tiles with motion passed through")),
+            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's H.264 video passed through, wlshare's progressive tiles passed through, wlshare's tiles with motion passed through")),
             "a wlshare target's picture is one of its three, the video where none is named: {page}"
         );
 

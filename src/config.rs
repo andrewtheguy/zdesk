@@ -1143,13 +1143,13 @@ impl TargetConfig {
                 microphone: false,
             },
             // Its picture is wlshare's own, passed: its H.264 video, the picture of a
-            // session that names none, or its tiles with motion or its
-            // progressive tiles, chosen at the picker. Its camera
-            // and microphone extensions take the browser's.
+            // session that names none, or its progressive tiles or its tiles with
+            // motion, chosen at the picker, in that order. Its camera and
+            // microphone extensions take the browser's.
             (Protocol::Vnc, Some(Subtype::Wlshare)) => Offers {
                 resize: true,
                 audio: true,
-                passthrough: &[Passthrough::WlshareVideo, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive],
+                passthrough: &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion],
                 placement: false,
                 pipeline: false,
                 standard_view: false,
@@ -1276,7 +1276,7 @@ impl TargetConfig {
         let plan = self.render_plan(Choices::default(), decoders).describe();
         if self.wlshare() {
             let tiles = |passthrough| self.render_plan(Choices { passthrough: Some(passthrough), ..Choices::default() }, decoders).describe();
-            return format!("{plan}, or {}, or {}", tiles(Passthrough::WlshareTilesMotion), tiles(Passthrough::WlshareTilesProgressive));
+            return format!("{plan}, or {}, or {}", tiles(Passthrough::WlshareTilesProgressive), tiles(Passthrough::WlshareTilesMotion));
         }
         if offered.is_empty() || self.passthrough(Choices::default()).is_some() {
             return plan;
@@ -3443,7 +3443,7 @@ mod tests {
         assert_eq!(plain.render_summary(), "tiles");
         assert_eq!(plain.render_plan(Choices::default(), Decoders::ALL).describe(), "tiles");
         let wlshare = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).unwrap().targets.remove(0);
-        assert_eq!(wlshare.render_summary(), "H.264 video, or tiles with motion, or progressive tiles");
+        assert_eq!(wlshare.render_summary(), "H.264 video, or progressive tiles, or tiles with motion");
         assert_eq!(wlshare.render_plan(Choices::default(), Decoders::ALL).describe(), "H.264 video");
     }
 
@@ -4616,10 +4616,10 @@ vnc_password_ref = \"x\"")).unwrap();
         let video = Choices { passthrough: Some(Passthrough::WlshareVideo), ..Choices::default() };
         let cfg = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).expect("a wlshare target");
         let target = &cfg.targets[0];
-        assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVideo, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive]);
+        assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion]);
         for (passthrough, progressive, describe) in [
-            (Passthrough::WlshareTilesMotion, false, "tiles with motion"),
             (Passthrough::WlshareTilesProgressive, true, "progressive tiles"),
+            (Passthrough::WlshareTilesMotion, false, "tiles with motion"),
         ] {
             let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
             target.accepts(tiles).expect("the tiles are offered");
@@ -4650,7 +4650,7 @@ vnc_password_ref = \"x\"")).unwrap();
         let plain = ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets.remove(0);
         let rdp = parse_target("").unwrap().targets.remove(0);
         for target in [&plain, &rdp] {
-            for passthrough in [Passthrough::WlshareVideo, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesProgressive] {
+            for passthrough in [Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion] {
                 let err = target.accepts(Choices { passthrough: Some(passthrough), ..Choices::default() }).unwrap_err();
                 assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
             }
