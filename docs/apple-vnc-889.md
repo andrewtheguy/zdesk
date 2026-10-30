@@ -49,7 +49,7 @@ official modes alone.
 | Confirmed | Type-30 authentication, the record layer and its initial rekey, zlib and ZRLE, the cursor cache, the display layout and the metadata framing. |
 | Corrected | Several published reverse-engineered descriptions are wrong on points zDesk depends on: the layout's length and display count, `ViewerInfo`'s body, the virtual display's maximum size, `AutoFrameBufferUpdate`, the type-30 credential cipher and group, and the byte order of the media stream's flags. So are the pointer buttons on this revision and the wheel. Each is covered below. |
 | Density | A virtual display is asked for at 1x or 2x only; a fractional ratio is not rounded and produces a zoomed desktop. Standard mode is scaled by the Mac to the browser's density, and a mixed-density Combined Display view is composed at its points as Apple's viewer composes it: by the gateway for a 1x browser, by the browser for a 2x one. |
-| Picture and sound | `ard` inflates the Mac's Full quality and sends it as the gateway's tiles, or passes the Mac's own Adaptive picture where that was chosen, and carries no sound: Standard mode never touches the Mac's sound output. `ard-high-performance` takes both from the media stream, as Apple's viewer does — HEVC and AAC-ELD over SRTP. Its ZRLE rectangles are stepped over unread and never shown, so a session that passes the stream builds no video encoder: until the stream is up and across display changes the page says the screen is not available and sends the Mac no input. |
+| Picture and sound | `ard` inflates the Mac's Full quality and sends it as the gateway's tiles, or passes the Mac's own Adaptive picture where that was chosen, and carries no sound: Standard mode never touches the Mac's sound output. `ard-high-performance` takes both from the media stream, as Apple's viewer does — HEVC and AAC-ELD over SRTP. Its ZRLE rectangles are stepped over unread and never shown, so nothing of them is decoded: until the stream is up and across display changes the page says the screen is not available and sends the Mac no input. |
 | Not implemented | Apple's fixed resolution presets; authentication types other than 30. |
 
 ## Remote Management access
@@ -875,8 +875,8 @@ from the media stream (encoding `0x3f2`), and the daemon's framebuffer sender
 skips such a viewer. zDesk does too once the stream is up, and then arms and
 polls one pixel — see [RFB while the stream runs](#rfb-while-the-stream-runs).
 
-A client that decodes each update meets it at 0. A gateway that decoded
-Standard's ZRLE into VP9, held to 15% of a core, on a display of the Mac's own,
+A client that decodes each update meets it at 0. A gateway decoding every
+update of Standard's ZRLE, held to 15% of a core, on a display of the Mac's own,
 with an animation and a scrolling window on the Mac and the pointer sweeping,
 sampled once a second:
 

@@ -215,18 +215,18 @@ const MAX_TRACKED_PAINTS: usize = 4096;
 /// One number rather than one per plan, because a second one would bind on
 /// nothing: video never came near this. An access unit is a whole frame and
 /// [`crate::session::FRAME_BUFFER`] already holds that path to four, which
-/// is why VP9 under the same video ran 1 deep. What paces video is
-/// [`PAINT_LAG_LIMIT`], which counts time instead of messages.
+/// is why a video attachment playing the same video ran 1 deep. What paces
+/// video is [`PAINT_LAG_LIMIT`], which counts time instead of messages.
 const PAINT_WINDOW: usize = 24;
 
 /// How far behind the painter may fall before nothing more is added to its queue.
 ///
 /// A depth window alone cannot pace video, which the UAT showed rather than
-/// argued: with the renderer throttled twenty times, a VP9 attachment ran 222ms
-/// behind while never exceeding 7 batches in flight. Nothing parked, so nothing
-/// filled the queues behind the socket, and nothing upstream that reads that
-/// blocking could see the client fall a fifth of a second behind. Depth is the
-/// wrong unit for a path whose messages are whole frames.
+/// argued: with the renderer throttled twenty times, a video attachment ran
+/// 222ms behind while never exceeding 7 batches in flight. Nothing parked, so
+/// nothing filled the queues behind the socket, and nothing upstream that reads
+/// that blocking could see the client fall a fifth of a second behind. Depth is
+/// the wrong unit for a path whose messages are whole frames.
 ///
 /// So the window has two rules and a batch waits on either: too many owed, or
 /// the oldest owed for too long. Past this limit the wait is until the painter
