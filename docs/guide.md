@@ -446,21 +446,25 @@ microphone as PipeWire devices on the desktop. Without the subtype the same
 server is read as any VNC server is.
 
 - **Picture.** The picker's Picture group is *Adaptive video*, the default:
-  wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare decides, a
-  slower link getting fewer frames rather than coarser ones; never lossless. Or
+  wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare decides,
+  a slower link getting fewer frames rather than coarser ones; never lossless.
+  It is the lighter on the host's processor, and is coded by the host's
+  hardware encoder where it has one, but text can be less crisp. Or
   *Progressive tiles (alpha)*, for a link that is not always wide: every tile,
   still or moving, RemoteFX Progressive, as a Windows host draws its desktop
   over RDP without H.264 — coarse first and refined in place once still, what
   moves sent as the change from what the page holds — following the link,
   coarser first passes and fewer frames on a slower one. The page decodes them
   itself, as it composes an RDP host's pipeline, so they need no video decoder,
-  and are greyed where the page cannot compose one; never lossless. Or *Tiles
-  with motion (LAN)*: what is still as exact PNG, and a video stream of its own
-  for each region that moves, sent exact again once it stops. wlshare uses H.264
-  from the host's hardware encoder or libx264. The tiles are for a link with
-  room to spare: the picture ends exact, for several times the video's bytes —
-  tens of Mbit/s while something large moves. All three are passed through, so
-  no label says so, and no key tunes any of them: wlshare codes each one way.
+  and are greyed where the page cannot compose one; never lossless. They cost
+  the host's processor more than the video, coded in software, but text comes
+  out crisper. Or *Tiles with motion (LAN)*: what is still as lossless PNG, and
+  a video stream of its own for each region that moves, sent lossless again
+  once it stops. wlshare uses H.264 from the host's hardware encoder or
+  libx264. The tiles are for a link with room to spare: the picture ends
+  lossless, for several times the video's bytes — tens of Mbit/s while
+  something large moves. All three are passed through, so no label says so, and
+  no key tunes any of them: wlshare codes each one way.
 
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
