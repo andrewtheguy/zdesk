@@ -26,8 +26,8 @@ It needs:
   beforehand about the Mac's HEVC and the RDP host's H.264: the picker greys
   them, with the reason, where the decoder refuses them. It asks about
   wlshare's H.264 too, in both profiles wlshare codes: where the decoder
-  refuses either, a `wlshare` target's Video and its tiles with motion are
-  greyed, leaving its progressive tiles, which the page decodes itself. The
+  refuses either, a `wlshare` target's Adaptive video and its tiles with motion
+  are greyed, leaving its progressive tiles, which the page decodes itself. The
   Mac's H.264 is not asked about: it is offered to every browser with
   `VideoDecoder` and greyed without one, and a decoder that refuses it says so
   in the session, by its error. `AudioDecoder` plays Opus, a Mac's AAC-ELD and FLAC; a browser
@@ -76,7 +76,7 @@ config key.
 | `rdp` | yes | off, Opus or FLAC | the graphics pipeline, always passed | high quality or adaptive H.264 |
 | `rdp` with `egfx = false` | no | off, Opus or FLAC | — | — |
 | `vnc` | no | none | — | — |
-| `vnc`, `wlshare` | yes | off, Opus or FLAC | its H.264 video, its tiles with motion, or its progressive tiles (alpha), always passed | — |
+| `vnc`, `wlshare` | yes | off, Opus or FLAC | its H.264 video, its progressive tiles (alpha), or its tiles with motion, always passed | — |
 | `vnc`, `ard` | no | none | the Mac's Adaptive picture, passed (beta), or none: the gateway's tiles of the Mac's Full quality | — |
 | `vnc`, `ard` with `virtual_display` | yes | none | as `ard` | — |
 | `vnc`, `ard-high-performance` | yes | always carried | the Mac's HEVC, or its H.264 (beta), always passed | — |
@@ -118,11 +118,11 @@ config key.
   JPEG while a region changes, exact once it has settled, fitted to the link,
   and resumed when the browser comes back. Apple's Adaptive is greyed under
   Combined Display (below), which is the gateway's tiles too. On a `wlshare`
-  target the Picture group is *Video, passed through*, the default, wlshare's
-  H.264 of the whole desktop, *Tiles with motion, passed through*, wlshare's
-  own tiles, for a LAN, or *Progressive tiles (alpha), passed through*, its
-  tiles fitted to the link as a Windows host draws without H.264: see
-  [wlshare](#wlshare-vnc-subtype--wlshare).
+  target every picture is wlshare's own and passed through, which the labels
+  leave unsaid: the Picture group is *Adaptive video*, the default, wlshare's
+  H.264 of the whole desktop, *Progressive tiles (alpha)*, its tiles fitted to
+  the link as a Windows host draws without H.264, or *Tiles with motion (LAN)*,
+  wlshare's own tiles, for a LAN: see [wlshare](#wlshare-vnc-subtype--wlshare).
 - **Displays.** On an `ard` target sharing the Mac's physical screens: *One at a
   time* (beta), the default, starts on the main screen and offers the others in the
   display menu, in the picture chosen above; *Combined* (alpha) shows every
@@ -445,22 +445,22 @@ sound, and, in a session started with them, the browser's camera and
 microphone as PipeWire devices on the desktop. Without the subtype the same
 server is read as any VNC server is.
 
-- **Picture.** The picker's Picture group is *Video, passed through*, the
-  default: wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare
-  decides, a slower link getting fewer frames rather than coarser ones; never
-  lossless. Or *Tiles with motion, passed through*: what is still as exact PNG, and a
-  video stream of its own for each region that moves, sent exact again once it
-  stops. wlshare uses H.264 from the host's hardware encoder or libx264. The
-  tiles are for a link with room to spare: the picture ends exact, for several
-  times the video's bytes — tens of Mbit/s while something large moves. Or *Progressive tiles
-  (alpha), passed through*, for a link that is not always wide: every tile,
+- **Picture.** The picker's Picture group is *Adaptive video*, the default:
+  wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare decides, a
+  slower link getting fewer frames rather than coarser ones; never lossless. Or
+  *Progressive tiles (alpha)*, for a link that is not always wide: every tile,
   still or moving, RemoteFX Progressive, as a Windows host draws its desktop
   over RDP without H.264 — coarse first and refined in place once still, what
-  moves sent as the change from what the page holds — following the link, coarser
-  first passes and fewer frames on a slower one. The page decodes
-  them itself, as it composes an RDP host's pipeline, so they need no video
-  decoder, and are greyed where the page cannot compose one; never lossless.
-  No key tunes any of the three: wlshare codes each one way.
+  moves sent as the change from what the page holds — following the link,
+  coarser first passes and fewer frames on a slower one. The page decodes them
+  itself, as it composes an RDP host's pipeline, so they need no video decoder,
+  and are greyed where the page cannot compose one; never lossless. Or *Tiles
+  with motion (LAN)*: what is still as exact PNG, and a video stream of its own
+  for each region that moves, sent exact again once it stops. wlshare uses H.264
+  from the host's hardware encoder or libx264. The tiles are for a link with
+  room to spare: the picture ends exact, for several times the video's bytes —
+  tens of Mbit/s while something large moves. All three are passed through, so
+  no label says so, and no key tunes any of them: wlshare codes each one way.
 
 
 - **Beta:** a desktop with exactly two outputs, monitors or headless ones, is
