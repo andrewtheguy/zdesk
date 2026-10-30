@@ -21,11 +21,11 @@
 //! The baseline is a ping's round trip and not the smallest batch's, the move
 //! RustDesk's QoS and Guacamole's `sync` handler make, because a batch's time
 //! carries its own transmission. A stream whose frames are all one size — a
-//! passed VP9 stream, one frame in flight — spends the same time sending every
-//! one, and a baseline taken from them read that time as distance: at 5 Mbit/s
-//! the browser painted 8 frames a second a quarter of a second behind and no
-//! frame ever counted as late. A ping is a few bytes and carries nothing but
-//! the distance.
+//! passed video stream, one frame in flight — spends the same time sending
+//! every one, and a baseline taken from them read that time as distance: at
+//! 5 Mbit/s the browser painted 8 frames a second a quarter of a second behind
+//! and no frame ever counted as late. A ping is a few bytes and carries nothing
+//! but the distance.
 //!
 //! One writer, many cheap readers: the ws bridge stores two atomics on the
 //! events it already handles (a batch sent, a batch acknowledged), the passing

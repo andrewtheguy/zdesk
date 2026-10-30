@@ -441,7 +441,7 @@ decode, a Standard Mac's Full quality (plain RFB zlib) among them, are sent as
 tiles today, while wlshare's video, wlshare's own paced stream, and a Mac's
 Adaptive picture, Apple's own and decodable nowhere here, are passed.
 
-Whatever the gateway transcodes goes to tiles. A video encoder (H.264, VP9, AV1 or
+Whatever the gateway transcodes goes to tiles. A video encoder (H.264, AV1 or
 any other), a codec probe, or a codec key that selects one is not added as a side
 effect of other work: a video encoder here is a decision of its own, weighed as
 [The codec](#the-codec) weighs tiles against one. Keep the tiles stateless: each is
@@ -1567,16 +1567,16 @@ Adaptive picture's framing, and nothing else of it needed passing.
 
 An `rdp` target with the pipeline on composes nothing of it here: in every
 session the pipeline's commands go to the browser as the host sent them, and the
-page composes them. Composing it here and encoding the picture as VP9, as the
+page composes them. Composing it here and encoding the picture as video, as the
 gateway once did, was measured, for a desktop in use, at about three quarters
-VP9 encoding and a quarter decoding; passing the commands leaves the gateway the connection,
-unwrapping the channel's bulk compression to read the commands' headers, and the
-frame acknowledgements, a few percent of a core whatever the desktop is doing.
-What it costs is the browser's work: what the host draws with is sent as it is,
-and nothing of it is tuned here. A browser that cannot compose it cannot
-start the target, and there are no tiles to fall back to: a target with
-`egfx = false` is the one for it. The host still follows the browser's link by
-its own pacing, as *The page paces the host* and *The host finds a slow page
+encoding and a quarter decoding; passing the commands leaves the gateway the
+connection, unwrapping the channel's bulk compression to read the commands'
+headers, and the frame acknowledgements, a few percent of a core whatever the
+desktop is doing. What it costs is the browser's work: what the host draws with
+is sent as it is, and nothing of it is tuned here. A browser that cannot compose
+it cannot start the target, and there are no tiles to fall back to: a target
+with `egfx = false` is the one for it. The host still follows the browser's link
+by its own pacing, as *The page paces the host* and *The host finds a slow page
 for itself* below describe, and with Adaptive by its rate control
 ([A passed stream and the browser's link](#a-passed-stream-and-the-browsers-link)).
 

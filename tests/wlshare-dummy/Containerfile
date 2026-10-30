@@ -9,10 +9,9 @@
 # wlshare for two virtual displays, with no GPU and no input devices. Nothing draws on
 # them, which is the point: a desktop that never changes is where a capture
 # waiting on damage shows itself. A test that wants a moving one plays a video
-# on it (GStreamer's VP9 decoder and Wayland sink, below), which nothing else
-# starts. sway and wlroots 0.19 come from wlshare's APT
-# repository, because trixie's own wlroots 0.18 paints the cursor into a
-# headless capture.
+# on it (GStreamer and its Wayland sink, below), which nothing else starts. sway
+# and wlroots 0.19 come from wlshare's APT repository, because trixie's own
+# wlroots 0.18 paints the cursor into a headless capture.
 #
 # wlshare goes in as the package it ships as: the build stage makes the .deb
 # and the image installs it with apt, so the image has exactly the package's
