@@ -537,36 +537,37 @@ them is a new version and a new tag.
 
 A `wlshare` target lists one of wlshare's three pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
-(`Passthrough::WlshareVideo`, `Passthrough::WlshareTilesMotion`,
-`Passthrough::WlshareTilesProgressive`), and passes its
-frames untouched. Its video, *Adaptive video*, an H.264 stream of the whole
-desktop at 4:2:0, by the host's hardware encoder where it has one and libx264
-otherwise, is the picture of a session that names none, listed alone. Its tiles
-with motion, exact PNG tiles where the desktop is still and a 4:2:0 H.264 stream
-of its own for each region that moves, by the same encoder, are wlshare's
-picture for a link with room to spare — a picture that ends exact, for several
-times the video's bytes — listed with `WLSD`, every region held at wlshare's
-dial and every still exact. Its progressive tiles are the same encoding listed
-alone, so that wlshare walks it on the browser's link, for a link that is not
-always wide: every tile, still or moving, one RemoteFX Progressive tile block,
-as a Windows host draws its desktop where it has no H.264 — a coarse first pass
-refined in place once it is still, a changed tile the difference from what the
-page holds — and no stream, never lossless. Each is checked to be one 64×64 tile
-on the grid, cut by the desktop's edge, whose block names that tile, and passed
-as a `TILE` record of its own format (`TILE_PROGRESSIVE`). The page decodes them
-in wire order with the module that composes an RDP host's pipeline, its RemoteFX
-Progressive decoder over the desktop, each block put in a stream of its own with
-the protocol's tables (`wlshare_proto::progressive`), which never cross the
-link: so they need no video decoder, and a page that cannot compose the pipeline
-cannot take them either. Each block is coded against what the decoder holds of
-its tile, so one that does not decode, or a batch dropped with blocks in it,
-leaves the decoder holding what wlshare's next blocks are not coded against: it
-is given back, the whole picture is asked for, and no block is decoded until
-that picture starts. A server that ignores the listing is sent as tiles from its
-ZRLE. Do not transcode a passed frame, ask wlshare for anything with a client
-message, or add a key that selects or tunes the picture. See [wlshare's stream,
-passed through](#wlshares-stream-passed-through) and [wlshare's tiles with
-motion, passed through](#wlshares-tiles-with-motion-passed-through).
+(`Passthrough::WlshareVideo`, `Passthrough::WlshareTilesProgressive`,
+`Passthrough::WlshareTilesMotion`), and passes its frames untouched. Its video,
+*Adaptive video*, an H.264 stream of the whole desktop at 4:2:0, by the host's
+hardware encoder where it has one and libx264 otherwise, is the picture of a
+session that names none, listed alone. Its progressive tiles are its tiles'
+encoding, `WLST`, listed alone, so that wlshare walks it on the browser's link,
+for a link that is not always wide: every tile, still or moving, one RemoteFX
+Progressive tile block, as a Windows host draws its desktop where it has no
+H.264 — a coarse first pass refined in place once it is still, a changed tile
+the difference from what the page holds — and no stream, never lossless. Each is
+checked to be one 64×64 tile on the grid, cut by the desktop's edge, whose block
+names that tile, and passed as a `TILE` record of its own format
+(`TILE_PROGRESSIVE`). The page decodes them in wire order with the module that
+composes an RDP host's pipeline, its RemoteFX Progressive decoder over the
+desktop, each block put in a stream of its own with the protocol's tables
+(`wlshare_proto::progressive`), which never cross the link: so they need no
+video decoder, and a page that cannot compose the pipeline cannot take them
+either. Each block is coded against what the decoder holds of its tile, so one
+that does not decode, or a batch dropped with blocks in it, leaves the decoder
+holding what wlshare's next blocks are not coded against: it is given back, the
+whole picture is asked for, and no block is decoded until that picture starts.
+Its tiles with motion are the same encoding listed with `WLSD`: exact PNG tiles
+where the desktop is still and a 4:2:0 H.264 stream of its own for each region
+that moves, by the video's encoder, every region held at wlshare's dial and
+every still exact — wlshare's picture for a link with room to spare, one that
+ends exact, for several times the video's bytes. A server that ignores the
+listing is sent as tiles from its ZRLE. Do not transcode a passed frame, ask
+wlshare for anything with a client message, or add a key that selects or tunes
+the picture. See [wlshare's stream, passed
+through](#wlshares-stream-passed-through) and [wlshare's tiles with motion,
+passed through](#wlshares-tiles-with-motion-passed-through).
 
 #### Remote audio
 
