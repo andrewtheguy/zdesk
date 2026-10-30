@@ -4333,6 +4333,15 @@ async fn offer_media(
     let Some(media) = media else {
         return Ok(());
     };
+    // Through a relay, the Mac's ports are bound there first, or what it sends
+    // before they are is lost.
+    let bound = media.lock().unwrap().relay_bound();
+    if let Some(bound) = bound {
+        tokio::time::timeout(vnc_apple_media::STREAM_START, bound)
+            .await
+            .context("the relay did not bind the Mac's media ports in time")?
+            .context("the relay did not bind the Mac's media ports")?;
+    }
     let mut uplink = uplink.lock().await;
     let (sizes, offer) = {
         let d = desktop.lock().unwrap();

@@ -11,7 +11,8 @@
 //! - `zdesk-relay/1 media <token>` joins the connection the token names, for
 //!   High Performance's media stream. It answers `ok`, and from then on the
 //!   connection carries [frames](Frame): the gateway opens each UDP port the Mac
-//!   named, and the datagrams of each port pass both ways.
+//!   named, the relay says when it has bound it, and the datagrams of each port
+//!   pass both ways.
 //!
 //! Every other answer is `error <reason>`, after which the relay closes the
 //! connection.
@@ -22,13 +23,13 @@
 //! the Mac's. Nothing is authenticated: anyone who reaches the relay's port can
 //! connect through it to an address it allows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 pub mod server;
 
@@ -45,8 +46,8 @@ const PORT_QUEUE: usize = 4096;
 /// One unit of a media connection: an opened port, or a datagram of one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
-    /// The gateway asks the relay to bind `port` towards the Mac. Gateway to relay
-    /// only.
+    /// The gateway asks the relay to bind `port` towards the Mac, and the relay
+    /// answers the same once it has.
     Open { port: u16 },
     /// A datagram of `port`: to the Mac from the gateway, or from the Mac to it.
     Datagram { port: u16, payload: Vec<u8> },
@@ -139,6 +140,8 @@ pub struct MediaLink {
     /// Each opened port's queue, kept across a port being opened again so that
     /// a reader taking over a port never sees it end.
     ports: Arc<Mutex<HashMap<u16, Queue>>>,
+    /// The ports the relay has said it bound.
+    opened: watch::Receiver<HashSet<u16>>,
 }
 
 #[derive(Clone)]
@@ -171,6 +174,7 @@ impl MediaLink {
         });
         let ports: Arc<Mutex<HashMap<u16, Queue>>> = Arc::default();
         let incoming = Arc::clone(&ports);
+        let (bound, opened) = watch::channel(HashSet::new());
         tokio::spawn(async move {
             loop {
                 match Frame::read(&mut reader).await {
@@ -182,7 +186,9 @@ impl MediaLink {
                         }
                     }
                     Ok(Some(Frame::Open { port })) => {
-                        log::warn!("relay: ignoring an open of port {port} from the relay");
+                        bound.send_modify(|bound| {
+                            bound.insert(port);
+                        });
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -191,10 +197,26 @@ impl MediaLink {
                     }
                 }
             }
-            // Every port's reader then hears the connection close.
+            // Every port's reader then hears the connection close, and so does
+            // anything waiting for a port to be bound, as `bound` goes.
             incoming.lock().unwrap().clear();
         });
-        Ok(Self { out, ports })
+        Ok(Self { out, ports, opened })
+    }
+
+    /// Resolves once the relay has bound every one of `ports`, which the Mac must
+    /// not be asked to send to before: what it sends to a port not yet bound is
+    /// lost. Fails if the media connection closes first.
+    pub fn opened(&self, ports: &[u16]) -> impl Future<Output = std::io::Result<()>> + Send + use<> {
+        let mut opened = self.opened.clone();
+        let ports = ports.to_vec();
+        async move {
+            opened
+                .wait_for(|bound| ports.iter().all(|port| bound.contains(port)))
+                .await
+                .map(|_| ())
+                .map_err(|_| closed())
+        }
     }
 
     /// Open `port`: the relay binds it towards the Mac, and what the Mac sends

@@ -191,6 +191,8 @@ impl Relay {
                         }
                         let socket = Arc::new(bind(near, mac, port)?);
                         log::info!("{mac}: relaying UDP {port}");
+                        // Bound: the gateway may now have the Mac send to it.
+                        out.send(Frame::Open { port }.encode()).await?;
                         let counts = Arc::new(Counts::default());
                         pumps.spawn(pump(Arc::clone(&socket), port, out.clone(), Arc::clone(&counts)));
                         ports.insert(port, (socket, counts));
@@ -340,20 +342,12 @@ mod tests {
 
         let link = crate::MediaLink::connect(&relay, &token).await.unwrap();
         let opened = link.open(port);
+        // Once the relay says the port is bound, the Mac's first datagram arrives.
+        tokio::time::timeout(Duration::from_secs(5), link.opened(&[port])).await.unwrap().unwrap();
         mac_udp.connect((from.ip(), port)).await.unwrap();
+        mac_udp.send(b"picture").await.unwrap();
         let mut datagram = [0u8; 64];
-        // The relay binds the port once its open arrives; until then the Mac's
-        // datagrams are refused.
-        let len = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let _ = mac_udp.send(b"picture").await;
-                if let Ok(Ok(len)) = tokio::time::timeout(Duration::from_millis(50), opened.recv(&mut datagram)).await {
-                    return len;
-                }
-            }
-        })
-        .await
-        .unwrap();
+        let len = tokio::time::timeout(Duration::from_secs(5), opened.recv(&mut datagram)).await.unwrap().unwrap();
         assert_eq!(&datagram[..len], b"picture");
         opened.send(b"report").await.unwrap();
         let len = tokio::time::timeout(Duration::from_secs(5), mac_udp.recv(&mut datagram)).await.unwrap().unwrap();

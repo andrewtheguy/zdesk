@@ -2952,6 +2952,18 @@ impl MediaStream {
         Ok(Replied::default())
     }
 
+    /// Through a relay, resolves once the relay has bound the ports the Mac
+    /// named, which it must be before the Mac is offered anything to send to
+    /// them; `None` straight from the Mac, where binding is this side's own.
+    pub fn relay_bound(&self) -> Option<impl Future<Output = std::io::Result<()>> + Send + use<>> {
+        let Route::Relayed(link) = &self.route else {
+            return None;
+        };
+        let (ports, _) = self.receiver.as_ref()?;
+        let ports: Vec<u16> = std::iter::once(ports.audio).chain(ports.videos.iter().copied()).collect();
+        Some(link.opened(&ports))
+    }
+
     /// Bind the ports the Mac named and start receiving on them.
     fn receive(&self, ports: &Ports) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         Ok(tokio::spawn(Receiver::bind(self, ports)?.run()))

@@ -26,6 +26,7 @@ name = "zdesk"
 version = "0.0.492"
 license = "MIT"
 edition = "2024"
+default-run = "zdesk"
 
 [features]
 # Native builds include the local TUI control plane. Container artifacts

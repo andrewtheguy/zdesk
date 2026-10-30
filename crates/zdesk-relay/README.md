@@ -66,8 +66,11 @@ with one line:
   connection carries the Mac's TCP bytes.
 - `zdesk-relay/1 media <token>` gets `ok`, after which the connection carries
   frames. A frame is a kind byte, a big-endian port and a big-endian length,
-  followed by that many bytes of payload. Kind 0 opens a port, and only the
-  gateway sends it. Kind 1 is one datagram of that port, in either direction.
+  followed by that many bytes of payload. Kind 0 opens a port: the gateway
+  sends it, and the relay sends it back once it has bound the port. The
+  gateway offers the Mac its media stream only after that, so the Mac never
+  sends to a port that is not bound yet. Kind 1 is one datagram of that port,
+  in either direction.
 
 Every refusal is `error <reason>`, after which the relay closes the connection.
 The media stream crosses the relay on TCP, so a lost segment delays the
