@@ -2328,11 +2328,8 @@ impl Receive {
 /// display's picture from the port after the first's.
 pub struct MediaStream {
     offers: Offers,
-    /// The Mac, as the TCP session reached it: where the streams come from and RTCP
-    /// goes. Read by the receiver alone.
-    peer: std::net::IpAddr,
-    /// This side's address on that connection, which the UDP sockets bind.
-    local: std::net::IpAddr,
+    /// How the streams reach this side. Read by the receiver alone.
+    route: Route,
     /// An offer is out that the Mac has not answered.
     pending: bool,
     /// The Mac has named its ports, and no offer has gone out on that naming yet.
@@ -2479,8 +2476,7 @@ impl MediaStream {
     /// is shown from the start, and any other once [`Self::show`] says so. The
     /// handshake has advertised the stream, so the Mac already owes its ports.
     pub fn new(
-        peer: std::net::SocketAddr,
-        local: std::net::SocketAddr,
+        route: Route,
         receive: Receive,
         displays: usize,
     ) -> (Self, Vec<PassedUnits>) {
@@ -2507,8 +2503,7 @@ impl MediaStream {
             .unzip();
         let media = Self {
             offers,
-            peer: peer.ip(),
-            local: local.ip(),
+            route,
             pending: false,
             invited: false,
             offered: None,
@@ -2957,6 +2952,18 @@ impl MediaStream {
         Ok(Replied::default())
     }
 
+    /// Through a relay, resolves once the relay has bound the ports the Mac
+    /// named, which it must be before the Mac is offered anything to send to
+    /// them; `None` straight from the Mac, where binding is this side's own.
+    pub fn relay_bound(&self) -> Option<impl Future<Output = std::io::Result<()>> + Send + use<>> {
+        let Route::Relayed(link) = &self.route else {
+            return None;
+        };
+        let (ports, _) = self.receiver.as_ref()?;
+        let ports: Vec<u16> = std::iter::once(ports.audio).chain(ports.videos.iter().copied()).collect();
+        Some(link.opened(&ports))
+    }
+
     /// Bind the ports the Mac named and start receiving on them.
     fn receive(&self, ports: &Ports) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         Ok(tokio::spawn(Receiver::bind(self, ports)?.run()))
@@ -3126,7 +3133,7 @@ impl MediaDump {
 /// passed. It runs until the session drops it, and stops early only
 /// on a failure, which it leaves in `failed` and which ends the session.
 struct Receiver {
-    audio: tokio::net::UdpSocket,
+    audio: Datagrams,
     audio_srtp: SrtpReceiver,
     audio_rtcp: SrtcpSender,
     audio_reports: SrtcpReceiver,
@@ -3144,7 +3151,7 @@ struct Receiver {
 struct VideoLeg {
     /// The display's number, from one, for the log.
     display: usize,
-    socket: tokio::net::UdpSocket,
+    socket: Datagrams,
     port: u16,
     srtp: SrtpReceiver,
     rtcp: SrtcpSender,
@@ -3416,6 +3423,47 @@ async fn keyframe_wanted(videos: &[VideoLeg]) -> usize {
     }
 }
 
+/// How the Mac's media stream reaches this gateway.
+pub enum Route {
+    /// Straight from the Mac, on UDP: `peer` is the Mac as the TCP session
+    /// reached it, where the streams come from and RTCP goes, and `local` this
+    /// side's address on that connection, which the sockets bind.
+    Direct { peer: std::net::IpAddr, local: std::net::IpAddr },
+    /// Through a relay's media connection ([`crate::config::TargetConfig::relay`]),
+    /// which binds each port towards the Mac in this side's place.
+    Relayed(zdesk_relay::MediaLink),
+}
+
+impl Route {
+    /// The route of a session on `stream`, straight from the Mac.
+    pub fn direct(peer: std::net::SocketAddr, local: std::net::SocketAddr) -> Self {
+        Self::Direct { peer: peer.ip(), local: local.ip() }
+    }
+}
+
+/// One port of the stream: a UDP socket connected to the Mac's port, or that
+/// port carried by a relay.
+enum Datagrams {
+    Udp(tokio::net::UdpSocket),
+    Relayed(zdesk_relay::Port),
+}
+
+impl Datagrams {
+    async fn send(&self, datagram: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Udp(socket) => socket.send(datagram).await,
+            Self::Relayed(port) => port.send(datagram).await,
+        }
+    }
+
+    async fn recv(&self, datagram: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Udp(socket) => socket.recv(datagram).await,
+            Self::Relayed(port) => port.recv(datagram).await,
+        }
+    }
+}
+
 /// Whether a receive on one of the stream's connected sockets failed only to
 /// report an ICMP unreachable, for a report sent before the Mac's side was up.
 /// Linux and macOS say so as a refused connection, and Windows as a reset one
@@ -3433,9 +3481,13 @@ impl Receiver {
     /// binds them too: address and port reuse let both, and each socket being
     /// connected is what has the kernel hand each gateway its own Mac's packets.
     fn bind(media: &MediaStream, ports: &Ports) -> anyhow::Result<Self> {
-        let bind = |port: u16, buffer: Option<usize>| -> anyhow::Result<tokio::net::UdpSocket> {
-            let at = std::net::SocketAddr::new(media.local, port);
-            let to = std::net::SocketAddr::new(media.peer, port);
+        let bind = |port: u16, buffer: Option<usize>| -> anyhow::Result<Datagrams> {
+            let (peer, local) = match &media.route {
+                Route::Direct { peer, local } => (*peer, *local),
+                Route::Relayed(link) => return Ok(Datagrams::Relayed(link.open(port))),
+            };
+            let at = std::net::SocketAddr::new(local, port);
+            let to = std::net::SocketAddr::new(peer, port);
             let socket = socket2::Socket::new(
                 socket2::Domain::for_address(at),
                 socket2::Type::DGRAM,
@@ -3466,7 +3518,7 @@ impl Receiver {
                 .with_context(|| format!("bind UDP {at} for the Mac's media stream"))?;
             socket.connect(&to.into()).with_context(|| format!("connect UDP {at} to {to}"))?;
             socket.set_nonblocking(true)?;
-            Ok(tokio::net::UdpSocket::from_std(socket.into())?)
+            Ok(Datagrams::Udp(tokio::net::UdpSocket::from_std(socket.into())?))
         };
         let epoch = std::time::Instant::now();
         let videos = media
@@ -4658,8 +4710,7 @@ mod tests {
         assert!(names(&hevc, b"CABAC") && names(&hevc, b"POSE:4"));
         assert!(names(&h264, b"CABAC") && !names(&h264, b"POSE:4"));
         let (offers, _) = MediaStream::new(
-            "192.0.2.1:5900".parse().unwrap(),
-            "192.0.2.2:40000".parse().unwrap(),
+            Route::direct("192.0.2.1:5900".parse().unwrap(), "192.0.2.2:40000".parse().unwrap()),
             Receive::H264,
             1,
         );
@@ -4756,7 +4807,7 @@ mod tests {
     fn media() -> MediaStream {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        MediaStream::new(peer, local, Receive::Hevc { strips: true }, 1).0
+        MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 1).0
     }
 
     /// Offer the stream for `size` as the session does once the Mac has named its
@@ -5042,7 +5093,7 @@ mod tests {
     fn two_displays_are_offered_named_and_answered_together() {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        let (mut m, pictures) = MediaStream::new(peer, local, Receive::Hevc { strips: false }, 2);
+        let (mut m, pictures) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: false }, 2);
         assert_eq!((m.displays(), pictures.len()), (2, 2));
 
         let sizes = [(1600, 1000), (1280, 800)];
@@ -5082,7 +5133,7 @@ mod tests {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
         let relaxed = std::sync::atomic::Ordering::Relaxed;
-        let (mut m, _units) = MediaStream::new(peer, local, Receive::Hevc { strips: true }, 2);
+        let (mut m, _units) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 2);
         m.invited = true;
         assert_eq!((m.leg_of(0), m.leg_of(1)), (0, 1));
         m.show(0, true);
@@ -5118,7 +5169,7 @@ mod tests {
     fn a_display_nobody_is_shown_owes_its_packets_and_one_coming_into_view_its_next() {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        let (mut m, _units) = MediaStream::new(peer, local, Receive::Hevc { strips: true }, 2);
+        let (mut m, _units) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 2);
         m.invited = true;
         let offered = std::time::Instant::now();
         assert!(m.offer(&[(1600, 1000), (1280, 800)]).is_some());

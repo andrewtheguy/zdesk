@@ -1350,6 +1350,7 @@ fn target(protocol: Protocol, port: u16) -> TargetConfig {
         vnc_password: String::new(),
         password_ref: None,
         vnc_password_ref: None,
+        relay: None,
         domain: None,
         size: Some((1280, 800)),
         egfx: None,

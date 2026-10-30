@@ -4336,7 +4336,7 @@ dependencies = [
 
 [[package]]
 name = "zdesk"
-version = "0.0.492"
+version = "0.0.493"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4396,6 +4396,7 @@ dependencies = [
  "wlshare-proto",
  "zbus-secret-service-keyring-store",
  "zdesk-rdp-graphics",
+ "zdesk-relay",
 ]
 
 [[package]]
@@ -4406,6 +4407,19 @@ dependencies = [
  "log",
  "rayon",
  "thiserror",
+]
+
+[[package]]
+name = "zdesk-relay"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "log",
+ "rand 0.10.2",
+ "socket2",
+ "tokio",
 ]
 
 [[package]]

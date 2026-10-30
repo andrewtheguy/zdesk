@@ -33,6 +33,7 @@ async fn spawn_app() -> SocketAddr {
             vnc_password: String::new(),
             password_ref: None,
             vnc_password_ref: None,
+            relay: None,
             domain: None,
             size: Some((1280, 800)),
             egfx: None,

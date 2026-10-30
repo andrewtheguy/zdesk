@@ -232,6 +232,39 @@ trackpad gestures and adds no gesture recognition of its own: the guest
 recognises them. A Windows host opens MS-RDPEI and xrdp never does, which is
 the reason this would be an always-offered capability rather than a key.
 
+### zdesk-relay beyond QA
+
+[`zdesk-relay`](../crates/zdesk-relay/README.md) reaches a High Performance Mac
+the gateway cannot reach itself. As it stands it is for QA: it authenticates
+nobody, and it carries the Mac's media stream to the gateway over TCP. That
+was checked on a LAN only, against a virtual Mac behind its host's NAT: 6 ms of
+one-way delay and nothing dropped. Two things would take it past QA:
+
+- **Authentication.** Something the gateway proves before the relay connects
+  it anywhere, beyond the `--allow` networks that are the only limit today.
+- **The media stream over UDP.** Over TCP, one lost segment holds back every
+  datagram behind it until it is sent again, and a link slower than the Mac's
+  20 Mbit/s floor ([Rate control](apple-vnc-889.md#rate-control)) queues the
+  excess instead of losing it, so the picture falls seconds behind. The Mac
+  also sets its rate from the delay it sees, and TCP turns the link's losses
+  into queueing delay first. Over UDP the excess is lost, the gateway asks for
+  a keyframe, and the picture stays current.
+
+  The plan is to keep the session on TCP and have the relay also listen on UDP
+  at the same port number. The gateway would send the media there from one
+  socket, each datagram prefixed by its session and port, and the relay would
+  learn the gateway's address from the first one. Since the gateway sends
+  first, its firewall or NAT lets the relay's datagrams back in, and its
+  reports every second keep that open, so nothing has to be opened towards the
+  gateway. The framed TCP media connection would stay as the route for a
+  network that blocks outbound UDP. Only the media connection's two ends
+  change, since the receiver reads every port through one type
+  (`Datagrams` in src/vnc_apple_media.rs).
+
+  QUIC on one UDP port, the session as a stream and the media as datagrams,
+  would bring encryption and a place for the authentication. It would cost a
+  QUIC library and certificates, and the RFB code reads a `TcpStream` directly.
+
 ## Not planned
 
 ### Decoding an RDP host's H.264 at the gateway

@@ -843,6 +843,16 @@ pub struct TargetConfig {
     /// (3389 for RDP, 5900 for VNC) — normalized in [`ConfigFile::parse`].
     #[serde(default)]
     pub port: u16,
+    /// QA. A [`zdesk_relay`] to reach the Mac through, as `host:port`, for a Mac
+    /// this gateway cannot reach itself, such as a virtual Mac behind its host's
+    /// NAT: [`Self::host`] and [`Self::port`] are then the Mac as the relay
+    /// reaches it. The gateway only connects out to the relay's one port, the
+    /// session on one connection and the media stream's UDP framed on another,
+    /// so nothing has to be opened towards the gateway. The relay authenticates
+    /// nobody, so it is for QA. `ard-high-performance` only, whose media stream
+    /// is what a NAT stops.
+    #[serde(default)]
+    pub relay: Option<String>,
     /// Username. Required by RDP, and by a `vnc` target of either Apple subtype,
     /// where it is a *macOS account* and [`Self::password`] is that account's —
     /// not the Screen Sharing password. On a plain `vnc` target it is the
@@ -1819,6 +1829,28 @@ impl ConfigFile {
                      and nothing else here has one to open. Remove the key.",
                     target.name
                 ),
+            }
+            if let Some(relay) = &target.relay {
+                anyhow::ensure!(
+                    target.subtype == Some(Subtype::ArdHighPerformance),
+                    "target {:?} sets relay, which only an ard-high-performance target takes. \
+                     Remove the key.",
+                    target.name
+                );
+                let port = relay.rsplit_once(':').and_then(|(host, port)| {
+                    // Brackets are an IPv6 literal's and nothing else's.
+                    let host_ok = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+                        Some(literal) => literal.parse::<std::net::Ipv6Addr>().is_ok(),
+                        None => !host.is_empty() && !host.contains([':', '[', ']']),
+                    };
+                    host_ok.then(|| port.parse::<u16>().ok()).flatten()
+                });
+                anyhow::ensure!(
+                    port.is_some_and(|port| port != 0),
+                    "target {:?} sets relay = {relay:?}, which is not host:port — the port is \
+                     required, and an IPv6 address is bracketed, as in \"[fdb8::2]:15900\"",
+                    target.name
+                );
             }
         }
         #[cfg(feature = "tui")]
@@ -3744,6 +3776,33 @@ mod tests {
         ))
         .unwrap_err();
         assert!(format!("{err:#}").contains("only subtype \"ard\" takes"), "{err:#}");
+    }
+
+    /// A relay is High Performance's alone, and is written host:port.
+    #[test]
+    fn a_relay_is_a_high_performance_targets_host_and_port() {
+        let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
+        for relay in ["macwork.lan:15900", "10.0.0.1:15900", "[fdb8::1]:15900"] {
+            let target = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap().targets[0];
+            assert_eq!(target.relay.as_deref(), Some(relay));
+        }
+        for relay in [
+            "macwork.lan",
+            "fdb8::1:15900",
+            "macwork.lan:0",
+            ":15900",
+            "macwork.lan:x",
+            "[localhost]:15900",
+            "[fdb8::zz]:15900",
+            "[10.0.0.1]:15900",
+            "mac]work:15900",
+        ] {
+            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap_err();
+            assert!(format!("{err:#}").contains("is not host:port"), "{relay}: {err:#}");
+        }
+        let ard = "subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
+        let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}relay = \"10.0.0.1:15900\""))).unwrap_err();
+        assert!(format!("{err:#}").contains("only an ard-high-performance target takes"), "{err:#}");
     }
 
     /// The high-performance subtype carries the same account credentials as plain

@@ -30,7 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aes::Aes128;
-#[cfg(feature = "wlshare")]
 use anyhow::Context as _;
 use des::Des;
 use des::cipher::generic_array::GenericArray;
@@ -2288,7 +2287,9 @@ async fn session(
     // the connection and then says nothing — no socket timeout catches that. The
     // TCP connect has its own deadline inside the helper, so a slow one is
     // reported as what it is rather than as a handshake that ran long.
-    let dest = host_port(&config.host, config.port);
+    //
+    // A target behind a relay is connected to through it ([`connect`]).
+    let dest = config.relay.clone().unwrap_or_else(|| host_port(&config.host, config.port));
     let Some(connected) = engine::connect_and_handshake(
         "vnc",
         &dest,
@@ -2509,7 +2510,7 @@ async fn connect(
     choices: Choices,
     plan: RenderPlan,
     beside: bool,
-    stream: tokio::net::TcpStream,
+    mut stream: tokio::net::TcpStream,
 ) -> anyhow::Result<Connected> {
     let dialect = Dialect::of(config.subtype);
     if plan.apple_standard == Some(StandardQuality::Adaptive) {
@@ -2518,8 +2519,22 @@ async fn connect(
             .map_err(|e| anyhow::Error::new(e).context("setting the receive buffer of the connection to the Mac"))?;
     }
     // Where the connection runs, for High Performance's media stream: the Mac
-    // sends it from its own address to this side's, on UDP.
-    let addresses = (stream.peer_addr()?, stream.local_addr()?);
+    // sends it from its own address to this side's, on UDP. Through a relay,
+    // the stream is the relay's to send on, over a second connection to it.
+    let route = match &config.relay {
+        Some(relay) => {
+            let mac = host_port(&config.host, config.port);
+            let token = zdesk_relay::open(&mut stream, &mac)
+                .await
+                .with_context(|| format!("reaching {mac} through the relay at {relay}"))?;
+            info!("vnc: reached {mac} through the relay at {relay}");
+            let link = zdesk_relay::MediaLink::connect(relay, &token)
+                .await
+                .with_context(|| format!("opening the media stream's connection to the relay at {relay}"))?;
+            vnc_apple_media::Route::Relayed(link)
+        }
+        None => vnc_apple_media::Route::direct(stream.peer_addr()?, stream.local_addr()?),
+    };
     let (read_half, mut sock) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
@@ -2606,7 +2621,7 @@ async fn connect(
                 "a Standard session asks the Mac for one of its qualities, Adaptive or Full, \
                  and a High Performance session's picture is its media stream"
             );
-            apple_preface(reader, sock, server, macos, wrap_key, config, addresses, receive, plan.apple_standard)
+            apple_preface(reader, sock, server, macos, wrap_key, config, route, receive, plan.apple_standard)
                 .await
         }
     }
@@ -3061,7 +3076,7 @@ async fn apple_preface(
     macos: bool,
     wrap_key: [u8; 16],
     config: &TargetConfig,
-    (peer, local): (std::net::SocketAddr, std::net::SocketAddr),
+    route: vnc_apple_media::Route,
     // How the Mac's picture is passed, on a session with its media stream.
     receive: Option<vnc_apple_media::Receive>,
     // The quality the Mac is asked for, on a Standard session: Adaptive, passed,
@@ -3178,7 +3193,7 @@ async fn apple_preface(
         macos,
         apple: true,
         poll: media_stream,
-        media: receive.map(|receive| MediaStream::new(peer, local, receive, displays)),
+        media: receive.map(|receive| MediaStream::new(route, receive, displays)),
         passthrough: None,
     })
 }
@@ -4318,6 +4333,15 @@ async fn offer_media(
     let Some(media) = media else {
         return Ok(());
     };
+    // Through a relay, the Mac's ports are bound there first, or what it sends
+    // before they are is lost.
+    let bound = media.lock().unwrap().relay_bound();
+    if let Some(bound) = bound {
+        tokio::time::timeout(vnc_apple_media::STREAM_START, bound)
+            .await
+            .context("the relay did not bind the Mac's media ports in time")?
+            .context("the relay did not bind the Mac's media ports")?;
+    }
     let mut uplink = uplink.lock().await;
     let (sizes, offer) = {
         let d = desktop.lock().unwrap();
@@ -12465,7 +12489,7 @@ mod tests {
         let shared = test_shared(uplink, Arc::clone(&desktop), Arc::clone(&shadow));
 
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
         let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: true, strip: None, begins: true, data: vec![0; 16] };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         assert!(sink.passing());
@@ -12511,7 +12535,7 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
 
         // Not a keyframe: dropped for one, and the notice stays up.
         let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: false, strip: None, begins: true, data: vec![0; 16] };
@@ -12554,7 +12578,7 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
         let strip = |index, ends| PassedUnit {
             size: (2, 2),
             decode: "hev1.4.10.L150.BE.8".into(),
@@ -12608,7 +12632,7 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
         let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: true, strip: None, begins: true, data: vec![0; 16] };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         sink.flush().await;
@@ -14110,7 +14134,7 @@ mod tests {
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
         let receive = vnc_apple_media::Receive::Hevc { strips: true };
-        let media: SharedMedia = Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, receive, 1).0));
+        let media: SharedMedia = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), receive, 1).0));
         let shared = Shared {
             media: Some(Arc::clone(&media)),
             ..test_shared(uplink, Arc::clone(&desktop), test_shadow((1600, 1000)))
@@ -14260,7 +14284,7 @@ mod tests {
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
         let media: SharedMedia =
-            Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
+            Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
         let tab = SharedTab::default();
 
         media.lock().unwrap().test_answered(&[(1600, 1200)]);
@@ -14304,7 +14328,7 @@ mod tests {
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
         let media: SharedMedia =
-            Arc::new(std::sync::Mutex::new(MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: true }, 2).0));
+            Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 2).0));
         let shared = Shared {
             media: Some(Arc::clone(&media)),
             ..test_shared(uplink, Arc::clone(&desktop), test_shadow((100, 100)))
@@ -14386,7 +14410,7 @@ mod tests {
         // brings the tab's notice down.
         let addr = "127.0.0.1:5900".parse().unwrap();
         let media: SharedMedia = Arc::new(std::sync::Mutex::new(
-            MediaStream::new(addr, addr, vnc_apple_media::Receive::Hevc { strips: false }, 2).0,
+            MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 2).0,
         ));
         let unit = |size: (u16, u16)| PassedUnit {
             size,
