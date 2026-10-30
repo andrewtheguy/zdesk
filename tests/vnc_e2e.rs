@@ -84,6 +84,7 @@ async fn spawn_app(vnc_port: u16) -> SocketAddr {
             // Naming the ref is what makes the gateway answer VncAuth; the
             // password itself is the one opened from it.
             vnc_password_ref: Some("tigervnc".to_owned()),
+            relay: None,
             domain: None,
             // A plain target states no size: it is shown at the server's own.
             size: None,

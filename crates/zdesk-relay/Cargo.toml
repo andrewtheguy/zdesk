@@ -1,0 +1,25 @@
+# A relay for reaching a Mac that the gateway cannot reach itself, such as a
+# virtual Mac behind its host's NAT, run on a machine that reaches both. The
+# gateway opens TCP connections to one port on it and nothing else: one carries
+# the RFB session to the Mac, and one carries the High Performance media stream's
+# UDP, framed, which the relay sends on to the Mac and takes back from it. The
+# library half is the wire and the gateway's side of it, which the gateway uses;
+# the binary is the relay.
+#
+# A default member of the workspace, so a plain `cargo clippy` and `cargo test`
+# check it beside the gateway.
+[package]
+name = "zdesk-relay"
+version = "0.0.0"
+license = "MIT"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+rand = "0.10"
+socket2 = { version = "0.6", features = ["all"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }

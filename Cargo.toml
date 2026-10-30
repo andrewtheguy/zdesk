@@ -17,8 +17,8 @@
 # Mac's Adaptive picture, which shares no crate with the gateway.
 [workspace]
 resolver = "3"
-members = ["crates/zdesk-rdp-graphics"]
-default-members = [".", "crates/zdesk-rdp-graphics"]
+members = ["crates/zdesk-rdp-graphics", "crates/zdesk-relay"]
+default-members = [".", "crates/zdesk-rdp-graphics", "crates/zdesk-relay"]
 exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
@@ -202,6 +202,9 @@ socket2 = { version = "0.6", features = ["all"] }
 # Pure Rust apart from `ring` and zlib, so the build needs no cmake, pkg-config,
 # OpenSSL or libclang.
 zdesk-rdp-graphics = { path = "crates/zdesk-rdp-graphics" }
+# The wire of crates/zdesk-relay, for a High Performance target reached through
+# a relay (`relay`), and the relay itself, its binary.
+zdesk-relay = { path = "crates/zdesk-relay" }
 #
 # TLS is rustls with `ring`, and rustls needs that provider installed as the process
 # default before the first handshake: `tokio-rustls` is a direct dependency both for

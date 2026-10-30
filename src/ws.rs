@@ -2365,6 +2365,7 @@ mod tests {
             vnc_password: String::new(),
             password_ref: None,
             vnc_password_ref: None,
+            relay: None,
             domain: None,
             size: Some((1, 1)),
             egfx: None,

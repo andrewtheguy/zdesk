@@ -393,6 +393,12 @@ connection with the same error as wrong credentials. See
     phone or tablet.
   - The Mac sends to the gateway's UDP ports 5900 and 5901, and 5902 for a
     second display, so a firewall or NAT between them must let that through.
+  - **QA only:** where it cannot, as for a virtual Mac behind its host's NAT,
+    `relay = "host:port"` reaches the Mac through
+    [`zdesk-relay`](../crates/zdesk-relay/README.md), run on a machine that
+    reaches both, with `host` the Mac as the relay reaches it. The gateway only
+    connects out, to the relay's one TCP port, which carries the media stream
+    too. The relay has no authentication yet.
   - A Linux gateway needs `net.core.rmem_max` of at least 4194304 for the
     picture's socket, and the log warns when it is lower: the stock 212992
     loses keyframes at Retina sizes.

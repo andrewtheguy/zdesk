@@ -599,6 +599,13 @@ password_ref = "example"
 # host = "10.0.0.3"
 # username = "andrew"
 # password_ref = "mac"
+#
+# QA only: a Mac this gateway cannot reach, such as a virtual Mac behind its
+# host's NAT, is reached through `zdesk-relay` (crates/zdesk-relay/README.md)
+# on a machine that reaches both. `host` is then the Mac as the relay reaches
+# it. The gateway only connects out, to the relay's one TCP port, which carries
+# the media stream too. The relay authenticates nobody.
+# relay = "10.0.0.2:15900"
 
 # How a target's picture is coded is not configured: each picture has one way.
 # Where the gateway codes the picture — plain VNC, a Standard Mac's Full quality
