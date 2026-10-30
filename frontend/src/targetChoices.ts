@@ -423,7 +423,7 @@ function pictureOptions(
       value: "wlshare-video",
       label: "Adaptive video",
       note: abilities.wlshareH264
-        ? "wlshare's H.264 of the whole desktop, paced to this browser's link: a slower link gets fewer frames, not coarser ones. For any link; never lossless."
+        ? "wlshare's H.264 of the whole desktop, paced to this browser's link: a slower link gets fewer frames, not coarser ones. Light on the host's processor, and coded by its hardware encoder where it has one, but text can be less crisp. For any link; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's video.",
       disabled: !abilities.wlshareH264,
     },
@@ -431,7 +431,7 @@ function pictureOptions(
       value: "wlshare-tiles-progressive",
       label: "Progressive tiles (alpha)",
       note: abilities.rdpGraphics
-        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. For a link that is not always wide. Decoded by this page, with no video decoder; never lossless."
+        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Crisper text than the video, for more of the host's processor, coded in software. For a link that is not always wide. Decoded by this page, with no video decoder; never lossless."
         : NO_PROGRESSIVE,
       disabled: !abilities.rdpGraphics,
     },
@@ -439,7 +439,7 @@ function pictureOptions(
       value: "wlshare-tiles-motion",
       label: "Tiles with motion (LAN)",
       note: abilities.wlshareH264
-        ? "wlshare's own tiles: exact PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), exact again once it stops. A picture that ends exact, for several times the video's bytes."
+        ? "wlshare's own tiles: lossless PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
     },
