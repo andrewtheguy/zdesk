@@ -148,10 +148,7 @@ base64 = "0.22"
 # Session-slot claim tokens (see src/session.rs) and auth session tokens
 # (see src/auth.rs).
 uuid = { version = "1", features = ["v4"] }
-# Web login: the site_passwd credential is username:bcrypt_hash,
-# verified on /api/auth/login (see src/auth.rs).
-bcrypt = "0.19"
-# Hidden password prompt for the `gen-passwd` helper subcommand.
+# Hidden password prompt for the `zdesk password` helper subcommands.
 rpassword = "7"
 # Classic VNC authentication (src/vnc.rs): DES over the RFB challenge.
 des = "0.8"
@@ -235,6 +232,7 @@ sspi = { version = "0.21", default-features = false }
 # PEM or DER.
 rsa = { version = "0.10.0-rc.18", default-features = false }
 eax = "0.6"
+# Also the web login's digests, compared in constant time (src/auth.rs).
 sha2 = "0.11"
 # SRTP's and SRTCP's HMAC-SHA1-80 tags on the High Performance media stream
 # (src/vnc_apple_media.rs), over the `sha1` above.

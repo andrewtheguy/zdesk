@@ -95,7 +95,7 @@ The gateway reads its config from `%ProgramData%\zdesk\zdesk.toml`. Add
 
 ## First configuration
 
-The config contains the web-login hash and target credentials. Create it as the
+The config contains the web login and target credentials. Create it as the
 account that will run `zdesk serve`, mode `0600`. The package ships only the
 public [`zdesk.example.toml`](../zdesk.example.toml) from which to create it.
 The same account owns the state directory, where an enabled `[meter]` keeps its
@@ -107,7 +107,6 @@ On Linux:
 sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /etc/zdesk /var/lib/zdesk
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/share/doc/zdesk/zdesk.example.toml /etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ${EDITOR:-vi} /etc/zdesk/zdesk.toml
 ```
 
@@ -118,7 +117,6 @@ sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /usr/local/etc/zdesk /usr/l
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/local/share/doc/zdesk/zdesk.example.toml \
   /usr/local/etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ${EDITOR:-vi} /usr/local/etc/zdesk/zdesk.toml
 ```
 
@@ -131,25 +129,27 @@ with its SQLite files inherit that. If the wizard selected another folder, use i
 New-Item -ItemType Directory -Force "$env:ProgramData\zdesk" | Out-Null
 icacls "$env:ProgramData\zdesk" /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F"
 Copy-Item "$env:ProgramFiles\zdesk\share\doc\zdesk\zdesk.example.toml" "$env:ProgramData\zdesk\zdesk.toml"
-zdesk gen-passwd admin
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-Paste the generated `admin:$2b$...` value into `[server].site_passwd` and
-replace the example `[[targets]]` entry with the remote desktop to reach. Its
-password is not written there: the target names it with `password_ref`, and
-the config keeps it encrypted under your master password, which the gateway
-reads from the file `[server].master_password_file` names. Name a file beside
-the config for it (`master_password_file = "master-password"`; a relative path
-is taken from the config's directory). `password master create` then asks for
-a new master password, writes it to that file, which takes the directory's
-owner-only permissions, and prints the `[master]` block to paste into the
-config; `password encrypt` reads it from the file and prints the value to
-paste as `example = "…"` under `[passwords]`:
+Set the web login's username in `[server].site_username` and replace the
+example `[[targets]]` entry with the remote desktop to reach. No password is
+written as it is: the web login's is `[server].site_passwd` and the target names
+its own with `password_ref`, and the config keeps both encrypted under your
+master password, which the gateway reads from the file
+`[server].master_password_file` names. Name a file beside the config for it
+(`master_password_file = "master-password"`; a relative path is taken from the
+config's directory). `password master create` then asks for a new master
+password, writes it to that file, which takes the directory's owner-only
+permissions, and prints the `[master]` block to paste into the config;
+`password encrypt` reads it from the file and prints a value, once for the web
+login's password, to paste as `site_passwd = "…"`, and once for the target's,
+to paste as `example = "…"` under `[passwords]`:
 
 ```sh
 zdesk password master create
-zdesk password encrypt
+zdesk password encrypt   # the web login's password
+zdesk password encrypt   # the target's
 ```
 
 See [Target passwords](https://zdesk.dev/guide#target-passwords). Start the gateway in the
@@ -167,18 +167,15 @@ kind of target is set up and how the page is reached from another machine.
 Images are published for Linux amd64 and arm64 with `latest` and `v<version>`
 tags. The image has no `zdesk tui`.
 
-Generate the required web-login credential with:
-
-```sh
-docker run --rm -it ghcr.io/andrewtheguy/zdesk:latest gen-passwd admin
-```
-
 The master password comes from a file, as for any served gateway. Keep it in
 a secret, name that file in the config, and write the config's passwords with
-the same image, pasting what each prints:
+the same image, pasting what each prints: the web login's as
+`[server].site_passwd`, each target's under `[passwords]`:
 
 ```toml
 [server]
+site_username = "admin"
+site_passwd = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

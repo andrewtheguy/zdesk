@@ -109,15 +109,9 @@ pub enum Commands {
         worker: bool,
     },
 
-    /// Generate a [server].site_passwd credential for the web login: prompts
-    /// for a password and prints username:bcrypt_hash
-    GenPasswd {
-        /// Username for the web login (must not contain ':')
-        username: String,
-    },
-
-    /// Encrypt the targets' passwords for a config's [passwords], printing what
-    /// to paste there. A target names one with password_ref or vnc_password_ref.
+    /// Encrypt the config's passwords, printing what to paste: the web login's
+    /// as [server].site_passwd, and each target's under [passwords], by the name
+    /// its password_ref or vnc_password_ref gives.
     ///
     /// The master password is the config's [server].master_password_file when
     /// it names one, else asked for here; `password master create` writes that
@@ -138,10 +132,10 @@ pub enum PasswordAction {
         #[command(subcommand)]
         action: MasterAction,
     },
-    /// Print a password encrypted under the config's [master], to paste under
-    /// its [passwords] as NAME = "…", NAME being what a target's password_ref
-    /// or vnc_password_ref says. Prompts for it (twice on a terminal; one line
-    /// when piped)
+    /// Print a password encrypted under the config's [master], to paste as
+    /// [server].site_passwd = "…" for the web login, or under its [passwords] as
+    /// NAME = "…", NAME being what a target's password_ref or vnc_password_ref
+    /// says. Prompts for it (twice on a terminal; one line when piped)
     Encrypt {
         /// The config whose [master] to encrypt under; nothing in it is changed
         /// (default: the installed global config)
@@ -373,18 +367,6 @@ mod tests {
             panic!("expected the check-config subcommand");
         };
         assert!(config.is_none());
-    }
-
-    #[test]
-    fn gen_passwd_takes_a_username() {
-        let cli = Cli::try_parse_from(["zdesk", "gen-passwd", "andrew"]).unwrap();
-        let Commands::GenPasswd { username } = cli.command else {
-            panic!("expected the gen-passwd subcommand");
-        };
-        assert_eq!(username, "andrew");
-
-        // The username is required.
-        assert!(Cli::try_parse_from(["zdesk", "gen-passwd"]).is_err());
     }
 
 }

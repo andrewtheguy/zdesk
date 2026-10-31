@@ -518,29 +518,21 @@ struct OkResponse {
     ok: bool,
 }
 
-/// Verify the credentials against `[server].site_passwd` and set the session
+/// Verify the credentials against the `[server]` login and set the session
 /// cookie. 401 on a mismatch, with no hint which of the two fields was wrong.
 async fn login_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    let Some(site_passwd) = state.config.auth.login() else {
+    let Some(login) = state.config.auth.login() else {
         // Unreachable: `router` registers `no_login_handler` at this path on a
         // token gateway. Answered rather than asserted, because the shape that
         // would reach here — a login route on a gateway with no credential — must
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    let site_passwd = site_passwd.clone();
-    // bcrypt verification burns tens of milliseconds by design — keep it off
-    // the async workers.
-    let ok = tokio::task::spawn_blocking(move || {
-        site_passwd.verify(&req.username, &req.password)
-    })
-    .await
-    .map_err(anyhow::Error::from)?;
-    if !ok {
+    if !login.verify(&req.username, &req.password) {
         return Err(AppError::Unauthorized);
     }
     let token = state.auth.create();
@@ -1093,12 +1085,7 @@ mod tests {
                 virtual_displays: 1,
                 virtual_display: false,
             }],
-            auth: crate::auth::GatewayAuth::Login(
-                crate::auth::SitePasswd::parse(
-                    &crate::auth::generate("admin", "hunter2", 4).unwrap(),
-                )
-                .unwrap(),
-            ),
+            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::new("admin", "hunter2").unwrap()),
             branding: crate::config::Branding {
                 text: "zDesk".to_owned(),
                 logo: None,
@@ -1255,7 +1242,6 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[test]
     fn a_target_entry_names_its_subtype_and_what_its_type_offers() {
-        let passwd = crate::auth::generate("admin", "hunter2", 4).unwrap();
         let target = |name: &str, kind: &str, host: &str| {
             format!(
                 "[[targets]]\nname = \"{name}\"\n{kind}\nhost = \"{host}\"\n\
@@ -1263,7 +1249,7 @@ mod tests {
             )
         };
         let text = format!(
-            "[server]\nsite_passwd = \"{passwd}\"\n\n{}{}{}",
+            "{}{}{}",
             target("mac", "protocol = \"vnc\"\nsubtype = \"ard\"", "192.0.2.10"),
             target("win", "protocol = \"rdp\"\nsize = \"1920x1080\"", "192.0.2.11"),
             target("fast", "protocol = \"vnc\"\nsubtype = \"ard-high-performance\"", "192.0.2.10"),

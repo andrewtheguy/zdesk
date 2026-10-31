@@ -91,20 +91,9 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::GenPasswd { username } => gen_passwd(&username)?,
         Commands::Password { action } => password(action)?,
     }
 
-    Ok(())
-}
-
-/// Generate the `[server].site_passwd` value: prompt for the password (hidden,
-/// asked twice on a TTY; read as one line when piped) and print the encoded
-/// credential to stdout, pipeable straight into the config.
-fn gen_passwd(username: &str) -> anyhow::Result<()> {
-    let password = read_secret("Password", true)?;
-    let encoded = zdesk::auth::generate(username, &password, zdesk::auth::DEFAULT_COST)?;
-    println!("{encoded}");
     Ok(())
 }
 

@@ -26,14 +26,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 /// opens under the master password in `dir`'s `master-password` — so the start
 /// goes through `[server].master_password_file`, as a service's would.
 fn config_text(dir: &common::ScratchDir) -> String {
-    let site_passwd = zdesk::auth::generate("admin", "hunter2", 4).unwrap();
     dir.write("master-password", "correct horse\n");
     let master = zdesk::vault::MasterPassword::new("correct horse".to_owned()).unwrap();
     let (section, key) = zdesk::vault::Key::create(&master).unwrap();
     let value = key.encrypt("p").unwrap();
+    let site_passwd = key.encrypt("hunter2").unwrap();
     format!(
         r#"
 [server]
+site_username = "admin"
 site_passwd = "{site_passwd}"
 master_password_file = "master-password"
 

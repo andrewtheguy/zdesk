@@ -19,15 +19,14 @@ pub const TEST_USER: &str = "admin";
 pub const TEST_PASSWORD: &str = "hunter2";
 
 /// A web login for [`TEST_USER`]/[`TEST_PASSWORD`], for building an `AppConfig`
-/// directly. bcrypt's minimum cost keeps logins fast in tests.
+/// directly.
 ///
 /// The login rather than a token because these tests are about the gateway a
 /// browser reaches; a TUI worker has its own suite
 /// (`tests/tui_worker_e2e.rs`).
 #[allow(dead_code)]
 pub fn test_auth() -> zdesk::auth::GatewayAuth {
-    let encoded = zdesk::auth::generate(TEST_USER, TEST_PASSWORD, 4).unwrap();
-    zdesk::auth::GatewayAuth::Login(zdesk::auth::SitePasswd::parse(&encoded).unwrap())
+    zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::new(TEST_USER, TEST_PASSWORD).unwrap())
 }
 
 /// Pull `name` out of the operator's UAT config, for a test that borrows a

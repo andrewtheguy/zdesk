@@ -3440,9 +3440,8 @@ mod tests {
     }
 
     fn rdp_target(extra: &str) -> TargetConfig {
-        let passwd = crate::auth::generate("admin", "hunter2", 4).unwrap();
         let text = format!(
-            "[server]\nsite_passwd = \"{passwd}\"\n\n[[targets]]\nname = \"win\"\n\
+            "[[targets]]\nname = \"win\"\n\
              protocol = \"rdp\"\nhost = \"10.0.0.5\"\nusername = \"u\"\npassword_ref = \"p\"\n{extra}\n"
         );
         crate::config::ConfigFile::parse_fixture(&text).unwrap().targets.remove(0)

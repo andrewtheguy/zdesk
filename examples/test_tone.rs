@@ -156,12 +156,7 @@ async fn main() {
     let config = zdesk::config::AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         targets: vec![target],
-        auth: zdesk::auth::GatewayAuth::Login(
-            zdesk::auth::SitePasswd::parse(
-                &zdesk::auth::generate("admin", "hunter2", 4).unwrap(),
-            )
-            .unwrap(),
-        ),
+        auth: zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::new("admin", "hunter2").unwrap()),
         branding: zdesk::config::Branding {
             text: "audio tone harness".to_owned(),
             logo: None,

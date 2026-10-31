@@ -98,20 +98,20 @@ sudo apt install ./zdesk-linux-amd64.deb
 
 ### 獨立閘道：`zdesk serve`
 
-用隨附的範例建立設定檔，並產生登入憑證：
+用隨附的範例建立設定檔：
 
 ```sh
 sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /etc/zdesk /var/lib/zdesk
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/share/doc/zdesk/zdesk.example.toml /etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ```
 
-把產生的值和一個目標寫入 `/etc/zdesk/zdesk.toml`，並寫上閘道讀取主密碼的檔案：
+把網頁登入的使用者名稱和一個目標寫入 `/etc/zdesk/zdesk.toml`，並寫上閘道讀取主密碼的檔案：
 
 ```toml
 [server]
-site_passwd = "admin:$2b$..."
+site_username = "admin"
+site_passwd = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -122,11 +122,12 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-接著貼上目標的密碼，它會用你的主密碼加密（請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 輸出要以 `workstation = "…"` 的形式加到 `[passwords]` 下的值。
+接著貼上各個密碼，它們會用你的主密碼加密（請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 每次輸出一個值，所以要執行兩次：一次給網頁登入的密碼，以 `site_passwd = "…"` 的形式貼上；一次給目標的密碼，以 `workstation = "…"` 的形式加到 `[passwords]` 下。
 
 ```sh
 zdesk password master create
-zdesk password encrypt
+zdesk password encrypt   # 網頁登入的密碼
+zdesk password encrypt   # 目標的密碼
 ```
 
 啟動它，然後開啟 <http://localhost:52380>：
@@ -181,12 +182,11 @@ zdesk tui
 ```sh
 bun install --cwd frontend
 cp zdesk.example.toml zdesk.toml
-cargo run -- gen-passwd admin
-# 設定 [server].site_passwd，設定目標及其密碼（請見下文），然後：
+# 設定 [server].site_username，設定目標和各個密碼（請見下文），然後：
 cargo run -- serve -c zdesk.toml
 ```
 
-複製的範例參照了 `[passwords].example`，但需要你自己加上該值。請依[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)設定目標的加密密碼和主密碼檔案。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`，此時不需要主密碼。
+複製的範例參照了 `[passwords].example`，但該值和 `[server].site_passwd` 需要你自己加上。請依[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)設定主密碼檔案和加密的密碼：`password encrypt` 會為每個密碼輸出對應的值，網頁登入的密碼也包含在內。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`。
 
 Cargo 會建置前端並將其編譯進二進位檔，因此閘道是唯一提供頁面的程式。檢查指令：
 
