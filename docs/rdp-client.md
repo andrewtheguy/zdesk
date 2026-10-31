@@ -487,6 +487,32 @@ unwrapped to 18.8 MB as the host sent it, a desktop busy about half the time
 1.47 times smaller,
 scrolling 2.07 times and a video in a window 1.45 times, at 17 MB a second.
 
+Measured again on 2026-10-31 at 1920×1080, H.264 refused, with a Windows
+Server 2025 host set to Lossless against a stock Windows 11 host, each with a
+window dragged, a text box scrolled and a 960×600 video playing, 15 s each
+after a 3 s settle (a qa build of a scratch probe; its rig is kept beside the
+probes, `tmp/lossless-probe/`):
+
+| Case | Lossless host | Stock host |
+|---|---|---|
+| A window dragged | planar slivers, SurfaceToSurface and the cache: 1.5 KB a frame at 15–21 frames/s | Progressive: 19 KB a frame at 35 |
+| A text box scrolled | SurfaceToSurface and planar line strips, 2.8–18 KB a frame at 13–17 | SurfaceToSurface and ClearCodec, 6.8 KB at 17 |
+| A video in a window | planar alone, 590–610 KB a frame, 76–106 Mbit/s as sent, at 16–21 | Progressive, 18.6 KB a frame, 5 Mbit/s, at 34 |
+
+Its planar rectangles are whole changed regions rather than 64×64 tiles, of
+arbitrary widths and heights often a multiple of 64, and only two format
+headers ever came: run-length coded with no alpha plane (`0x30`), nine in ten,
+and plain with no alpha plane (`0x20`) where coding would not shrink them; no
+colour loss or subsampling. Desktop and text came to 0.5–0.73 bytes a pixel,
+video to 2.56; the host's bulk compression took a fifth off the video and
+about two fifths off the opening paint. SurfaceToSurface and the cache of
+64×64 tiles are drawn with as much as on the stock host, and both stop
+11 frames unacknowledged. The Lossless host drew no more than 21 frames a
+second even where each was a kilobyte or two, against the stock host's 35;
+the two differ in edition as well as policy, so which of them that is was not
+separated. wlshare's lossless tiles model this picture
+([Lossless tiles](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
+
 Lossless takes no H.264 either. A session that offered it, with something
 moving on the host's screen, was drawn with planar and uncompressed rectangles
 alone, so an Adaptive session against such a host is drawn that way too, at that
