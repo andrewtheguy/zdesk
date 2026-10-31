@@ -65,8 +65,8 @@ Watch more demos on the [zDesk site](https://zdesk.dev/demo).
   picture and wlshare's H.264 are passed through untouched, and all but the High
   Performance Mac's are paced to the browser link.
 - **Tiles that settle to lossless.** Where the gateway codes the picture itself,
-  it sends 64×64 tiles: PNG where they are exact, JPEG where they move, and
-  sent again exactly once they are still.
+  it sends 64×64 tiles: PNG where they are lossless, JPEG where they move, and
+  sent again losslessly once they are still.
 - **A gateway with a low memory footprint.** One Rust binary serves one session
   at a time, and where the remote's picture and sound are passed through, the
   browser decodes them, so the gateway holds no decoder or decoded picture for
@@ -113,7 +113,7 @@ seamlessly of the three, since what RFB lacks is added to it.
   ours, what RFB lacks is added to it: it switches outputs, follows the window
   at its density, carries Opus or FLAC sound and the browser's camera and
   microphone, and codes its own H.264 of the whole desktop for the gateway to
-  pass through, paced to the browser's link — or, for a link with room to spare, its own exact
+  pass through, paced to the browser's link — or, for a link with room to spare, its own lossless
   tiles with a video stream for each region that moves, H.264 from hardware or
   libx264. Two outputs can be shown at once, the second
   in a browser tab of its own (beta).

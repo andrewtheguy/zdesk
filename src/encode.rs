@@ -7,7 +7,7 @@
 //!             VideoSink::msg()  ── ServerMsg ────────┤ handle pushed, in order
 //!                                                    ▼ mpsc, cap ENCODE_DEPTH
 //!                                order task: await handles FIFO → frame_tx
-//!                                            ⤷ settle tick → still JPEG tiles owed exact
+//!                                            ⤷ settle tick → still JPEG tiles owed a lossless refresh
 //! ```
 //!
 //! FIFO collection keeps control messages in source order with the tiles around
@@ -136,8 +136,8 @@ const CARRY_BYTES: u64 = AHEAD / 2;
 const CARRY_SPAN: Duration = Duration::from_secs(10);
 
 /// How often the order task looks for tiles sent as JPEG that have gone still, to be
-/// owed their exact picture ([`Tiles::tick`]): a tile is still once a whole tick has
-/// gone by without it changing, so it is sent exactly 50–100 ms after it stopped.
+/// owed their lossless picture ([`Tiles::tick`]): a tile is still once a whole tick has
+/// gone by without it changing, so it is sent losslessly 50–100 ms after it stopped.
 /// TigerVNC's server refreshes what it sent lossy on the same 50 ms. It has to be its
 /// own timer rather than something the next round does, because a screen that stops
 /// changing takes no next round — which is exactly the case a refresh is for.
@@ -454,7 +454,7 @@ struct Shared {
     video: tokio::sync::Mutex<Video>,
     /// Signalled when a round may now be taken that could not be before: a round came
     /// back with tiles still owed, the browser painted tiles back under the paint
-    /// window, or tiles went still and are owed their exact picture. An engine parked
+    /// window, or tiles went still and are owed their lossless picture. An engine parked
     /// on a clean `due_at` finds out from it. See [`VideoSink::round_returned`].
     round_returned: Arc<Notify>,
     /// Whether the picture is the remote's own, passed through ([`VideoSink::pass`])
@@ -499,7 +499,7 @@ struct Shared {
     /// bytes.
     graphics: AtomicU64,
     graphics_bytes: AtomicU64,
-    /// Rounds of tiles sent, and of them the refreshes: tiles owed their exact picture,
+    /// Rounds of tiles sent, and of them the refreshes: tiles owed their lossless picture,
     /// and the coarse ones ([`crate::tiles::Round::coarse`]).
     rounds: AtomicU64,
     refreshes: AtomicU64,
@@ -751,7 +751,7 @@ impl VideoSink {
     /// Completes when a round may be taken that could not be before — the engines'
     /// third wake-up source, beside their own frame boundaries and [`Self::due_at`]:
     /// a round came back with tiles still owed, the browser painted tiles back under
-    /// the paint window, or tiles went still and are owed their exact picture.
+    /// the paint window, or tiles went still and are owed their lossless picture.
     ///
     /// Needed because `due_at` says nothing while a round is out or the browser has
     /// not painted what it was sent: an engine that went idle then would park on it
@@ -904,7 +904,7 @@ impl VideoSink {
     }
 
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
-    /// record, untouched: a PNG of the desktop's pixels there exactly, or one
+    /// record, untouched: a lossless PNG of the desktop's pixels there, or one
     /// progressive tile's block, a first pass or an upgrade against what the page
     /// holds of the tile; `format` says which.
     ///
@@ -1334,7 +1334,7 @@ impl VideoSink {
     }
 }
 
-/// One settle tick: tiles sent as JPEG that have gone still are owed their exact
+/// One settle tick: tiles sent as JPEG that have gone still are owed their lossless
 /// picture, and the engine is woken to take the round that sends it.
 async fn settle_tiles(shared: &Shared) {
     if shared.video.lock().await.tiles.tick() {
@@ -1343,7 +1343,7 @@ async fn settle_tiles(shared: &Shared) {
 }
 
 /// Collect finished rounds in push order and forward their tiles, and owe tiles that
-/// went still their exact picture.
+/// went still their lossless picture.
 ///
 /// The settle timer belongs here rather than anywhere the rounds arrive, because the
 /// case it exists for is a screen that has stopped producing them.
@@ -1447,7 +1447,7 @@ async fn send_round(
     shared.round_bytes.store(bytes as u64, Ordering::Relaxed);
     held.settle(bytes);
     shared.rounds.fetch_add(1, Ordering::Relaxed);
-    if round.exact() {
+    if round.lossless() {
         shared.refreshes.fetch_add(1, Ordering::Relaxed);
     }
     if round.coarse() {
@@ -1455,7 +1455,7 @@ async fn send_round(
     }
     debug!(
         "{engine}: {} {} tile(s) in {} rectangle(s), {bytes} bytes",
-        if round.exact() {
+        if round.lossless() {
             "refreshed".to_owned()
         } else if round.coarse() {
             format!("sent coarse at q{}", round.quality())
@@ -1510,7 +1510,7 @@ fn micros(since: Instant) -> u64 {
 /// - `passed` and `keyframe` are read together for a passed stream: keyframe bytes
 ///   against all of them say how much of the stream the remote spent starting over.
 /// - `rounds`, `refreshes`, `coarse`, `jpeg` and `png` are the tiles: how many rounds
-///   went, how many of them sent still tiles exactly and how many changed tiles
+///   went, how many of them sent still tiles losslessly and how many changed tiles
 ///   coarse, and what the rectangles came to in each format.
 /// - `coding` against `waiting` says whether the rounds overlapped the read loop:
 ///   `waiting` accrues only while the order task finds a round *unfinished*.
@@ -2420,8 +2420,8 @@ mod tests {
     }
 
     /// A session's first picture on a link not yet measured comes coarse, every tile
-    /// of many colours a JPEG, and settles to the exact picture once it is still;
-    /// on a link measured fast it comes exact at once.
+    /// of many colours a JPEG, and settles to the lossless picture once it is still;
+    /// on a link measured fast it comes lossless at once.
     #[tokio::test]
     async fn a_first_picture_on_an_unmeasured_link_comes_coarse_and_settles() {
         let (sink, mut frame_rx) = video_sink(256, 128).await;
@@ -2431,18 +2431,18 @@ mod tests {
         assert!(first.iter().all(|unit| unit.format == Format::Jpeg));
         assert_eq!(sink.shared.coarse.load(Ordering::Relaxed), 1);
         drop(first);
-        // The settle ticks make it exact, nothing coarse among them: as an engine
+        // The settle ticks make it lossless, nothing coarse among them: as an engine
         // does, every wake-up a frame.
-        let mut exact = 0;
+        let mut lossless = 0;
         tokio::time::timeout(Duration::from_secs(5), async {
-            while exact < 8 {
+            while lossless < 8 {
                 sink.round_returned().await;
                 sink.frame().await.unwrap();
                 sink.flush().await;
                 while let Ok(msg) = frame_rx.try_recv() {
                     let ServerMsg::Tile(unit) = msg else { panic!("expected tiles, got {msg:?}") };
-                    assert_eq!(unit.format, Format::Png, "a refresh was not exact");
-                    exact += usize::from(unit.w / 64);
+                    assert_eq!(unit.format, Format::Png, "a refresh was not lossless");
+                    lossless += usize::from(unit.w / 64);
                 }
             }
         })
@@ -2459,7 +2459,7 @@ mod tests {
     }
 
     /// A reattach, which resets the session's link feedback, takes the sink's paint
-    /// window back to unmeasured: a whole picture on a link measured fast comes exact,
+    /// window back to unmeasured: a whole picture on a link measured fast comes lossless,
     /// and after a reattach comes coarse again, until the new link has been seen.
     #[tokio::test]
     async fn a_reattached_browser_is_not_taken_at_the_last_ones_link() {
@@ -2656,11 +2656,11 @@ mod tests {
         assert_eq!(second.iter().map(|unit| unit.h).sum::<u16>(), 192);
     }
 
-    /// A tile sent as JPEG is sent again exactly once it is still, woken by the settle
+    /// A tile sent as JPEG is sent again losslessly once it is still, woken by the settle
     /// tick the way a returning round wakes the engine, and nothing after that: a still
-    /// screen costs nothing once it is exact.
+    /// screen costs nothing once it is lossless.
     #[tokio::test(start_paused = true)]
-    async fn a_still_jpeg_tile_is_sent_again_exactly_and_then_nothing() {
+    async fn a_still_jpeg_tile_is_sent_again_losslessly_and_then_nothing() {
         let (sink, mut frame_rx) = video_sink(128, 64).await;
         let photo = rect(0, 0, 64, 64);
         let lossy = round(&sink, &mut frame_rx, photo, &noise(64, 64, 1)).await;
@@ -2678,29 +2678,29 @@ mod tests {
         })
         .await
         .expect("a still JPEG tile was never refreshed");
-        let exact = drain_tiles(&mut frame_rx).await;
-        assert_eq!(exact.iter().map(|unit| (unit.x, unit.y, unit.w, unit.h, unit.format)).collect::<Vec<_>>(), [(0, 0, 64, 64, Format::Png)]);
+        let lossless = drain_tiles(&mut frame_rx).await;
+        assert_eq!(lossless.iter().map(|unit| (unit.x, unit.y, unit.w, unit.h, unit.format)).collect::<Vec<_>>(), [(0, 0, 64, 64, Format::Png)]);
         assert_eq!(sink.shared.refreshes.load(Ordering::Relaxed), 1);
-        drop(exact);
+        drop(lossless);
 
         tokio::time::sleep(SETTLE_TICK * 4).await;
-        assert!(sink.due_at().await.is_none(), "an exact picture was owed again");
+        assert!(sink.due_at().await.is_none(), "a lossless picture was owed again");
         sink.frame().await.unwrap();
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "an exact picture was sent again");
+        assert!(frame_rx.try_recv().is_err(), "a lossless picture was sent again");
     }
 
-    /// A tile of few colours is exact the first time, and owes nothing when it goes
+    /// A tile of few colours is lossless the first time, and owes nothing when it goes
     /// still.
     #[tokio::test(start_paused = true)]
-    async fn an_exact_tile_owes_nothing_when_it_goes_still() {
+    async fn a_lossless_tile_owes_nothing_when_it_goes_still() {
         let (sink, mut frame_rx) = video_sink(320, 240).await;
         let area = rect(0, 0, 320, 64);
         let tiles = round(&sink, &mut frame_rx, area, &vec![90; 320 * 64 * 3]).await;
         assert!(tiles.iter().all(|unit| unit.format == Format::Png));
         drop(tiles);
         tokio::time::sleep(SETTLE_TICK * 4).await;
-        assert!(sink.due_at().await.is_none(), "an exact tile was owed a refresh");
+        assert!(sink.due_at().await.is_none(), "a lossless tile was owed a refresh");
     }
 
     /// What the engines park on. `None` has to mean "nothing could be taken now", or a

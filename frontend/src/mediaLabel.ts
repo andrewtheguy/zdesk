@@ -177,13 +177,13 @@ export function renderLabel(plan: string): string {
 
 /** The wire fields of `hostPicture`: what an RDP host's pipeline has drawn with. */
 export interface HostPicture {
-  exact: boolean;
+  lossless: boolean;
   codecs: string[];
 }
 
 /**
  * The Host's picture row of an RDP session with the graphics pipeline: whether
- * what the host has drawn so far is its picture exactly, and with which codecs.
+ * what the host has drawn so far is lossless, and with which codecs.
  * Null on any other session, which has no row; an empty list is a pipeline that
  * has drawn nothing yet.
  */
@@ -192,7 +192,7 @@ export function hostPictureLabel(picture: HostPicture): string {
     return "Nothing drawn yet";
   }
   const codecs = picture.codecs.join(", ");
-  return picture.exact
+  return picture.lossless
     ? `Lossless (${codecs})`
     : `Lossy (${codecs}): the host's image quality policy is not Lossless`;
 }

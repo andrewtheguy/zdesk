@@ -92,7 +92,7 @@ png = "0.18"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # The picture the gateway codes itself, plain VNC's and the RDP bitmap path's, is
 # 64×64 tiles of the desktop (src/tiles.rs): a changed tile as JPEG, or as PNG
-# (the `png` above) where it is few enough colours to be exact, and every JPEG tile
+# (the `png` above) where it is few enough colours to be lossless, and every JPEG tile
 # sent again as PNG once it stops changing. Both are images the browser decodes on
 # its own, so the page carries no decoder for them. Pure Rust: `simd` picks its AVX2
 # kernels at run time, and the baseline build runs on any x86-64 and on arm64.

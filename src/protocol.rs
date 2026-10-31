@@ -943,7 +943,7 @@ impl StandardUnit {
 ///   replaces what the canvas held there whatever it held, and none depends on another,
 ///   so a client draws them in order, and decodes them in any.
 /// - A JPEG record is the lossy pass of tiles that are still changing, and the gateway
-///   sends them again as PNG once they are still; a PNG record is the exact pixels.
+///   sends them again as PNG once they are still; a PNG record is lossless.
 /// - A client acknowledges a batch when it has drawn it and not before: the gateway
 ///   sends the next tiles as the client paints, which is how the picture follows the
 ///   client's link.
@@ -1425,12 +1425,12 @@ pub enum ServerMsg {
     /// correct in the config file.
     RemoteOs { macos: bool },
     /// What an RDP host's graphics pipeline has drawn with so far, by codec, and
-    /// whether that is the host's picture exactly — which a Windows host's image
+    /// whether that is lossless — which a Windows host's image
     /// quality policy decides and nothing in the protocol says
     /// ([`crate::rdp_client::Event::Drawn`]). Sent whenever the host draws with
     /// something it had not, and again on every repaint of a session that keeps
     /// its engine; never for a picture of bitmap updates.
-    HostPicture { exact: bool, codecs: Vec<&'static str> },
+    HostPicture { lossless: bool, codecs: Vec<&'static str> },
     /// The part of an RDP host's passed graphics pipeline this display shows, in
     /// the pixels of the picture the page composes from it: the column of the
     /// host's desktop the display is, `w` by `h` from `x`, `y`. Sent only in a
@@ -1653,7 +1653,7 @@ enum ControlMsg<'a> {
         render: &'a str,
     },
     RemoteOs { macos: bool },
-    HostPicture { exact: bool, codecs: &'a [&'static str] },
+    HostPicture { lossless: bool, codecs: &'a [&'static str] },
     Resizing { active: bool },
     ScreenUnavailable { active: bool },
     PictureWithheld { active: bool, hevc: bool },
@@ -1870,8 +1870,8 @@ impl ServerMsg {
                 control(&ControlMsg::VideoFormat { decode, strips: *strips, engine: *engine })
             }
             ServerMsg::RemoteOs { macos } => control(&ControlMsg::RemoteOs { macos: *macos }),
-            ServerMsg::HostPicture { exact, codecs } => {
-                control(&ControlMsg::HostPicture { exact: *exact, codecs })
+            ServerMsg::HostPicture { lossless, codecs } => {
+                control(&ControlMsg::HostPicture { lossless: *lossless, codecs })
             }
             ServerMsg::Resizing { active } => control(&ControlMsg::Resizing { active: *active }),
             ServerMsg::ScreenUnavailable { active } => control(&ControlMsg::ScreenUnavailable { active: *active }),
@@ -2475,11 +2475,11 @@ mod tests {
 
     #[test]
     fn host_picture_names_its_codecs() {
-        let msg = ServerMsg::HostPicture { exact: false, codecs: vec!["Planar", "RemoteFX Progressive"] };
+        let msg = ServerMsg::HostPicture { lossless: false, codecs: vec!["Planar", "RemoteFX Progressive"] };
         assert!(msg.is_display());
         assert_eq!(
             msg.text_frame().as_deref(),
-            Some(r#"{"type":"hostPicture","exact":false,"codecs":["Planar","RemoteFX Progressive"]}"#)
+            Some(r#"{"type":"hostPicture","lossless":false,"codecs":["Planar","RemoteFX Progressive"]}"#)
         );
     }
 

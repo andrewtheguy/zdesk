@@ -780,7 +780,7 @@ impl Graphics {
                         info!(
                             "rdp: the host has drawn with {} so far, {}",
                             names.join(", "),
-                            if self.fidelity.exact() { "exact" } else { "not exact" }
+                            if self.fidelity.lossless() { "lossless" } else { "not lossless" }
                         );
                         updates.push(Update::Drawn(self.fidelity.clone()));
                     }

@@ -2463,7 +2463,7 @@ export function useRemoteDesktop(
           // the pipeline's first run must find a compositor with nothing in it.
           painter()?.startGraphics();
           setVideoStream({ decode: "", composed: true });
-          setHostPicture({ exact: true, codecs: [] });
+          setHostPicture({ lossless: true, codecs: [] });
           break;
         case "standardStart":
           // Queued the same way: the picture's first rectangle must find a
@@ -2499,7 +2499,7 @@ export function useRemoteDesktop(
           painter()?.endRegion(msg.stream);
           break;
         case "hostPicture":
-          setHostPicture({ exact: msg.exact, codecs: msg.codecs });
+          setHostPicture({ lossless: msg.lossless, codecs: msg.codecs });
           break;
         case "graphicsView":
           handleGraphicsView(msg);

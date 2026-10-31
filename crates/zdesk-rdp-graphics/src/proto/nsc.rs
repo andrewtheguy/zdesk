@@ -154,7 +154,7 @@ mod tests {
         out
     }
 
-    /// Raw planes, no subsampling, no colour loss: YCoCg back to RGB exactly.
+    /// Raw planes, no subsampling, no colour loss: YCoCg back to RGB losslessly.
     #[test]
     fn raw_planes_convert_from_ycocg() {
         // One pixel: Y = 100, Co = 20, Cg = -10 (0xF6), alpha whatever.

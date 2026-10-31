@@ -34,7 +34,7 @@
 // - A `wlshare` target's picture is one of three, all wlshare's own and passed
 //   through, which their labels leave unsaid: its H.264 of the whole desktop,
 //   which it paces to the link, its progressive tiles, or its tiles with motion,
-//   exact PNG where the desktop is still and video only where it moves, for a
+//   lossless PNG where the desktop is still and video only where it moves, for a
 //   LAN: see `pictureOptions`. The video until another is chosen, each greyed
 //   in a browser that cannot decode it: the video and the tiles' H.264 where
 //   there is no `VideoDecoder`, the progressive tiles where the page cannot
@@ -458,7 +458,7 @@ function pictureOptions(
 const GATEWAY_ADAPTIVE: PictureOption = {
   value: null,
   label: "Gateway adaptive, settles to lossless",
-  note: "The Mac's lossless Full quality, coded by the gateway as tiles that fit this browser's link: JPEG while a region changes, exact once it has settled. Resumes when this browser comes back.",
+  note: "The Mac's lossless Full quality, coded by the gateway as tiles that fit this browser's link: JPEG while a region changes, lossless once it has settled. Resumes when this browser comes back.",
   disabled: false,
 };
 

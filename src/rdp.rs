@@ -1632,7 +1632,7 @@ async fn active_loop(
                         sink.pass_graphics(wrapped, frame).await?;
                     }
                     Event::Drawn(fidelity) => {
-                        let msg = ServerMsg::HostPicture { exact: fidelity.exact(), codecs: fidelity.names() };
+                        let msg = ServerMsg::HostPicture { lossless: fidelity.lossless(), codecs: fidelity.names() };
                         sink.msg(msg.clone()).await?;
                         if let Some(tab) = &mut tab {
                             tab.msg(msg.clone()).await;

@@ -24,7 +24,7 @@
 //!   changed.
 //! - [`compositor`] — the pipeline and a framebuffer together, fed commands that
 //!   were passed on.
-//! - [`fidelity`] — whether what a host has drawn with is its picture exactly.
+//! - [`fidelity`] — whether what a host has drawn with is lossless.
 //! - [`pool`] — the threads the decoding that runs side by side runs on.
 
 pub mod avc;

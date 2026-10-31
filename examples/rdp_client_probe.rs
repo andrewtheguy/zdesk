@@ -467,7 +467,7 @@ struct Tally {
     /// When the pipeline first began, against which the wait for it is judged
     /// (`PIPELINE_WAIT` in the RDP client).
     pipeline_began: Option<Instant>,
-    /// What the pipeline has drawn with so far, and so whether it is exact.
+    /// What the pipeline has drawn with so far, and so whether it is lossless.
     host_picture: Option<Fidelity>,
     paints: u64,
     /// Frame boundaries the host marked, which only the graphics pipeline does.

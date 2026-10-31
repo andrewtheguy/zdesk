@@ -206,7 +206,7 @@ pub enum Event {
     /// before there is a frame to cut in half.
     FramesMarked,
     /// The pipeline drew with something it had not drawn with before: what it has
-    /// drawn with so far, and so whether its picture is the host's exactly. A
+    /// drawn with so far, and so whether its picture is lossless. A
     /// pipeline that starts over ([`Event::FramesMarked`]) starts from nothing.
     Drawn(Fidelity),
     /// The desktop was redefined — resized, or rebuilt at the same size — and the

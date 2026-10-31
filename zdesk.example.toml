@@ -499,7 +499,7 @@ password_ref = "example"
 # page to decode, paced by the browser's link, and never lossless. "Gateway
 # adaptive, settles to lossless", the one a session that names no passthrough gets,
 # asks the Mac for its Full quality, the lossless zlib, which the gateway inflates
-# and codes as its tiles: JPEG while a region changes, exact once it has
+# and codes as its tiles: JPEG while a region changes, lossless once it has
 # settled. No key selects either.
 # [[targets]]
 # name = "mac-screen-sharing"
@@ -610,10 +610,10 @@ password_ref = "example"
 # How a target's picture is coded is not configured: each picture has one way.
 # Where the gateway codes the picture — plain VNC, a Standard Mac's Full quality
 # and RDP's bitmap path — it is tiles: the desktop in 64×64 tiles, a changed tile
-# of few colours sent exactly as PNG and any other as JPEG at quality 90, sent
-# again exactly as PNG once it has stopped changing. Tiles go as fast as the
+# of few colours sent losslessly as PNG and any other as JPEG at quality 90, sent
+# again losslessly as PNG once it has stopped changing. Tiles go as fast as the
 # browser paints them, and a change the link would take too long to carry comes
-# first as a coarse JPEG that sharpens to the exact picture once it is still. A
+# first as a coarse JPEG that sharpens to the lossless picture once it is still. A
 # `wlshare` target's picture is wlshare's own, passed through: its H.264 video,
 # its progressive tiles, or its tiles with motion, chosen at the picker, each
 # coded and paced by wlshare. A passed Mac media stream or RDP graphics pipeline

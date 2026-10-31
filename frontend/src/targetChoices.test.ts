@@ -248,7 +248,7 @@ test("a Standard Mac's picture is its Adaptive picture passed, or the gateway's 
   assert.equal(first.choices.passthrough, "apple-adaptive", "the first");
   assert.match(first.pictures?.[0].label ?? "", /^Apple's Adaptive \(beta\)/);
   assert.match(first.pictures?.[1].label ?? "", /^Gateway adaptive/);
-  assert.match(first.pictures?.[1].note ?? "", /exact once it has settled/);
+  assert.match(first.pictures?.[1].note ?? "", /lossless once it has settled/);
   // Nothing remembered is the first; a remembered null is the gateway's tiles.
   assert.equal(
     targetOptions(STANDARD, { standardView: "one" }, ABLE).choices.passthrough,
