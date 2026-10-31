@@ -117,13 +117,13 @@ zdesk password master create
 zdesk password encrypt
 ```
 
-见[目标密码](guide.zh-CN.md#目标密码)。在前台启动网关：
+见[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)。在前台启动网关：
 
 ```sh
 zdesk serve
 ```
 
-然后打开 <http://localhost:52380>。[使用 zDesk](guide.zh-CN.md) 介绍各类目标如何设置，以及如何从另一台计算机访问页面。
+然后打开 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-CN/guide) 介绍各类目标如何设置，以及如何从另一台计算机访问页面。
 
 ## 容器
 

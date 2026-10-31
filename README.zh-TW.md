@@ -15,7 +15,7 @@ Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建�
 瀏覽器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面
 ```
 
-`zdesk serve` 是單一使用者的：一組登入、一份目標清單、一個進行中的工作階段。原生安裝套件還包含 [`zdesk tui`](docs/guide.zh-TW.md#本機執行個體)，這是一個本機控制平面，可以並排執行多個彼此獨立的閘道執行個體。
+`zdesk serve` 是單一使用者的：一組登入、一份目標清單、一個進行中的工作階段。原生安裝套件還包含 [`zdesk tui`](https://zdesk.dev/zh-TW/guide#local-instances)，這是一個本機控制平面，可以並排執行多個彼此獨立的閘道執行個體。
 
 > [!WARNING]
 > **不保證回溯相容。** zDesk 的[方向](docs/architecture.md#direction)仍在調整中，任何版本都可能變更或移除某個設定項、WebSocket 協定或某項功能，且不再讀取舊的寫法。升級時請對照 [`zdesk.example.toml`](zdesk.example.toml) 檢查你的設定。頁面和閘道屬於同一個版本：升級時仍開著的分頁會顯示兩者的版本號，並提示重新載入。這裡說的是相容性，而不是穩定性：我一直在實際使用未標示為實驗性的功能，它們一直很穩定。
@@ -122,7 +122,7 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-接著貼上目標的密碼，它會用你的主密碼加密（請見[目標密碼](docs/guide.zh-TW.md#目標密碼)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 輸出要以 `workstation = "…"` 的形式加到 `[passwords]` 下的值。
+接著貼上目標的密碼，它會用你的主密碼加密（請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 輸出要以 `workstation = "…"` 的形式加到 `[passwords]` 下的值。
 
 ```sh
 zdesk password master create
@@ -155,13 +155,13 @@ docker run -d --name zdesk -p 52380:52380 \
 zdesk tui
 ```
 
-它只監聽回送位址，位於 <http://zdesk.localhost:52380>。按 `n` 建立執行個體，按 `e` 在其設定中新增目標，按 `p` 加密目標的密碼，按 `s` 啟動執行個體，按 `o` 在瀏覽器中開啟它。[本機執行個體](docs/guide.zh-TW.md#本機執行個體)列出了所有按鍵。容器映像檔不包含控制平面。
+它只監聽回送位址，位於 <http://zdesk.localhost:52380>。按 `n` 建立執行個體，按 `e` 在其設定中新增目標，按 `p` 加密目標的密碼，按 `s` 啟動執行個體，按 `o` 在瀏覽器中開啟它。[本機執行個體](https://zdesk.dev/zh-TW/guide#local-instances)列出了所有按鍵。容器映像檔不包含控制平面。
 
 [安裝 zDesk](docs/install.zh-TW.md) 涵蓋所有平台、升級和解除安裝。
 
 ## 文件
 
-- [使用 zDesk](docs/guide.zh-TW.md)：瀏覽器用戶端、啟動工作階段、設定 Windows、Mac、wlshare 和 VNC 目標、`zdesk tui`
+- [使用 zDesk](https://zdesk.dev/zh-TW/guide)：瀏覽器用戶端、啟動工作階段、設定 Windows、Mac、wlshare 和 VNC 目標、`zdesk tui`
 - [安裝 zDesk](docs/install.zh-TW.md)：套件、首次設定、升級、解除安裝
 
 以下文件只有英文版：
@@ -186,7 +186,7 @@ cargo run -- gen-passwd admin
 cargo run -- serve -c zdesk.toml
 ```
 
-複製的範例參照了 `[passwords].example`，但需要你自己加上該值。請依[目標密碼](docs/guide.zh-TW.md#目標密碼)設定目標的加密密碼和主密碼檔案。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`，此時不需要主密碼。
+複製的範例參照了 `[passwords].example`，但需要你自己加上該值。請依[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)設定目標的加密密碼和主密碼檔案。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`，此時不需要主密碼。
 
 Cargo 會建置前端並將其編譯進二進位檔，因此閘道是唯一提供頁面的程式。檢查指令：
 

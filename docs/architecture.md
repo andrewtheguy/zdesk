@@ -3,7 +3,7 @@
 zDesk is a single-user gateway for RDP and VNC targets, including Macs reached
 through their built-in Screen Sharing service. A Rust backend owns the remote
 protocol session and exposes one common HTTP/WebSocket interface to the React SPA,
-which is the only client. [Using zDesk](guide.md) is the operator's view of
+which is the only client. [Using zDesk](https://zdesk.dev/guide) is the operator's view of
 the same system.
 
 ## Data path

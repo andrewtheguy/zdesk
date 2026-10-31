@@ -283,7 +283,7 @@ site_passwd = ""
 # an "rdp" target over MS-RDPECAM and MS-RDPEAI and on a "wlshare" target over
 # wlshare's extensions: the tick is the offer, and the session's floating menu
 # turns the device on, per session. Described under Camera and microphone in
-# docs/guide.md.
+# the guide, https://zdesk.dev/guide#camera-and-microphone.
 #
 # Graphics is how an "rdp" host draws its pipeline: High quality, the pipeline's
 # codecs without H.264, for a LAN, where a slow link

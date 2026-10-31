@@ -117,13 +117,13 @@ zdesk password master create
 zdesk password encrypt
 ```
 
-請見[目標密碼](guide.zh-TW.md#目標密碼)。在前景啟動閘道：
+請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)。在前景啟動閘道：
 
 ```sh
 zdesk serve
 ```
 
-然後開啟 <http://localhost:52380>。[使用 zDesk](guide.zh-TW.md) 說明各類目標如何設定，以及如何從另一台電腦存取頁面。
+然後開啟 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-TW/guide) 說明各類目標如何設定，以及如何從另一台電腦存取頁面。
 
 ## 容器
 

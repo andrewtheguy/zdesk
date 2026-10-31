@@ -152,14 +152,14 @@ zdesk password master create
 zdesk password encrypt
 ```
 
-See [Target passwords](guide.md#target-passwords). Start the gateway in the
+See [Target passwords](https://zdesk.dev/guide#target-passwords). Start the gateway in the
 foreground:
 
 ```sh
 zdesk serve
 ```
 
-Then open <http://localhost:52380>. [Using zDesk](guide.md) says how each
+Then open <http://localhost:52380>. [Using zDesk](https://zdesk.dev/guide) says how each
 kind of target is set up and how the page is reached from another machine.
 
 ## Container
