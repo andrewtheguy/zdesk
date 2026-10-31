@@ -22,7 +22,7 @@ crate-type = ["cdylib"]
 zdesk-rdp-graphics = { path = "../../../crates/zdesk-rdp-graphics" }
 # The tables and the stream of wlshare's progressive tiles, which the page decodes
 # here, at the gateway's pin.
-wlshare-proto = { path = "../../../../wlshare/crates/wlshare-proto" }
+wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v9" }
 rayon = "1"
 # wlshare's lossless tiles: each body one zstd frame of a planar bitmap, read by
 # a zstd decoder in Rust, which needs no C toolchain for the page's target.

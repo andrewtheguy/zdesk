@@ -4191,6 +4191,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "wlshare-proto"
 version = "9.0.0"
+source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v9#a8e760b677f5a21f8cf5b9b768a6a864033b2f22"
 dependencies = [
  "thiserror",
 ]
