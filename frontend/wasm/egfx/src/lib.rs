@@ -393,20 +393,36 @@ impl WlshareTiles {
     /// The pixels of `body`, one of wlshare's lossless tiles: one zstd frame of a
     /// planar bitmap of exactly a `w`×`h` rectangle, depending on nothing before
     /// it, as `R, G, B, A` rows for the page to put there. Throws for one that does
-    /// not decode.
+    /// not decode, or whose frame holds more than any planar bitmap of the
+    /// rectangle can be ([`planar_most`]), which is not read past.
     pub fn planar(&mut self, w: u16, h: u16, body: &[u8]) -> Result<Vec<u8>, JsError> {
         let fail = |e: String| JsError::new(&format!("a {w}x{h} lossless tile: {e}"));
         self.bitmap.clear();
+        let most = planar_most(w, h);
         let mut source = body;
-        let mut frame = ruzstd::decoding::StreamingDecoder::new(&mut source).map_err(|e| fail(e.to_string()))?;
-        std::io::Read::read_to_end(&mut frame, &mut self.bitmap).map_err(|e| fail(e.to_string()))?;
-        drop(frame);
+        let frame = ruzstd::decoding::StreamingDecoder::new(&mut source).map_err(|e| fail(e.to_string()))?;
+        let mut capped = std::io::Read::take(frame, most as u64 + 1);
+        std::io::Read::read_to_end(&mut capped, &mut self.bitmap).map_err(|e| fail(e.to_string()))?;
+        if self.bitmap.len() > most {
+            self.bitmap = Vec::new();
+            return Err(fail(format!("a zstd frame of more than the {most} bytes a planar bitmap of it can be")));
+        }
+        drop(capped);
         if !source.is_empty() {
             return Err(fail(format!("{} bytes past its zstd frame", source.len())));
         }
         zdesk_rdp_graphics::proto::planar::decompress(&self.bitmap, &mut self.planes, &mut self.pixels, w, h).map_err(|e| fail(e.to_string()))?;
         Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
     }
+}
+
+/// The most bytes a planar bitmap of a `w`×`h` rectangle can be: its format
+/// header, four planes — the alpha plane the codec reads past among them — of
+/// at most two bytes a pixel, a run-length coded row's worst being a segment
+/// to each pixel, a control byte and the pixel's byte, and the padding byte
+/// the plain form ends with.
+fn planar_most(w: u16, h: u16) -> usize {
+    1 + 4 * 2 * usize::from(w) * usize::from(h) + 1
 }
 
 impl Default for WlshareTiles {

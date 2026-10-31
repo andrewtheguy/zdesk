@@ -1155,7 +1155,7 @@ block instead, and its lossless tiles every tile a planar bitmap, and no stream
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of eight kinds: a PNG of it, a region
+Every rectangle of an update is one of nine kinds: a PNG of it, a region
 stream's first frame, its next, its end, a copy of what the page holds
 elsewhere, a scroll or a window moved, a tile of it kept in the page's cache
 of tiles, a tile drawn from that cache, a window switched back to or a page
