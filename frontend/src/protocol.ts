@@ -561,6 +561,9 @@ export type HoldCause = "size";
 
 const BATCH_FRAME_KIND = 0x02;
 const BATCH_HEADER_LEN = 8;
+// A batch header's flag: the update its records belong to goes on in the next
+// batch, and is shown whole with it (`FLAG_CONTINUED` in `src/protocol.rs`).
+const BATCH_CONTINUED = 0x01;
 const AUDIO_FRAME_KIND = 0x03;
 const AUDIO_HEADER_LEN = 4;
 const AUDIO_FLAG_GAP = 0x01;
@@ -616,7 +619,7 @@ const VIDEO_STRIP_FLAGS = VIDEO_STRIP | VIDEO_STRIP_INDEX | VIDEO_STRIP_ENDS;
 // matching `batch` in `src/protocol.rs`):
 //
 //   offset 0: u8  frame kind, always 0x02 (batch)
-//   offset 1: u8  flags, always 0
+//   offset 1: u8  flags: bit 0 continued, and nothing else
 //   offset 2: u16 record count
 //   offset 4: u32 sequence, increasing per attachment
 //   offset 8: records, back to back
@@ -662,11 +665,25 @@ export function batchFrameSequence(buf: ArrayBuffer): number | null {
     return null;
   }
   const view = new DataView(buf);
-  if (view.getUint8(0) !== BATCH_FRAME_KIND || view.getUint8(1) !== 0) {
+  if (
+    view.getUint8(0) !== BATCH_FRAME_KIND ||
+    (view.getUint8(1) & ~BATCH_CONTINUED) !== 0
+  ) {
     return null;
   }
   const sequence = view.getUint32(4, true);
   return sequence === 0 ? null : sequence;
+}
+
+/**
+ * Whether a batch is continued: the update its records belong to goes on in
+ * the next batch, which the paint worker waits for before drawing any of it.
+ */
+export function batchFrameContinued(buf: ArrayBuffer): boolean {
+  return (
+    batchFrameSequence(buf) !== null &&
+    (new DataView(buf).getUint8(1) & BATCH_CONTINUED) !== 0
+  );
 }
 
 function decodeRecord(

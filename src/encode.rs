@@ -1278,12 +1278,12 @@ impl VideoSink {
 
     /// Make room in the run being gathered for a record of `bytes`, before its share
     /// of [`QUEUE_BUDGET`] is taken: a run that would pass a batch's worth is queued
-    /// first. A batch cuts there anyway, and a run gathered past the budget would wait
+    /// first, continued, as its update goes on. A batch cuts there anyway, and a run gathered past the budget would wait
     /// on room only its own queueing frees.
     async fn gather_room(&self, bytes: usize) -> anyhow::Result<()> {
         let mut gathered = self.shared.gathered.lock().await;
         if gathered.bytes + bytes > MAX_BATCH_BYTES {
-            self.send_run(&mut gathered).await?;
+            self.send_run_continued(&mut gathered, true).await?;
         }
         Ok(())
     }
@@ -1296,12 +1296,19 @@ impl VideoSink {
         gathered.bytes += bytes;
     }
 
+    /// Queue the records gathered as the run that ends their update.
     async fn send_run(&self, gathered: &mut Gathered) -> anyhow::Result<()> {
+        self.send_run_continued(gathered, false).await
+    }
+
+    /// Queue the records gathered as a run, `continued` where their update goes on
+    /// in the next ([`ServerMsg::Run`]).
+    async fn send_run_continued(&self, gathered: &mut Gathered, continued: bool) -> anyhow::Result<()> {
         if gathered.records.is_empty() {
             return Ok(());
         }
         gathered.bytes = 0;
-        self.send(Pending::Msg(ServerMsg::Run(std::mem::take(&mut gathered.records)))).await
+        self.send(Pending::Msg(ServerMsg::Run { records: std::mem::take(&mut gathered.records), continued })).await
     }
 
     async fn send(&self, item: Pending) -> anyhow::Result<()> {
@@ -1658,7 +1665,7 @@ mod tests {
     /// The records of a run of wlshare's tiles ([`ServerMsg::Run`]).
     fn run(msg: &ServerMsg) -> &[ServerMsg] {
         match msg {
-            ServerMsg::Run(records) => records,
+            ServerMsg::Run { records, .. } => records,
             other => panic!("expected a run, got {other:?}"),
         }
     }
@@ -2068,7 +2075,8 @@ mod tests {
 
     /// wlshare's tiles wait for the end of the update that carried them, and go then
     /// as one run, which the wire puts in one batch; a run reaching a batch's worth
-    /// goes without waiting, before the next tile takes its share of the queue.
+    /// goes without waiting, before the next tile takes its share of the queue,
+    /// continued, as its update goes on.
     #[tokio::test]
     async fn wlshares_tiles_go_as_one_run_an_update() {
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
@@ -2081,6 +2089,7 @@ mod tests {
         sink.flush().await;
         let out = drain(&mut frame_rx, 1).await;
         assert_eq!(run(&out[0]).len(), 21, "the update's 20 tiles and its copy");
+        assert!(matches!(out[0], ServerMsg::Run { continued: false, .. }), "the update's whole");
         assert!(frame_rx.try_recv().is_err());
 
         let half = MAX_BATCH_BYTES / 2;
@@ -2091,6 +2100,10 @@ mod tests {
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
         assert_eq!((run(&out[0]).len(), run(&out[1]).len()), (2, 1), "cut at a batch's worth");
+        assert!(
+            matches!((&out[0], &out[1]), (ServerMsg::Run { continued: true, .. }, ServerMsg::Run { continued: false, .. })),
+            "the cut run continued into the update's last"
+        );
         assert!(frame_rx.try_recv().is_err());
     }
 

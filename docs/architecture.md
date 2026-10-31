@@ -2436,7 +2436,7 @@ has the room, spells it out.
 Screen updates use little-endian binary frames:
 
 ```text
-u8 kind = 0x02 | u8 flags = 0 | u16 record count | u32 sequence | records
+u8 kind = 0x02 | u8 flags | u16 record count | u32 sequence | records
 
 VIDEO    op 0x03: u8 flags | u16 w | u16 h | u32 len | payload[len]
 GRAPHICS op 0x04: u32 len | message[len]
@@ -2455,8 +2455,15 @@ FramebufferUpdate of wlshare's tiles. The engine gathers an update's records and
 hands them on together, cutting them at a batch's 256 KiB. Handed on as they
 were read, they went one or two to a batch on a link that kept up, and every
 batch is acknowledged: a picture of small progressive tiles cost thousands of
-acknowledgments a second, megabits a second from the browser. Receivers reject unknown operations and truncated
-records, and reject a nonzero frame flags byte. A `VIDEO` record's own flags byte
+acknowledgments a second, megabits a second from the browser. An update cut so
+is shown whole: every batch of it but its last has the frame flag `0x01`,
+continued, and the paint worker holds a continued batch, acknowledging it at
+once, as the rest of its update is behind that acknowledgment, and draws it
+with the next batch that is not, or ahead of whatever command comes first.
+The canvas is shown whenever the worker's task ends, so an update drawn a
+batch at a time was shown part one frame and part the last: a moving picture
+of planar or progressive tiles torn along its runs' rows. Receivers reject
+unknown operations and truncated records, and reject any other frame flag. A `VIDEO` record's own flags byte
 is `0x01` for a keyframe, and for a unit that is one strip of the picture
 ([in strips](#apples-media-stream-passed-through)) `0x02`, with the strip's
 number from the top in `0x0C` and `0x10` on the last strip of its frame —

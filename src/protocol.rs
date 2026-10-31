@@ -439,6 +439,10 @@ pub enum ClientMsg {
 pub mod batch {
     pub const FRAME_KIND: u8 = 0x02;
     pub const HEADER_LEN: usize = 8;
+    /// The batch header's flag: the update its records belong to goes on in the
+    /// next batch, which the browser waits for before it shows any of it
+    /// ([`super::ServerMsg::Run`]).
+    pub const FLAG_CONTINUED: u8 = 0x01;
 
     pub const OP_VIDEO: u8 = 0x03;
     pub const OP_GRAPHICS: u8 = 0x04;
@@ -1303,7 +1307,15 @@ pub enum ServerMsg {
     /// in a batch of their own. Passed one at a time, an update's records each went
     /// in a batch of their own on a link that kept up, each acknowledged by the
     /// browser: thousands of acknowledgments a second for a picture of small tiles.
-    Run(Vec<ServerMsg>),
+    ///
+    /// An update of more than a batch's worth goes as several runs, each cut at a
+    /// batch's worth of bytes ([`crate::wire::MAX_BATCH_BYTES`]) so its records'
+    /// share of the queue's budget moves on. Every run but the update's last is
+    /// `continued`, and every batch it makes is marked so
+    /// ([`batch::FLAG_CONTINUED`]): the browser holds them and shows the update
+    /// whole with its last batch, so a moving picture is never shown part this
+    /// frame and part the last.
+    Run { records: Vec<ServerMsg>, continued: bool },
     /// Build the decoder for moving region `stream` of wlshare's tiles with this
     /// configuration: ahead of the stream's first [`ServerMsg::Region`], and of the
     /// first of a new stream on an id that was ended. `engine` is the engine that
@@ -1762,7 +1774,7 @@ impl ServerMsg {
                 | ServerMsg::Region(_)
                 | ServerMsg::Copy(_)
                 | ServerMsg::Cache(_)
-                | ServerMsg::Run(_)
+                | ServerMsg::Run { .. }
                 | ServerMsg::RegionFormat { .. }
                 | ServerMsg::RegionEnd { .. }
                 | ServerMsg::VideoFormat { .. }
@@ -1793,7 +1805,7 @@ impl ServerMsg {
             | ServerMsg::Region(_)
             | ServerMsg::Copy(_)
             | ServerMsg::Cache(_)
-            | ServerMsg::Run(_)
+            | ServerMsg::Run { .. }
             | ServerMsg::Audio(_)
             | ServerMsg::AudioGap => {
                 return None;

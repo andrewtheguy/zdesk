@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  batchFrameContinued,
   batchFrameSequence,
   clickCount,
   decodeAudioFrame,
@@ -26,8 +27,18 @@ test("a screen batch carries its attachment-local sequence", () => {
   frame[0] = 0x03;
   assert.equal(batchFrameSequence(frame.buffer), null);
   frame[0] = 0x02;
+  frame[1] = 2;
+  assert.equal(batchFrameSequence(frame.buffer), null, "a flag that is none");
+});
+
+test("a continued batch says so, and is a batch all the same", () => {
+  const frame = new Uint8Array([0x02, 0, 0, 0, 7, 0, 0, 0]);
+  assert.equal(batchFrameContinued(frame.buffer), false);
   frame[1] = 1;
-  assert.equal(batchFrameSequence(frame.buffer), null);
+  assert.equal(batchFrameContinued(frame.buffer), true);
+  assert.equal(batchFrameSequence(frame.buffer), 7);
+  frame[1] = 3;
+  assert.equal(batchFrameContinued(frame.buffer), false, "not a batch");
 });
 
 test("screen batch sequences start at one; zero is not an attachment sequence", () => {
