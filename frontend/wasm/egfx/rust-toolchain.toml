@@ -5,6 +5,6 @@
 # A dated nightly, because how the compiler takes `atomics` is changing
 # (rust-lang/rust#162235). rustup installs it from this file on the first build.
 [toolchain]
-channel = "nightly-2026-09-29"
+channel = "nightly-2026-10-31"
 components = ["rust-src"]
 profile = "minimal"
