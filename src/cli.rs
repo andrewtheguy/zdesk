@@ -110,7 +110,7 @@ pub enum Commands {
     },
 
     /// Encrypt the config's passwords, printing what to paste: the web login's
-    /// as [server].site_passwd, and each target's under [passwords], by the name
+    /// as [server].site_passwd_enc, and each target's under [passwords], by the name
     /// its password_ref or vnc_password_ref gives.
     ///
     /// The master password is the config's [server].master_password_file when
@@ -133,7 +133,7 @@ pub enum PasswordAction {
         action: MasterAction,
     },
     /// Print a password encrypted under the config's [master], to paste as
-    /// [server].site_passwd = "…" for the web login, or under its [passwords] as
+    /// [server].site_passwd_enc = "…" for the web login, or under its [passwords] as
     /// NAME = "…", NAME being what a target's password_ref or vnc_password_ref
     /// says. Prompts for it (twice on a terminal; one line when piped)
     Encrypt {

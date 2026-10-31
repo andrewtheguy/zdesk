@@ -358,8 +358,8 @@ async fn serve(config: AppConfig) -> anyhow::Result<()> {
             target.name, target.host, target.port, target.protocol
         );
     }
-    if let Some(site_passwd) = config.auth.login() {
-        info!("web login: user {:?}", site_passwd.username());
+    if let Some(site_passwd_enc) = config.auth.login() {
+        info!("web login: user {:?}", site_passwd_enc.username());
     }
 
     // Race the servers against an explicit shutdown signal. Relying on the OS

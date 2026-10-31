@@ -107,7 +107,7 @@ Copy-Item "$env:ProgramFiles\zdesk\share\doc\zdesk\zdesk.example.toml" "$env:Pro
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-在 `[server].site_username` 中设置网页登录的用户名，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。密码都不以明文写入：网页登录的密码是 `[server].site_passwd`，目标通过 `password_ref` 引用自己的密码，配置用你的主密码将两者加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password encrypt` 从该文件读取主密码并输出一个值：一次为网页登录的密码，以 `site_passwd = "…"` 的形式粘贴；一次为目标的密码，以 `example = "…"` 的形式粘贴到 `[passwords]` 下：
+在 `[server].site_username` 中设置网页登录的用户名，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。密码都不以明文写入：网页登录的密码是 `[server].site_passwd_enc`，目标通过 `password_ref` 引用自己的密码，配置用你的主密码将两者加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password encrypt` 从该文件读取主密码并输出一个值：一次为网页登录的密码，以 `site_passwd_enc = "…"` 的形式粘贴；一次为目标的密码，以 `example = "…"` 的形式粘贴到 `[passwords]` 下：
 
 ```sh
 zdesk password master create
@@ -127,12 +127,12 @@ zdesk serve
 
 镜像发布于 Linux amd64 和 arm64，带有 `latest` 和 `v<version>` 标签。镜像中没有 `zdesk tui`。
 
-与任何提供服务的网关一样，主密码来自一个文件。把它保存在 secret 中，在配置中指定该文件，并用同一镜像写入配置的密码，粘贴每条命令输出的内容：网页登录的密码粘贴为 `[server].site_passwd`，每个目标的密码粘贴到 `[passwords]` 下：
+与任何提供服务的网关一样，主密码来自一个文件。把它保存在 secret 中，在配置中指定该文件，并用同一镜像写入配置的密码，粘贴每条命令输出的内容：网页登录的密码粘贴为 `[server].site_passwd_enc`，每个目标的密码粘贴到 `[passwords]` 下：
 
 ```toml
 [server]
 site_username = "admin"
-site_passwd = "$ZD;1;AES-256-GCM;…"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

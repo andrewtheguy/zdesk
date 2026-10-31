@@ -203,7 +203,7 @@ file the gateway reads its master password from:
 ```toml
 [server]
 site_username = "admin"
-site_passwd = "$ZD;1;AES-256-GCM;…"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -218,7 +218,7 @@ Then paste in the passwords, encrypted under your master password (see
 [Target passwords](https://zdesk.dev/guide#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
 prints a `[master]` block for the config; `password encrypt` prints a value, so
-run it twice: once for the web login's password, pasted as `site_passwd = "…"`,
+run it twice: once for the web login's password, pasted as `site_passwd_enc = "…"`,
 and once for the target's, added as `workstation = "…"` under `[passwords]`.
 
 ```sh
@@ -295,7 +295,7 @@ cargo run -- serve -c zdesk.toml
 ```
 
 The copied example names `[passwords].example` but leaves it and
-`[server].site_passwd` for you to add. Set up the master-password file and the
+`[server].site_passwd_enc` for you to add. Set up the master-password file and the
 encrypted passwords as described in
 [Target passwords](https://zdesk.dev/guide#target-passwords): `password encrypt`
 prints the value for each, the web login's included. For a target with an empty

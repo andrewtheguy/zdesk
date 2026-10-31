@@ -1456,15 +1456,15 @@ pub struct ServerSection {
     /// overriding one half from the command line and taking the other from the
     /// file is how a gateway ends up on an address nobody wrote down.
     pub listen: Option<String>,
-    /// The web login's username. Required with [`Self::site_passwd`] — without a
+    /// The web login's username. Required with [`Self::site_passwd_enc`] — without a
     /// login everything but the SPA shell and `/api/auth/*` refuses requests, so
     /// an empty value would lock the server to nobody.
     pub site_username: Option<String>,
     /// The web login's password, encrypted as a `[passwords]` value is: what
     /// `zdesk password encrypt` prints, opened by the same `[master]` and
     /// [`Self::master_password_file`]. Required with [`Self::site_username`].
-    pub site_passwd: Option<String>,
-    /// [`Self::site_passwd`] decrypted by [`ConfigFile::unlock`], and empty until
+    pub site_passwd_enc: Option<String>,
+    /// [`Self::site_passwd_enc`] decrypted by [`ConfigFile::unlock`], and empty until
     /// then. Never written in the file.
     #[serde(skip)]
     pub site_password: String,
@@ -1505,7 +1505,7 @@ pub struct ServerSection {
 }
 
 /// Where the web login's encrypted password is, for its errors.
-const SITE_PASSWD: &str = "[server].site_passwd";
+const SITE_PASSWD_ENC: &str = "[server].site_passwd_enc";
 
 /// The default display name when `[branding].text` is unset.
 pub const DEFAULT_BRANDING: &str = "zDesk";
@@ -1724,7 +1724,7 @@ pub struct ConfigFile {
     pub master: Option<MasterSection>,
     /// The `[passwords]` table: each target password, encrypted, by the name a
     /// target's `password_ref` or `vnc_password_ref` gives it. The web login's
-    /// password is not here: it is `[server].site_passwd`, encrypted the same way. Written by
+    /// password is not here: it is `[server].site_passwd_enc`, encrypted the same way. Written by
     /// what `zdesk password encrypt` prints, or by the TUI's `p`. An empty value
     /// is a placeholder: the empty password, kept until a real one replaces it,
     /// and nothing to decrypt.
@@ -2139,7 +2139,7 @@ impl ConfigFile {
     }
 
     /// Every password a target names is in `[passwords]`, every value there but a
-    /// placeholder and `[server].site_passwd` have the shape of one `zdesk password
+    /// placeholder and `[server].site_passwd_enc` have the shape of one `zdesk password
     /// encrypt` prints, and a `[master]` block is there to open them — all of it
     /// checked without the key, which reading a file never has.
     fn check_passwords(&self) -> anyhow::Result<()> {
@@ -2170,21 +2170,21 @@ impl ConfigFile {
                 );
             }
         }
-        if let Some(value) = self.site_passwd() {
-            crate::vault::check_value(SITE_PASSWD, value)?;
+        if let Some(value) = self.site_passwd_enc() {
+            crate::vault::check_value(SITE_PASSWD_ENC, value)?;
             anyhow::ensure!(
                 self.master.is_some(),
-                "{SITE_PASSWD} has no [master] block to open it — `zdesk password master show` or `create` prints one"
+                "{SITE_PASSWD_ENC} has no [master] block to open it — `zdesk password master show` or `create` prints one"
             );
         }
         Ok(())
     }
 
-    /// `[server].site_passwd` as written, when it is there and not blank.
-    fn site_passwd(&self) -> Option<&str> {
+    /// `[server].site_passwd_enc` as written, when it is there and not blank.
+    fn site_passwd_enc(&self) -> Option<&str> {
         self.server
             .as_ref()
-            .and_then(|server| server.site_passwd.as_deref())
+            .and_then(|server| server.site_passwd_enc.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
     }
@@ -2193,7 +2193,7 @@ impl ConfigFile {
     /// whether this file needs its master password before it can serve. A
     /// placeholder needs none.
     pub fn needs_master(&self) -> bool {
-        self.site_passwd().is_some() || self.targets.iter().any(|target| {
+        self.site_passwd_enc().is_some() || self.targets.iter().any(|target| {
             [&target.password_ref, &target.vnc_password_ref]
                 .into_iter()
                 .flatten()
@@ -2219,9 +2219,9 @@ impl ConfigFile {
             return Ok(());
         }
         let key = key.context("the config names passwords, and nothing gave its master password")?;
-        if let Some(value) = self.site_passwd() {
-            let password = key.decrypt(SITE_PASSWD, value)?;
-            anyhow::ensure!(!password.is_empty(), "{SITE_PASSWD} opens to the empty password");
+        if let Some(value) = self.site_passwd_enc() {
+            let password = key.decrypt(SITE_PASSWD_ENC, value)?;
+            anyhow::ensure!(!password.is_empty(), "{SITE_PASSWD_ENC} opens to the empty password");
             if let Some(server) = &mut self.server {
                 server.site_password = password;
             }
@@ -2382,11 +2382,11 @@ impl ConfigFile {
             (None, None) => ListenAddr::Tcp(DEFAULT_LISTEN.to_owned()),
         };
         let username = server.site_username.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let has_password = server.site_passwd.as_deref().is_some_and(|s| !s.trim().is_empty());
+        let has_password = server.site_passwd_enc.as_deref().is_some_and(|s| !s.trim().is_empty());
         let (Some(username), true) = (username, has_password) else {
             anyhow::bail!(
-                "[server].site_username and [server].site_passwd are required — \
-                 site_passwd is what `zdesk password encrypt` prints"
+                "[server].site_username and [server].site_passwd_enc are required — \
+                 site_passwd_enc is what `zdesk password encrypt` prints"
             );
         };
         // The password is empty here when the file was only checked, never
@@ -2685,7 +2685,7 @@ fn installed_layout_for_exe(exe: &Path) -> Option<InstalledLayout> {
 
 /// A test's config text with the `[master]` and `[passwords]` blocks its targets'
 /// `password_ref`s and `vnc_password_ref`s need, and the `[master]` its
-/// `site_passwd` needs, so a fixture names its passwords the way a real config
+/// `site_passwd_enc` needs, so a fixture names its passwords the way a real config
 /// does without spelling out tables only their shape is checked in. The values open under no key: [`ConfigFile::unlock`] is the vault's
 /// tests' to drive.
 #[cfg(test)]
@@ -2791,11 +2791,11 @@ mod tests {
         assert_eq!(state_dir(Path::new("uat.toml")), Path::new(""), "the working directory");
     }
 
-    /// The web login's `site_username` and `site_passwd` lines, for configs that
+    /// The web login's `site_username` and `site_passwd_enc` lines, for configs that
     /// get resolved — resolve requires the login. The value has an encrypted
     /// value's shape and opens under no key, as [`vaulted`]'s do.
-    fn site_passwd_line() -> String {
-        format!("site_username = \"admin\"\nsite_passwd = \"{}{}\"", crate::vault::PREFIX, "A".repeat(40))
+    fn site_login_lines() -> String {
+        format!("site_username = \"admin\"\nsite_passwd_enc = \"{}{}\"", crate::vault::PREFIX, "A".repeat(40))
     }
 
     fn minimal() -> String {
@@ -2811,7 +2811,7 @@ mod tests {
             password_ref = "p"
             host = "192.0.2.10"
             "#,
-            site_passwd_line()
+            site_login_lines()
         )
     }
 
@@ -2826,8 +2826,8 @@ mod tests {
     fn minimal_config_gets_defaults() {
         let config = ConfigFile::parse_fixture(&minimal()).unwrap().resolve().unwrap();
         assert_eq!(config.listen.to_string(), DEFAULT_LISTEN);
-        let site_passwd = config.auth.login().expect("a served gateway logs in");
-        assert_eq!(site_passwd.username(), "admin");
+        let site_passwd_enc = config.auth.login().expect("a served gateway logs in");
+        assert_eq!(site_passwd_enc.username(), "admin");
         assert_eq!(config.targets.len(), 1);
         let t = &config.targets[0];
         assert_eq!(t.name, "one");
@@ -2856,7 +2856,7 @@ mod tests {
             password_ref = "p"
             host = "192.0.2.10"
             "#,
-            site_passwd_line()
+            site_login_lines()
         )
     }
 
@@ -3080,7 +3080,7 @@ mod tests {
             password_ref = "p"
             host = "192.0.2.10"
             "#,
-            site_passwd_line()
+            site_login_lines()
         );
         let config = ConfigFile::parse_fixture(&toml).unwrap().resolve().unwrap();
         assert_eq!(config.branding.text, "Acme Remote");
@@ -3338,7 +3338,7 @@ mod tests {
             protocol = "vnc"
             host = "10.0.0.3"
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap();
         let config = config.resolve().unwrap();
@@ -3373,21 +3373,21 @@ mod tests {
         };
         refused(toml);
         let value = format!("{}{}", crate::vault::PREFIX, "A".repeat(40));
-        refused(&format!("[server]\nsite_passwd = \"{value}\"\n{toml}"));
+        refused(&format!("[server]\nsite_passwd_enc = \"{value}\"\n{toml}"));
         refused(&format!("[server]\nsite_username = \"admin\"\n{toml}"));
         // Whitespace-only is as good as absent.
-        refused(&format!("[server]\nsite_username = \"  \"\nsite_passwd = \"{value}\"\n{toml}"));
-        refused(&format!("[server]\nsite_username = \"admin\"\nsite_passwd = \"  \"\n{toml}"));
+        refused(&format!("[server]\nsite_username = \"  \"\nsite_passwd_enc = \"{value}\"\n{toml}"));
+        refused(&format!("[server]\nsite_username = \"admin\"\nsite_passwd_enc = \"  \"\n{toml}"));
     }
 
     /// A password written as it is, rather than encrypted, is refused when the
     /// file is read, as a target's would be.
     #[test]
-    fn a_plaintext_site_passwd_is_rejected() {
+    fn a_plaintext_site_passwd_enc_is_rejected() {
         let toml = r#"
             [server]
             site_username = "admin"
-            site_passwd = "hunter2"
+            site_passwd_enc = "hunter2"
 
             [[targets]]
             name = "one"
@@ -3398,17 +3398,17 @@ mod tests {
         "#;
         let err = ConfigFile::parse_fixture(toml).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("[server].site_passwd") && msg.contains("zdesk password encrypt"), "{msg}");
+        assert!(msg.contains("[server].site_passwd_enc") && msg.contains("zdesk password encrypt"), "{msg}");
     }
 
     /// The web login's password opens under the file's `[master]`, and a file that
     /// encrypts nothing else still needs its master password for it.
     #[test]
-    fn the_site_passwd_opens_under_the_master() {
+    fn the_site_passwd_enc_opens_under_the_master() {
         let master = crate::vault::MasterPassword::new("correct horse".to_owned()).unwrap();
         let (section, key) = crate::vault::Key::create(&master).unwrap();
         let text = format!(
-            "[server]\nsite_username = \"admin\"\nsite_passwd = \"{}\"\n\n\
+            "[server]\nsite_username = \"admin\"\nsite_passwd_enc = \"{}\"\n\n\
              [master]\nsalt = \"{}\"\ncheck = \"{}\"\n\n\
              [[targets]]\nname = \"one\"\nprotocol = \"vnc\"\nhost = \"192.0.2.10\"\n",
             key.encrypt("hunter2").unwrap(),
@@ -3427,7 +3427,7 @@ mod tests {
         // Without [master] there is nothing to open it with.
         let text = text.replace(&format!("[master]\nsalt = \"{}\"\ncheck = \"{}\"\n", section.salt, section.check), "");
         let err = ConfigFile::parse(&text).unwrap_err();
-        assert!(format!("{err:#}").contains("site_passwd has no [master]"), "{err:#}");
+        assert!(format!("{err:#}").contains("site_passwd_enc has no [master]"), "{err:#}");
     }
 
     #[test]
@@ -3587,7 +3587,7 @@ mod tests {
             host = "10.0.0.4"
             vnc_password_ref = "hunter2"
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap()
         .resolve()
@@ -3607,7 +3607,7 @@ mod tests {
             host = "10.0.0.4"
             port = 5901
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap()
         .resolve()
@@ -3630,7 +3630,7 @@ mod tests {
             host = "192.0.2.10"
             {extra}
             "#,
-            site_passwd_line()
+            site_login_lines()
         )
     }
 
@@ -3650,7 +3650,7 @@ mod tests {
             host = "10.0.0.4"
             {extra}
             "#,
-            site_passwd_line()
+            site_login_lines()
         )
     }
 
@@ -3715,7 +3715,7 @@ mod tests {
     #[test]
     fn a_placeholder_password_needs_no_master() {
         // Without the web login, whose own password always needs the master.
-        let target = vnc_toml(r#"vnc_password_ref = "pi""#).replace(&site_passwd_line(), "");
+        let target = vnc_toml(r#"vnc_password_ref = "pi""#).replace(&site_login_lines(), "");
         let placeholder = format!("{target}\n[passwords]\npi = \"\"\n");
         let mut file = ConfigFile::parse(&placeholder).unwrap();
         assert!(!file.needs_master());
@@ -3788,7 +3788,7 @@ mod tests {
             username = "Administrator"
             password_ref = "hunter2"
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap_err();
         let msg = format!("{err:#}");
@@ -3851,7 +3851,7 @@ mod tests {
         let err = ConfigFile::parse_fixture(&format!(
             "[server]\n{}\n\n[[targets]]\nname = \"pc\"\nprotocol = \"rdp\"\nhost = \"10.0.0.5\"\n\
              username = \"Administrator\"\npassword_ref = \"h\"\nvirtual_display = true\n",
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap_err();
         assert!(format!("{err:#}").contains("only subtype \"ard\" takes"), "{err:#}");
@@ -4320,7 +4320,7 @@ vnc_password_ref = \"x\"")).unwrap();
             host = "10.0.0.5"
             vnc_password_ref = "hunter2"
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap_err();
         let msg = format!("{err:#}");
@@ -4347,7 +4347,7 @@ vnc_password_ref = \"x\"")).unwrap();
         for keys in ["", "username = \"u\"", "password_ref = \"p\""] {
             let err = ConfigFile::parse_fixture(&format!(
                 "[server]\n{}\n[[targets]]\nname = \"w\"\nprotocol = \"rdp\"\nhost = \"h\"\n{keys}\n",
-                site_passwd_line()
+                site_login_lines()
             ))
             .unwrap_err();
             let msg = format!("{err:#}");
@@ -4373,7 +4373,7 @@ vnc_password_ref = \"x\"")).unwrap();
                 password_ref = "p"
                 clipboard = true
                 "#,
-                site_passwd_line()
+                site_login_lines()
             ))
             .unwrap_err();
             assert!(format!("{err:#}").contains("clipboard"), "{protocol}: {err:#}");
@@ -4390,7 +4390,7 @@ vnc_password_ref = \"x\"")).unwrap();
         let target = |body: &str| {
             ConfigFile::parse_fixture(&format!(
                 "[server]\n{}\n[[targets]]\nname = \"desk\"\nhost = \"10.0.0.5\"\n{body}\n",
-                site_passwd_line()
+                site_login_lines()
             ))
             .unwrap()
             .resolve()
@@ -4436,7 +4436,7 @@ vnc_password_ref = \"x\"")).unwrap();
     #[test]
     fn a_camera_and_a_microphone_are_offered_on_rdp_and_wlshare_alone() {
         let parse = |target: &str| {
-            ConfigFile::parse_fixture(&format!("[server]\n{}\n\n[[targets]]\n{target}", site_passwd_line()))
+            ConfigFile::parse_fixture(&format!("[server]\n{}\n\n[[targets]]\n{target}", site_login_lines()))
                 .and_then(|file| file.resolve())
                 .unwrap()
                 .targets
@@ -4491,7 +4491,7 @@ vnc_password_ref = \"x\"")).unwrap();
                 host = "10.0.0.5"
                 egfx = {value}
                 "#,
-                site_passwd_line()
+                site_login_lines()
             ))
             .unwrap_err();
             let rendered = format!("{err:#}");
@@ -4513,7 +4513,7 @@ vnc_password_ref = \"x\"")).unwrap();
                 host = "10.0.0.5"
                 egfx = {value}
                 "#,
-                site_passwd_line()
+                site_login_lines()
             ))
         };
         assert!(!parse("false").unwrap().resolve().unwrap().targets[0].egfx(), "the bitmap path is one key away");
@@ -4543,7 +4543,7 @@ vnc_password_ref = \"x\"")).unwrap();
                 host = "10.0.0.5"
                 {extra}
                 "#,
-                site_passwd_line()
+                site_login_lines()
             ))
             .and_then(ConfigFile::resolve)
             .unwrap()
@@ -4608,7 +4608,7 @@ vnc_password_ref = \"x\"")).unwrap();
     fn a_standard_mac_carries_no_sound() {
         let target = "[[targets]]\nname = \"mac\"\nprotocol = \"vnc\"\nsubtype = \"ard\"\n\
                       host = \"10.0.0.5\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
-        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_passwd_line()))
+        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
             .unwrap()
             .resolve()
             .unwrap();
@@ -4622,7 +4622,7 @@ vnc_password_ref = \"x\"")).unwrap();
     fn high_performance_carries_its_media_streams_sound() {
         let target = "[[targets]]\nname = \"mac\"\nprotocol = \"vnc\"\nsubtype = \"ard-high-performance\"\n\
                       host = \"10.0.0.5\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
-        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_passwd_line()))
+        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
             .unwrap()
             .resolve()
             .unwrap();
@@ -4641,7 +4641,7 @@ vnc_password_ref = \"x\"")).unwrap();
         // The format is the protocol's, and is what the RDP client asks a host for.
         let rdp = ConfigFile::parse_fixture(&format!(
             "[server]\n{}\n[[targets]]\nname = \"w\"\nprotocol = \"rdp\"\nhost = \"h\"\nusername = \"u\"\npassword_ref = \"p\"\n",
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap()
         .resolve()
@@ -4652,7 +4652,7 @@ vnc_password_ref = \"x\"")).unwrap();
         // for, which is the same 48 kHz stereo and needs no resampling either.
         let vnc = ConfigFile::parse_fixture(&format!(
             "[server]\n{}\n[[targets]]\nname = \"v\"\nprotocol = \"vnc\"\nsubtype = \"wlshare\"\nhost = \"h\"\n",
-            site_passwd_line()
+            site_login_lines()
         ))
         .unwrap()
         .resolve()
@@ -4679,7 +4679,7 @@ vnc_password_ref = \"x\"")).unwrap();
             host = "10.0.0.5"
             {body}
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))?
         .resolve()
     }
@@ -4701,7 +4701,7 @@ vnc_password_ref = \"x\"")).unwrap();
             egfx = false
             {body}
             "#,
-            site_passwd_line()
+            site_login_lines()
         ))?
         .resolve()
     }
@@ -4729,7 +4729,7 @@ vnc_password_ref = \"x\"")).unwrap();
         for kind in ["", "subtype = \"ard\"\nusername = \"u\"", "subtype = \"ard-high-performance\"\nusername = \"u\""] {
             let target = ConfigFile::parse_fixture(&format!(
                 "[server]\n{}\n[[targets]]\nname = \"v\"\nprotocol = \"vnc\"\n{kind}\nhost = \"h\"\npassword_ref = \"p\"\n",
-                site_passwd_line()
+                site_login_lines()
             ))
             .and_then(ConfigFile::resolve)
             .unwrap()

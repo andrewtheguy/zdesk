@@ -107,7 +107,7 @@ Copy-Item "$env:ProgramFiles\zdesk\share\doc\zdesk\zdesk.example.toml" "$env:Pro
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-在 `[server].site_username` 中設定網頁登入的使用者名稱，並把範例中的 `[[targets]]` 項目換成要存取的遠端桌面。密碼都不以明文寫入：網頁登入的密碼是 `[server].site_passwd`，目標透過 `password_ref` 參照自己的密碼，設定用你的主密碼將兩者加密儲存，閘道從 `[server].master_password_file` 指定的檔案讀取主密碼。在設定中為它指定設定旁邊的一個檔案（`master_password_file = "master-password"`；相對路徑以設定所在的目錄為基準）。接著 `password master create` 詢問新的主密碼，把它寫入該檔案（該檔案沿用目錄僅限你的帳號存取的權限），並輸出要貼到設定中的 `[master]` 區塊；`password encrypt` 從該檔案讀取主密碼並輸出一個值：一次給網頁登入的密碼，以 `site_passwd = "…"` 的形式貼上；一次給目標的密碼，以 `example = "…"` 的形式貼到 `[passwords]` 下：
+在 `[server].site_username` 中設定網頁登入的使用者名稱，並把範例中的 `[[targets]]` 項目換成要存取的遠端桌面。密碼都不以明文寫入：網頁登入的密碼是 `[server].site_passwd_enc`，目標透過 `password_ref` 參照自己的密碼，設定用你的主密碼將兩者加密儲存，閘道從 `[server].master_password_file` 指定的檔案讀取主密碼。在設定中為它指定設定旁邊的一個檔案（`master_password_file = "master-password"`；相對路徑以設定所在的目錄為基準）。接著 `password master create` 詢問新的主密碼，把它寫入該檔案（該檔案沿用目錄僅限你的帳號存取的權限），並輸出要貼到設定中的 `[master]` 區塊；`password encrypt` 從該檔案讀取主密碼並輸出一個值：一次給網頁登入的密碼，以 `site_passwd_enc = "…"` 的形式貼上；一次給目標的密碼，以 `example = "…"` 的形式貼到 `[passwords]` 下：
 
 ```sh
 zdesk password master create
@@ -127,12 +127,12 @@ zdesk serve
 
 映像檔發布於 Linux amd64 和 arm64，附有 `latest` 和 `v<version>` 標籤。映像檔中沒有 `zdesk tui`。
 
-與任何提供服務的閘道一樣，主密碼來自一個檔案。把它保存在 secret 中，在設定中指定該檔案，並用同一映像檔寫入設定的密碼，貼上每個命令輸出的內容：網頁登入的密碼貼為 `[server].site_passwd`，每個目標的密碼貼到 `[passwords]` 下：
+與任何提供服務的閘道一樣，主密碼來自一個檔案。把它保存在 secret 中，在設定中指定該檔案，並用同一映像檔寫入設定的密碼，貼上每個命令輸出的內容：網頁登入的密碼貼為 `[server].site_passwd_enc`，每個目標的密碼貼到 `[passwords]` 下：
 
 ```toml
 [server]
 site_username = "admin"
-site_passwd = "$ZD;1;AES-256-GCM;…"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

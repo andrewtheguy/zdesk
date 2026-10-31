@@ -134,7 +134,7 @@ notepad "$env:ProgramData\zdesk\zdesk.toml"
 
 Set the web login's username in `[server].site_username` and replace the
 example `[[targets]]` entry with the remote desktop to reach. No password is
-written as it is: the web login's is `[server].site_passwd` and the target names
+written as it is: the web login's is `[server].site_passwd_enc` and the target names
 its own with `password_ref`, and the config keeps both encrypted under your
 master password, which the gateway reads from the file
 `[server].master_password_file` names. Name a file beside the config for it
@@ -143,7 +143,7 @@ config's directory). `password master create` then asks for a new master
 password, writes it to that file, which takes the directory's owner-only
 permissions, and prints the `[master]` block to paste into the config;
 `password encrypt` reads it from the file and prints a value, once for the web
-login's password, to paste as `site_passwd = "…"`, and once for the target's,
+login's password, to paste as `site_passwd_enc = "…"`, and once for the target's,
 to paste as `example = "…"` under `[passwords]`:
 
 ```sh
@@ -170,12 +170,12 @@ tags. The image has no `zdesk tui`.
 The master password comes from a file, as for any served gateway. Keep it in
 a secret, name that file in the config, and write the config's passwords with
 the same image, pasting what each prints: the web login's as
-`[server].site_passwd`, each target's under `[passwords]`:
+`[server].site_passwd_enc`, each target's under `[passwords]`:
 
 ```toml
 [server]
 site_username = "admin"
-site_passwd = "$ZD;1;AES-256-GCM;…"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

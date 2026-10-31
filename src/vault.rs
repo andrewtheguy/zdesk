@@ -2,12 +2,12 @@
 //!
 //! A target names its password (`password_ref = "win11"`) rather than writing it,
 //! and the config's `[passwords]` table holds each one as an AES-256-GCM value; a
-//! served gateway's web login holds its own in `[server].site_passwd`:
+//! served gateway's web login holds its own in `[server].site_passwd_enc`:
 //!
 //! ```toml
 //! [server]
 //! site_username = "admin"
-//! site_passwd = "$ZD;1;AES-256-GCM;…"
+//! site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 //!
 //! [master]
 //! salt = "…"
@@ -24,7 +24,7 @@
 //! a wrong master password is told as one at start-up, before any value is tried.
 //! A value is the password alone: what it is called is the config's to say, so
 //! `zdesk password encrypt` prints one to paste under whatever name a target
-//! gives it, or as `site_passwd`.
+//! gives it, or as `site_passwd_enc`.
 //!
 //! Where the master password comes from is the deployment's to say, and each
 //! audience has its own answer — `[server].master_password_file` for a served
@@ -234,7 +234,7 @@ impl Key {
     }
 
     /// The password `value` holds; `field` is where the config keeps it
-    /// (`[passwords].win11`, `[server].site_passwd`), for the error.
+    /// (`[passwords].win11`, `[server].site_passwd_enc`), for the error.
     pub fn decrypt(&self, field: &str, value: &str) -> anyhow::Result<String> {
         let blob = decode_value(field, value)?;
         let (nonce, sealed) = blob.split_at(NONCE_LEN);
