@@ -5,8 +5,8 @@
 //! is what keeps each mode free of the other's machinery.
 //!
 //! **The login.** `[server].site_username` names the one user, and
-//! `[server].site_password_ref` names that user's password in `[passwords]`,
-//! encrypted like a target's (see [`crate::vault`]). `/api/auth/login` verifies a
+//! `[server].site_passwd_enc` holds that user's password, encrypted like a
+//! target's (see [`crate::vault`]). `/api/auth/login` verifies a
 //! username/password pair against them and mints a session token, and everything
 //! guarded (the rest of `/api/*`, `/ws`) requires that token in the cookie.
 //! Sessions live in memory only — a server restart logs every browser out,
@@ -26,7 +26,7 @@
 //! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tui")]
@@ -41,22 +41,35 @@ pub const COOKIE_NAME: &str = "zdesk_session";
 /// Sliding session lifetime: every validated request pushes the expiry out.
 const SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Argon2id's cost for checking a login: 19 MiB and two passes, OWASP's minimum.
+/// Every guess at `/api/auth/login` pays it, which is what makes guessing a human's
+/// password slow; a lighter cost than the vault's, which is paid once per start.
+const LOGIN_ARGON2_MEMORY_KIB: u32 = 19 * 1024;
+const LOGIN_ARGON2_PASSES: u32 = 2;
+const LOGIN_SALT_LEN: usize = 16;
+
 /// A served gateway's web login: the one username allowed to log in and its
-/// password, `[server].site_username` and the `[passwords]` entry
-/// `[server].site_password_ref` names, decrypted by
+/// password, `[server].site_username` and `[server].site_passwd_enc`, decrypted by
 /// [`crate::config::ConfigFile::unlock`].
 ///
-/// Both are kept as SHA-256 digests rather than as written, so a login attempt
-/// compares two values of one length whatever was typed, and the password itself
-/// is not held for the life of the process.
+/// The username is kept as a SHA-256 digest, so it is compared at one length
+/// whatever was typed. The password is kept as Argon2id of it under a salt drawn
+/// at start, so the password itself is not held for the life of the process and
+/// every guess costs [`LOGIN_ARGON2_MEMORY_KIB`] and its passes.
 #[derive(Clone)]
 pub struct SiteLogin {
     username: String,
     username_digest: [u8; 32],
-    password_digest: [u8; 32],
+    /// `None` when no password was decrypted (a config only checked, not
+    /// served): such a login lets nobody in.
+    password_hash: Option<[u8; 32]>,
+    salt: [u8; LOGIN_SALT_LEN],
+    /// One check at a time. Each takes Argon2id's memory, so a flood of guesses
+    /// waits here in turn rather than allocating it once per guess at once.
+    checking: Arc<Mutex<()>>,
 }
 
-// Manual Debug so an AppConfig dump never prints a digest of the password.
+// Manual Debug so an AppConfig dump never prints a hash of the password.
 impl std::fmt::Debug for SiteLogin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SiteLogin")
@@ -66,13 +79,19 @@ impl std::fmt::Debug for SiteLogin {
 }
 
 impl SiteLogin {
-    /// The login for `username` and its decrypted `password`.
+    /// The login for `username` and its decrypted `password`. An empty password
+    /// is one never decrypted, and opens to nothing.
     pub fn new(username: &str, password: &str) -> anyhow::Result<Self> {
         anyhow::ensure!(!username.is_empty(), "the login username is empty");
+        let mut salt = [0u8; LOGIN_SALT_LEN];
+        rand::fill(&mut salt[..]);
+        let password_hash = (!password.is_empty()).then(|| stretch(password, &salt)).transpose()?;
         Ok(Self {
             username: username.to_owned(),
             username_digest: digest(username),
-            password_digest: digest(password),
+            password_hash,
+            salt,
+            checking: Arc::new(Mutex::new(())),
         })
     }
 
@@ -82,18 +101,33 @@ impl SiteLogin {
     }
 
     /// Check a login attempt. Both halves are compared in full whatever the other
-    /// said, so a wrong username and a wrong password take the same time; and an
-    /// empty password is never right, so a login whose password was never
-    /// decrypted (a config only checked, not served) lets nobody in.
+    /// said, so a wrong username and a wrong password take the same time. Blocks
+    /// for Argon2id's cost and for any check ahead of it, so call it off the
+    /// async workers.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
-        let password_ok = bytes_match(&digest(password), &self.password_digest);
-        username_ok & password_ok & !password.is_empty()
+        let Some(expected) = &self.password_hash else {
+            return false;
+        };
+        let _turn = self.checking.lock().unwrap_or_else(PoisonError::into_inner);
+        let password_ok = stretch(password, &self.salt).is_ok_and(|hash| bytes_match(&hash, expected));
+        username_ok & password_ok
     }
 }
 
 fn digest(text: &str) -> [u8; 32] {
     sha2::Sha256::digest(text.as_bytes()).into()
+}
+
+/// Argon2id of a login password under `salt`, at the login's cost.
+fn stretch(password: &str, salt: &[u8; LOGIN_SALT_LEN]) -> anyhow::Result<[u8; 32]> {
+    let params = argon2::Params::new(LOGIN_ARGON2_MEMORY_KIB, LOGIN_ARGON2_PASSES, 1, Some(32))
+        .map_err(|error| anyhow::anyhow!("invalid Argon2 parameters: {error}"))?;
+    let mut hash = [0u8; 32];
+    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
+        .hash_password_into(password.as_bytes(), salt, &mut hash)
+        .map_err(|error| anyhow::anyhow!("Argon2id failed: {error}"))?;
+    Ok(hash)
 }
 
 /// How this process decides that a request may proceed at all.
@@ -141,10 +175,12 @@ impl GatewayAuth {
 /// The secret a worker and its one client share: 32 random bytes,
 /// base64url, minted per launch.
 ///
-/// Deliberately not encrypted the way a [`SiteLogin`]'s password is. Encryption
-/// protects a credential at rest against whoever reads where it rests, and this one
-/// never rests: it is generated in memory, written once to a pipe held by the
-/// process that spawned this one, and gone when this one exits.
+/// Deliberately neither encrypted nor stretched the way a [`SiteLogin`]'s password
+/// is. Encryption protects a credential at rest against whoever reads where it
+/// rests, and this one never rests: it is generated in memory, written once to a
+/// pipe held by the process that spawned this one, and gone when this one exits.
+/// And there is nobody to be slow for: Argon2id's cost exists to make guessing a
+/// *human's* password expensive, and 32 random bytes are not guessable at any cost.
 #[cfg(feature = "tui")]
 #[derive(Clone)]
 pub struct WorkerToken(String);

@@ -1465,9 +1465,9 @@ pub struct ServerSection {
     /// [`Self::master_password_file`]. Required with [`Self::site_username`].
     pub site_passwd_enc: Option<String>,
     /// [`Self::site_passwd_enc`] decrypted by [`ConfigFile::unlock`], and empty until
-    /// then. Never written in the file.
+    /// then. Never written in the file, and never in a Debug dump of it.
     #[serde(skip)]
-    pub site_password: String,
+    pub site_password: Redacted,
     /// A file holding the master password that opens `[passwords]`: a container's
     /// secret (`/run/secrets/…`), a systemd credential, a file only the service's
     /// account reads. A relative path is taken from the config file's directory.
@@ -1502,6 +1502,17 @@ pub struct ServerSection {
     /// a request whose own `Host` is a loopback name, so a gateway behind a real
     /// hostname or address ignores this however it is set.
     pub dev_subdomain: Option<String>,
+}
+
+/// A decrypted secret kept in a config struct that derives Debug: its Debug output
+/// is redacted, so a dump of the config never prints it.
+#[derive(Clone, Default)]
+pub struct Redacted(pub String);
+
+impl std::fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Redacted(…)")
+    }
 }
 
 /// Where the web login's encrypted password is, for its errors.
@@ -2223,7 +2234,7 @@ impl ConfigFile {
             let password = key.decrypt(SITE_PASSWD_ENC, value)?;
             anyhow::ensure!(!password.is_empty(), "{SITE_PASSWD_ENC} opens to the empty password");
             if let Some(server) = &mut self.server {
-                server.site_password = password;
+                server.site_password = Redacted(password);
             }
         }
         let open = |name: &str| match self.passwords[name].as_str() {
@@ -2391,7 +2402,7 @@ impl ConfigFile {
         };
         // The password is empty here when the file was only checked, never
         // unlocked; such a login lets nobody in (see `SiteLogin::verify`).
-        let login = SiteLogin::new(username, &server.site_password).context("invalid [server].site_username")?;
+        let login = SiteLogin::new(username, &server.site_password.0).context("invalid [server].site_username")?;
         let branding = Self::resolve_branding(self.branding.as_ref())?;
         Ok(AppConfig {
             listen,
@@ -3419,6 +3430,8 @@ mod tests {
         assert!(file.needs_master());
         assert!(file.clone().unlock(None).is_err());
         file.unlock(Some(&key)).unwrap();
+        let rendered = format!("{file:?}");
+        assert!(!rendered.contains("hunter2"), "a config dump hides the decrypted password: {rendered}");
         let config = file.resolve().unwrap();
         let login = config.auth.login().unwrap();
         assert!(login.verify("admin", "hunter2"));

@@ -532,7 +532,13 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    if !login.verify(&req.username, &req.password) {
+    let login = login.clone();
+    // A check costs Argon2id's memory and passes by design, and waits for any
+    // check ahead of it — keep it off the async workers.
+    let ok = tokio::task::spawn_blocking(move || login.verify(&req.username, &req.password))
+        .await
+        .map_err(anyhow::Error::from)?;
+    if !ok {
         return Err(AppError::Unauthorized);
     }
     let token = state.auth.create();
