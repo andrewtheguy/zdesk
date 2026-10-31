@@ -43,6 +43,13 @@ belong in the linked documentation.
   English, never one by converting the other's characters: their technical terms
   differ (网关/閘道, 配置/設定, 软件包/套件, 会话/工作階段, 文件/檔案), so each
   keeps its own vocabulary.
+- The user guide and the home and demo pages live on
+  [zdesk.dev](https://zdesk.dev), in
+  [zdesk-website](https://github.com/andrewtheguy/zdesk-website), not in this
+  repo. After a change to what a user sees, chooses or configures (a picker
+  choice, a config key, a feature, a supported server or browser, a command),
+  check whether the site needs updating too, and update it there in all three
+  locales following that repository's own instructions.
 - Put temporary files and test configuration under `tmp/`. Always run local
   Python through `uv` (GitHub Actions excluded).
 - Errors are `anyhow` by default, and `thiserror` wherever a caller branches on
