@@ -26,7 +26,7 @@
 //! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tui")]
@@ -64,9 +64,8 @@ pub struct SiteLogin {
     /// served): such a login lets nobody in.
     password_hash: Option<[u8; 32]>,
     salt: [u8; LOGIN_SALT_LEN],
-    /// One check at a time. Each takes Argon2id's memory, so a flood of guesses
-    /// waits here in turn rather than allocating it once per guess at once.
-    checking: Arc<Mutex<()>>,
+    /// The one turn to check a password: see [`Self::try_turn`].
+    turn: Arc<tokio::sync::Semaphore>,
 }
 
 // Manual Debug so an AppConfig dump never prints a hash of the password.
@@ -91,8 +90,17 @@ impl SiteLogin {
             username_digest: digest(username),
             password_hash,
             salt,
-            checking: Arc::new(Mutex::new(())),
+            turn: Arc::new(tokio::sync::Semaphore::new(1)),
         })
+    }
+
+    /// The turn to check a password, or `None` while another check holds it. Taken
+    /// before the check is started and held until it ends, so one check runs at a
+    /// time and an attempt arriving meanwhile is refused rather than queued: each
+    /// takes Argon2id's memory, and a queue would leave a burst of guesses still
+    /// being checked long after it stopped.
+    pub fn try_turn(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.turn.clone().try_acquire_owned().ok()
     }
 
     /// The username allowed to log in (for startup logging).
@@ -102,14 +110,13 @@ impl SiteLogin {
 
     /// Check a login attempt. Both halves are compared in full whatever the other
     /// said, so a wrong username and a wrong password take the same time. Blocks
-    /// for Argon2id's cost and for any check ahead of it, so call it off the
-    /// async workers.
+    /// for Argon2id's cost, so call it off the async workers, holding the turn
+    /// [`Self::try_turn`] gave.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
         let Some(expected) = &self.password_hash else {
             return false;
         };
-        let _turn = self.checking.lock().unwrap_or_else(PoisonError::into_inner);
         let password_ok = stretch(password, &self.salt).is_ok_and(|hash| bytes_match(&hash, expected));
         username_ok & password_ok
     }
@@ -335,6 +342,17 @@ mod tests {
     fn an_empty_password_never_logs_in() {
         let login = SiteLogin::new("admin", "").unwrap();
         assert!(!login.verify("admin", ""));
+    }
+
+    /// One check at a time: a second turn is refused while the first is held, and
+    /// given again once it is dropped.
+    #[test]
+    fn one_login_check_holds_the_turn() {
+        let login = SiteLogin::new("admin", "hunter2").unwrap();
+        let turn = login.try_turn().expect("the first turn");
+        assert!(login.clone().try_turn().is_none(), "a clone shares the one turn");
+        drop(turn);
+        assert!(login.try_turn().is_some());
     }
 
     #[test]
