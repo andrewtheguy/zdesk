@@ -1,4 +1,4 @@
-//! Whether a host draws its pipeline exactly.
+//! Whether a host draws its pipeline losslessly.
 //!
 //! A host says nothing of how faithfully it draws: a Windows host's image quality
 //! is its own policy (*Configure image quality for RemoteFX Adaptive Graphics*), and
@@ -7,16 +7,16 @@
 //! one set to Lossless drew with planar and uncompressed rectangles alone, and one
 //! left at its default with RemoteFX Progressive and ClearCodec carrying NSCodec.
 //!
-//! So the codecs a pipeline has drawn with say whether its picture is exact so far:
+//! So the codecs a pipeline has drawn with say whether its picture is lossless so far:
 //!
-//! - **Exact:** uncompressed rectangles; planar, which this client takes without
+//! - **Lossless:** uncompressed rectangles; planar, which this client takes without
 //!   colour loss or subsampling ([`crate::proto::planar`] refuses both); the alpha
 //!   codec; and ClearCodec whose subcodecs are raw or RLEX.
 //! - **Not:** RemoteFX, RemoteFX Progressive, every H.264, and ClearCodec carrying
 //!   NSCodec. NSCodec's chroma is halved into its YCoCg planes even at colour loss
-//!   level 1 (MS-RDPEGDI 3.1.9.1.2), so it is not exact at any level.
+//!   level 1 (MS-RDPEGDI 3.1.9.1.2), so it is not lossless at any level.
 //!
-//! A codec this list does not name is counted as not exact: "exact" is said only of
+//! A codec this list does not name is counted as not lossless: "lossless" is said only of
 //! what is known to be.
 
 use std::collections::BTreeSet;
@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use crate::proto::gfx;
 use crate::proto::wire::Reader;
 
-/// What one draw was made with, as far as its exactness goes.
+/// What one draw was made with, as far as whether it is lossless goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Drawn {
     Uncompressed,
@@ -60,8 +60,8 @@ impl Drawn {
         }
     }
 
-    /// Whether what was drawn this way is the host's picture exactly.
-    pub fn exact(self) -> bool {
+    /// Whether what was drawn this way is lossless.
+    pub fn lossless(self) -> bool {
         matches!(self, Self::Uncompressed | Self::Planar | Self::Alpha | Self::ClearCodec)
     }
 
@@ -129,10 +129,10 @@ impl Fidelity {
         self.seen.insert(Drawn::of(codec, data))
     }
 
-    /// Whether everything drawn so far is the host's picture exactly. True of a
-    /// pipeline that has drawn nothing, which [`Self::is_empty`] tells apart.
-    pub fn exact(&self) -> bool {
-        self.seen.iter().all(|drawn| drawn.exact())
+    /// Whether everything drawn so far is lossless. True of a pipeline that has
+    /// drawn nothing, which [`Self::is_empty`] tells apart.
+    pub fn lossless(&self) -> bool {
+        self.seen.iter().all(|drawn| drawn.lossless())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -178,12 +178,12 @@ mod tests {
     }
 
     #[test]
-    fn what_a_lossless_host_draws_with_is_exact() {
+    fn what_a_host_set_to_lossless_draws_with_is_lossless() {
         let mut fidelity = Fidelity::default();
         assert!(fidelity.saw(gfx::CODEC_PLANAR, &[]));
         assert!(fidelity.saw(gfx::CODEC_UNCOMPRESSED, &[]));
         assert!(!fidelity.saw(gfx::CODEC_PLANAR, &[0x10]));
-        assert!(fidelity.exact());
+        assert!(fidelity.lossless());
         assert_eq!(fidelity.names(), ["Uncompressed", "Planar"]);
     }
 
@@ -191,24 +191,24 @@ mod tests {
     fn what_a_default_host_draws_with_is_not() {
         let mut fidelity = Fidelity::default();
         fidelity.saw(gfx::CODEC_CLEARCODEC, &clear(false, &[2, 1]));
-        assert!(!fidelity.exact());
+        assert!(!fidelity.lossless());
         fidelity.saw(gfx::CODEC_CAPROGRESSIVE, &[]);
         assert_eq!(fidelity.names(), ["ClearCodec with NSCodec", "RemoteFX Progressive"]);
     }
 
     #[test]
-    fn clearcodec_is_exact_only_without_nscodec() {
+    fn clearcodec_is_lossless_only_without_nscodec() {
         assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(false, &[0, 2])), Drawn::ClearCodec);
         assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[2])), Drawn::ClearCodec);
         assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[0, 1])), Drawn::ClearCodecNsc);
         // A glyph hit, with no composition header behind it.
         assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &[0x03, 0, 7, 0]), Drawn::ClearCodec);
-        assert!(Drawn::ClearCodec.exact());
-        assert!(!Drawn::ClearCodecNsc.exact());
+        assert!(Drawn::ClearCodec.lossless());
+        assert!(!Drawn::ClearCodecNsc.lossless());
     }
 
     #[test]
-    fn every_lossy_codec_and_an_unknown_one_is_not_exact() {
+    fn every_lossy_codec_and_an_unknown_one_is_not_lossless() {
         for codec in [
             gfx::CODEC_CAVIDEO,
             gfx::CODEC_CAPROGRESSIVE,
@@ -218,7 +218,7 @@ mod tests {
             gfx::CODEC_AVC444_V2,
             0x0042,
         ] {
-            assert!(!Drawn::of(codec, &[]).exact(), "{}", gfx::codec_name(codec));
+            assert!(!Drawn::of(codec, &[]).lossless(), "{}", gfx::codec_name(codec));
         }
     }
 }

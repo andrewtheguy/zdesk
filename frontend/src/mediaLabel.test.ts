@@ -213,16 +213,16 @@ test("the Render row waits for the target, then names its picture", () => {
 
 test("an RDP host's picture says whether it is lossless, and with what", () => {
   assert.equal(
-    hostPictureLabel({ exact: true, codecs: [] }),
+    hostPictureLabel({ lossless: true, codecs: [] }),
     "Nothing drawn yet",
   );
   assert.equal(
-    hostPictureLabel({ exact: true, codecs: ["Uncompressed", "Planar"] }),
+    hostPictureLabel({ lossless: true, codecs: ["Uncompressed", "Planar"] }),
     "Lossless (Uncompressed, Planar)",
   );
   assert.equal(
     hostPictureLabel({
-      exact: false,
+      lossless: false,
       codecs: ["ClearCodec with NSCodec", "RemoteFX Progressive"],
     }),
     "Lossy (ClearCodec with NSCodec, RemoteFX Progressive): the host's image quality policy is not Lossless",

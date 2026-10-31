@@ -377,7 +377,7 @@ pipeline's other codecs alone. The host confirms one set and then draws.
 High quality is not lossless unless the host is told to be
 ([Lossless, by the host's policy](#lossless-by-the-hosts-policy)). Of the codecs
 the host draws with by default, planar and uncompressed rectangles and ClearCodec's
-raw and RLEX subcodecs carry their pixels exactly. ClearCodec's NSCodec subcodec
+raw and RLEX subcodecs carry their pixels losslessly. ClearCodec's NSCodec subcodec
 shifts chroma bits away by its colour loss level ([MS-RDPNSC section
 2.2.2](https://github.com/andrewtheguy/ms-rdp-specs/blob/main/MS-RDPNSC.pdf),
 [MS-RDPEGDI section
@@ -491,14 +491,14 @@ Lossless takes no H.264 either. A session that offered it, with something
 moving on the host's screen, was drawn with planar and uncompressed rectangles
 alone, so an Adaptive session against such a host is drawn that way too, at that
 cost. Nothing here needs to change for it: every codec the host chose is one the
-compositor decodes exactly, and the pipeline keeps its resize, which bitmap
-updates do not have. So a target that needs every pixel exact keeps `egfx` on
+compositor decodes losslessly, and the pipeline keeps its resize, which bitmap
+updates do not have. So a target that needs a lossless picture keeps `egfx` on
 and has its host set to Lossless; `egfx = false` is not the way to it.
 
 Whether a host draws losslessly is read off the codecs it draws with, by
 `fidelity.rs` in the graphics crate, and shown in the Info card's *Host's
 picture* row for every session with the pipeline: it says the codecs, and is
-exact only for uncompressed, planar, alpha and ClearCodec without NSCodec.
+lossless only for uncompressed, planar, alpha and ClearCodec without NSCodec.
 
 ### The pipeline, passed on
 

@@ -309,7 +309,7 @@ export type ControlMsg =
   // again whenever the whole picture is sent again. `engine` as a format's.
   //
   // The tiles are the gateway's own, or a wlshare session's started with its
-  // tiles with motion, wlshare's own passed through: exact PNG tiles where the desktop is still,
+  // tiles with motion, wlshare's own passed through: lossless PNG tiles where the desktop is still,
   // and a video stream of its own for each region that moves, as REGION records.
   // Every region stream of the tiles picture before it ends here, and its
   // decoder goes: it comes ahead of the first record, and again wherever the
@@ -341,11 +341,11 @@ export type ControlMsg =
   // Command or become remote Control.
   | { type: "remoteOs"; macos: boolean }
   // What an RDP host's graphics pipeline has drawn with so far, by codec, and
-  // whether all of it is the host's picture exactly: a Windows host draws
-  // exactly only when its image quality policy is set to Lossless, and nothing
+  // whether all of it is lossless: a Windows host draws losslessly
+  // only when its image quality policy is set to Lossless, and nothing
   // else in the protocol says so. Sent whenever the host draws with something it
   // had not, and again on a repaint; a pipeline's `graphicsStart` starts it over.
-  | { type: "hostPicture"; exact: boolean; codecs: string[] }
+  | { type: "hostPicture"; lossless: boolean; codecs: string[] }
   // A High Performance Mac is being resized and the picture is not the
   // window's yet: true from the window's new size until the Mac's answering
   // layout has held still. The page covers the desktop meanwhile, as Apple's
@@ -483,7 +483,7 @@ export interface StandardMsg {
 
 // A rectangle of the desktop in the tiles the gateway codes, a row's run of 64x64
 // tiles as one image: a JPEG of tiles still changing, which the gateway sends again
-// as PNG once they are still, or a PNG of the exact pixels, as wlshare's tiles with
+// as PNG once they are still, or a lossless PNG of the pixels, as wlshare's tiles with
 // motion send their stills too. Each replaces what the canvas held there and depends
 // on no other, so they are drawn in wire order and may be decoded in any. Or one of
 // wlshare's progressive tiles: a RemoteFX Progressive

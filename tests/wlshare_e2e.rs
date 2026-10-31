@@ -499,7 +499,7 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
 
 /// A session started with wlshare's tiles with motion is sent wlshare's own tiles,
 /// passed: the picture starts behind a `tilesStart`, its first update is the whole
-/// desktop as exact PNG, and wlshare was asked for its tiles rather than its video.
+/// desktop as lossless PNG, and wlshare was asked for its tiles rather than its video.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
 async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
@@ -603,7 +603,7 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
 
 /// A session started with wlshare's progressive tiles is sent them alone, passed:
 /// `TILE` records of their own format, every one a tile block, which the page's
-/// RemoteFX Progressive decoder reads into the desktop wlshare's exact tiles show,
+/// RemoteFX Progressive decoder reads into the desktop wlshare's lossless tiles show,
 /// once wlshare has refined them; and wlshare was asked for progressive tiles.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
@@ -611,14 +611,14 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
-    let (w, h, exact, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are exact PNG while nothing moves");
+    let (w, h, lossless, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are lossless PNG while nothing moves");
     let (pw, ph, progressive, formats) = picture_of(addr, "wlshare-tiles-progressive", 6).await;
     assert_eq!((pw, ph), (w, h), "the same desktop");
     assert_eq!(formats, [zdesk::protocol::batch::TILE_PROGRESSIVE].into(), "progressive tiles alone");
-    let se: f64 = exact.iter().zip(&progressive).map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2)).sum();
-    let psnr = if se == 0.0 { f64::INFINITY } else { 10.0 * (255.0f64.powi(2) * exact.len() as f64 / se).log10() };
-    assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the exact one");
+    let se: f64 = lossless.iter().zip(&progressive).map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2)).sum();
+    let psnr = if se == 0.0 { f64::INFINITY } else { 10.0 * (255.0f64.powi(2) * lossless.len() as f64 / se).log10() };
+    assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the lossless one");
     let logs = container.logs();
     assert!(logs.contains("asked for progressive tiles up to quality"), "wlshare was not asked for its progressive tiles:\n{logs}");
 }

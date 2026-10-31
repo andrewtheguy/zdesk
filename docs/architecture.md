@@ -3,7 +3,7 @@
 zDesk is a single-user gateway for RDP and VNC targets, including Macs reached
 through their built-in Screen Sharing service. A Rust backend owns the remote
 protocol session and exposes one common HTTP/WebSocket interface to the React SPA,
-which is the only client. [Using zDesk](guide.md) is the operator's view of
+which is the only client. [Using zDesk](https://zdesk.dev/guide) is the operator's view of
 the same system.
 
 ## Data path
@@ -28,7 +28,7 @@ every session of a target with the pipeline on, the default — see
 [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
 wlshare, reached as `subtype = "wlshare"`, codes its own H.264 stream of the
 whole desktop, at a quality and walk of its own — or, in a session
-started with its tiles with motion, chosen at the picker, its own tiles, exact PNG
+started with its tiles with motion, chosen at the picker, its own tiles, lossless PNG
 where the desktop is still and a video stream of its own for each region that moves,
 H.264 by the host's hardware encoder where it has one and libx264 otherwise, passed the same way. A `wlshare` desktop
 too large for that stream, in a session that does not resize it, has no picture:
@@ -46,7 +46,7 @@ picture a session started with it passes for the page to decode.
 The rest is decoded in the gateway and sent as tiles: a plain VNC server's
 desktop, an RDP host's bitmap path (`egfx = false`) and a Standard Mac's Full
 quality, in 64×64 tiles, each changed tile an image the browser decodes on its
-own, PNG where it holds few enough colours to be exact and JPEG at the target's
+own, PNG where it holds few enough colours to be lossless and JPEG at the target's
 quality where it does not, every changed tile a coarse JPEG where the link would
 take too long to carry them, and a JPEG tile sent again as PNG once it is still —
 see [The tiles](#the-tiles).
@@ -181,7 +181,7 @@ Screen Sharing's Standard mode (`ard`, including the unofficial
 physical screens, all at once as Combined Display, as the session was started at
 the picker. Its picture is the Mac's Full quality, lossless zlib, which the
 gateway inflates and sends as [the tiles](#the-tiles), as it
-sends any VNC server's desktop: JPEG while a region changes and exact once it has
+sends any VNC server's desktop: JPEG while a region changes and lossless once it has
 settled, on one screen, on the virtual display, and on Combined Display (alpha),
 where the gateway composes every screen first; see
 [A Standard Mac's Combined Display](#a-standard-macs-combined-display). No other
@@ -422,7 +422,7 @@ A session's picture reaches the browser one of two ways, both ordinary:
   asks to pass joins them with a rule of its own; do not refuse it on this
   rule's account.
 - **Coded here** as tiles ([The tiles](#the-tiles)): the desktop in 64×64 tiles,
-  a changed tile a PNG where it holds few enough colours to be exact and a JPEG at
+  a changed tile a PNG where it holds few enough colours to be lossless and a JPEG at
   the target's quality where it does not, a coarse JPEG first where the link is
   slow, a JPEG tile sent again as PNG once it is still, and every tile sent as fast
   as the browser paints them. The coders are
@@ -430,7 +430,7 @@ A session's picture reaches the browser one of two ways, both ordinary:
   images itself.
 
 The goal of either way is a picture that settles to lossless wherever the source
-is lossless: a region that has stopped changing ends up on the page exactly as
+is lossless: a region that has stopped changing ends up on the page losslessly, as
 the remote has it, and the link is fitted while it moves, not after. The tiles do
 this for every source they code, a plain VNC server's ZRLE, an RDP host's bitmap
 path and a Standard Mac's Full quality alike, by sending a still JPEG tile again
@@ -558,11 +558,11 @@ either. Each block is coded against what the decoder holds of its tile, so one
 that does not decode, or a batch dropped with blocks in it, leaves the decoder
 holding what wlshare's next blocks are not coded against: it is given back, the
 whole picture is asked for, and no block is decoded until that picture starts.
-Its tiles with motion are the same encoding listed with `WLSD`: exact PNG tiles
+Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
-every still exact — wlshare's picture for a link with room to spare, one that
-ends exact, for several times the video's bytes. A server that ignores the
+every still lossless — wlshare's picture for a link with room to spare, one that
+ends lossless, for several times the video's bytes. A server that ignores the
 listing is sent as tiles from its ZRLE. Do not transcode a passed frame, ask
 wlshare for anything with a client message, or add a key that selects or tunes
 the picture. See [wlshare's stream, passed
@@ -695,7 +695,7 @@ switched to or from mid-session.
   lossless, which the gateway inflates on the connection's one stream
   (`vnc_encodings`, `Payload::Zlib`), as it decodes any VNC server's ZRLE, and
   codes as [the tiles](#the-tiles), unchanged: paced by the
-  page's painting, coarse first on a slow link, exact once a region has
+  page's painting, coarse first on a slow link, lossless once a region has
   settled, resumed for a browser that comes back and repainted on a `refresh`.
   The Mac's connection is read as any VNC server's: the tiles fit the browser's
   link, and the Mac, whose zlib has nothing to make coarser, is not held. Do
@@ -765,7 +765,7 @@ the Mac's Adaptive picture, as it passes nothing.
   that changes density is composed for again, and the Mac asked to repaint.
 - **The tiles, as any picture coded here.** What is composed goes to
   [the tiles](#the-tiles), unchanged: paced by the page's
-  painting, coarse first on a slow link, made exact once still. The session
+  painting, coarse first on a slow link, made lossless once still. The session
   resumes for a browser that comes back, the `mosaic` resent ahead of its resize.
 - **Kept on every screen.** A layout of one screen, which a login or a lock at
   the Mac makes, is answered with the combined view again and not shown: the
@@ -916,7 +916,7 @@ Both picture paths it serves arrive in 64-pixel tiles already: ZRLE's tiles and 
 RDP host's bitmap updates.
 
 - **A changed tile is an image.** A tile of at most 256 colours — text, rules and
-  flat panels, which is most of a desktop — is sent as a PNG of a palette, exact. Any
+  flat panels, which is most of a desktop — is sent as a PNG of a palette, lossless. Any
   other, a photograph or a gradient, is sent as a baseline JPEG at quality 90
   (`tiles::QUALITY`), its colour sampled once per 2×2 pixels. Each tile is drawn on its
   own, replacing what the browser held there whatever it held, and depends on no
@@ -925,7 +925,7 @@ RDP host's bitmap updates.
   changed tiles the link would take longer than 250 ms (`COARSE_SPAN`) to carry at
   the target's quality, weighed at what a tile has lately cost there, goes coarse:
   every changed tile a JPEG at quality 20, text and panels included, and only a
-  tile of one colour a PNG, exact and smaller. Where the link would take longer
+  tile of one colour a PNG, lossless and smaller. Where the link would take longer
   than the span to carry the round even at 20, weighed at what a tile has lately
   cost at 20, it goes at 10, and past that at 5 (`COARSE_QUALITIES`), below which a
   JPEG saves little more. The 1440×900 photograph a 1 Mbit/s link took four
@@ -944,18 +944,18 @@ RDP host's bitmap updates.
   a rectangle sent to the one before gives its room back and measures nothing. A
   link not yet seen to carry anything is a slow one for a round past 32 KiB, which
   goes at 20, so a session's first picture comes coarse and settles. A coarse tile is lossy like any
-  JPEG tile, and the next bullet makes it exact once it is still; a refresh is never
+  JPEG tile, and the next bullet makes it lossless once it is still; a refresh is never
   coarse, so coarse is only ever the first picture of a change.
-- **A still JPEG tile is sent again exactly.** Every 50 ms (`SETTLE_TICK`) the order
+- **A still JPEG tile is sent again losslessly.** Every 50 ms (`SETTLE_TICK`) the order
   task marks still each tile last sent as JPEG that has not changed since the tick
   before, and a round taken while no tile has changed sends those as PNG of the
   mirror's pixels, as many as the paint window's room comes to at what a tile's
-  exact picture has lately cost, top row first, and at least one. It is TigerVNC's
+  lossless picture has lately cost, top row first, and at least one. It is TigerVNC's
   lossless refresh (its `EncodeManager`'s lossy and recently changed regions),
   region by region rather than when the whole screen is still: a tile that keeps
-  changing is not refreshed while it moves, and the screen around it is made exact
-  meanwhile. A tile sent exactly owes nothing, so a still screen costs nothing once
-  it is exact.
+  changing is not refreshed while it moves, and the screen around it is made lossless
+  meanwhile. A tile sent losslessly owes nothing, so a still screen costs nothing once
+  it is lossless.
 - **A row's run is one image.** A round takes, row by row, each run of owed tiles,
   and cuts it where its tiles change format, so a row of text is one PNG and a
   photograph in it one JPEG. Runs are coded on every core (rayon).
@@ -996,7 +996,7 @@ Four rules hold the picture up, and each is a rule somewhere:
 - **Rounds are serial, and off the engine's task.** A round crops the tiles it takes
   out of the mirror and is coded on a blocking worker while the engine goes on
   blitting into the mirror; what lands meanwhile marks its tiles owed again. At most
-  one round is out, so a tile is marked by what was sent of it — owed its exact
+  one round is out, so a tile is marked by what was sent of it — owed its lossless
   picture or not — before the next round looks at it. A round that comes back after
   a resize marks nothing, the new desktop's tiles being owed rounds of their own.
 
@@ -1132,9 +1132,9 @@ session started with its tiles, chosen at the picker as *Progressive tiles* or
 *Tiles with motion* against its video, lists in place of `WLSV`. Its tiles with
 motion are a video stream of its own, 4:2:0, for each region that moves, at
 most four at once — H.264, by the wlshare host's hardware encoder where it has
-one and libx264 otherwise — and exact PNG stills where the desktop is still,
+one and libx264 otherwise — and lossless PNG stills where the desktop is still,
 every tile a stream carried sent again as PNG once it is still, so the picture
-ends exact. Its progressive tiles are every tile a RemoteFX Progressive tile
+ends lossless. Its progressive tiles are every tile a RemoteFX Progressive tile
 block instead, and no stream (above). The tiles with motion are Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
@@ -1148,7 +1148,7 @@ Nothing is coded here.
 
 - **Listed with which tiles beside it.** `WLST` goes at the head of the list.
   For its tiles with motion `WLSD` beside it holds every region's stream at
-  wlshare's dial and every still is exact; for its progressive tiles, listed
+  wlshare's dial and every still is lossless; for its progressive tiles, listed
   alone, wlshare walks its dial down on the browser's lag, the first passes
   following it, and refines every tile once the link has room. Every region is H.264, 4:2:0, which wlshare codes with its host's
   hardware encoder where it found one at its startup, the GPU's fixed-function
@@ -1841,9 +1841,9 @@ the pipeline.
   with the pipeline the gateway reads each draw's codec off the commands it
   passes (`crates/zdesk-rdp-graphics/src/fidelity.rs`), ClearCodec's subcodecs
   included, and sends `hostPicture` when the host draws with something new. The
-  card's *Host's picture* row reads it: exact only for uncompressed, planar,
+  card's *Host's picture* row reads it: lossless only for uncompressed, planar,
   alpha and ClearCodec without NSCodec. A pipeline that starts over starts it
-  over. A host draws an exact picture when its image quality policy is set to
+  over. A host draws a lossless picture when its image quality policy is set to
   Lossless ([Lossless, by the host's policy](rdp-client.md#lossless-by-the-hosts-policy)).
 
 ### Decoded in the page
@@ -1909,7 +1909,7 @@ as Chromium guesses BT.709 for anything HD.
 **The tiles follow the browser's painting, at one quality.** They have no quality
 walk: a changed tile of many colours goes at the one quality, 90, on any
 link, or coarse where the link would take too long to carry the round
-([The tiles](#the-tiles)), and settles exact either way. What a slow link changes
+([The tiles](#the-tiles)), and settles lossless either way. What a slow link changes
 besides is how often a round goes. A round is taken only
 while what the browser was sent is painted back under the paint window
 (`PaintWindow` in `src/encode.rs`), the bound a Standard Mac's rectangles are held
@@ -1924,7 +1924,7 @@ pass that sharpens where it stays, as a Mac's Adaptive picture does for a viewer
 one ([A Standard Mac's own picture](#a-standard-macs-picture)), and what is
 queued is never more than the window holds. The painting that brings the window back
 under its bound wakes the engine (`VideoSink::round_returned`), so a round is never
-left waiting for the next frame boundary. A still JPEG tile's exact picture goes
+left waiting for the next frame boundary. A still JPEG tile's lossless picture goes
 in the room the window leaves, once nothing changed is waiting
 ([The tiles](#the-tiles)).
 
@@ -2078,7 +2078,7 @@ page decodes. There is no codec key.
 **Tiles rather than a video encoder.** A tile holds no state: it is drawn on its
 own and predicts from nothing, so a slow link is sent the newest pixels whenever a
 round goes, with nothing to drop, keep in order for a decoder or start over from a
-keyframe; a still screen is made exact; and the browser decodes it itself, so the
+keyframe; a still screen is made lossless; and the browser decodes it itself, so the
 page carries no decoder. What a video encoder would buy is motion in fewer bytes:
 a scroll or a playing video across the desktop costs a tile coder every changed
 tile at its JPEG, where an inter-frame stream codes what moved. The pictures the
@@ -2090,7 +2090,7 @@ a one-pixel coloured glyph stem on a dark terminal most of its saturation, which
 no quantizer restores; what it buys is a stream every browser's own decoder
 takes, its hardware one included, so there is no chroma to choose, no question
 to ask the browser about it and no decoder of the page's behind it. A picture
-that must end exact is wlshare's tiles with motion, chosen at the picker.
+that must end lossless is wlshare's tiles with motion, chosen at the picker.
 
 Nothing downstream of `TargetConfig::render_plan` names a codec but the modules
 that read a passed stream's own headers to name its configuration string:

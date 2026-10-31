@@ -25,7 +25,7 @@ browser ── HTTPS or localhost ── zDesk ── RDP / VNC ── your desk
 ```
 
 `zdesk serve` is single-user: one login, a list of your targets, and one
-active session. Native installs also include [`zdesk tui`](docs/guide.md#local-instances),
+active session. Native installs also include [`zdesk tui`](https://zdesk.dev/guide#local-instances),
 a local control plane that runs several independent gateway instances side by
 side.
 
@@ -65,8 +65,8 @@ Watch more demos on the [zDesk site](https://zdesk.dev/demo).
   picture and wlshare's H.264 are passed through untouched, and all but the High
   Performance Mac's are paced to the browser link.
 - **Tiles that settle to lossless.** Where the gateway codes the picture itself,
-  it sends 64×64 tiles: PNG where they are exact, JPEG where they move, and
-  sent again exactly once they are still.
+  it sends 64×64 tiles: PNG where they are lossless, JPEG where they move, and
+  sent again losslessly once they are still.
 - **A gateway with a low memory footprint.** One Rust binary serves one session
   at a time, and where the remote's picture and sound are passed through, the
   browser decodes them, so the gateway holds no decoder or decoded picture for
@@ -113,7 +113,7 @@ seamlessly of the three, since what RFB lacks is added to it.
   ours, what RFB lacks is added to it: it switches outputs, follows the window
   at its density, carries Opus or FLAC sound and the browser's camera and
   microphone, and codes its own H.264 of the whole desktop for the gateway to
-  pass through, paced to the browser's link — or, for a link with room to spare, its own exact
+  pass through, paced to the browser's link — or, for a link with room to spare, its own lossless
   tiles with a video stream for each region that moves, H.264 from hardware or
   libx264. Two outputs can be shown at once, the second
   in a browser tab of its own (beta).
@@ -215,7 +215,7 @@ password_ref = "workstation"
 ```
 
 Then paste in the target's password, encrypted under your master password (see
-[Target passwords](docs/guide.md#target-passwords)): `password master create`
+[Target passwords](https://zdesk.dev/guide#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
 prints a `[master]` block for the config; `password encrypt` prints the value
 to add as `workstation = "…"` under `[passwords]`.
@@ -263,7 +263,7 @@ zdesk tui
 It listens on loopback only, at <http://zdesk.localhost:52380>. Press `n` to
 create an instance, `e` to add a target to its config, `p` to encrypt the
 target's password, `s` to start the instance and `o` to open it in the browser.
-[Local instances](docs/guide.md#local-instances) lists every key. The container
+[Local instances](https://zdesk.dev/guide#local-instances) lists every key. The container
 image has no control plane.
 
 [Installing zDesk](docs/install.md) covers every platform, upgrades and
@@ -271,7 +271,7 @@ removal.
 
 ## Documentation
 
-- [Using zDesk](docs/guide.md): the browser client, starting a session, setting up Windows, Mac, wlshare and VNC targets, `zdesk tui`
+- [Using zDesk](https://zdesk.dev/guide): the browser client, starting a session, setting up Windows, Mac, wlshare and VNC targets, `zdesk tui`
 - [Installing zDesk](docs/install.md): packages, first configuration, upgrade, removal
 - [`zdesk.example.toml`](zdesk.example.toml): every configuration key, annotated
 - [Known issues](docs/known-issues.md): faults worth recognising rather than re-investigating
@@ -295,7 +295,7 @@ cargo run -- serve -c zdesk.toml
 
 The copied example names `[passwords].example` but leaves it for you to add.
 Set up the target's encrypted password and master-password file as described in
-[Target passwords](docs/guide.md#target-passwords). For a target with an empty
+[Target passwords](https://zdesk.dev/guide#target-passwords). For a target with an empty
 password, add `example = ""` under `[passwords]` instead; it needs no master
 password.
 

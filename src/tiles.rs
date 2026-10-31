@@ -1,10 +1,10 @@
 //! The picture this gateway codes itself, plain VNC's and the RDP bitmap path's: the
 //! desktop in 64×64 tiles, each changed tile an image the browser decodes on its own.
 //!
-//! A changed tile goes as PNG where it holds few enough colours to be one exactly
+//! A changed tile goes as PNG where it holds few enough colours to be lossless
 //! ([`PALETTE`]), which is most of a desktop: text, rules and flat panels. Any other,
 //! a photograph or a gradient, goes as JPEG at [`QUALITY`], and is owed its
-//! exact picture: once it has gone a whole [settle tick](Tiles::tick) without
+//! lossless picture: once it has gone a whole [settle tick](Tiles::tick) without
 //! changing, it is sent again as PNG, as TigerVNC's server refreshes what it sent
 //! lossy, region by region rather than when the whole screen is still. Every tile is
 //! drawn on its own, so a tile sent replaces what the browser held there whatever it
@@ -22,7 +22,7 @@
 //! A round the link would take too long to carry at [`QUALITY`] goes coarse
 //! instead ([`Round::coarse`]): every changed tile a JPEG at 20, or coarser still
 //! where even that would take too long ([`COARSE_QUALITIES`]), text and panels
-//! included, which the settle tick makes exact once they are still. So a slow link shows a
+//! included, which the settle tick makes lossless once they are still. So a slow link shows a
 //! whole new picture soon, blurred, and it sharpens where it stays, as a Mac's
 //! Adaptive picture does, rather than a sharp one arriving row by row.
 
@@ -37,26 +37,26 @@ use crate::video::Mirror;
 pub const TILE: u16 = 64;
 
 /// The JPEG quality a changed tile of many colours is sent at until it is still
-/// and sent exactly, on every target: high enough that a link with room to spare
+/// and sent losslessly, on every target: high enough that a link with room to spare
 /// shows a desktop worth looking at, and no key's to change. A link that would
 /// take too long to carry a round at it gets one coarser first
 /// ([`COARSE_QUALITIES`]).
 pub const QUALITY: u8 = 90;
 
-/// The most colours a tile may hold to be sent exactly as it changes: a PNG of a
+/// The most colours a tile may hold to be sent losslessly as it changes: a PNG of a
 /// palette, which a tile of text, rules and flat panels fits, and which costs less
 /// than its JPEG would. A tile with more is a picture of something, sent as JPEG and
-/// made exact once it is still.
+/// made lossless once it is still.
 const PALETTE: usize = 256;
 
 /// How a JPEG samples colour: once per 2×2 pixels. A JPEG tile is the lossy pass of
-/// a tile that will be sent exactly once it is still, so it is the one that costs the
+/// a tile that will be sent losslessly once it is still, so it is the one that costs the
 /// least, and a tile of text, where 4:2:0 would show, goes as PNG anyway.
 const JPEG_SAMPLING: jpeg_encoder::SamplingFactor = jpeg_encoder::SamplingFactor::R_4_2_0;
 
-/// What a tile's exact picture is taken to cost before one has been coded: what a
-/// refresh is budgeted by until [`Tiles::exact_bytes`] has a measure.
-const EXACT_GUESS: u64 = 8 * 1024;
+/// What a tile's lossless picture is taken to cost before one has been coded: what a
+/// refresh is budgeted by until [`Tiles::lossless_bytes`] has a measure.
+const LOSSLESS_GUESS: u64 = 8 * 1024;
 
 /// The JPEG qualities a coarse round may go at ([`Round::coarse`]), none finer than
 /// the tiles' own: 20 first, a whole desktop in a fifth of what it is at 90, and
@@ -72,16 +72,16 @@ pub const LEVELS: usize = 1 + COARSE_QUALITIES.len();
 /// What a changed tile is taken to cost at each level before a round at it has been
 /// coded: what [`Tiles::changed_bytes`] weighs a round by until it has a measure.
 /// The ratios are the photograph's above.
-const CHANGED_GUESS: [u64; LEVELS] = [EXACT_GUESS, EXACT_GUESS / 5, EXACT_GUESS * 12 / 100, EXACT_GUESS / 12];
+const CHANGED_GUESS: [u64; LEVELS] = [LOSSLESS_GUESS, LOSSLESS_GUESS / 5, LOSSLESS_GUESS * 12 / 100, LOSSLESS_GUESS / 12];
 
 /// The image a coded rectangle is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     /// A JPEG at [`QUALITY`], or at one of [`COARSE_QUALITIES`] in a coarse
-    /// round, its colour at [`JPEG_SAMPLING`]: lossy, and so owed its exact picture
+    /// round, its colour at [`JPEG_SAMPLING`]: lossy, and so owed its lossless picture
     /// once its tiles are still.
     Jpeg,
-    /// A PNG, the exact pixels.
+    /// A PNG, lossless.
     Png,
     /// A RemoteFX Progressive tile block, which only wlshare's progressive tiles
     /// send: one tile, a first pass or an upgrade, against what the page holds of
@@ -106,7 +106,7 @@ impl Format {
 struct Tile {
     /// Changed since it was last taken for a round: the next round takes it.
     dirty: bool,
-    /// What the browser was last sent of it is a JPEG: it is owed its exact picture
+    /// What the browser was last sent of it is a JPEG: it is owed its lossless picture
     /// once it is still.
     lossy: bool,
     /// Changed since the last settle tick, so not yet still.
@@ -140,9 +140,9 @@ pub struct Tiles {
     /// The browser is to be told the picture starts here, from nothing, ahead of the
     /// next round's tiles: the first of a session, and after [`Self::reset`].
     start_owed: bool,
-    /// What a tile's exact picture has come to lately, in bytes: what a refresh
+    /// What a tile's lossless picture has come to lately, in bytes: what a refresh
     /// round is budgeted by.
-    exact_bytes: u64,
+    lossless_bytes: u64,
     /// What a tile has come to lately in a round of changed tiles at each of the
     /// [`LEVELS`], in bytes: what the changed tiles owed are weighed by
     /// ([`Self::changed_bytes`]).
@@ -163,7 +163,7 @@ impl Tiles {
             round_out: false,
             epoch: 0,
             start_owed: true,
-            exact_bytes: EXACT_GUESS,
+            lossless_bytes: LOSSLESS_GUESS,
             changed_costs: CHANGED_GUESS,
         }
     }
@@ -250,7 +250,7 @@ impl Tiles {
     }
 
     /// Whether a round would take anything now: tiles changed, or tiles owed their
-    /// exact picture. Never while a round is out, whose return says so instead, so an
+    /// lossless picture. Never while a round is out, whose return says so instead, so an
     /// engine waiting on this is not woken to take nothing.
     pub fn owes(&self) -> bool {
         !self.round_out && (self.dirty > 0 || self.refresh > 0)
@@ -263,7 +263,7 @@ impl Tiles {
     }
 
     /// One settle tick: every tile sent lossy and not changed since the last tick is
-    /// still, and owed its exact picture. True when a refresh is owed, for the order
+    /// still, and owed its lossless picture. True when a refresh is owed, for the order
     /// task to wake the engine. Nothing while a round is out: its tiles are marked by
     /// what it sent only once it is back, and the tick after that one takes them.
     pub fn tick(&mut self) -> bool {
@@ -290,16 +290,16 @@ impl Tiles {
     ///
     /// Every changed tile, when there are any, at `level`, one of the [`LEVELS`]
     /// ([`Round::coarse`]): a refresh waits for the picture to be current. Otherwise
-    /// the tiles owed their exact picture, top row first, as many as `budget` bytes
-    /// come to at what a tile's exact picture has lately cost, and at least one.
+    /// the tiles owed their lossless picture, top row first, as many as `budget` bytes
+    /// come to at what a tile's lossless picture has lately cost, and at least one.
     /// `None` when nothing is owed, and while a round is out.
     pub fn take_round(&mut self, budget: u64, level: usize) -> Option<Round> {
         if !self.owes() {
             return None;
         }
         let mirror = self.mirror.as_ref()?;
-        let exact = self.dirty == 0;
-        let mut allowed = if exact { (budget / self.exact_bytes.max(1)).max(1) } else { u64::MAX };
+        let lossless = self.dirty == 0;
+        let mut allowed = if lossless { (budget / self.lossless_bytes.max(1)).max(1) } else { u64::MAX };
         let (w, h) = mirror.size();
         let mut runs = Vec::new();
         for row in 0..self.rows {
@@ -308,7 +308,7 @@ impl Tiles {
                 let start = col;
                 while col < self.cols && allowed > 0 {
                     let tile = &mut self.grid[row * self.cols + col];
-                    let taken = if exact { std::mem::take(&mut tile.refresh) } else { std::mem::take(&mut tile.dirty) };
+                    let taken = if lossless { std::mem::take(&mut tile.refresh) } else { std::mem::take(&mut tile.dirty) };
                     if !taken {
                         break;
                     }
@@ -330,23 +330,23 @@ impl Tiles {
             }
         }
         let tiles: usize = runs.iter().map(|run| run.cols).sum();
-        if exact {
+        if lossless {
             self.refresh -= tiles;
         } else {
             self.dirty -= tiles;
         }
         self.round_out = true;
         let start = std::mem::take(&mut self.start_owed);
-        let level = if exact { 0 } else { level.min(LEVELS - 1) };
+        let level = if lossless { 0 } else { level.min(LEVELS - 1) };
         let quality = match level {
             0 => self.quality,
             coarse => COARSE_QUALITIES[coarse - 1].min(self.quality),
         };
-        Some(Round { runs, exact, level, quality, epoch: self.epoch, start })
+        Some(Round { runs, lossless, level, quality, epoch: self.epoch, start })
     }
 
     /// Bring back what a round took, with what it was coded as: a tile sent as JPEG is
-    /// owed its exact picture once still, and one sent as PNG is owed nothing. A tile
+    /// owed its lossless picture once still, and one sent as PNG is owed nothing. A tile
     /// that changed while the round was out is owed again whatever the round sent of
     /// it, and is marked by the round that sends it next; a round taken before a resize
     /// marks nothing.
@@ -362,18 +362,18 @@ impl Tiles {
                     tile.lossy = part.format == Format::Jpeg;
                 }
             }
-            if part.format == Format::Png && round.exact {
+            if part.format == Format::Png && round.lossless {
                 // Weighted towards the latest, so a budget follows what the desktop
                 // shows now.
                 let per_tile = part.data.len() as u64 / part.cols as u64;
-                self.exact_bytes = (self.exact_bytes * 3 + per_tile) / 4;
+                self.lossless_bytes = (self.lossless_bytes * 3 + per_tile) / 4;
             }
         }
         // A round of changed tiles says what a tile costs at its level and no other;
-        // a refresh is of the tiles a JPEG did not make exact, which a changed one
-        // mostly is not, and says what [`Self::exact_bytes`] is alone.
+        // a refresh is of the tiles a JPEG did not make lossless, which a changed one
+        // mostly is not, and says what [`Self::lossless_bytes`] is alone.
         let tiles: usize = coded.iter().map(|part| part.cols).sum();
-        if !round.exact && tiles > 0 {
+        if !round.lossless && tiles > 0 {
             let per_tile = coded.iter().map(|part| part.data.len() as u64).sum::<u64>() / tiles as u64;
             let cost = &mut self.changed_costs[round.level];
             *cost = (*cost * 3 + per_tile) / 4;
@@ -395,8 +395,8 @@ struct Run {
 /// The tiles a round took, away from [`Tiles`] while a blocking worker codes them.
 pub struct Round {
     runs: Vec<Run>,
-    /// A refresh round: tiles owed their exact picture, every one coded as PNG.
-    exact: bool,
+    /// A refresh round: tiles owed their lossless picture, every one coded as PNG.
+    lossless: bool,
     /// Its level, one of the [`LEVELS`]: see [`Self::coarse`].
     level: usize,
     /// The JPEG quality its tiles are coded at.
@@ -408,16 +408,16 @@ pub struct Round {
 }
 
 impl Round {
-    /// Whether this round sends tiles owed their exact picture rather than tiles that
+    /// Whether this round sends tiles owed their lossless picture rather than tiles that
     /// changed.
-    pub fn exact(&self) -> bool {
-        self.exact
+    pub fn lossless(&self) -> bool {
+        self.lossless
     }
 
     /// Whether this round sends its changed tiles coarse: every one a JPEG at
     /// [`Self::quality`], one of [`COARSE_QUALITIES`], but a tile of one colour, whose
-    /// PNG is exact and smaller, because the link would take too long to carry them at
-    /// the tiles' quality. Each is owed its exact picture once it is still, as any
+    /// PNG is lossless and smaller, because the link would take too long to carry them at
+    /// the tiles' quality. Each is owed its lossless picture once it is still, as any
     /// JPEG tile is.
     pub fn coarse(&self) -> bool {
         self.level > 0
@@ -436,7 +436,7 @@ impl Round {
     /// Code every run, on every core, in the order the browser draws them: rows top
     /// to bottom, each left to right. Blocking: call it on a worker.
     pub fn code(&self) -> anyhow::Result<Vec<Coded>> {
-        let coded: Vec<Vec<Coded>> = self.runs.par_iter().map(|run| code_run(run, self.exact, self.coarse(), self.quality)).collect::<anyhow::Result<_>>()?;
+        let coded: Vec<Vec<Coded>> = self.runs.par_iter().map(|run| code_run(run, self.lossless, self.coarse(), self.quality)).collect::<anyhow::Result<_>>()?;
         Ok(coded.into_iter().flatten().collect())
     }
 }
@@ -456,9 +456,9 @@ pub struct Coded {
 }
 
 /// Code `run`, cut where its tiles change format: a tile of few colours, and every
-/// tile of an `exact` round, as PNG, and any other as JPEG at `quality`. In a
+/// tile of a `lossless` round, as PNG, and any other as JPEG at `quality`. In a
 /// `coarse` round only a tile of one colour is a PNG.
-fn code_run(run: &Run, exact: bool, coarse: bool, quality: u8) -> anyhow::Result<Vec<Coded>> {
+fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Result<Vec<Coded>> {
     let (width, height) = (usize::from(run.rect.w()), usize::from(run.rect.h()));
     let tile = usize::from(TILE);
     let formats: Vec<Format> = (0..run.cols)
@@ -466,8 +466,8 @@ fn code_run(run: &Run, exact: bool, coarse: bool, quality: u8) -> anyhow::Result
             let left = i * tile;
             let right = (left + tile).min(width);
             let colours = || palette(rows(&run.rgb, width, left, right, height)).map(|(colours, _)| colours.len() / 3);
-            let exactly = exact || if coarse { colours() == Some(1) } else { colours().is_some() };
-            if exactly { Format::Png } else { Format::Jpeg }
+            let png = lossless || if coarse { colours() == Some(1) } else { colours().is_some() };
+            if png { Format::Png } else { Format::Jpeg }
         })
         .collect();
     let mut coded = Vec::new();
@@ -662,7 +662,7 @@ mod tests {
         assert!(tiles.take_round(0, 0).is_none());
     }
 
-    /// A tile of few colours is sent exactly, and one of many as JPEG, a run cut where
+    /// A tile of few colours is sent losslessly, and one of many as JPEG, a run cut where
     /// its tiles' formats change.
     #[test]
     fn a_run_is_cut_where_its_tiles_change_format() {
@@ -682,11 +682,11 @@ mod tests {
         assert_eq!(unjpeg(&coded[1].data), (64, 64));
     }
 
-    /// The exact picture of a tile sent as JPEG: owed once a whole tick has gone by
+    /// The lossless picture of a tile sent as JPEG: owed once a whole tick has gone by
     /// without it changing, not while it keeps changing, and sent as PNG of the
     /// mirror's pixels, after which it is owed nothing.
     #[test]
-    fn a_lossy_tile_is_sent_exactly_once_it_is_still() {
+    fn a_lossy_tile_is_sent_losslessly_once_it_is_still() {
         let mut tiles = tiles(128, 64);
         let photo = noise(64, 64, 3);
         tiles.blit(placed(0, 0, 64, 64), &photo).expect("a blit");
@@ -695,10 +695,10 @@ mod tests {
         assert!(!tiles.tick(), "changed in this tick, so not still");
         assert!(tiles.tick(), "a whole tick without a change");
         let (round, coded) = sent(&mut tiles, 0);
-        assert!(round.exact());
+        assert!(round.lossless());
         assert_eq!(coded.iter().map(|part| part.format).collect::<Vec<_>>(), [Format::Png]);
         assert_eq!(unpng(&coded[0].data).2, photo, "the refresh is not the mirror's pixels");
-        assert!(!tiles.tick() && !tiles.tick(), "a tile sent exactly is owed nothing");
+        assert!(!tiles.tick() && !tiles.tick(), "a tile sent losslessly is owed nothing");
 
         // One that changes again before it is still is owed its changed pixels, not a
         // refresh of the old.
@@ -708,7 +708,7 @@ mod tests {
         tiles.blit(placed(0, 0, 64, 64), &noise(64, 64, 5)).expect("a blit");
         assert!(!tiles.tick(), "changed in the tick");
         let (round, _) = sent(&mut tiles, 0);
-        assert!(!round.exact(), "a changed tile goes ahead of any refresh");
+        assert!(!round.lossless(), "a changed tile goes ahead of any refresh");
     }
 
     /// Changed tiles go ahead of a refresh, and a refresh takes as many tiles as its
@@ -721,20 +721,20 @@ mod tests {
         tiles.tick();
         assert!(tiles.tick());
         tiles.blit(placed(0, 0, 1, 1), &[1, 2, 3]).expect("a blit");
-        assert!(!tiles.take_round(u64::MAX, 0).expect("owed").exact(), "a refresh went ahead of a change");
+        assert!(!tiles.take_round(u64::MAX, 0).expect("owed").lossless(), "a refresh went ahead of a change");
         tiles.round_out = false;
         let one = tiles.take_round(0, 0).expect("owed");
-        assert_eq!((one.exact(), one.tiles()), (true, 1), "a refresh of no budget is one tile");
+        assert_eq!((one.lossless(), one.tiles()), (true, 1), "a refresh of no budget is one tile");
         tiles.round_out = false;
-        let two = tiles.take_round(2 * EXACT_GUESS, 0).expect("owed");
+        let two = tiles.take_round(2 * LOSSLESS_GUESS, 0).expect("owed");
         assert_eq!(two.tiles(), 2);
     }
 
     /// A coarse round sends a tile of text as a JPEG at its level's quality, and
-    /// keeps a tile of one colour exact; it weighs what a tile costs at its level
-    /// alone; the JPEG is made exact once it is still, and a refresh is never coarse.
+    /// keeps a tile of one colour lossless; it weighs what a tile costs at its level
+    /// alone; the JPEG is made lossless once it is still, and a refresh is never coarse.
     #[test]
-    fn a_coarse_round_sends_text_as_jpeg_and_makes_it_exact_once_still() {
+    fn a_coarse_round_sends_text_as_jpeg_and_makes_it_lossless_once_still() {
         let mut tiles = tiles(128, 64);
         // Two colours in stripes: a palette's, which a fine round sends as PNG.
         let text: Vec<u8> = (0..64 * 64).flat_map(|i| if (i * 7 / 3) % 5 < 2 { [0, 0, 0] } else { [250, 250, 250] }).collect();
@@ -749,15 +749,15 @@ mod tests {
         let coded = round.code().expect("a round codes");
         tiles.put_back(&round, &coded);
         let parts: Vec<_> = coded.iter().map(|part| (part.x, part.format)).collect();
-        assert_eq!(parts, [(0, Format::Jpeg), (64, Format::Png)], "text coarse, the flat tile exact");
+        assert_eq!(parts, [(0, Format::Jpeg), (64, Format::Png)], "text coarse, the flat tile lossless");
         assert_eq!(unjpeg(&coded[0].data), (64, 64));
         assert_eq!(tiles.changed_costs[0], CHANGED_GUESS[0], "a coarse round weighed what a fine tile costs");
         assert_ne!(tiles.changed_costs[2], CHANGED_GUESS[2], "a coarse round did not weigh its own level");
 
         tiles.tick();
-        assert!(tiles.tick(), "the coarse tile is owed its exact picture");
+        assert!(tiles.tick(), "the coarse tile is owed its lossless picture");
         let refresh = tiles.take_round(u64::MAX, 2).expect("owed");
-        assert!(refresh.exact() && !refresh.coarse(), "a refresh went coarse");
+        assert!(refresh.lossless() && !refresh.coarse(), "a refresh went coarse");
         let coded = refresh.code().expect("a round codes");
         assert_eq!(coded.iter().map(|part| (part.x, part.format)).collect::<Vec<_>>(), [(0, Format::Png)]);
         assert_eq!(unpng(&coded[0].data).2, text);

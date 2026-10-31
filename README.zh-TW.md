@@ -15,7 +15,7 @@ Windows 和 macOS 主機不需要安裝任何軟體，只要開啟系統內建�
 瀏覽器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面
 ```
 
-`zdesk serve` 是單一使用者的：一組登入、一份目標清單、一個進行中的工作階段。原生安裝套件還包含 [`zdesk tui`](docs/guide.zh-TW.md#本機執行個體)，這是一個本機控制平面，可以並排執行多個彼此獨立的閘道執行個體。
+`zdesk serve` 是單一使用者的：一組登入、一份目標清單、一個進行中的工作階段。原生安裝套件還包含 [`zdesk tui`](https://zdesk.dev/zh-TW/guide#local-instances)，這是一個本機控制平面，可以並排執行多個彼此獨立的閘道執行個體。
 
 > [!WARNING]
 > **不保證回溯相容。** zDesk 的[方向](docs/architecture.md#direction)仍在調整中，任何版本都可能變更或移除某個設定項、WebSocket 協定或某項功能，且不再讀取舊的寫法。升級時請對照 [`zdesk.example.toml`](zdesk.example.toml) 檢查你的設定。頁面和閘道屬於同一個版本：升級時仍開著的分頁會顯示兩者的版本號，並提示重新載入。這裡說的是相容性，而不是穩定性：我一直在實際使用未標示為實驗性的功能，它們一直很穩定。
@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/fd0610bb-444a-4222-aa1d-76a39d09b3f0
 - **依瀏覽器調整尺寸，依其像素密度清晰顯示。** Windows、高效能模式 Mac 以及 wlshare 的無頭輸出會依螢幕像素密度跟隨視窗，因此在 Retina 或 HiDPI 螢幕上清晰，並以實際尺寸顯示。標準模式 Mac 的顯示器維持其回報的密度。
 - **同時顯示兩個顯示器（alpha）**，支援 Windows、高效能模式 Mac 和 wlshare，第二個顯示器在另一個瀏覽器分頁中開啟。macOS 26 上 Apple 自己的檢視器在有兩個虛擬顯示器時不提供動態解析度。
 - **遠端自己的畫面，在瀏覽器中解碼。** Windows 的圖形管線、高效能模式 Mac 的 HEVC 或 H.264、標準模式 Mac 的 Adaptive 畫面以及 wlshare 的 H.264 都原封不動地直通，除了高效能模式 Mac 之外，都依瀏覽器連線調節節奏。
-- **最終收斂為無損的圖塊。** 由閘道自行編碼畫面時，閘道傳送 64×64 圖塊：精確的部分用 PNG，移動中的部分用 JPEG，靜止後再精確地重送一次。
+- **最終收斂為無損的圖塊。** 由閘道自行編碼畫面時，閘道傳送 64×64 圖塊：無損的部分用 PNG，移動中的部分用 JPEG，靜止後再無損地重送一次。
 - **瀏覽器中的遠端聲音**：依瀏覽器連線調節的 Opus、適合區域網路的無損 FLAC，或高效能模式 Mac 自己的 AAC-ELD。
 - **雙向剪貼簿文字**，瀏覽器允許時自動同步，不允許時透過 Clipboard 面板。
 - **攝影機和麥克風重新導向（實驗性）**，用於在選擇器中勾選它們後啟動的 RDP 或 wlshare 工作階段。
@@ -48,7 +48,7 @@ zDesk 以各平台原生的遠端桌面伺服器為核心打造：Windows 內建
 - **Windows 10 和 11 的遠端桌面**（`rdp`）。依密度跟隨視窗，傳輸 Opus 或 FLAC 聲音，同時支援攝影機和麥克風。畫面是其圖形管線，直通給瀏覽器，可以是高品質，或（alpha）自適應 H.264。
 - **Mac 的高效能螢幕共享**（`vnc`，`subtype = "ard-high-performance"`）。依密度跟隨視窗，支援一個或兩個虛擬顯示器，一律傳輸 AAC-ELD 聲音。畫面是直通的 HEVC 或 H.264（beta），由 Mac 依自己的速率而非瀏覽器連線傳送：靜止畫面資料很少，移動時很多。H.264 需要瀏覽器具備 `VideoDecoder`，但頁面不需要額外元件；HEVC 則需要能解碼它的瀏覽器或頁面的軟體解碼器。
 - **Mac 的標準螢幕共享**（`vnc`，`subtype = "ard"`）。Mac 的實體顯示器，單一或全部，依其自身尺寸和密度顯示，畫面是閘道針對 Mac 無損 Full 品質編碼的圖塊，或直通的 Mac 自己的 Adaptive 畫面（beta）；不支援聲音、攝影機和麥克風。
-- **Linux 上的 wlshare**（`vnc`，`subtype = "wlshare"`）。由於伺服器是我們自己的，RFB 缺少的功能都加到了它裡面：它可以切換輸出、依密度跟隨視窗、傳輸 Opus 或 FLAC 聲音以及瀏覽器的攝影機和麥克風，並自行針對整個桌面編碼 H.264 供閘道直通，依瀏覽器連線調節節奏；或者在連線頻寬充裕時，使用它自己的精確圖塊，並為每個移動區域提供一路視訊串流，使用硬體或 libx264 編碼的 H.264。可以同時顯示兩個輸出，第二個在另一個瀏覽器分頁中（alpha）。
+- **Linux 上的 wlshare**（`vnc`，`subtype = "wlshare"`）。由於伺服器是我們自己的，RFB 缺少的功能都加到了它裡面：它可以切換輸出、依密度跟隨視窗、傳輸 Opus 或 FLAC 聲音以及瀏覽器的攝影機和麥克風，並自行針對整個桌面編碼 H.264 供閘道直通，依瀏覽器連線調節節奏；或者在連線頻寬充裕時，使用它自己的無損圖塊，並為每個移動區域提供一路視訊串流，使用硬體或 libx264 編碼的 H.264。可以同時顯示兩個輸出，第二個在另一個瀏覽器分頁中（alpha）。
 
 其他所有 VNC 伺服器都是一般的 `vnc` 目標，透過 RFB 基本功能存取：一個 1x 影格緩衝區，不調整尺寸，沒有聲音，由閘道傳送圖塊。其他 RDP 伺服器或許剛好能用，但未經測試。比較表、它們的共同點以及各自直通的內容，請見 [Prioritized servers](docs/architecture.md#prioritized-servers)（英文）。
 
@@ -122,7 +122,7 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-接著貼上目標的密碼，它會用你的主密碼加密（請見[目標密碼](docs/guide.zh-TW.md#目標密碼)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 輸出要以 `workstation = "…"` 的形式加到 `[passwords]` 下的值。
+接著貼上目標的密碼，它會用你的主密碼加密（請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password encrypt` 輸出要以 `workstation = "…"` 的形式加到 `[passwords]` 下的值。
 
 ```sh
 zdesk password master create
@@ -155,13 +155,13 @@ docker run -d --name zdesk -p 52380:52380 \
 zdesk tui
 ```
 
-它只監聽回送位址，位於 <http://zdesk.localhost:52380>。按 `n` 建立執行個體，按 `e` 在其設定中新增目標，按 `p` 加密目標的密碼，按 `s` 啟動執行個體，按 `o` 在瀏覽器中開啟它。[本機執行個體](docs/guide.zh-TW.md#本機執行個體)列出了所有按鍵。容器映像檔不包含控制平面。
+它只監聽回送位址，位於 <http://zdesk.localhost:52380>。按 `n` 建立執行個體，按 `e` 在其設定中新增目標，按 `p` 加密目標的密碼，按 `s` 啟動執行個體，按 `o` 在瀏覽器中開啟它。[本機執行個體](https://zdesk.dev/zh-TW/guide#local-instances)列出了所有按鍵。容器映像檔不包含控制平面。
 
 [安裝 zDesk](docs/install.zh-TW.md) 涵蓋所有平台、升級和解除安裝。
 
 ## 文件
 
-- [使用 zDesk](docs/guide.zh-TW.md)：瀏覽器用戶端、啟動工作階段、設定 Windows、Mac、wlshare 和 VNC 目標、`zdesk tui`
+- [使用 zDesk](https://zdesk.dev/zh-TW/guide)：瀏覽器用戶端、啟動工作階段、設定 Windows、Mac、wlshare 和 VNC 目標、`zdesk tui`
 - [安裝 zDesk](docs/install.zh-TW.md)：套件、首次設定、升級、解除安裝
 
 以下文件只有英文版：
@@ -186,7 +186,7 @@ cargo run -- gen-passwd admin
 cargo run -- serve -c zdesk.toml
 ```
 
-複製的範例參照了 `[passwords].example`，但需要你自己加上該值。請依[目標密碼](docs/guide.zh-TW.md#目標密碼)設定目標的加密密碼和主密碼檔案。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`，此時不需要主密碼。
+複製的範例參照了 `[passwords].example`，但需要你自己加上該值。請依[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)設定目標的加密密碼和主密碼檔案。如果目標使用空白密碼，可在 `[passwords]` 下加上 `example = ""`，此時不需要主密碼。
 
 Cargo 會建置前端並將其編譯進二進位檔，因此閘道是唯一提供頁面的程式。檢查指令：
 
