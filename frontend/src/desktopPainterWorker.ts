@@ -257,10 +257,15 @@ export function createPainterWorker(
   // as each batch lands is shown part this frame and part the last — a moving
   // picture torn along its tiles' rows. Drawn ahead of whatever is queued next.
   let held: ArrayBuffer[] = [];
-  const drawHeld = async () => {
+  // What is held drawn, for the attachment `born` names: a clear while one draws
+  // ends it, and the rest are the gone attachment's.
+  const drawHeld = async (born: number) => {
     const frames = held;
     held = [];
     for (const frame of frames) {
+      if (born !== epoch) {
+        return;
+      }
       await painter?.draw(frame);
     }
   };
@@ -270,23 +275,32 @@ export function createPainterWorker(
       held.push(frame);
       return;
     }
-    await drawHeld();
+    await drawHeld(born);
+    if (born !== epoch) {
+      return;
+    }
     await painter?.draw(frame);
     if (born === epoch) {
       compose();
     }
   };
-  // `holding` for a batch, which draws or holds what is held itself.
+  // `holding` for a batch, which draws or holds what is held itself; any other
+  // command draws it first, and shows it on a mosaic as a final batch would.
   const queued = (task: () => void | Promise<void>, holding = false) => {
     const born = epoch;
     queue = queue
       .then(async () => {
-        if (born === epoch) {
-          if (!holding) {
-            await drawHeld();
-          }
-          return task();
+        if (born !== epoch) {
+          return;
         }
+        if (!holding && held.length > 0) {
+          await drawHeld(born);
+          if (born !== epoch) {
+            return;
+          }
+          compose();
+        }
+        return task();
       })
       .catch(() => {});
   };
