@@ -237,7 +237,8 @@ export type ControlMsg =
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
       // "apple-media", "apple-h264", "apple-adaptive", "wlshare-video" or
-      // "wlshare-tiles-motion", "wlshare-tiles-progressive" — or null for a desktop
+      // "wlshare-tiles-motion", "wlshare-tiles-progressive",
+      // "wlshare-tiles-lossless" — or null for a desktop
       // the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
@@ -488,11 +489,13 @@ export interface StandardMsg {
 // on no other, so they are drawn in wire order and may be decoded in any. Or one of
 // wlshare's progressive tiles: a RemoteFX Progressive
 // tile block of one 64x64 tile, which depends on every block of that tile before
-// it, so it is decoded in wire order too (framePainter.ts). See `TileUnit` in
-// src/protocol.rs for the contract.
+// it, so it is decoded in wire order too (framePainter.ts). Or one of wlshare's
+// lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless and
+// depending on no other, decoded by the same module in wire order with the
+// progressive ones. See `TileUnit` in src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive";
+  format: "jpeg" | "png" | "progressive" | "planar";
   x: number;
   y: number;
   w: number;
@@ -579,6 +582,7 @@ const TILE_FORMATS = {
   1: "jpeg",
   2: "png",
   3: "progressive",
+  4: "planar",
 } as const;
 
 const OP_REGION = 0x07;
@@ -746,7 +750,7 @@ function decodeTile(
     return null;
   }
   const format = view.getUint8(at + 1);
-  if (format !== 1 && format !== 2 && format !== 3) {
+  if (format !== 1 && format !== 2 && format !== 3 && format !== 4) {
     return null;
   }
 

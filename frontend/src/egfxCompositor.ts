@@ -41,9 +41,9 @@ import init, {
   module as compiled,
   Egfx,
   type InitInput,
-  ProgressiveTiles,
   startPool,
   stopPool,
+  WlshareTiles,
 } from "../wasm/egfx/pkg/zdesk_egfx.js";
 import type { PoolEvent, PoolSeat } from "./egfxPool.worker.ts";
 
@@ -151,18 +151,19 @@ export type DecodedFrame = Pick<
 >;
 
 /**
- * wlshare's progressive tiles as the page draws them: the module's RemoteFX
- * Progressive decoder over the desktop, which keeps every tile's coefficients
- * from one block to the next, so blocks go in in wire order.
+ * wlshare's tiles the page decodes in the module: its progressive tiles, by the
+ * module's RemoteFX Progressive decoder over the desktop, which keeps every
+ * tile's coefficients from one block to the next, so blocks go in in wire order;
+ * and its lossless tiles, each planar bitmap alone.
  */
-export interface ProgressiveDecoder {
+export interface TilesDecoder {
   /**
    * The tile `block` is of, decoded against what this holds of it: `R, G, B, A`
    * rows of the rectangle `x, y, w, h`, the block's tile cut by the edge of a
    * `width`×`height` desktop, for the canvas to put there. Throws for a block that
    * does not decode.
    */
-  decode(
+  progressive(
     width: number,
     height: number,
     x: number,
@@ -171,23 +172,30 @@ export interface ProgressiveDecoder {
     h: number,
     block: Uint8Array,
   ): Uint8Array;
+  /**
+   * The pixels of `bitmap`, a planar bitmap of exactly a `w`×`h` rectangle that
+   * depends on nothing before it: `R, G, B, A` rows for the canvas to put there.
+   * Throws for one that does not decode.
+   */
+  planar(w: number, h: number, bitmap: Uint8Array): Uint8Array;
   /** Give the module back what it holds of every tile. */
   close(): void;
 }
 
 /**
- * A progressive decoder out of the module, loaded and its threads started as for
- * a compositor (`loadEgfx`).
+ * A decoder of wlshare's tiles out of the module, loaded and its threads started
+ * as for a compositor (`loadEgfx`).
  */
-export async function loadProgressiveTiles(
+export async function loadTilesDecoder(
   source?: InitInput,
   threads?: number,
-): Promise<ProgressiveDecoder> {
+): Promise<TilesDecoder> {
   await loadEgfx(source, threads);
-  const tiles = new ProgressiveTiles();
+  const tiles = new WlshareTiles();
   return {
-    decode: (width, height, x, y, w, h, block) =>
-      tiles.decode(width, height, x, y, w, h, block),
+    progressive: (width, height, x, y, w, h, block) =>
+      tiles.progressive(width, height, x, y, w, h, block),
+    planar: (w, h, bitmap) => tiles.planar(w, h, bitmap),
     close: () => tiles.free(),
   };
 }

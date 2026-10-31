@@ -71,7 +71,8 @@ export type Passthrough =
   | "apple-adaptive"
   | "wlshare-video"
   | "wlshare-tiles-motion"
-  | "wlshare-tiles-progressive";
+  | "wlshare-tiles-progressive"
+  | "wlshare-tiles-lossless";
 
 /** One entry of GET /api/targets. */
 export interface TargetInfo {
@@ -104,7 +105,7 @@ export interface TargetInfo {
   /**
    * The streams this target can pass, in the picker's order: none, an RDP host's
    * graphics pipeline, a High Performance Mac's HEVC and its H.264, a Standard
-   * Mac's Adaptive picture, or wlshare's video and its two tiles.
+   * Mac's Adaptive picture, or wlshare's video and its three tiles.
    */
   passthroughs: Passthrough[];
   /** Whether where the second virtual display sits is a choice. */
@@ -352,9 +353,13 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
 const NO_PROGRESSIVE =
   "This page cannot decode wlshare's progressive tiles: that needs WebGL 2 and a cross-origin isolated page.";
 
+// Why wlshare's lossless tiles are greyed: the same module decodes them.
+const NO_LOSSLESS =
+  "This page cannot decode wlshare's lossless tiles: that needs WebGL 2 and a cross-origin isolated page.";
+
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
-  "This browser decodes none of wlshare's pictures: its H.264 video, its progressive tiles, which need WebGL 2 and a cross-origin isolated page, or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser decodes none of wlshare's pictures: its H.264 video, its progressive or lossless tiles, which need WebGL 2 and a cross-origin isolated page, or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -375,8 +380,9 @@ function noHevc(target: TargetInfo): string {
  * The ways a Mac's or a wlshare desktop's picture can reach this browser, in the
  * order the picker shows them: a High Performance Mac's HEVC passed through, and
  * its H.264; a Standard Mac's Adaptive picture passed through, and the gateway's
- * tiles of its Full quality; wlshare's video, its progressive tiles and its
- * tiles with motion, all passed through and labelled without saying so.
+ * tiles of its Full quality; wlshare's video, its progressive tiles, its tiles
+ * with motion and its lossless tiles, all passed through and labelled without
+ * saying so.
  *
  * - The HEVC is greyed in a browser whose own decoder does not take it, unless
  *   the page decodes it itself, which it then does (softwareDecoder.ts). The
@@ -388,8 +394,8 @@ function noHevc(target: TargetInfo): string {
  *   (standardPicture.ts), nor the gateway's tiles, images every page decodes.
  * - wlshare's video and its tiles with motion, whose regions are H.264, are
  *   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its
- *   progressive tiles in one that cannot compose an RDP host's pipeline, whose
- *   module decodes them.
+ *   progressive and lossless tiles in one that cannot compose an RDP host's
+ *   pipeline, whose module decodes them.
  */
 function pictureOptions(
   target: TargetInfo,
@@ -442,6 +448,14 @@ function pictureOptions(
         ? "wlshare's own tiles: lossless PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
+    },
+    "wlshare-tiles-lossless": {
+      value: "wlshare-tiles-lossless",
+      label: "Lossless tiles (experimental)",
+      note: abilities.rdpGraphics
+        ? "wlshare's tiles as a Windows host draws under its Lossless policy: every tile exact, still or moving, in RDP's planar codec, with no video, a slower link getting fewer frames. Many times the video's bytes: for a LAN. Decoded by this page, with no video decoder."
+        : NO_LOSSLESS,
+      disabled: !abilities.rdpGraphics,
     },
   };
   const offered = target.passthroughs.flatMap((passthrough) =>

@@ -30,9 +30,12 @@
 //! [`run_pool_thread`], and its worker can be ended.
 //!
 //! wlshare's progressive tiles are decoded here too, by the same crate's
-//! RemoteFX Progressive decoder ([`ProgressiveTiles`]): each a tile block the
+//! RemoteFX Progressive decoder ([`WlshareTiles`]): each a tile block the
 //! page hands in order, put in a stream of its own with the protocol's tables
-//! (`wlshare_proto::progressive`), its tile's pixels handed back.
+//! (`wlshare_proto::progressive`), its tile's pixels handed back. And so are
+//! its lossless tiles, by the planar codec that draws a Windows host's lossless
+//! pipeline ([`WlshareTiles::planar`]): each bitmap alone, its pixels
+//! handed back.
 
 use std::io;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -332,19 +335,23 @@ impl Default for Egfx {
 
 /// wlshare's progressive tiles as the page draws them: one RemoteFX Progressive
 /// decoder over the desktop, which keeps every tile's coefficients from one block
-/// to the next. A desktop of another size starts it over.
+/// to the next. A desktop of another size starts it over. Its lossless tiles too,
+/// each alone ([`Self::planar`]).
 #[wasm_bindgen]
-pub struct ProgressiveTiles {
+pub struct WlshareTiles {
     decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
     size: (u32, u32),
     frame: u32,
+    /// The planar codec's working space, kept from one bitmap to the next.
+    planes: Vec<u8>,
+    pixels: Vec<u8>,
 }
 
 #[wasm_bindgen]
-impl ProgressiveTiles {
+impl WlshareTiles {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> ProgressiveTiles {
-        ProgressiveTiles { decoder: Default::default(), size: (0, 0), frame: 0 }
+    pub fn new() -> WlshareTiles {
+        WlshareTiles { decoder: Default::default(), size: (0, 0), frame: 0, planes: Vec::new(), pixels: Vec::new() }
     }
 
     /// The tile `block` is of, decoded against what this holds of it, as `R, G,
@@ -354,7 +361,7 @@ impl ProgressiveTiles {
     /// Throws for a block that does not decode, or that paints none of the
     /// rectangle, after which the tile holds what it held before.
     #[allow(clippy::too_many_arguments)]
-    pub fn decode(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
+    pub fn progressive(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
         if self.size != (width, height) {
             self.decoder = Default::default();
             self.size = (width, height);
@@ -380,9 +387,18 @@ impl ProgressiveTiles {
         }
         Ok(out)
     }
+
+    /// The pixels of `bitmap`, one of wlshare's lossless tiles: a planar bitmap
+    /// of exactly a `w`×`h` rectangle, depending on nothing before it, as `R, G, B,
+    /// A` rows for the page to put there. Throws for one that does not decode.
+    pub fn planar(&mut self, w: u16, h: u16, bitmap: &[u8]) -> Result<Vec<u8>, JsError> {
+        zdesk_rdp_graphics::proto::planar::decompress(bitmap, &mut self.planes, &mut self.pixels, w, h)
+            .map_err(|e| JsError::new(&format!("a {w}x{h} planar tile: {e}")))?;
+        Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
+    }
 }
 
-impl Default for ProgressiveTiles {
+impl Default for WlshareTiles {
     fn default() -> Self {
         Self::new()
     }

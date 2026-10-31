@@ -422,6 +422,9 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_PNG => image.starts_with(b"\x89PNG"),
                     // A first pass's block or an upgrade's: 0xCCC6 or 0xCCC7, little-endian.
                     batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
+                    // A planar bitmap's format header: no alpha plane, run-length
+                    // coded or plain, no colour loss or subsampling.
+                    batch::TILE_PLANAR => matches!(image.first(), Some(0x30 | 0x20)),
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");

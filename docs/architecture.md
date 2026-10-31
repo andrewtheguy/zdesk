@@ -535,10 +535,11 @@ since neither end keeps an older layout. That version is also what
 leaves the extensions alone is no reason to move the pin; one that changes
 them is a new version and a new tag.
 
-A `wlshare` target lists one of wlshare's three pictures for every browser,
+A `wlshare` target lists one of wlshare's four pictures for every browser,
 whichever the session was started with, chosen at the picker's Picture group
 (`Passthrough::WlshareVideo`, `Passthrough::WlshareTilesProgressive`,
-`Passthrough::WlshareTilesMotion`), and passes its frames untouched. Its video,
+`Passthrough::WlshareTilesMotion`, `Passthrough::WlshareTilesLossless`), and
+passes its frames untouched. Its video,
 *Adaptive video*, an H.264 stream of the whole desktop at 4:2:0, by the host's
 hardware encoder where it has one and libx264 otherwise, is the picture of a
 session that names none, listed alone. Its progressive tiles are its tiles'
@@ -558,6 +559,17 @@ either. Each block is coded against what the decoder holds of its tile, so one
 that does not decode, or a batch dropped with blocks in it, leaves the decoder
 holding what wlshare's next blocks are not coded against: it is given back, the
 whole picture is asked for, and no block is decoded until that picture starts.
+Its lossless tiles (experimental) are `WLST` with `WLSL` beside it, for a LAN:
+every tile that changed, still or moving, a planar bitmap of its pixels, RDP 6.0
+bitmap compression with no alpha plane, colour loss or subsampling, as a Windows
+host draws its pipeline under its Lossless policy
+([Lossless, by the host's policy](rdp-client.md#lossless-by-the-hosts-policy)),
+and no stream, the browser's lag slowing wlshare's updates and never what a tile
+shows. Each is a rectangle inside the desktop of any size, passed as a `TILE`
+record of its own format (`TILE_PLANAR`), and the page decodes it, alone and in
+wire order with the progressive ones, with the same module's planar codec, the
+one that draws a Windows host's lossless pipeline; one that does not decode asks
+for the whole picture as a progressive tile does.
 Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
@@ -1128,14 +1140,16 @@ listing sends.
 #### wlshare's tiles with motion, passed through
 
 wlshare has a second picture encoding, `WLST` (`0x574c5354`), which a `wlshare`
-session started with its tiles, chosen at the picker as *Progressive tiles* or
-*Tiles with motion* against its video, lists in place of `WLSV`. Its tiles with
+session started with its tiles, chosen at the picker as *Progressive tiles*,
+*Tiles with motion* or *Lossless tiles* against its video, lists in place of
+`WLSV`. Its tiles with
 motion are a video stream of its own, 4:2:0, for each region that moves, at
 most four at once — H.264, by the wlshare host's hardware encoder where it has
 one and libx264 otherwise — and lossless PNG stills where the desktop is still,
 every tile a stream carried sent again as PNG once it is still, so the picture
 ends lossless. Its progressive tiles are every tile a RemoteFX Progressive tile
-block instead, and no stream (above). The tiles with motion are Motion, which this gateway removed because here
+block instead, and its lossless tiles every tile a planar bitmap, and no stream
+(above). The tiles with motion are Motion, which this gateway removed because here
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
@@ -1143,14 +1157,16 @@ Every rectangle of an update is one of eight kinds: a PNG of it, a region
 stream's first frame, its next, its end, a copy of what the page holds
 elsewhere, a scroll or a window moved, a tile of it kept in the page's cache
 of tiles, a tile drawn from that cache, a window switched back to or a page
-scrolled back, or a progressive tile.
+scrolled back, a progressive tile, or a planar bitmap.
 Nothing is coded here.
 
 - **Listed with which tiles beside it.** `WLST` goes at the head of the list.
   For its tiles with motion `WLSD` beside it holds every region's stream at
   wlshare's dial and every still is lossless; for its progressive tiles, listed
   alone, wlshare walks its dial down on the browser's lag, the first passes
-  following it, and refines every tile once the link has room. Every region is H.264, 4:2:0, which wlshare codes with its host's
+  following it, and refines every tile once the link has room; for its
+  lossless tiles `WLSL` beside it, wlshare sends every tile exact and the lag
+  slows its updates alone. Every region is H.264, 4:2:0, which wlshare codes with its host's
   hardware encoder where it found one at its startup, the GPU's fixed-function
   block, and with libx264 otherwise; a wlshare with neither does not start, and
   a region it cannot code ends its session. The browser decodes it with its own
@@ -2007,13 +2023,15 @@ six, the Mac's HEVC and H.264 in one row:
 | wlshare's video (`wlshare` subtype, passed where chosen) | wlshare's walk of its frame rate, every frame at its own quality | Each fence echo is held for the queue ahead of the frame on the browser's link (`VideoSink::fence_hold`) |
 | wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at wlshare's dial (`WLSD`) | Each fence echo is held as the video's is, and nothing adapts to it |
 | wlshare's progressive tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: the stage of each first pass, then frame rate | Each fence echo is held as the video's is |
+| wlshare's lossless tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: frame rate alone, every tile exact | Each fence echo is held as the video's is |
 | An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; with Adaptive, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; with Adaptive, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more |
 | A High Performance Mac's HEVC or H.264 (beta), always passed | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway |
 | A Standard Mac's Adaptive picture (passed where chosen) | The Mac: how many updates it sends, and whether it refines them while the screen moves | Its connection, read as the page paints, through a small receive buffer |
 
 - **wlshare** walks its video's frame rate: every frame is at its quality, fewer
   of them go as the link falls behind, and they come back as it clears; its
-  progressive tiles walk their first passes' stage, then the frame rate. See
+  progressive tiles walk their first passes' stage, then the frame rate, and
+  its lossless tiles the frame rate alone. See
   [wlshare's stream, passed through](#wlshares-stream-passed-through).
 - **A Windows host** has no quality dial for a client to turn, but it has its
   own network detection. Every session with the pipeline takes part in it, and
@@ -2224,7 +2242,7 @@ and `GET /api/targets` carries it:
 | `rdp` | yes | shown | said, not offered: the graphics pipeline, always passed | shown: high quality or adaptive H.264 | shown |
 | `rdp` with `egfx = false` | no | shown | hidden | hidden | shown |
 | `vnc` | no | hidden | hidden | hidden | hidden |
-| `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's H.264 video, its progressive tiles (alpha) or its tiles with motion, all passed | hidden | shown |
+| `vnc`, `wlshare` | yes | shown | shown, as Picture: wlshare's H.264 video, its progressive tiles (alpha), its tiles with motion or its lossless tiles (experimental), all passed | hidden | shown |
 | `vnc`, `ard` | no | hidden | shown, as Picture: the Mac's Adaptive picture, passed (beta), greyed under Combined Display, or the gateway's tiles of its Full quality; and as Displays: one at a time (beta) or Combined (alpha) | hidden | hidden |
 | `vnc`, `ard` with `virtual_display` | yes | hidden | shown, as Picture only, as for `ard`: a virtual display is one screen, so there is no Displays row | hidden | hidden |
 | `vnc`, `ard-high-performance` | yes | hidden: always carried | shown, as Picture: the Mac's HEVC or its H.264 (beta), always passed | hidden | hidden |
@@ -2278,8 +2296,9 @@ and `GET /api/targets` carries it:
   passthrough at all. A `wlshare` target's Picture group is Adaptive video,
   wlshare's H.264 of the whole desktop, which `connect` names as `wlshare-video`
   and which a session that names none is sent, taken first, Progressive tiles
-  (alpha), `wlshare-tiles-progressive`, and Tiles with motion (LAN),
-  `wlshare-tiles-motion`: all three passed, so no label says so.
+  (alpha), `wlshare-tiles-progressive`, Tiles with motion (LAN),
+  `wlshare-tiles-motion`, and Lossless tiles (experimental),
+  `wlshare-tiles-lossless`: all four passed, so no label says so.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
@@ -2291,8 +2310,8 @@ and `GET /api/targets` carries it:
   under Combined Display, which is the gateway's tiles. A `wlshare` target's
   Adaptive video and its tiles with motion, whose moving regions are H.264, are
   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its
-  progressive tiles in a page that cannot compose an RDP host's pipeline, whose
-  module decodes them; a browser that takes none of them cannot start the
+  progressive and lossless tiles in a page that cannot compose an RDP host's
+  pipeline, whose module decodes them; a browser that takes none of them cannot start the
   target. `/api/targets` says which streams a target can pass, as
   `passthroughs`; on `rdp`, `wlshare` and `ard-high-performance` the picture is
   always one of them, while a Standard Mac's Full quality, which names none, is

@@ -1833,11 +1833,12 @@ test("a malformed batch ends a Mac's own picture", async () => {
 });
 
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
-// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile),
-// x, y, w and h as u16, a u32 length, the image, little-endian.
+// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile, 4
+// a lossless tile's planar bitmap), x, y, w and h as u16, a u32 length, the
+// image, little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3;
+    format: 1 | 2 | 3 | 4;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1953,17 +1954,26 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     onVideoNeedsKeyframe: (reason) => {
       videoKeyframeAsks.push(reason);
     },
-    loadProgressive: async () => {
+    loadTiles: async () => {
       made += 1;
       await new Promise((resolve) => setTimeout(resolve, 10));
       return {
-        decode(width, height, x, y, w, h, block) {
+        progressive(width, height, x, y, w, h, block) {
           calls.push(`${width}x${height} ${x},${y} ${w}x${h} [${block[0]}]`);
           if (block[0] === 0xee) {
             throw new Error("not a tile block");
           }
           const rgba = new Uint8Array(w * h * 4);
           rgba[0] = block[0];
+          return rgba;
+        },
+        planar(w, h, bitmap) {
+          calls.push(`planar ${w}x${h} [${bitmap[0]}]`);
+          if (bitmap[0] === 0xee) {
+            throw new Error("not a planar bitmap");
+          }
+          const rgba = new Uint8Array(w * h * 4);
+          rgba[0] = bitmap[0];
           return rgba;
         },
         close() {
@@ -2052,9 +2062,43 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
     assert.equal(put.at(-1), "9 64x64 at 0,0");
     assert.equal(made, 3);
+    // A lossless tile is decoded by the same module, alone, and put where it
+    // says, in its turn among the rest.
+    await p.draw(
+      tileFrame([
+        { format: 4, at: [0, 0, 100, 64], image: [10] },
+        { format: 3, at: [0, 64, 64, 16], image: [11] },
+        { format: 4, at: [64, 64, 36, 16], image: [12] },
+      ]),
+    );
+    assert.deepEqual(calls.slice(-3), [
+      "planar 100x64 [10]",
+      "100x80 0,64 64x16 [11]",
+      "planar 36x16 [12]",
+    ]);
+    assert.deepEqual(put.slice(-3), [
+      "10 100x64 at 0,0",
+      "11 64x16 at 0,64",
+      "12 36x16 at 64,64",
+    ]);
+    assert.equal(made, 3, "the one decoder");
+    // And one that does not decode asks for the whole picture as a progressive
+    // one does.
+    const asked = videoKeyframeAsks.length;
+    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [0xee] }]));
+    assert.equal(videoKeyframeAsks.length, asked + 1);
+    assert.match(
+      videoKeyframeAsks.at(-1) ?? "",
+      /a lossless tile did not decode/,
+    );
+    assert.equal(closed, 3, "given back at the failure");
     p.clear();
     await waited(0);
-    assert.equal(closed, 3, "the attachment's end gives it back too");
+    assert.equal(
+      closed,
+      3,
+      "nothing more to give back at the attachment's end",
+    );
   } finally {
     globals.ImageData = undefined;
   }
