@@ -553,7 +553,7 @@ impl Shared {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
             Format::Progressive => (&self.progressive, &self.progressive_bytes),
-            Format::Planar => (&self.planar, &self.planar_bytes),
+            Format::Planar | Format::Still => (&self.planar, &self.planar_bytes),
         }
     }
 

@@ -424,6 +424,8 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
                     // A zstd frame, of a planar bitmap.
                     batch::TILE_PLANAR => image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]),
+                    // The still stream's next bytes, a zstd frame's start or not.
+                    batch::TILE_STILL => true,
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");

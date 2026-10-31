@@ -490,12 +490,14 @@ export interface StandardMsg {
 // wlshare's progressive tiles: a RemoteFX Progressive
 // tile block of one 64x64 tile, which depends on every block of that tile before
 // it, so it is decoded in wire order too (framePainter.ts). Or one of wlshare's
-// lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless and
-// depending on no other, decoded by the same module in wire order with the
-// progressive ones. See `TileUnit` in src/protocol.rs for the contract.
+// lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless,
+// depending on no other where the desktop moves ("planar") and read after the
+// still stream's bodies before it where it is still ("still"), decoded by the
+// same module in wire order with the progressive ones. See `TileUnit` in
+// src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive" | "planar";
+  format: "jpeg" | "png" | "progressive" | "planar" | "still";
   x: number;
   y: number;
   w: number;
@@ -586,6 +588,7 @@ const TILE_FORMATS = {
   2: "png",
   3: "progressive",
   4: "planar",
+  5: "still",
 } as const;
 
 const OP_REGION = 0x07;
@@ -767,7 +770,7 @@ function decodeTile(
     return null;
   }
   const format = view.getUint8(at + 1);
-  if (format !== 1 && format !== 2 && format !== 3 && format !== 4) {
+  if (!(format in TILE_FORMATS)) {
     return null;
   }
 
@@ -782,7 +785,7 @@ function decodeTile(
   return {
     record: {
       kind: "tile",
-      format: TILE_FORMATS[format],
+      format: TILE_FORMATS[format as keyof typeof TILE_FORMATS],
       x,
       y,
       w,

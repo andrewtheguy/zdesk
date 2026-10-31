@@ -6252,7 +6252,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             reader.read_exact(&mut header[1..used]).await?;
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
-                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } | TileHeader::Planar { len } => len,
+                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } | TileHeader::Planar { len } | TileHeader::Still { len } => len,
                 TileHeader::End { .. } | TileHeader::Copy { .. } | TileHeader::Cached { .. } | TileHeader::Store { .. } => 0,
             };
             let mut body = vec![0u8; len];
@@ -6271,6 +6271,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 // The rectangle's pixels, whatever its size inside the desktop: the
                 // page decodes it there alone.
                 TileHeader::Planar { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Planar, body).await?,
+                // The same, in the still stream, which the page reads in order.
+                TileHeader::Still { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body).await?,
                 // One tile on the grid, cut by the desktop's edge, and the block's own
                 // tile the rectangle's: the page decodes it there against what it holds.
                 TileHeader::Progressive { .. } => {
