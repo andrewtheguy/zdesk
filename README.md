@@ -43,9 +43,7 @@ side.
 
 A Mac's Screen Sharing in a Chrome tab on Windows:
 
-https://github.com/user-attachments/assets/9cca3536-cc93-4745-856c-33aab3819478
-
-
+https://github.com/user-attachments/assets/c0329780-2dce-401c-b860-ee5020aff407
 
 Watch more demos on the [zDesk site](https://zdesk.dev/demo).
 
