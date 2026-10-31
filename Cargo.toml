@@ -336,6 +336,9 @@ aes = "0.9"
 # (src/session.rs, src/ws.rs): waiting out a real timeout in a unit test is a
 # stretch of doing nothing.
 tokio = { version = "1", features = ["test-util"] }
+# wlshare's end-to-end test reads its lossless tiles as the page does: each body a
+# zstd frame, read by the page's own zstd decoder.
+ruzstd = "0.8"
 
 [profile.release]
 strip = true

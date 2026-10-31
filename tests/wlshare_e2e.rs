@@ -591,8 +591,10 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
                                 .expect("the page's decoder reads wlshare's progressive tile");
                         }
                         batch::TILE_PLANAR => {
-                            let (mut planes, mut bgrx) = (Vec::new(), Vec::new());
-                            zdesk_rdp_graphics::proto::planar::decompress(&tile.image, &mut planes, &mut bgrx, tile.w, tile.h)
+                            let (mut planes, mut bgrx, mut bitmap) = (Vec::new(), Vec::new(), Vec::new());
+                            let mut frame = ruzstd::decoding::StreamingDecoder::new(&tile.image[..]).expect("a zstd frame");
+                            std::io::Read::read_to_end(&mut frame, &mut bitmap).expect("the page's decoder reads wlshare's zstd frame");
+                            zdesk_rdp_graphics::proto::planar::decompress(&bitmap, &mut planes, &mut bgrx, tile.w, tile.h)
                                 .expect("the page's decoder reads wlshare's planar bitmap");
                             let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
                             put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);

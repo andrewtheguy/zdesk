@@ -342,7 +342,9 @@ pub struct WlshareTiles {
     decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
     size: (u32, u32),
     frame: u32,
-    /// The planar codec's working space, kept from one bitmap to the next.
+    /// A lossless tile's bitmap out of its frame, and the planar codec's working
+    /// space, kept from one tile to the next.
+    bitmap: Vec<u8>,
     planes: Vec<u8>,
     pixels: Vec<u8>,
 }
@@ -351,7 +353,7 @@ pub struct WlshareTiles {
 impl WlshareTiles {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WlshareTiles {
-        WlshareTiles { decoder: Default::default(), size: (0, 0), frame: 0, planes: Vec::new(), pixels: Vec::new() }
+        WlshareTiles { decoder: Default::default(), size: (0, 0), frame: 0, bitmap: Vec::new(), planes: Vec::new(), pixels: Vec::new() }
     }
 
     /// The tile `block` is of, decoded against what this holds of it, as `R, G,
@@ -388,12 +390,21 @@ impl WlshareTiles {
         Ok(out)
     }
 
-    /// The pixels of `bitmap`, one of wlshare's lossless tiles: a planar bitmap
-    /// of exactly a `w`×`h` rectangle, depending on nothing before it, as `R, G, B,
-    /// A` rows for the page to put there. Throws for one that does not decode.
-    pub fn planar(&mut self, w: u16, h: u16, bitmap: &[u8]) -> Result<Vec<u8>, JsError> {
-        zdesk_rdp_graphics::proto::planar::decompress(bitmap, &mut self.planes, &mut self.pixels, w, h)
-            .map_err(|e| JsError::new(&format!("a {w}x{h} planar tile: {e}")))?;
+    /// The pixels of `body`, one of wlshare's lossless tiles: one zstd frame of a
+    /// planar bitmap of exactly a `w`×`h` rectangle, depending on nothing before
+    /// it, as `R, G, B, A` rows for the page to put there. Throws for one that does
+    /// not decode.
+    pub fn planar(&mut self, w: u16, h: u16, body: &[u8]) -> Result<Vec<u8>, JsError> {
+        let fail = |e: String| JsError::new(&format!("a {w}x{h} lossless tile: {e}"));
+        self.bitmap.clear();
+        let mut source = body;
+        let mut frame = ruzstd::decoding::StreamingDecoder::new(&mut source).map_err(|e| fail(e.to_string()))?;
+        std::io::Read::read_to_end(&mut frame, &mut self.bitmap).map_err(|e| fail(e.to_string()))?;
+        drop(frame);
+        if !source.is_empty() {
+            return Err(fail(format!("{} bytes past its zstd frame", source.len())));
+        }
+        zdesk_rdp_graphics::proto::planar::decompress(&self.bitmap, &mut self.planes, &mut self.pixels, w, h).map_err(|e| fail(e.to_string()))?;
         Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
     }
 }

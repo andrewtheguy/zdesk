@@ -469,10 +469,10 @@ pub mod batch {
     /// keeping every tile's coefficients from one to the next
     /// (`wlshare_proto::progressive`).
     pub const TILE_PROGRESSIVE: u8 = 0x03;
-    /// A `TILE` record's image is a planar bitmap of wlshare's lossless tiles, of
-    /// exactly the rectangle's pixels: RDP 6.0 bitmap compression with no alpha
-    /// plane, colour loss or subsampling, which the page decodes alone, in order
-    /// with the progressive ones (`wlshare_proto::tiles`).
+    /// A `TILE` record's image is one of wlshare's lossless tiles: one zstd frame
+    /// of a planar bitmap of exactly the rectangle's pixels, RDP 6.0 bitmap
+    /// compression with no alpha plane, colour loss or subsampling, which the page
+    /// decodes alone, in order with the progressive ones (`wlshare_proto::tiles`).
     pub const TILE_PLANAR: u8 = 0x04;
 
 

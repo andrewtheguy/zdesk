@@ -561,15 +561,17 @@ holding what wlshare's next blocks are not coded against: it is given back, the
 whole picture is asked for, and no block is decoded until that picture starts.
 Its lossless tiles (experimental) are `WLST` with `WLSL` beside it, for a LAN:
 every tile that changed, still or moving, a planar bitmap of its pixels, RDP 6.0
-bitmap compression with no alpha plane, colour loss or subsampling, as a Windows
-host draws its pipeline under its Lossless policy
+bitmap compression with no alpha plane, colour loss or subsampling, as one zstd
+frame, as a Windows host draws its pipeline under its Lossless policy and wraps
+it in its bulk compression
 ([Lossless, by the host's policy](rdp-client.md#lossless-by-the-hosts-policy)),
 and no stream, the browser's lag slowing wlshare's updates and never what a tile
 shows. Each is a rectangle inside the desktop of any size, passed as a `TILE`
 record of its own format (`TILE_PLANAR`), and the page decodes it, alone and in
-wire order with the progressive ones, with the same module's planar codec, the
-one that draws a Windows host's lossless pipeline; one that does not decode asks
-for the whole picture as a progressive tile does.
+wire order with the progressive ones, its frame by ruzstd, a zstd decoder in
+Rust, and its bitmap by the same module's planar codec, the one that draws a
+Windows host's lossless pipeline; one that does not decode asks for the whole
+picture as a progressive tile does.
 Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
