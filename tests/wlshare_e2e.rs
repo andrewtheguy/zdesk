@@ -590,7 +590,16 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
                                 })
                                 .expect("the page's decoder reads wlshare's progressive tile");
                         }
-                        other => panic!("a tile of format {other:#x} in a test that draws PNG and progressive tiles"),
+                        batch::TILE_PLANAR => {
+                            let (mut planes, mut bgrx, mut bitmap) = (Vec::new(), Vec::new(), Vec::new());
+                            let mut frame = ruzstd::decoding::StreamingDecoder::new(&tile.image[..]).expect("a zstd frame");
+                            std::io::Read::read_to_end(&mut frame, &mut bitmap).expect("the page's decoder reads wlshare's zstd frame");
+                            zdesk_rdp_graphics::proto::planar::decompress(&bitmap, &mut planes, &mut bgrx, tile.w, tile.h)
+                                .expect("the page's decoder reads wlshare's planar bitmap");
+                            let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
+                            put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);
+                        }
+                        other => panic!("a tile of format {other:#x} in a test that draws PNG, progressive and planar tiles"),
                     }
                 }
                 ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
@@ -621,6 +630,26 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the lossless one");
     let logs = container.logs();
     assert!(logs.contains("asked for progressive tiles up to quality"), "wlshare was not asked for its progressive tiles:\n{logs}");
+}
+
+/// A session started with wlshare's lossless tiles is sent them alone, passed:
+/// `TILE` records of the planar format, which the page's planar codec reads into
+/// exactly the desktop wlshare's tiles with motion show; and wlshare was asked for
+/// lossless tiles.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+    let addr = spawn_app(vnc_port).await;
+    let (w, h, png, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are lossless PNG while nothing moves");
+    let (lw, lh, planar, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
+    assert_eq!((lw, lh), (w, h), "the same desktop");
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_PLANAR].into(), "planar tiles alone");
+    assert!(planar == png, "the lossless tiles show the desktop exactly as the PNG tiles do");
+    let logs = container.logs();
+    assert!(logs.contains("asked for lossless tiles"), "wlshare was not asked for its lossless tiles:\n{logs}");
 }
 
 /// A video to play on the desktop of the test that wants it moving: a file on this

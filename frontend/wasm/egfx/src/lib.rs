@@ -30,9 +30,12 @@
 //! [`run_pool_thread`], and its worker can be ended.
 //!
 //! wlshare's progressive tiles are decoded here too, by the same crate's
-//! RemoteFX Progressive decoder ([`ProgressiveTiles`]): each a tile block the
+//! RemoteFX Progressive decoder ([`WlshareTiles`]): each a tile block the
 //! page hands in order, put in a stream of its own with the protocol's tables
-//! (`wlshare_proto::progressive`), its tile's pixels handed back.
+//! (`wlshare_proto::progressive`), its tile's pixels handed back. And so are
+//! its lossless tiles, by the planar codec that draws a Windows host's lossless
+//! pipeline ([`WlshareTiles::planar`]): each bitmap alone, its pixels
+//! handed back.
 
 use std::io;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -332,19 +335,25 @@ impl Default for Egfx {
 
 /// wlshare's progressive tiles as the page draws them: one RemoteFX Progressive
 /// decoder over the desktop, which keeps every tile's coefficients from one block
-/// to the next. A desktop of another size starts it over.
+/// to the next. A desktop of another size starts it over. Its lossless tiles too,
+/// each alone ([`Self::planar`]).
 #[wasm_bindgen]
-pub struct ProgressiveTiles {
+pub struct WlshareTiles {
     decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
     size: (u32, u32),
     frame: u32,
+    /// A lossless tile's bitmap out of its frame, and the planar codec's working
+    /// space, kept from one tile to the next.
+    bitmap: Vec<u8>,
+    planes: Vec<u8>,
+    pixels: Vec<u8>,
 }
 
 #[wasm_bindgen]
-impl ProgressiveTiles {
+impl WlshareTiles {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> ProgressiveTiles {
-        ProgressiveTiles { decoder: Default::default(), size: (0, 0), frame: 0 }
+    pub fn new() -> WlshareTiles {
+        WlshareTiles { decoder: Default::default(), size: (0, 0), frame: 0, bitmap: Vec::new(), planes: Vec::new(), pixels: Vec::new() }
     }
 
     /// The tile `block` is of, decoded against what this holds of it, as `R, G,
@@ -354,7 +363,7 @@ impl ProgressiveTiles {
     /// Throws for a block that does not decode, or that paints none of the
     /// rectangle, after which the tile holds what it held before.
     #[allow(clippy::too_many_arguments)]
-    pub fn decode(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
+    pub fn progressive(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
         if self.size != (width, height) {
             self.decoder = Default::default();
             self.size = (width, height);
@@ -380,9 +389,43 @@ impl ProgressiveTiles {
         }
         Ok(out)
     }
+
+    /// The pixels of `body`, one of wlshare's lossless tiles: one zstd frame of a
+    /// planar bitmap of exactly a `w`×`h` rectangle, depending on nothing before
+    /// it, as `R, G, B, A` rows for the page to put there. Throws for one that does
+    /// not decode, or whose frame holds more than any planar bitmap of the
+    /// rectangle can be ([`planar_most`]), which is not read past.
+    pub fn planar(&mut self, w: u16, h: u16, body: &[u8]) -> Result<Vec<u8>, JsError> {
+        let fail = |e: String| JsError::new(&format!("a {w}x{h} lossless tile: {e}"));
+        self.bitmap.clear();
+        let most = planar_most(w, h);
+        let mut source = body;
+        let frame = ruzstd::decoding::StreamingDecoder::new(&mut source).map_err(|e| fail(e.to_string()))?;
+        let mut capped = std::io::Read::take(frame, most as u64 + 1);
+        std::io::Read::read_to_end(&mut capped, &mut self.bitmap).map_err(|e| fail(e.to_string()))?;
+        if self.bitmap.len() > most {
+            self.bitmap = Vec::new();
+            return Err(fail(format!("a zstd frame of more than the {most} bytes a planar bitmap of it can be")));
+        }
+        drop(capped);
+        if !source.is_empty() {
+            return Err(fail(format!("{} bytes past its zstd frame", source.len())));
+        }
+        zdesk_rdp_graphics::proto::planar::decompress(&self.bitmap, &mut self.planes, &mut self.pixels, w, h).map_err(|e| fail(e.to_string()))?;
+        Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
+    }
 }
 
-impl Default for ProgressiveTiles {
+/// The most bytes a planar bitmap of a `w`×`h` rectangle can be: its format
+/// header, four planes — the alpha plane the codec reads past among them — of
+/// at most two bytes a pixel, a run-length coded row's worst being a segment
+/// to each pixel, a control byte and the pixel's byte, and the padding byte
+/// the plain form ends with.
+fn planar_most(w: u16, h: u16) -> usize {
+    1 + 4 * 2 * usize::from(w) * usize::from(h) + 1
+}
+
+impl Default for WlshareTiles {
     fn default() -> Self {
         Self::new()
     }

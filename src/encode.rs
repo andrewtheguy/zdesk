@@ -504,14 +504,16 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG, as PNG and as progressive tile blocks,
-    /// and their bytes.
+    /// Rectangles of tiles sent as JPEG, as PNG, as progressive tile blocks and as
+    /// planar bitmaps, and their bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
     progressive: AtomicU64,
     progressive_bytes: AtomicU64,
+    planar: AtomicU64,
+    planar_bytes: AtomicU64,
     /// Rectangles of wlshare's tiles drawn from what the browser holds.
     copies: AtomicU64,
     /// Tiles of wlshare's tiles drawn from the browser's cache of them.
@@ -551,6 +553,7 @@ impl Shared {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
             Format::Progressive => (&self.progressive, &self.progressive_bytes),
+            Format::Planar => (&self.planar, &self.planar_bytes),
         }
     }
 
@@ -584,6 +587,8 @@ impl Shared {
             png_bytes: AtomicU64::new(0),
             progressive: AtomicU64::new(0),
             progressive_bytes: AtomicU64::new(0),
+            planar: AtomicU64::new(0),
+            planar_bytes: AtomicU64::new(0),
             copies: AtomicU64::new(0),
             cached: AtomicU64::new(0),
             code_micros: AtomicU64::new(0),
@@ -904,9 +909,10 @@ impl VideoSink {
     }
 
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
-    /// record, untouched: a lossless PNG of the desktop's pixels there, or one
+    /// record, untouched: a lossless PNG of the desktop's pixels there, one
     /// progressive tile's block, a first pass or an upgrade against what the page
-    /// holds of the tile; `format` says which.
+    /// holds of the tile, or a lossless planar bitmap of the pixels there; `format`
+    /// says which.
     ///
     /// wlshare's tiles are a passed picture, as its video is ([`Self::pass`]): wlshare
     /// decides what is sent, codes it and paces it by the fences the engine echoes once
@@ -1532,6 +1538,8 @@ struct Totals {
     png_bytes: u64,
     progressive: u64,
     progressive_bytes: u64,
+    planar: u64,
+    planar_bytes: u64,
     copies: u64,
     cached: u64,
     code_micros: u64,
@@ -1560,6 +1568,8 @@ impl Totals {
             png_bytes: load(&shared.png_bytes),
             progressive: load(&shared.progressive),
             progressive_bytes: load(&shared.progressive_bytes),
+            planar: load(&shared.planar),
+            planar_bytes: load(&shared.planar_bytes),
             copies: load(&shared.copies),
             cached: load(&shared.cached),
             code_micros: load(&shared.code_micros),
@@ -1575,7 +1585,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} progressive / {} bytes, {} copied, {} cached, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} progressive / {} bytes and {} planar / {} bytes, {} copied, {} cached, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1592,6 +1602,8 @@ impl fmt::Display for Totals {
             self.png_bytes,
             self.progressive,
             self.progressive_bytes,
+            self.planar,
+            self.planar_bytes,
             self.copies,
             self.cached,
             self.code_micros,

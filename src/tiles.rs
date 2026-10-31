@@ -87,6 +87,9 @@ pub enum Format {
     /// send: one tile, a first pass or an upgrade, against what the page holds of
     /// it. Nothing here codes one.
     Progressive,
+    /// A planar bitmap, which only wlshare's lossless tiles send: the rectangle's
+    /// pixels, lossless, depending on nothing before it. Nothing here codes one.
+    Planar,
 }
 
 impl Format {
@@ -96,6 +99,7 @@ impl Format {
             Self::Jpeg => crate::protocol::batch::TILE_JPEG,
             Self::Png => crate::protocol::batch::TILE_PNG,
             Self::Progressive => crate::protocol::batch::TILE_PROGRESSIVE,
+            Self::Planar => crate::protocol::batch::TILE_PLANAR,
         }
     }
 }
@@ -482,7 +486,7 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
         let data = match format {
             Format::Png => png(w, h, &rgb),
             Format::Jpeg => jpeg(w, h, &rgb, quality),
-            Format::Progressive => Err(anyhow::anyhow!("this gateway codes no {format:?} tile of its own: it is wlshare's, passed through")),
+            Format::Progressive | Format::Planar => Err(anyhow::anyhow!("this gateway codes no {format:?} tile of its own: it is wlshare's, passed through")),
         }
 
         .with_context(|| format!("coding a {w}x{h} tile as {format:?}"))?;

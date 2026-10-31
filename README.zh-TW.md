@@ -65,7 +65,7 @@ zDesk 以各平台原生的遠端桌面伺服器為核心打造：Windows 內建
 | 攝影機和麥克風 | ⚠️ 實驗性 | ❌ | ❌ | ⚠️ 實驗性 | ❌ |
 | Unicode 剪貼簿 | ✅ | ✅ | ✅ | ✅ | ⚠️ 需 Extended Clipboard，否則為 Latin-1 |
 | 畫面依瀏覽器連線調節節奏 | ✅ | ❌ 依 Mac 自己的速率 | ✅ | ✅ | ✅ |
-| 畫面最終收斂為無損 | ⚠️ 僅當主機原則要求時 | ❌ | ✅ 使用 Full 品質時 | ⚠️ 使用 *Tiles with motion* 時 | ✅ |
+| 畫面最終收斂為無損 | ⚠️ 僅當主機原則要求時 | ❌ | ✅ 使用 Full 品質時 | ⚠️ 使用 *Tiles with motion* 或 *Lossless tiles* 時 | ✅ |
 
 | | Chrome、Edge | Safari | Firefox |
 |---|---|---|---|

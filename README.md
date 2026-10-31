@@ -137,7 +137,7 @@ What each server and browser does and does not do, in one place.
 | Camera and microphone | ⚠️ experimental | ❌ | ❌ | ⚠️ experimental | ❌ |
 | Unicode clipboard | ✅ | ✅ | ✅ | ✅ | ⚠️ with Extended Clipboard, else Latin-1 |
 | Picture paced to the browser link | ✅ | ❌ the Mac's own rate | ✅ | ✅ | ✅ |
-| Picture settles to lossless | ⚠️ only when the host's policy asks | ❌ | ✅ with Full quality | ⚠️ with *Tiles with motion* | ✅ |
+| Picture settles to lossless | ⚠️ only when the host's policy asks | ❌ | ✅ with Full quality | ⚠️ with *Tiles with motion* or *Lossless tiles* | ✅ |
 
 | | Chrome, Edge | Safari | Firefox |
 |---|---|---|---|

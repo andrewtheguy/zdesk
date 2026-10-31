@@ -191,31 +191,59 @@ impl Default for AudioPlan {
     }
 }
 
+/// Which of wlshare's tiles a session passes, chosen at the picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WlshareTiles {
+    /// Its progressive tiles ([`Passthrough::WlshareTilesProgressive`]): every
+    /// tile RemoteFX Progressive, still or moving, and no stream, walked on the
+    /// browser's lag.
+    Progressive,
+    /// Its tiles with motion ([`Passthrough::WlshareTilesMotion`]): lossless PNG
+    /// where the desktop is still and a video stream of its own, 4:2:0, for each
+    /// region that moves, H.264 by the host's hardware encoder where it has one
+    /// and libx264 otherwise, every still lossless.
+    Motion,
+    /// Its lossless tiles ([`Passthrough::WlshareTilesLossless`]): every tile
+    /// that changed, still or moving, a planar bitmap of its pixels, and no
+    /// stream, the browser's lag slowing the updates and nothing else.
+    Lossless,
+}
+
+impl WlshareTiles {
+    /// The passthrough that passes these tiles.
+    pub fn passthrough(self) -> Passthrough {
+        match self {
+            Self::Progressive => Passthrough::WlshareTilesProgressive,
+            Self::Motion => Passthrough::WlshareTilesMotion,
+            Self::Lossless => Passthrough::WlshareTilesLossless,
+        }
+    }
+
+    /// The tiles `passthrough` passes, where it passes any.
+    pub fn of(passthrough: Passthrough) -> Option<Self> {
+        match passthrough {
+            Passthrough::WlshareTilesProgressive => Some(Self::Progressive),
+            Passthrough::WlshareTilesMotion => Some(Self::Motion),
+            Passthrough::WlshareTilesLossless => Some(Self::Lossless),
+            _ => None,
+        }
+    }
+}
+
 /// The render choices an engine sees: the target's resolved picture and the
 /// passthrough the session was started with, from [`TargetConfig::render_plan`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RenderPlan {
-    /// wlshare's tiles are its progressive tiles
-    /// ([`Passthrough::WlshareTilesProgressive`]) rather than its tiles with
-    /// motion. Set only with [`Self::wlshare_tiles`].
-    pub progressive: bool,
     /// The picture is wlshare's own, its video ([`Passthrough::WlshareVideo`]) or its
     /// tiles ([`Self::wlshare_tiles`]), asked of a `wlshare`
     /// target's server and passed as it comes; otherwise, where no passthrough below
     /// says the picture is the remote's, it is the tiles coded here. A wlshare server
     /// that ignores the listing is coded here too.
     pub wlshare: bool,
-    /// wlshare's picture is its tiles rather than its video, either of the two chosen
-    /// at the picker, asked of the server and passed as it comes. Set only with
-    /// [`Self::wlshare`]. With [`Self::progressive`] they are its progressive tiles
-    /// ([`Passthrough::WlshareTilesProgressive`]): every tile RemoteFX
-    /// Progressive, still or moving, and no stream, walked on the browser's lag.
-    /// Without it they are its tiles with motion
-    /// ([`Passthrough::WlshareTilesMotion`]): lossless PNG where the desktop is
-    /// still and a video stream of its own, 4:2:0, for each region that moves,
-    /// H.264 by the host's hardware encoder where it has one and libx264
-    /// otherwise, every still lossless.
-    pub wlshare_tiles: bool,
+    /// wlshare's picture is its tiles rather than its video, which of the three
+    /// chosen at the picker, asked of the server and passed as it comes. Set only
+    /// with [`Self::wlshare`].
+    pub wlshare_tiles: Option<WlshareTiles>,
     /// The Mac's picture passes as it came, its HEVC:
     /// [`Passthrough::AppleMedia`], chosen at the picker. None of the fields
     /// above reach such a picture.
@@ -315,7 +343,7 @@ pub enum Passthrough {
     /// wlshare's H.264 of the whole desktop, 4:2:0, at the quality wlshare decides,
     /// its frame rate walked on the browser's link, which fits any link and is
     /// never lossless. Offered by a `wlshare` target
-    /// beside its two tiles, and passed in every session not started with them: the
+    /// beside its three tiles, and passed in every session not started with them: the
     /// subtype's picture where none is named. Passed to any browser, as a Mac's
     /// H.264 is: none is asked whether it decodes it, and the picker greys it where
     /// the page's own decoder refuses it.
@@ -338,6 +366,13 @@ pub enum Passthrough {
     /// that is not always wide, where a picture that ends lossless matters less
     /// than one that keeps up.
     WlshareTilesProgressive,
+    /// wlshare's lossless tiles (experimental): every tile that changed, still or
+    /// moving, RDP's planar codec of its pixels, as a Windows host draws its
+    /// pipeline under its Lossless policy, and no stream, the browser's lag
+    /// slowing the updates and never what a tile shows. Decoded by the same module
+    /// as its progressive tiles. Offered and chosen as its other tiles are: for a
+    /// LAN, many times the video's bytes where the desktop moves.
+    WlshareTilesLossless,
 }
 
 /// A Standard Mac's picture, in the quality Apple's viewer's menu names, which is
@@ -370,19 +405,20 @@ impl Passthrough {
             Self::WlshareVideo => "wlshare-video",
             Self::WlshareTilesMotion => "wlshare-tiles-motion",
             Self::WlshareTilesProgressive => "wlshare-tiles-progressive",
+            Self::WlshareTilesLossless => "wlshare-tiles-lossless",
         }
     }
 
     /// Whether a session passes it only where it was chosen at the picker. A High
     /// Performance Mac's HEVC and its H.264 are a choice of one from two, either
     /// passed in every session, a Standard Mac's Adaptive picture is a choice
-    /// against the tiles coded here, and wlshare's two tiles against its video; an RDP
+    /// against the tiles coded here, and wlshare's three tiles against its video; an RDP
     /// host's pipeline is the only one, as the gateway composes none, and wlshare's
     /// video is the picture of every session that chose no other.
     pub fn chosen(self) -> bool {
         match self {
             Self::RdpGraphics | Self::WlshareVideo => false,
-            Self::AppleMedia | Self::AppleH264 | Self::AppleAdaptive | Self::WlshareTilesMotion | Self::WlshareTilesProgressive => true,
+            Self::AppleMedia | Self::AppleH264 | Self::AppleAdaptive | Self::WlshareTilesMotion | Self::WlshareTilesProgressive | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -394,7 +430,7 @@ impl Passthrough {
         match self {
             Self::RdpGraphics | Self::AppleAdaptive => false,
             // wlshare starts over at a keyframe, or sends the whole desktop again.
-            Self::AppleMedia | Self::AppleH264 | Self::WlshareVideo | Self::WlshareTilesMotion | Self::WlshareTilesProgressive => true,
+            Self::AppleMedia | Self::AppleH264 | Self::WlshareVideo | Self::WlshareTilesMotion | Self::WlshareTilesProgressive | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -408,6 +444,7 @@ impl Passthrough {
             Self::WlshareVideo => "wlshare's H.264 video",
             Self::WlshareTilesMotion => "wlshare's tiles with motion",
             Self::WlshareTilesProgressive => "wlshare's progressive tiles",
+            Self::WlshareTilesLossless => "wlshare's lossless tiles",
         }
     }
 }
@@ -422,8 +459,8 @@ pub struct Offers {
     /// take and where it is always carried, as on `ard-high-performance`.
     pub audio: bool,
     /// The streams this target can pass untouched, in the picker's order: none,
-    /// the one, or two, a High Performance Mac's HEVC and H.264, or three,
-    /// wlshare's video and two tiles.
+    /// the one, or two, a High Performance Mac's HEVC and H.264, or four,
+    /// wlshare's video and three tiles.
     pub passthrough: &'static [Passthrough],
     /// Whether where the second virtual display sits is a choice
     /// ([`Placement`]): on a target that asks for two of a host that is told
@@ -747,7 +784,7 @@ impl Decoders {
             // The page decodes it in WebAssembly, which every page that starts has.
             Passthrough::AppleAdaptive => true,
             // Decoded by the module that composes the pipeline, on its threads.
-            Passthrough::RdpGraphics | Passthrough::WlshareTilesProgressive => self.rdp_graphics,
+            Passthrough::RdpGraphics | Passthrough::WlshareTilesProgressive | Passthrough::WlshareTilesLossless => self.rdp_graphics,
         }
     }
 }
@@ -775,8 +812,8 @@ impl RenderPlan {
             Some(Passthrough::AppleAdaptive)
         } else if self.rdp_graphics {
             Some(Passthrough::RdpGraphics)
-        } else if self.wlshare_tiles {
-            Some(if self.progressive { Passthrough::WlshareTilesProgressive } else { Passthrough::WlshareTilesMotion })
+        } else if let Some(tiles) = self.wlshare_tiles {
+            Some(tiles.passthrough())
         } else if self.wlshare {
             Some(Passthrough::WlshareVideo)
         } else {
@@ -792,8 +829,13 @@ impl RenderPlan {
     /// has to derive. Each picture has one way to be coded, so the card names the
     /// picture and nothing more.
     pub fn describe(&self) -> String {
-        if self.wlshare_tiles {
-            return (if self.progressive { "progressive tiles" } else { "tiles with motion" }).to_owned();
+        if let Some(tiles) = self.wlshare_tiles {
+            return match tiles {
+                WlshareTiles::Progressive => "progressive tiles",
+                WlshareTiles::Motion => "tiles with motion",
+                WlshareTiles::Lossless => "lossless tiles",
+            }
+            .to_owned();
         }
         if self.wlshare {
             return "H.264 video".to_owned();
@@ -1084,9 +1126,8 @@ impl TargetConfig {
         let passthrough = self.passthrough(choices);
         // wlshare's picture is the one the session was started with, its video where
         // none was named.
-        let progressive = passthrough == Some(Passthrough::WlshareTilesProgressive);
-        let wlshare_tiles = progressive || passthrough == Some(Passthrough::WlshareTilesMotion);
-        let wlshare = wlshare_tiles || passthrough == Some(Passthrough::WlshareVideo);
+        let wlshare_tiles = passthrough.and_then(WlshareTiles::of);
+        let wlshare = wlshare_tiles.is_some() || passthrough == Some(Passthrough::WlshareVideo);
         let apple_media = passthrough == Some(Passthrough::AppleMedia);
         let apple_h264 = passthrough == Some(Passthrough::AppleH264);
         let hevc_instead = apple_h264 && decoders.takes(Passthrough::AppleMedia);
@@ -1099,7 +1140,6 @@ impl TargetConfig {
         let apple_combined = self.offers().standard_view && choices.standard_view == StandardView::Combined;
         let rdp_h264 = rdp_graphics && choices.pipeline.h264() && decoders.rdp_h264;
         RenderPlan {
-            progressive,
             wlshare,
             wlshare_tiles,
             apple_media,
@@ -1153,13 +1193,13 @@ impl TargetConfig {
                 microphone: false,
             },
             // Its picture is wlshare's own, passed: its H.264 video, the picture of a
-            // session that names none, or its progressive tiles or its tiles with
-            // motion, chosen at the picker, in that order. Its camera and
+            // session that names none, or its progressive tiles, its tiles with
+            // motion or its lossless tiles, chosen at the picker, in that order. Its camera and
             // microphone extensions take the browser's.
             (Protocol::Vnc, Some(Subtype::Wlshare)) => Offers {
                 resize: true,
                 audio: true,
-                passthrough: &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion],
+                passthrough: &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless],
                 placement: false,
                 pipeline: false,
                 standard_view: false,
@@ -1286,7 +1326,7 @@ impl TargetConfig {
         let plan = self.render_plan(Choices::default(), decoders).describe();
         if self.wlshare() {
             let tiles = |passthrough| self.render_plan(Choices { passthrough: Some(passthrough), ..Choices::default() }, decoders).describe();
-            return format!("{plan}, or {}, or {}", tiles(Passthrough::WlshareTilesProgressive), tiles(Passthrough::WlshareTilesMotion));
+            return format!("{plan}, or {}, or {}, or {}", tiles(Passthrough::WlshareTilesProgressive), tiles(Passthrough::WlshareTilesMotion), tiles(Passthrough::WlshareTilesLossless));
         }
         if offered.is_empty() || self.passthrough(Choices::default()).is_some() {
             return plan;
@@ -3531,14 +3571,13 @@ mod tests {
         assert_eq!(
             cfg.targets[0].render_plan(Choices::default(), Decoders::ALL),
             RenderPlan {
-                progressive: false,
                 apple_media: false,
                 apple_h264: false,
                 hevc_instead: false,
                 apple_standard: None, apple_combined: false,
                 rdp_graphics: false,
                 rdp_h264: false,
-                wlshare: false, wlshare_tiles: false,
+                wlshare: false, wlshare_tiles: None,
             }
         );
     }
@@ -3565,7 +3604,7 @@ mod tests {
         assert_eq!(plain.render_summary(), "tiles");
         assert_eq!(plain.render_plan(Choices::default(), Decoders::ALL).describe(), "tiles");
         let wlshare = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).unwrap().targets.remove(0);
-        assert_eq!(wlshare.render_summary(), "H.264 video, or progressive tiles, or tiles with motion");
+        assert_eq!(wlshare.render_summary(), "H.264 video, or progressive tiles, or tiles with motion, or lossless tiles");
         assert_eq!(wlshare.render_plan(Choices::default(), Decoders::ALL).describe(), "H.264 video");
     }
 
@@ -4757,38 +4796,42 @@ vnc_password_ref = \"x\"")).unwrap();
         }
     }
 
-    /// wlshare's two tiles are chosen at the picker, against its video: a session
-    /// started with either asks wlshare for those tiles, the progressive ones
-    /// decoded by the page's module; one that names its video, or nothing, is
-    /// sent the video.
+    /// wlshare's three tiles are chosen at the picker, against its video: a session
+    /// started with one asks wlshare for those tiles, the progressive and the
+    /// lossless ones decoded by the page's module; one that names its video, or
+    /// nothing, is sent the video.
     #[cfg(feature = "wlshare")]
     #[test]
     fn wlshares_tiles_are_a_choice_at_the_picker() {
         let video = Choices { passthrough: Some(Passthrough::WlshareVideo), ..Choices::default() };
         let cfg = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).expect("a wlshare target");
         let target = &cfg.targets[0];
-        assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion]);
-        for (passthrough, progressive, describe) in [
-            (Passthrough::WlshareTilesProgressive, true, "progressive tiles"),
-            (Passthrough::WlshareTilesMotion, false, "tiles with motion"),
+        assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless]);
+        for (passthrough, kind, describe) in [
+            (Passthrough::WlshareTilesProgressive, WlshareTiles::Progressive, "progressive tiles"),
+            (Passthrough::WlshareTilesMotion, WlshareTiles::Motion, "tiles with motion"),
+            (Passthrough::WlshareTilesLossless, WlshareTiles::Lossless, "lossless tiles"),
         ] {
             let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
             target.accepts(tiles).expect("the tiles are offered");
             let plan = target.render_plan(tiles, Decoders::ALL);
-            assert_eq!(plan, RenderPlan { progressive, apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: true }, "{passthrough:?}");
+            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
             assert_eq!(plan.describe(), describe);
             assert_eq!(plan.passthrough(), Some(passthrough));
         }
-        // The progressive tiles are decoded by the module that composes an RDP
-        // host's pipeline: a browser without it is beyond them, and no other.
-        let progressive = Choices { passthrough: Some(Passthrough::WlshareTilesProgressive), ..Choices::default() };
+        // The progressive and the lossless tiles are decoded by the module that
+        // composes an RDP host's pipeline: a browser without it is beyond them, and
+        // no other.
         let moduleless = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false };
-        assert_eq!(target.beyond(progressive, moduleless), Some(Passthrough::WlshareTilesProgressive));
-        assert_eq!(target.beyond(progressive, Decoders::ALL), None);
+        for passthrough in [Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesLossless] {
+            let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
+            assert_eq!(target.beyond(tiles, moduleless), Some(passthrough));
+            assert_eq!(target.beyond(tiles, Decoders::ALL), None);
+        }
         assert_eq!(target.beyond(Choices { passthrough: Some(Passthrough::WlshareTilesMotion), ..Choices::default() }, moduleless), None);
         for choices in [video, Choices::default()] {
             let plan = target.render_plan(choices, Decoders::ALL);
-            assert!(plan.wlshare && !plan.wlshare_tiles && !plan.progressive, "{choices:?}");
+            assert!(plan.wlshare && plan.wlshare_tiles.is_none(), "{choices:?}");
             assert_eq!(plan.passthrough(), Some(Passthrough::WlshareVideo), "{choices:?}");
         }
     }
@@ -4801,7 +4844,7 @@ vnc_password_ref = \"x\"")).unwrap();
         let plain = ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets.remove(0);
         let rdp = parse_target("").unwrap().targets.remove(0);
         for target in [&plain, &rdp] {
-            for passthrough in [Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion] {
+            for passthrough in [Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless] {
                 let err = target.accepts(Choices { passthrough: Some(passthrough), ..Choices::default() }).unwrap_err();
                 assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
             }
