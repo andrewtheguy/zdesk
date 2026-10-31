@@ -77,7 +77,7 @@ C:\Program Files\zdesk\share\doc\zdesk\LICENSE
 
 ## 首次配置
 
-配置中包含网页登录的哈希和目标的凭据。请以将运行 `zdesk serve` 的账户创建它，权限为 `0600`。软件包只附带公开的 [`zdesk.example.toml`](../zdesk.example.toml)，用来创建配置。同一账户也拥有状态目录，启用的 `[meter]` 默认把数据库保存在那里。
+配置中包含网页登录和目标的凭据。请以将运行 `zdesk serve` 的账户创建它，权限为 `0600`。软件包只附带公开的 [`zdesk.example.toml`](../zdesk.example.toml)，用来创建配置。同一账户也拥有状态目录，启用的 `[meter]` 默认把数据库保存在那里。
 
 在 Linux 上：
 
@@ -85,7 +85,6 @@ C:\Program Files\zdesk\share\doc\zdesk\LICENSE
 sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /etc/zdesk /var/lib/zdesk
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/share/doc/zdesk/zdesk.example.toml /etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ${EDITOR:-vi} /etc/zdesk/zdesk.toml
 ```
 
@@ -96,7 +95,6 @@ sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /usr/local/etc/zdesk /usr/l
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/local/share/doc/zdesk/zdesk.example.toml \
   /usr/local/etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ${EDITOR:-vi} /usr/local/etc/zdesk/zdesk.toml
 ```
 
@@ -106,15 +104,15 @@ ${EDITOR:-vi} /usr/local/etc/zdesk/zdesk.toml
 New-Item -ItemType Directory -Force "$env:ProgramData\zdesk" | Out-Null
 icacls "$env:ProgramData\zdesk" /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F"
 Copy-Item "$env:ProgramFiles\zdesk\share\doc\zdesk\zdesk.example.toml" "$env:ProgramData\zdesk\zdesk.toml"
-zdesk gen-passwd admin
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-把生成的 `admin:$2b$...` 值粘贴到 `[server].site_passwd`，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。目标的密码不写在那里：目标通过 `password_ref` 引用它，配置用你的主密码将其加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password encrypt` 从该文件读取主密码，输出要以 `example = "…"` 的形式粘贴到 `[passwords]` 下的值：
+在 `[server].site_username` 中设置网页登录的用户名，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。密码都不以明文写入：网页登录的密码是 `[server].site_passwd_enc`，目标通过 `password_ref` 引用自己的密码，配置用你的主密码将两者加密保存，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password encrypt` 从该文件读取主密码并输出一个值：一次为网页登录的密码，以 `site_passwd_enc = "…"` 的形式粘贴；一次为目标的密码，以 `example = "…"` 的形式粘贴到 `[passwords]` 下：
 
 ```sh
 zdesk password master create
-zdesk password encrypt
+zdesk password encrypt   # 网页登录的密码
+zdesk password encrypt   # 目标的密码
 ```
 
 见[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)。在前台启动网关：
@@ -129,16 +127,12 @@ zdesk serve
 
 镜像发布于 Linux amd64 和 arm64，带有 `latest` 和 `v<version>` 标签。镜像中没有 `zdesk tui`。
 
-用以下命令生成所需的网页登录凭据：
-
-```sh
-docker run --rm -it ghcr.io/andrewtheguy/zdesk:latest gen-passwd admin
-```
-
-与任何提供服务的网关一样，主密码来自一个文件。把它保存在 secret 中，在配置中指定该文件，并用同一镜像写入配置的密码，粘贴每条命令输出的内容：
+与任何提供服务的网关一样，主密码来自一个文件。把它保存在 secret 中，在配置中指定该文件，并用同一镜像写入配置的密码，粘贴每条命令输出的内容：网页登录的密码粘贴为 `[server].site_passwd_enc`，每个目标的密码粘贴到 `[passwords]` 下：
 
 ```toml
 [server]
+site_username = "admin"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

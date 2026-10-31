@@ -1,9 +1,14 @@
-//! The targets' passwords, kept encrypted in the config that names them.
+//! The config's passwords, kept encrypted in the config that holds them.
 //!
 //! A target names its password (`password_ref = "win11"`) rather than writing it,
-//! and the config's `[passwords]` table holds each one as an AES-256-GCM value:
+//! and the config's `[passwords]` table holds each one as an AES-256-GCM value; a
+//! served gateway's web login holds its own in `[server].site_passwd_enc`:
 //!
 //! ```toml
+//! [server]
+//! site_username = "admin"
+//! site_passwd_enc = "$ZD;1;AES-256-GCM;…"
+//!
 //! [master]
 //! salt = "…"
 //! check = "…"
@@ -19,7 +24,7 @@
 //! a wrong master password is told as one at start-up, before any value is tried.
 //! A value is the password alone: what it is called is the config's to say, so
 //! `zdesk password encrypt` prints one to paste under whatever name a target
-//! gives it.
+//! gives it, or as `site_passwd_enc`.
 //!
 //! Where the master password comes from is the deployment's to say, and each
 //! audience has its own answer — `[server].master_password_file` for a served
@@ -36,7 +41,7 @@ use serde::Deserialize;
 use sha2::Sha256;
 use std::path::{Path, PathBuf};
 
-/// What every `[passwords]` value starts with: the program, the format's version
+/// What every encrypted value starts with: the program, the format's version
 /// and the cipher, so a value says what it is to anyone reading the file.
 pub const PREFIX: &str = "$ZD;1;AES-256-GCM;";
 
@@ -228,9 +233,10 @@ impl Key {
         Ok(format!("{PREFIX}{}", BASE64.encode(blob)))
     }
 
-    /// The password `[passwords].<name>` holds; `name` is for the error.
-    pub fn decrypt(&self, name: &str, value: &str) -> anyhow::Result<String> {
-        let blob = decode_value(name, value)?;
+    /// The password `value` holds; `field` is where the config keeps it
+    /// (`[passwords].win11`, `[server].site_passwd_enc`), for the error.
+    pub fn decrypt(&self, field: &str, value: &str) -> anyhow::Result<String> {
+        let blob = decode_value(field, value)?;
         let (nonce, sealed) = blob.split_at(NONCE_LEN);
         let nonce: [u8; NONCE_LEN] = nonce.try_into().expect("split at the nonce's length");
         let plain = self
@@ -238,12 +244,12 @@ impl Key {
             .decrypt(&nonce.into(), sealed)
             .map_err(|_| {
                 anyhow::anyhow!(
-                    "[passwords].{name} does not open under this config's master password; \
+                    "{field} does not open under this config's master password; \
                      it was encrypted under another [master] — encrypt it again with \
                      `zdesk password encrypt`"
                 )
             })?;
-        String::from_utf8(plain).with_context(|| format!("[passwords].{name} is not UTF-8"))
+        String::from_utf8(plain).with_context(|| format!("{field} is not UTF-8"))
     }
 
     /// The key as one line, for a control plane to hand its worker down a pipe.
@@ -261,28 +267,28 @@ impl Key {
     }
 }
 
-/// A `[passwords]` value's sealed bytes, nonce first.
-fn decode_value(name: &str, value: &str) -> anyhow::Result<Vec<u8>> {
+/// An encrypted value's sealed bytes, nonce first; `field` names it for the error.
+fn decode_value(field: &str, value: &str) -> anyhow::Result<Vec<u8>> {
     let encoded = value.strip_prefix(PREFIX).with_context(|| {
         format!(
-            "[passwords].{name} is not an encrypted value (it starts with {PREFIX:?}): paste \
+            "{field} is not an encrypted value (it starts with {PREFIX:?}): paste \
              what `zdesk password encrypt` prints rather than the password"
         )
     })?;
     let blob = BASE64
         .decode(encoded)
-        .with_context(|| format!("[passwords].{name} is not base64 after its prefix"))?;
+        .with_context(|| format!("{field} is not base64 after its prefix"))?;
     anyhow::ensure!(
         blob.len() >= NONCE_LEN + TAG_LEN,
-        "[passwords].{name} is too short to be an encrypted value"
+        "{field} is too short to be an encrypted value"
     );
     Ok(blob)
 }
 
-/// `[passwords].<name>` has the shape of a value [`Key::encrypt`] wrote, checked
-/// without the key — which is all reading a file, or `check-config`, has.
-pub fn check_value(name: &str, value: &str) -> anyhow::Result<()> {
-    decode_value(name, value).map(|_| ())
+/// `value`, kept at `field`, has the shape of a value [`Key::encrypt`] wrote,
+/// checked without the key — which is all reading a file, or `check-config`, has.
+pub fn check_value(field: &str, value: &str) -> anyhow::Result<()> {
+    decode_value(field, value).map(|_| ())
 }
 
 /// A password's name: what `password_ref` says and `[passwords]` keys by. Letters,
@@ -412,11 +418,11 @@ mod tests {
         let (section, key) = Key::create(&master("correct horse")).unwrap();
         let value = key.encrypt("hunter2").unwrap();
         assert!(value.starts_with(PREFIX), "{value}");
-        check_value("win11", &value).unwrap();
+        check_value("[passwords].win11", &value).unwrap();
         assert_ne!(key.encrypt("hunter2").unwrap(), value, "every value has its own nonce");
 
         let again = Key::derive(&master("correct horse"), &section).unwrap();
-        assert_eq!(again.decrypt("win11", &value).unwrap(), "hunter2");
+        assert_eq!(again.decrypt("[passwords].win11", &value).unwrap(), "hunter2");
 
         let err = Key::derive(&master("battery staple"), &section).unwrap_err();
         assert!(format!("{err:#}").contains("does not open"), "{err:#}");
@@ -427,7 +433,7 @@ mod tests {
         let (_, first) = Key::create(&master("one master")).unwrap();
         let (_, second) = Key::create(&master("one master")).unwrap();
         let value = first.encrypt("hunter2").unwrap();
-        assert!(second.decrypt("win11", &value).is_err());
+        assert!(second.decrypt("[passwords].win11", &value).is_err());
     }
 
     #[test]
@@ -441,7 +447,7 @@ mod tests {
 
     #[test]
     fn a_plaintext_value_is_refused_by_shape() {
-        let err = check_value("win11", "hunter2").unwrap_err();
+        let err = check_value("[passwords].win11", "hunter2").unwrap_err();
         assert!(format!("{err:#}").contains("zdesk password encrypt"), "{err:#}");
     }
 

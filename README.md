@@ -189,21 +189,21 @@ gateways on the machine you use. The two sections below set up each.
 
 ### Served gateway: `zdesk serve`
 
-Create the config from the shipped example and generate a login:
+Create the config from the shipped example:
 
 ```sh
 sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /etc/zdesk /var/lib/zdesk
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/share/doc/zdesk/zdesk.example.toml /etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ```
 
-Put the generated value and a target in `/etc/zdesk/zdesk.toml`, with the
+Put the web login's username and a target in `/etc/zdesk/zdesk.toml`, with the
 file the gateway reads its master password from:
 
 ```toml
 [server]
-site_passwd = "admin:$2b$..."
+site_username = "admin"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -214,15 +214,17 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-Then paste in the target's password, encrypted under your master password (see
+Then paste in the passwords, encrypted under your master password (see
 [Target passwords](https://zdesk.dev/guide#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
-prints a `[master]` block for the config; `password encrypt` prints the value
-to add as `workstation = "…"` under `[passwords]`.
+prints a `[master]` block for the config; `password encrypt` prints a value, so
+run it twice: once for the web login's password, pasted as `site_passwd_enc = "…"`,
+and once for the target's, added as `workstation = "…"` under `[passwords]`.
 
 ```sh
 zdesk password master create
-zdesk password encrypt
+zdesk password encrypt   # the web login's password
+zdesk password encrypt   # the target's
 ```
 
 Start it and open <http://localhost:52380>:
@@ -288,16 +290,16 @@ You need Rust with rustup and [Bun](https://bun.sh).
 ```sh
 bun install --cwd frontend
 cp zdesk.example.toml zdesk.toml
-cargo run -- gen-passwd admin
-# Set [server].site_passwd, configure a target and its passwords (see below), then:
+# Set [server].site_username, configure a target and the passwords (see below), then:
 cargo run -- serve -c zdesk.toml
 ```
 
-The copied example names `[passwords].example` but leaves it for you to add.
-Set up the target's encrypted password and master-password file as described in
-[Target passwords](https://zdesk.dev/guide#target-passwords). For a target with an empty
-password, add `example = ""` under `[passwords]` instead; it needs no master
-password.
+The copied example names `[passwords].example` but leaves it and
+`[server].site_passwd_enc` for you to add. Set up the master-password file and the
+encrypted passwords as described in
+[Target passwords](https://zdesk.dev/guide#target-passwords): `password encrypt`
+prints the value for each, the web login's included. For a target with an empty
+password, add `example = ""` under `[passwords]` instead.
 
 Cargo builds the frontend and compiles it into the binary, so the gateway is
 the only thing that serves the page. The checks are:

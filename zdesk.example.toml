@@ -13,8 +13,8 @@
 # working-directory files. The listen address below is the one setting that can
 # also come from outside this file (--listen, or ZDESK_LISTEN); everything
 # else, credentials included, is configured here. Keep this file readable only
-# by the service user — it holds the login hash, and the targets' passwords,
-# encrypted, in [passwords] below.
+# by the service user — it holds the login's password, and the targets',
+# encrypted, in [server] and [passwords] below.
 #
 #   chmod 600 zdesk.toml
 #
@@ -115,14 +115,16 @@
 #[hevc_wasm]
 #archive = "/srv/zdesk/hevc-wasm-v0.0.18.tar.gz"
 
-# The targets' passwords. A target never writes one: it names it, with
-# password_ref or vnc_password_ref, and [passwords] keeps it under that name,
-# encrypted with a key derived from your master password and the salt in
-# [master]. Neither table is typed: each is printed for you to paste here.
+# The passwords. A target never writes one: it names it, with password_ref or
+# vnc_password_ref, and [passwords] keeps it under that name, encrypted with a
+# key derived from your master password and the salt in [master]; the web
+# login's is [server].site_passwd_enc, encrypted the same way. Neither table is
+# typed: each is printed for you to paste here.
 #
 #   zdesk password master create -c zdesk.toml  # writes the master password file, prints [master]
 #   zdesk password master show -c zdesk.toml    # prints [master] under the file already there
-#   zdesk password encrypt -c zdesk.toml        # prints the ciphertext to paste as example = "…"
+#   zdesk password encrypt -c zdesk.toml        # prints the ciphertext to paste as example = "…",
+#                                               # or as site_passwd_enc = "…"
 #
 # A served gateway reads the master password from the file
 # [server].master_password_file names; `password` reads it there too, or asks
@@ -161,9 +163,11 @@
 # A browser cannot use this form. The client addresses its gateway by URL — one
 # HTTP origin and up to five WebSocket paths, /ws/display from a second display's
 # tab — so whatever terminates the proxy is what it talks to.
-# Web login (required): username:bcrypt_hash guarding the whole surface.
-# Generate with:  zdesk gen-passwd <username>
-site_passwd = ""
+# Web login (required): the one username and password guarding the whole
+# surface. The password is encrypted under [master], as a target's is: paste
+# what `zdesk password encrypt -c zdesk.toml` prints.
+site_username = "admin"
+site_passwd_enc = ""
 
 # A file holding the master password that opens [passwords]: a container's
 # secret, a systemd credential, a file only the gateway's account reads. A

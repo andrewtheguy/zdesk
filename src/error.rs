@@ -37,6 +37,12 @@ pub enum AppError {
     #[error("forbidden")]
     Forbidden,
 
+    /// A login attempt arrived while another was being checked — rendered as
+    /// `429 Too Many Requests`. Refused rather than queued, so a burst of guesses
+    /// leaves nothing behind to be checked after it stops.
+    #[error("a login is already being checked")]
+    LoginBusy,
+
     /// Another browser's WebSocket holds the single session slot — rendered
     /// as `409 Conflict`. The client may retry with `force` (takeover).
     #[error("session busy")]
@@ -61,6 +67,9 @@ impl IntoResponse for AppError {
             }
             AppError::Forbidden => {
                 (StatusCode::FORBIDDEN, "not this session's holder").into_response()
+            }
+            AppError::LoginBusy => {
+                (StatusCode::TOO_MANY_REQUESTS, "a login is already being checked").into_response()
             }
             AppError::SessionBusy(_) => {
                 (StatusCode::CONFLICT, "another browser holds the session").into_response()

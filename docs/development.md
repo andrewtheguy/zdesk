@@ -9,8 +9,7 @@ gateway binary.
 ```sh
 bun install --cwd frontend
 cp zdesk.example.toml zdesk.toml
-cargo run -- gen-passwd admin
-# Set [server].site_passwd, configure a target and its passwords (see below), then:
+# Set [server].site_username, configure a target and the passwords (see below), then:
 cargo run -- serve -c zdesk.toml
 ```
 

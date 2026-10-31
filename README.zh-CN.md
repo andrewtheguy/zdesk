@@ -98,20 +98,20 @@ sudo apt install ./zdesk-linux-amd64.deb
 
 ### 独立网关：`zdesk serve`
 
-用附带的示例创建配置，并生成登录凭据：
+用附带的示例创建配置：
 
 ```sh
 sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" /etc/zdesk /var/lib/zdesk
 sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
   /usr/share/doc/zdesk/zdesk.example.toml /etc/zdesk/zdesk.toml
-zdesk gen-passwd admin
 ```
 
-把生成的值和一个目标写入 `/etc/zdesk/zdesk.toml`，并写上网关读取主密码的文件：
+把网页登录的用户名和一个目标写入 `/etc/zdesk/zdesk.toml`，并写上网关读取主密码的文件：
 
 ```toml
 [server]
-site_passwd = "admin:$2b$..."
+site_username = "admin"
+site_passwd_enc = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -122,11 +122,12 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-然后粘贴目标的密码，它用你的主密码加密（见 [目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password encrypt` 输出要以 `workstation = "…"` 的形式添加到 `[passwords]` 下的值。
+然后粘贴各个密码，它们用你的主密码加密（见 [目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password encrypt` 每次输出一个值，所以要运行两次：一次为网页登录的密码，以 `site_passwd_enc = "…"` 的形式粘贴；一次为目标的密码，以 `workstation = "…"` 的形式添加到 `[passwords]` 下。
 
 ```sh
 zdesk password master create
-zdesk password encrypt
+zdesk password encrypt   # 网页登录的密码
+zdesk password encrypt   # 目标的密码
 ```
 
 启动它，然后打开 <http://localhost:52380>：
@@ -181,12 +182,11 @@ zdesk tui
 ```sh
 bun install --cwd frontend
 cp zdesk.example.toml zdesk.toml
-cargo run -- gen-passwd admin
-# 设置 [server].site_passwd，配置目标及其密码（见下文），然后：
+# 设置 [server].site_username，配置目标和各个密码（见下文），然后：
 cargo run -- serve -c zdesk.toml
 ```
 
-复制的示例引用了 `[passwords].example`，但需要你自己添加该值。按[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)设置目标的加密密码和主密码文件。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`，此时无需主密码。
+复制的示例引用了 `[passwords].example`，但该值和 `[server].site_passwd_enc` 需要你自己添加。按[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)设置主密码文件和加密的密码：`password encrypt` 为每个密码输出对应的值，网页登录的密码也包括在内。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`。
 
 Cargo 会构建前端并将其编译进二进制文件，因此网关是唯一提供页面的程序。检查命令：
 
