@@ -1852,6 +1852,19 @@ test("a picture the GPU refuses is said once, and the pictures after it dropped"
   );
 });
 
+test("a refusal the context notice replaced is said again when the context is given back", async () => {
+  const p = planesPainter();
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
+  refused = 0xbd;
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: [...KEYFRAME, 0xbd] }]));
+  const refusal = videoErrors.at(-1);
+  assert.match(String(refusal), /cannot decode/);
+  p.graphicsLost();
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  p.graphicsRestored();
+  assert.equal(videoErrors.at(-1), refusal, "the refusal still stands");
+});
+
 test("the attachment's end gives the software decoder's picture back", async () => {
   const p = planesPainter();
   await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));

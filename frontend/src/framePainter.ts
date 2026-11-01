@@ -563,13 +563,27 @@ export function createFramePainter(options: {
 
   // While the browser has taken the canvas's context away: said once, and taken
   // back when it gives it back, unless something said since has replaced it.
+  // What it replaced, a refusal that still stands, is said again then, as it
+  // was: whether a painted frame takes it down too.
   const CONTEXT_LOST =
     "The browser took the picture's GPU context away. It is drawn again when the browser gives it back.";
+  let displaced: { reason: string | null; complained: boolean } = {
+    reason: null,
+    complained: false,
+  };
 
   const sayContextLost = () => {
     if (saying !== CONTEXT_LOST) {
+      displaced = { reason: saying, complained: videoComplained };
       videoComplained = false;
       say(CONTEXT_LOST);
+    }
+  };
+
+  const unsayContextLost = () => {
+    if (saying === CONTEXT_LOST) {
+      say(displaced.reason);
+      videoComplained = displaced.complained;
     }
   };
 
@@ -1691,9 +1705,7 @@ export function createFramePainter(options: {
       // Taken back first: what follows may say something of its own. A
       // sentence that replaced it, a pipeline ended while the context was gone,
       // stays.
-      if (saying === CONTEXT_LOST) {
-        say(null);
-      }
+      unsayContextLost();
       if (pipeline) {
         restorePipeline(pipeline);
       }
