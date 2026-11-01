@@ -4,7 +4,7 @@
 // records what it is asked, since a test has no GPU.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { openPictureCanvas, PictureContextLost } from "./glPicture.ts";
+import { openPictureCanvas, watchPictureContext } from "./glPicture.ts";
 
 /** A canvas whose WebGL 2 context records its calls; `lost` is what it reports. */
 function fakeCanvas() {
@@ -49,20 +49,28 @@ test("a picture whose context was taken stays lost when it is given back", () =>
   // Given back: the context says it is not lost, the picture still is.
   state.lost = false;
   assert.equal(picture.lost(), true);
-  assert.throws(() => picture.usable(), PictureContextLost);
+  assert.throws(() => picture.usable(), /took the picture's WebGL context/);
   calls.length = 0;
   picture.close();
   assert.deepEqual(calls, [], "nothing of the old context deleted in the new");
 });
 
-test("a picture is lost as soon as its context says so, before the browser's event", () => {
+test("a picture is lost by the browser's word, not before", () => {
   const { canvas, state } = fakeCanvas();
   const picture = openPictureCanvas(canvas, FRAGMENT);
+  // The context reports itself lost ahead of the event: its calls are no-ops,
+  // and the picture says nothing yet.
   state.lost = true;
-  assert.throws(() => picture.usable(), PictureContextLost);
-  // And stays so, though the event never came before the context was back.
-  state.lost = false;
+  assert.equal(picture.lost(), false);
+  picture.usable();
+  canvas.dispatchEvent(new Event("webglcontextlost"));
   assert.equal(picture.lost(), true);
+});
+
+test("no picture is made in a context that is lost", () => {
+  const { canvas, state } = fakeCanvas();
+  state.lost = true;
+  assert.throws(() => openPictureCanvas(canvas, FRAGMENT));
 });
 
 test("a picture made in the context given back is closed as any other", () => {
@@ -75,4 +83,18 @@ test("a picture made in the context given back is closed as any other", () => {
   calls.length = 0;
   picture.close();
   assert.ok(calls.includes("deleteProgram"));
+});
+
+test("the canvas's watcher asks the context back and reports both ends", () => {
+  const { canvas } = fakeCanvas();
+  const heard: string[] = [];
+  watchPictureContext(canvas, {
+    lost: () => heard.push("lost"),
+    restored: () => heard.push("restored"),
+  });
+  const taken = new Event("webglcontextlost", { cancelable: true });
+  canvas.dispatchEvent(taken);
+  assert.ok(taken.defaultPrevented);
+  canvas.dispatchEvent(new Event("webglcontextrestored"));
+  assert.deepEqual(heard, ["lost", "restored"]);
 });

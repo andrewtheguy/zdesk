@@ -156,6 +156,13 @@ export type PainterEvent =
    * for an attachment that has since been cleared is not the page's to act on.
    */
   | { type: "graphicsShown"; shown: boolean; epoch: number }
+  /**
+   * The browser took the WebGL canvas's context away, and gave it back
+   * (glPicture.ts). What the pictures in it held went with it: the page starts
+   * the session over once it is back.
+   */
+  | { type: "contextLost" }
+  | { type: "contextRestored" }
   /** `retire` is done: the worker can be ended. */
   | { type: "retired" };
 
@@ -176,6 +183,11 @@ export function createPainterWorker(
   let canvas: OffscreenCanvas | null = null;
   let ctx: OffscreenCanvasRenderingContext2D | null = null;
   let painter: FramePainter | null = null;
+  // While the browser has the WebGL canvas's context, until the clear that
+  // ends the attachment: what a picture drawn in it says of itself meanwhile
+  // is not the page's to show, since the page starts the session over once
+  // the context is back.
+  let contextGone = false;
   // While a composition is set, the framebuffer the painter draws into, off
   // screen; the canvas then shows `view` drawn from it. Null otherwise, when the
   // painter draws straight onto the canvas.
@@ -318,7 +330,11 @@ export function createPainterWorker(
           ctx = canvas.getContext("2d", { alpha: false });
           painter = makePainter({
             context: () => (framebuffer ? framebufferCtx : ctx),
-            onVideoError: (reason) => post({ type: "videoError", reason }),
+            onVideoError: (reason) => {
+              if (!contextGone || reason === null) {
+                post({ type: "videoError", reason });
+              }
+            },
             onVideoNeedsKeyframe: (reason) =>
               post({ type: "videoNeedsKeyframe", reason }),
             makePicture: () => createGraphicsPicture(command.graphics),
@@ -327,11 +343,12 @@ export function createPainterWorker(
               post({ type: "graphicsShown", shown, epoch }),
             decoding: command.decoding,
           });
-          // Heard as it happens, not behind the batches queued: a run waiting
-          // on one finds the picture as the context left it.
           watchPictureContext(command.graphics, {
-            lost: () => painter?.graphicsLost(),
-            restored: () => painter?.graphicsRestored(),
+            lost: () => {
+              contextGone = true;
+              post({ type: "contextLost" });
+            },
+            restored: () => post({ type: "contextRestored" }),
           });
           break;
         case "frame": {
@@ -439,6 +456,7 @@ export function createPainterWorker(
           epoch += 1;
           queue = Promise.resolve();
           held = [];
+          contextGone = false;
           painter?.clear();
           framebuffer = null;
           framebufferCtx = null;
