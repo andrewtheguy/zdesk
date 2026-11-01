@@ -810,14 +810,29 @@ export function createFramePainter(options: {
 
   // A composed run drawn on the picture, where there is one: read again after the
   // run's waits, since the context may have gone during them. False once the
-  // pipeline has ended.
+  // pipeline has ended. A run composed without one that left pictures on the
+  // GPU, its units handed there before the context went, holds pixels nothing
+  // draws and no framebuffer has: its pipeline ends, as one losing them does.
   const drawRun = (
     current: Pipeline,
     run: ComposedRun,
     shown: ReadonlyMap<number, VideoFrame>,
   ): boolean => {
+    if (!current.picture) {
+      if (
+        run.gpu.length > 0 ||
+        (current.compositor?.gpuAreas().length ?? 0) > 0
+      ) {
+        endPipeline(
+          current,
+          `${new PictureContextLost().message}, with the H.264 pictures only it held`,
+        );
+        return false;
+      }
+      return true;
+    }
     try {
-      current.picture?.upload(run, shown);
+      current.picture.upload(run, shown);
       return true;
     } catch (error) {
       return failPicture(current, error);

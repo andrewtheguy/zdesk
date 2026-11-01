@@ -1287,6 +1287,43 @@ test("a pipeline whose H.264 pictures only the GPU held ends with the context", 
   assert.equal(pictures.made, 1, "and no picture made for it again");
 });
 
+test("a run that left a picture on the GPU before the context went ends its pipeline", async () => {
+  const { made, load } = fakeCompositors({
+    plan: (commands) =>
+      commands[0] === H264
+        ? { gpu: [true, true], restore: [] }
+        : { gpu: [], restore: [] },
+  });
+  const video = fakeVideo({ hold: true, coded: [31, 32] });
+  const p = graphicsPainter(load, { video: video.make });
+  p.startGraphics();
+  await p.draw(graphicsFrame([[1]]));
+  const run = p.draw(graphicsFrame([[H264, 2, 5, 31, 32]]));
+  const held = async (n: number) => {
+    while (video.held.length < n) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  // The first unit left on the GPU, then the context gone while the second
+  // decodes: no area the GPU holds yet, so the pipeline waits for it back.
+  await held(1);
+  video.held[0]();
+  await held(2);
+  assert.deepEqual(made[0].onGpu, [0]);
+  p.graphicsLost();
+  video.held[1]();
+  await run;
+  assert.deepEqual(made[0].supplied, [[1, 32]], "the second supplied");
+  assert.match(
+    videoErrors.at(-1) ?? "",
+    /could not compose the host's graphics \(the browser took the picture's WebGL context away, with the H.264 pictures only it held\)/,
+  );
+  await p.draw(graphicsFrame([[2]]));
+  assert.deepEqual(made[0].fed.length, 2, "nothing composed after it");
+  p.graphicsRestored();
+  assert.equal(pictures.made, 1, "and no picture made for it again");
+});
+
 test("a run's H.264 is decoded and supplied before the run is composed", async () => {
   const { made, load } = fakeCompositors();
   const video = fakeVideo();
