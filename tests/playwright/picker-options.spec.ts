@@ -19,7 +19,7 @@
 //
 //     ZDESK_PLAYWRIGHT_BASE_URL=http://127.0.0.1:PORT/ \
 //     ZDESK_PLAYWRIGHT_USERNAME=admin \
-//     ZDESK_PLAYWRIGHT_PASSWORD=hunter2 \
+//     ZDESK_PLAYWRIGHT_PASSWORD=hunter22 \
 //     ZDESK_PLAYWRIGHT_PICKER_TARGET=test-tone \
 //     bunx playwright test '/picker-options\.spec\.ts$'
 import { expect, type Locator, type Page, test } from "@playwright/test";

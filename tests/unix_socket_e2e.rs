@@ -30,7 +30,7 @@ fn config_text(dir: &common::ScratchDir) -> String {
     let master = zdesk::vault::MasterPassword::new("correct horse".to_owned()).unwrap();
     let (section, key) = zdesk::vault::Key::create(&master).unwrap();
     let value = key.encrypt("p").unwrap();
-    let site_passwd_hash = key.hash("hunter2");
+    let site_passwd_hash = key.hash("hunter22");
     format!(
         r#"
 [server]

@@ -16,7 +16,7 @@ use std::time::Duration;
 #[allow(dead_code)]
 pub const TEST_USER: &str = "admin";
 #[allow(dead_code)]
-pub const TEST_PASSWORD: &str = "hunter2";
+pub const TEST_PASSWORD: &str = "hunter22";
 
 /// A web login for [`TEST_USER`]/[`TEST_PASSWORD`], for building an `AppConfig`
 /// directly.

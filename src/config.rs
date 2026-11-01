@@ -2433,7 +2433,7 @@ impl ConfigFile {
         // The key is `None` here when the file was only checked, never unlocked;
         // such a login lets nobody in (see `SiteLogin::verify`).
         let login = SiteLogin::new(username, hash, server.site_login_key)
-            .context("invalid [server].site_username")?;
+            .context("invalid [server] web login")?;
         let branding = Self::resolve_branding(self.branding.as_ref())?;
         Ok(AppConfig {
             listen,
@@ -3457,7 +3457,7 @@ mod tests {
             "[server]\nsite_username = \"admin\"\nsite_passwd_hash = \"{}\"\n\n\
              [master]\nsalt = \"{}\"\ncheck = \"{}\"\n\n\
              [[targets]]\nname = \"one\"\nprotocol = \"vnc\"\nhost = \"192.0.2.10\"\n",
-            key.hash("hunter2"),
+            key.hash("hunter22"),
             section.salt,
             section.check,
         );
@@ -3466,12 +3466,19 @@ mod tests {
         assert!(file.clone().unlock(None).is_err());
         // Only checked, never unlocked: the login lets nobody in.
         let checked = file.clone().resolve().unwrap();
-        assert!(!checked.auth.login().unwrap().verify("admin", "hunter2"));
+        assert!(!checked.auth.login().unwrap().verify("admin", "hunter22"));
         file.unlock(Some(&key)).unwrap();
         let config = file.resolve().unwrap();
         let login = config.auth.login().unwrap();
-        assert!(login.verify("admin", "hunter2"));
+        assert!(login.verify("admin", "hunter22"));
         assert!(!login.verify("admin", "wrong"));
+
+        // A hash of the empty password is refused once the key can tell it.
+        let empty = text.replace(&key.hash("hunter22"), &key.hash(""));
+        let mut file = ConfigFile::parse(&empty).unwrap();
+        file.unlock(Some(&key)).unwrap();
+        let err = file.resolve().unwrap_err();
+        assert!(format!("{err:#}").contains("the login password is empty"), "{err:#}");
 
         // Without [master] there is nothing to open it with.
         let text = text.replace(&format!("[master]\nsalt = \"{}\"\ncheck = \"{}\"\n", section.salt, section.check), "");

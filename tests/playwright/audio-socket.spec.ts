@@ -17,7 +17,7 @@
 //
 //     ZDESK_PLAYWRIGHT_BASE_URL=http://127.0.0.1:PORT/ \
 //     ZDESK_PLAYWRIGHT_USERNAME=admin \
-//     ZDESK_PLAYWRIGHT_PASSWORD=hunter2 \
+//     ZDESK_PLAYWRIGHT_PASSWORD=hunter22 \
 //     ZDESK_PLAYWRIGHT_AUDIO_TARGET=test-tone \
 //     npx playwright test audio-socket
 import { expect, type Page, test } from "@playwright/test";

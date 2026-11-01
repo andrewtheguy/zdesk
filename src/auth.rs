@@ -43,6 +43,25 @@ pub const COOKIE_NAME: &str = "zdesk_session";
 /// Sliding session lifetime: every validated request pushes the expiry out.
 const SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// The fewest characters a web login's password may have: NIST SP 800-63B's
+/// minimum for a password a person chooses.
+pub const MIN_PASSWORD_CHARS: usize = 8;
+
+/// Whether `password` is long enough to be a web login's.
+fn long_enough(password: &str) -> bool {
+    password.chars().count() >= MIN_PASSWORD_CHARS
+}
+
+/// Refuse a web login password shorter than [`MIN_PASSWORD_CHARS`]: checked where
+/// the password is still plain, since a hash cannot tell its length.
+pub fn check_password_length(password: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        long_enough(password),
+        "the web login password must be at least {MIN_PASSWORD_CHARS} characters"
+    );
+    Ok(())
+}
+
 /// A served gateway's web login: the one username allowed to log in,
 /// `[server].site_username`, and `[server].site_passwd_hash` with the key it was
 /// made under, given by [`crate::config::ConfigFile::unlock`].
@@ -71,9 +90,14 @@ impl std::fmt::Debug for SiteLogin {
 }
 
 impl SiteLogin {
-    /// The login for `username`, whose password `hash` was made under `key`.
+    /// The login for `username`, whose password `hash` was made under `key`. A
+    /// hash of the empty password is refused once the key can tell it.
     pub fn new(username: &str, hash: LoginHash, key: Option<LoginKey>) -> anyhow::Result<Self> {
         anyhow::ensure!(!username.is_empty(), "the login username is empty");
+        anyhow::ensure!(
+            !key.as_ref().is_some_and(|key| key.verify("", &hash)),
+            "the login password is empty"
+        );
         Ok(Self {
             username: username.to_owned(),
             username_digest: digest(username),
@@ -85,6 +109,7 @@ impl SiteLogin {
     /// The login for `username` and `password` made in memory, under a login key
     /// of its own: for a gateway built without a config file.
     pub fn with_password(username: &str, password: &str) -> anyhow::Result<Self> {
+        check_password_length(password)?;
         let key = LoginKey::generate();
         Self::new(username, key.hash(password), Some(key))
     }
@@ -95,11 +120,13 @@ impl SiteLogin {
     }
 
     /// Check a login attempt. Both halves are compared in full whatever the other
-    /// said, so a wrong username and a wrong password take the same time.
+    /// said, so a wrong username and a wrong password take the same time; and a
+    /// password shorter than [`MIN_PASSWORD_CHARS`], the empty one included, is
+    /// never right.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
         let password_ok = self.key.as_ref().is_some_and(|key| key.verify(password, &self.hash));
-        username_ok & password_ok
+        username_ok & password_ok & long_enough(password)
     }
 }
 
@@ -353,21 +380,21 @@ mod tests {
 
     #[test]
     fn a_login_takes_its_username_and_password_and_nothing_else() {
-        let login = login("hunter2", true);
+        let login = login("hunter22", true);
         assert_eq!(login.username(), "admin");
-        assert!(login.verify("admin", "hunter2"));
+        assert!(login.verify("admin", "hunter22"));
         assert!(!login.verify("admin", "wrong"));
-        assert!(!login.verify("admin", "hunter"), "a prefix");
-        assert!(!login.verify("mallory", "hunter2"), "username must match too");
-        assert!(SiteLogin::with_password("", "hunter2").is_err());
+        assert!(!login.verify("admin", "hunter2"), "a prefix");
+        assert!(!login.verify("mallory", "hunter22"), "username must match too");
+        assert!(SiteLogin::with_password("", "hunter22").is_err());
     }
 
     /// A config that is only checked resolves its login with no key: that login
     /// must open to nothing.
     #[test]
     fn a_login_without_its_key_never_logs_in() {
-        let login = login("hunter2", false);
-        assert!(!login.verify("admin", "hunter2"));
+        let login = login("hunter22", false);
+        assert!(!login.verify("admin", "hunter22"));
     }
 
     /// Five failures are free; each after locks out for twice as long, up to the
@@ -400,10 +427,34 @@ mod tests {
         }
     }
 
+    /// The empty password never logs in: a login for it is refused when it is made,
+    /// and a login for another password turns it away.
+    #[test]
+    fn an_empty_password_never_logs_in() {
+        assert!(SiteLogin::with_password("admin", "").is_err());
+        let key = LoginKey::generate();
+        assert!(SiteLogin::new("admin", key.hash(""), Some(key)).is_err());
+        assert!(!login("hunter22", true).verify("admin", ""));
+    }
+
+    /// A password must have [`MIN_PASSWORD_CHARS`] characters, counted as
+    /// characters rather than bytes, and a shorter attempt is never right.
+    #[test]
+    fn a_short_password_is_refused() {
+        assert!(check_password_length("hunter2").is_err());
+        assert!(check_password_length("hunter22").is_ok());
+        assert!(check_password_length("密码密码密码密码").is_ok(), "eight characters");
+        assert!(check_password_length("密码密码密码密").is_err(), "seven, in 21 bytes");
+        assert!(SiteLogin::with_password("admin", "hunter2").is_err());
+        let key = LoginKey::generate();
+        let short = SiteLogin::new("admin", key.hash("short"), Some(key)).unwrap();
+        assert!(!short.verify("admin", "short"), "a short hash made in code still lets nobody in");
+    }
+
     #[test]
     fn a_login_is_not_in_its_debug_output() {
-        let rendered = format!("{:?}", GatewayAuth::Login(login("hunter2", true)));
-        assert!(rendered.contains("admin") && !rendered.contains("hunter2"), "{rendered}");
+        let rendered = format!("{:?}", GatewayAuth::Login(login("hunter22", true)));
+        assert!(rendered.contains("admin") && !rendered.contains("hunter22"), "{rendered}");
     }
 
     #[test]

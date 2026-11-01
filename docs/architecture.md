@@ -4018,6 +4018,12 @@ attempt costs one HMAC and a constant-time compare, and needs no turn, no
 blocking thread and no memory of its own. The gateway keeps the login key, not
 the password.
 
+A hash cannot tell its password's length, so the minimum of 8 characters
+(`MIN_PASSWORD_CHARS`, NIST SP 800-63B's) is checked where the password is still
+plain: `password hash` refuses a shorter one, and a login attempt shorter than it,
+the empty one included, is never right. A hash of the empty password is refused at
+start, since the key can tell that one.
+
 Guessing online is slowed by one process-wide throttle (`LoginThrottle` in
 `src/auth.rs`), not by client address, which behind a proxy is the proxy's and in a
 forwarded header is the client's to write. Five failures in a row are free; each

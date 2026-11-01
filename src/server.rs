@@ -1094,7 +1094,7 @@ mod tests {
                 virtual_displays: 1,
                 virtual_display: false,
             }],
-            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::with_password("admin", "hunter2").unwrap()),
+            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::with_password("admin", "hunter22").unwrap()),
             branding: crate::config::Branding {
                 text: "zDesk".to_owned(),
                 logo: None,
@@ -1345,7 +1345,7 @@ mod tests {
             }
             request.body(axum::body::Body::from(body)).unwrap()
         };
-        let login = r#"{"username":"admin","password":"hunter2"}"#;
+        let login = r#"{"username":"admin","password":"hunter22"}"#;
         let response = app.clone().oneshot(request("POST", "/api/auth/login", None, login)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let set_cookie = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
@@ -1386,7 +1386,7 @@ mod tests {
                         .method("POST")
                         .uri("/api/auth/login")
                         .header(header::CONTENT_TYPE, "application/json")
-                        .body(axum::body::Body::from(r#"{"username":"admin","password":"hunter2"}"#))
+                        .body(axum::body::Body::from(r#"{"username":"admin","password":"hunter22"}"#))
                         .unwrap(),
                 )
                 .await

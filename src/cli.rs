@@ -144,7 +144,8 @@ pub enum PasswordAction {
     },
     /// Print the web login's password hashed one way under the config's
     /// [master], to paste as [server].site_passwd_hash = "…". Prompts for it
-    /// (twice on a terminal; one line when piped)
+    /// (twice on a terminal; one line when piped); it must be at least 8
+    /// characters
     Hash {
         /// The config whose [master] to hash under; nothing in it is changed
         /// (default: the installed global config)
