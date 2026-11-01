@@ -4008,6 +4008,30 @@ key, tells a wrong master password apart before any value is tried. One master
 password opens every config made under it, while each file's salt gives each
 its own key. Inline `password` and `vnc_password` are unknown keys.
 
+The web login's password is not among them. A gateway only ever checks it, so
+`[server].site_passwd_hash` keeps it as a one-way
+`$ZD;1;HMAC-SHA256;<base64(HMAC(login key, password))>`, the login key an HMAC
+of a fixed message under the file's key. Without the master password nobody
+holding the file can test a guess against it, and with it they hold every
+target's password anyway, so the hash is keyed rather than stretched: a login
+attempt costs one HMAC and a constant-time compare, and needs no turn, no
+blocking thread and no memory of its own. The gateway keeps the login key, not
+the password.
+
+A hash cannot tell its password's length, so the minimum of 8 characters
+(`MIN_PASSWORD_CHARS`, NIST SP 800-63B's) is checked where the password is still
+plain: `password hash` refuses a shorter one, and a login attempt shorter than it,
+the empty one included, is never right. A hash of the empty password is refused at
+start, since the key can tell that one.
+
+Guessing online is slowed by one process-wide throttle (`LoginThrottle` in
+`src/auth.rs`), not by client address, which behind a proxy is the proxy's and in a
+forwarded header is the client's to write. Five failures in a row are free; each
+after locks logins out for 1 s, doubling to 60 s, and an attempt during a lockout
+is answered 429 with `Retry-After` without being checked. A success clears the
+count. Someone guessing can keep the one user waiting up to 60 s past their last
+guess, which a single-user gateway takes over unlimited guesses.
+
 An empty value is a placeholder, the empty password set up before the real
 one is encrypted over it: it decrypts to nothing, so it needs no `[master]`,
 and a config whose targets name only placeholders needs no master password to
@@ -4056,10 +4080,10 @@ Where the master password comes from is each audience's:
   TUI reads it; a container build, which has neither, links no credential
   store.
 
-`zdesk password master show` and `create` print a `[master]` block and
-`zdesk password encrypt` prints one value under a config's `[master]`, each taking the master
+`zdesk password master show` and `create` print a `[master]` block, and
+`zdesk password encrypt` and `hash` print one value under a config's `[master]`, each taking the master
 password from the config's `[server].master_password_file`, else asking at the
-terminal, and neither touches the keychain. Neither writes the config: a served
+terminal, and none touches the keychain. Neither writes the config: a served
 gateway's config is assembled by whoever deploys it, by hand or from Helm values, and the
 output goes wherever that is. The one file written is the master password's own:
 `password master create` asks for a new one twice and writes the file the config

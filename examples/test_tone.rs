@@ -156,7 +156,7 @@ async fn main() {
     let config = zdesk::config::AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         targets: vec![target],
-        auth: zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::new("admin", "hunter2").unwrap()),
+        auth: zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::with_password("admin", "hunter22").unwrap()),
         branding: zdesk::config::Branding {
             text: "audio tone harness".to_owned(),
             logo: None,
@@ -174,7 +174,7 @@ async fn main() {
     });
 
     // println! rather than log: this is the harness's whole user interface.
-    println!("\n  Open  http://{addr}/   (admin / hunter2)");
+    println!("\n  Open  http://{addr}/   (admin / hunter22)");
     println!("  Open \"test-tone\", choose Opus under Sound and Start. 440 Hz for 5s, quiet for 5s.");
     println!("  The tone must arrive on its own, go away, and come back, untouched,");
     println!("  and ☰ → Mute and Unmute must stop and start it.");

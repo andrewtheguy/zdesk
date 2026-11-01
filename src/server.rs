@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tui")]
 use crate::auth::GatewayAuth;
 use crate::{
-    auth::{self, AuthSessions},
+    auth::{self, AuthSessions, LoginThrottle},
     config::AppConfig,
     error::{ApiResult, AppError},
     hevc_wasm::HevcDecoder,
@@ -34,6 +34,8 @@ pub struct AppState {
     /// worker's requests carry the launch token the control plane adds in that
     /// same cookie and there is no session to look up, so this stays empty there.
     pub auth: Arc<AuthSessions>,
+    /// The process-wide throttle on failed logins.
+    pub login_throttle: Arc<LoginThrottle>,
     /// Every browser socket's byte counters, and the database `[meter]` records them in.
     pub throughput: Throughput,
     /// The software HEVC decoder, read at start-up.
@@ -266,6 +268,7 @@ pub fn router_with_sessions(
         config,
         sessions,
         auth: Arc::new(AuthSessions::default()),
+        login_throttle: Arc::new(LoginThrottle::default()),
         throughput,
         hevc_decoder,
     };
@@ -519,7 +522,9 @@ struct OkResponse {
 }
 
 /// Verify the credentials against the `[server]` login and set the session
-/// cookie. 401 on a mismatch, with no hint which of the two fields was wrong.
+/// cookie. 401 on a mismatch, with no hint which of the two fields was wrong, and
+/// 429 without checking while failed logins have locked it out (see
+/// [`LoginThrottle`]).
 async fn login_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -532,19 +537,10 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    // One check at a time, its turn taken before anything is spawned: an attempt
-    // arriving during another's check is refused, so a burst of guesses neither
-    // fills the blocking pool nor leaves a backlog behind it.
-    let turn = login.try_turn().ok_or(AppError::LoginBusy)?;
-    let login = login.clone();
-    // A check costs Argon2id's memory and passes by design — keep it off the async
-    // workers. It holds the turn until it ends, even if the client has gone.
-    let ok = tokio::task::spawn_blocking(move || {
-        let _turn = turn;
-        login.verify(&req.username, &req.password)
-    })
-    .await
-    .map_err(anyhow::Error::from)?;
+    let ok = state
+        .login_throttle
+        .attempt(std::time::Instant::now(), || login.verify(&req.username, &req.password))
+        .map_err(AppError::LoginLocked)?;
     if !ok {
         return Err(AppError::Unauthorized);
     }
@@ -1098,7 +1094,7 @@ mod tests {
                 virtual_displays: 1,
                 virtual_display: false,
             }],
-            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::new("admin", "hunter2").unwrap()),
+            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::with_password("admin", "hunter22").unwrap()),
             branding: crate::config::Branding {
                 text: "zDesk".to_owned(),
                 logo: None,
@@ -1349,7 +1345,7 @@ mod tests {
             }
             request.body(axum::body::Body::from(body)).unwrap()
         };
-        let login = r#"{"username":"admin","password":"hunter2"}"#;
+        let login = r#"{"username":"admin","password":"hunter22"}"#;
         let response = app.clone().oneshot(request("POST", "/api/auth/login", None, login)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let set_cookie = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
@@ -1390,7 +1386,7 @@ mod tests {
                         .method("POST")
                         .uri("/api/auth/login")
                         .header(header::CONTENT_TYPE, "application/json")
-                        .body(axum::body::Body::from(r#"{"username":"admin","password":"hunter2"}"#))
+                        .body(axum::body::Body::from(r#"{"username":"admin","password":"hunter22"}"#))
                         .unwrap(),
                 )
                 .await

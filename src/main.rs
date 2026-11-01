@@ -118,11 +118,10 @@ fn read_secret(label: &str, confirm: bool) -> anyhow::Result<String> {
     }
 }
 
-/// `zdesk password`: print a config's `[master]` block or one of its `[passwords]`
-/// values, for whoever deploys the config to paste. Nothing is written to a file.
+/// `zdesk password`: print a config's `[master]` block, one of its `[passwords]`
+/// values or its web login's hash, for whoever deploys the config to paste.
+/// Nothing is written to a file.
 fn password(action: PasswordAction) -> anyhow::Result<()> {
-    use std::io::IsTerminal as _;
-
     match action {
         PasswordAction::Master {
             action: MasterAction::Show { config },
@@ -162,28 +161,42 @@ fn password(action: PasswordAction) -> anyhow::Result<()> {
             print_master_block(&master)?;
         }
         PasswordAction::Encrypt { config } => {
-            let path = zdesk::config::config_path(config.as_deref())?;
-            let section = zdesk::vault::master_of(&path)?;
-            let master = match zdesk::vault::master_file_of(&path)? {
-                Some(_) => zdesk::vault::MasterPassword::read_file(&existing_master_file(&path)?)?,
-                None => {
-                    anyhow::ensure!(
-                        std::io::stdin().is_terminal(),
-                        "no master password: the config names no [server].master_password_file \
-                         and stdin is not a terminal to ask at"
-                    );
-                    // Asked once: a mistyped master is told as one by the block's check.
-                    zdesk::vault::MasterPassword::new(read_secret("Master password", false)?)?
-                }
-            };
-            let key = zdesk::vault::Key::derive(&master, &section)
-                .with_context(|| format!("in {}", path.display()))?;
+            let key = config_key(config.as_deref())?;
             let password = read_secret("Password", true)?;
             anyhow::ensure!(!password.is_empty(), "the password is empty");
             println!("{}", key.encrypt(&password)?);
         }
+        PasswordAction::Hash { config } => {
+            let key = config_key(config.as_deref())?;
+            let password = read_secret("Web login password", true)?;
+            zdesk::auth::check_password_length(&password)?;
+            println!("{}", key.hash(&password));
+        }
     }
     Ok(())
+}
+
+/// The key of the config at `config` (the installed one by default): its
+/// `[master]` block under the master password in its `[server].master_password_file`,
+/// or asked for at the terminal when it names none.
+fn config_key(config: Option<&std::path::Path>) -> anyhow::Result<zdesk::vault::Key> {
+    use std::io::IsTerminal as _;
+
+    let path = zdesk::config::config_path(config)?;
+    let section = zdesk::vault::master_of(&path)?;
+    let master = match zdesk::vault::master_file_of(&path)? {
+        Some(_) => zdesk::vault::MasterPassword::read_file(&existing_master_file(&path)?)?,
+        None => {
+            anyhow::ensure!(
+                std::io::stdin().is_terminal(),
+                "no master password: the config names no [server].master_password_file \
+                 and stdin is not a terminal to ask at"
+            );
+            // Asked once: a mistyped master is told as one by the block's check.
+            zdesk::vault::MasterPassword::new(read_secret("Master password", false)?)?
+        }
+    };
+    zdesk::vault::Key::derive(&master, &section).with_context(|| format!("in {}", path.display()))
 }
 
 /// Print a new `[master]` block under `master`, with a salt of its own.
@@ -358,8 +371,8 @@ async fn serve(config: AppConfig) -> anyhow::Result<()> {
             target.name, target.host, target.port, target.protocol
         );
     }
-    if let Some(site_passwd_enc) = config.auth.login() {
-        info!("web login: user {:?}", site_passwd_enc.username());
+    if let Some(login) = config.auth.login() {
+        info!("web login: user {:?}", login.username());
     }
 
     // Race the servers against an explicit shutdown signal. Relying on the OS

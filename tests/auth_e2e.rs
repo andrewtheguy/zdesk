@@ -96,7 +96,7 @@ async fn login_rejects_wrong_credentials_without_a_cookie() {
 
     for body in [
         r#"{"username":"admin","password":"wrong"}"#,
-        r#"{"username":"mallory","password":"hunter2"}"#,
+        r#"{"username":"mallory","password":"hunter22"}"#,
         r#"{"username":"","password":""}"#,
     ] {
         let (status, head, _) = post_login(addr, body).await;
@@ -113,7 +113,7 @@ async fn login_sets_the_session_cookie_and_grants_access() {
     let addr = spawn_app().await;
 
     let (status, head, body) =
-        post_login(addr, r#"{"username":"admin","password":"hunter2"}"#).await;
+        post_login(addr, r#"{"username":"admin","password":"hunter22"}"#).await;
     assert_eq!(status, 200, "login failed: {body}");
     assert_eq!(body, r#"{"ok":true}"#);
 

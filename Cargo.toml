@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.497"
+version = "0.0.498"
 license = "MIT"
 edition = "2024"
 default-run = "zdesk"
@@ -379,9 +379,7 @@ opt-level = 3
 opt-level = 3
 
 # The master password's key derivation (src/vault.rs): 64 MiB of Argon2id takes a
-# debug gateway seconds to start without these. The web login's check
-# (src/auth.rs) runs Argon2id on every attempt too, so a debug gateway logs in at
-# the speed a released one does.
+# debug gateway seconds to start without these.
 [profile.dev.package.argon2]
 opt-level = 3
 

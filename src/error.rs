@@ -7,7 +7,7 @@
 //! typed variants such as [`AppError::NotFound`] directly.
 
 use axum::{
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 
@@ -37,11 +37,10 @@ pub enum AppError {
     #[error("forbidden")]
     Forbidden,
 
-    /// A login attempt arrived while another was being checked — rendered as
-    /// `429 Too Many Requests`. Refused rather than queued, so a burst of guesses
-    /// leaves nothing behind to be checked after it stops.
-    #[error("a login is already being checked")]
-    LoginBusy,
+    /// Too many failed logins in a row: logins are locked out for this long —
+    /// rendered as `429 Too Many Requests` with `Retry-After` in whole seconds.
+    #[error("login locked out")]
+    LoginLocked(std::time::Duration),
 
     /// Another browser's WebSocket holds the single session slot — rendered
     /// as `409 Conflict`. The client may retry with `force` (takeover).
@@ -68,8 +67,14 @@ impl IntoResponse for AppError {
             AppError::Forbidden => {
                 (StatusCode::FORBIDDEN, "not this session's holder").into_response()
             }
-            AppError::LoginBusy => {
-                (StatusCode::TOO_MANY_REQUESTS, "a login is already being checked").into_response()
+            AppError::LoginLocked(left) => {
+                let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(header::RETRY_AFTER, seconds.to_string())],
+                    "too many failed logins",
+                )
+                    .into_response()
             }
             AppError::SessionBusy(_) => {
                 (StatusCode::CONFLICT, "another browser holds the session").into_response()
