@@ -163,6 +163,7 @@ zdesk tui
 ## 文档
 
 - [使用 zDesk](https://zdesk.dev/zh-CN/guides/zdesk)：浏览器客户端、启动会话、设置 Windows、Mac、wlshare 和 VNC 目标、`zdesk tui`
+- [设置 wlshare](https://zdesk.dev/zh-CN/guides/wlshare)：zDesk 连接的 Linux 服务器，运行在 wlroots 桌面上：安装、谁可以连接、开机即启动的无头桌面
 - [安装 zDesk](docs/install.zh-CN.md)：软件包、首次配置、升级、卸载
 
 以下文档只有英文版：

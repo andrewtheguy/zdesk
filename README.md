@@ -274,6 +274,7 @@ removal.
 ## Documentation
 
 - [Using zDesk](https://zdesk.dev/guides/zdesk): the browser client, starting a session, setting up Windows, Mac, wlshare and VNC targets, `zdesk tui`
+- [Setting up wlshare](https://zdesk.dev/guides/wlshare): the Linux server zDesk reaches, on a wlroots desktop: installing it, who may connect, a headless desktop up at boot
 - [Installing zDesk](docs/install.md): packages, first configuration, upgrade, removal
 - [`zdesk.example.toml`](zdesk.example.toml): every configuration key, annotated
 - [Known issues](docs/known-issues.md): faults worth recognising rather than re-investigating
