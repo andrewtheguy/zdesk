@@ -253,6 +253,15 @@ export function createFramePainter(options: {
   // The decoder, built on the first announcement or unit.
   let video: DesktopVideo | null = null;
 
+  // What is said about the picture now, through `onVideoError`: every sentence
+  // goes through here, so one taken back is taken back only while it is the
+  // one on screen.
+  let saying: string | null = null;
+  const say = (reason: string | null) => {
+    saying = reason;
+    options.onVideoError(reason);
+  };
+
   // The pipeline being composed, from its `graphicsStart`. `compositor` and
   // `picture` are null until the module has loaded, and for good once `broken`: a
   // compositor that refused a command no longer holds what the host believes its
@@ -370,8 +379,15 @@ export function createFramePainter(options: {
     sink: RelaySink;
     picture: GraphicsPicture;
     shown: boolean;
+    /** What it shows, from the last `graphicsView`: what it is made again for. */
+    display: number;
+    part: PicturePart;
   }
   let mirror: Mirror | null = null;
+  // What a mirror showed when the browser took the context away, to be made
+  // again for when it gives it back: announced anew, its sink is sent the
+  // whole part (displayRelay.ts).
+  let mirrorLost: { display: number; part: PicturePart } | null = null;
 
   // A pipeline's compositor, given back; it composes nothing more. Its picture
   // stays where it is, showing what was last drawn.
@@ -415,6 +431,7 @@ export function createFramePainter(options: {
 
   // A tab's mirror, given back, and its picture no longer shown.
   const releaseMirror = () => {
+    mirrorLost = null;
     if (!mirror) {
       return;
     }
@@ -486,7 +503,7 @@ export function createFramePainter(options: {
       refused = decode;
     }
     videoComplained = recoverable;
-    options.onVideoError(reason);
+    say(reason);
   };
 
   const releaseVideo = () => {
@@ -501,12 +518,11 @@ export function createFramePainter(options: {
     video = null;
     videoComplained = false;
     refused = null;
-    contextNotice = false;
     // Retracted, and not merely forgotten. This is the attachment boundary: the
     // decoder that said it is gone, the next attachment may be a different target
     // through a different origin, and the page clears its own copy on the way back to
     // the picker only — a reattach would otherwise inherit the sentence.
-    options.onVideoError(null);
+    say(null);
   };
 
   const desktopVideo = (): DesktopVideo => {
@@ -524,7 +540,7 @@ export function createFramePainter(options: {
       options.decoding,
     );
     videoComplained = false;
-    options.onVideoError(null);
+    say(null);
     return video;
   };
 
@@ -540,22 +556,20 @@ export function createFramePainter(options: {
     }
     stop(broken);
     videoComplained = false;
-    options.onVideoError(
+    say(
       `This browser could not compose the host's graphics (${why}). Reload the page to start the session over.`,
     );
   };
 
   // While the browser has taken the canvas's context away: said once, and taken
-  // back when it gives it back.
-  let contextNotice = false;
+  // back when it gives it back, unless something said since has replaced it.
+  const CONTEXT_LOST =
+    "The browser took the picture's GPU context away. It is drawn again when the browser gives it back.";
 
   const sayContextLost = () => {
-    if (!contextNotice) {
-      contextNotice = true;
+    if (saying !== CONTEXT_LOST) {
       videoComplained = false;
-      options.onVideoError(
-        "The browser took the picture's GPU context away. It is drawn again when the browser gives it back.",
-      );
+      say(CONTEXT_LOST);
     }
   };
 
@@ -630,6 +644,114 @@ export function createFramePainter(options: {
     showPipeline(current);
   };
 
+  // A tab's mirror, dropped with the context the browser took, and what it
+  // showed kept for when it is given back.
+  const loseMirror = () => {
+    if (!mirror) {
+      return;
+    }
+    const { display, part } = mirror;
+    releaseMirror();
+    mirrorLost = { display, part };
+    sayContextLost();
+  };
+
+  // A tab's mirror of display `display`, `part` of the session page's picture:
+  // made the first time, and told what it shows every time. While the browser
+  // has the context only what it shows is kept.
+  const showMirror = (display: number, part: PicturePart) => {
+    if (mirrorLost) {
+      mirrorLost = { display, part };
+      return;
+    }
+    if (!mirror) {
+      // A tab holds no pipeline and no stream: the picture is the whole of
+      // what it shows.
+      releaseVideo();
+      let picture: GraphicsPicture;
+      try {
+        picture = makePicture();
+      } catch (error) {
+        if (error instanceof PictureContextLost) {
+          mirrorLost = { display, part };
+          sayContextLost();
+          return;
+        }
+        say(
+          `This browser could not show display ${display}'s picture (${describe(error)}).`,
+        );
+        return;
+      }
+      // A patch that finds the context gone: the mirror is dropped and made
+      // again when it is given back, not ended.
+      let lostInPatch = false;
+      const patching: Pick<GraphicsPicture, "patch"> = {
+        patch(w, h, rects, pixels) {
+          try {
+            picture.patch(w, h, rects, pixels);
+          } catch (error) {
+            lostInPatch = error instanceof PictureContextLost;
+            throw error;
+          }
+        },
+      };
+      // Shown from its first painted update, and not before: until then the
+      // picture's canvas holds nothing of the display's.
+      const made: Mirror = {
+        picture,
+        shown: false,
+        display,
+        part,
+        sink: createRelaySink(
+          makeRelay(),
+          patching,
+          () => {
+            if (mirror === made && !made.shown) {
+              made.shown = true;
+              options.onGraphicsShown?.(true);
+            }
+          },
+          (why) => {
+            if (mirror !== made) {
+              return;
+            }
+            if (lostInPatch) {
+              loseMirror();
+              return;
+            }
+            releaseMirror();
+            videoComplained = false;
+            say(
+              `This browser could not show display ${made.display}'s picture (${why}). Reload the page to start it over.`,
+            );
+          },
+        ),
+      };
+      mirror = made;
+    }
+    mirror.display = display;
+    mirror.part = part;
+    mirror.sink.show(display, part);
+  };
+
+  // A tab's mirror blanked at the desktop's new size: dropped until the context
+  // is given back where it is gone, ended where the picture fails.
+  const blankMirror = (current: Mirror, w: number, h: number) => {
+    try {
+      current.picture.blank(w, h);
+    } catch (error) {
+      if (error instanceof PictureContextLost) {
+        loseMirror();
+        return;
+      }
+      const why = describe(error);
+      releaseMirror();
+      say(
+        `This browser could not show the display's picture (${why}). Reload the page to start it over.`,
+      );
+    }
+  };
+
   // The end of a Mac's own picture this page can no longer follow, said once: a
   // rectangle that did not decode, or a batch that never arrived whole, leaves a
   // framebuffer the Mac's next rectangles are not drawn against, and no repaint
@@ -642,7 +764,7 @@ export function createFramePainter(options: {
     broken.picture?.close();
     broken.picture = null;
     videoComplained = false;
-    options.onVideoError(
+    say(
       `This browser could not decode the Mac's picture (${why}). Reload the page to start the session over.`,
     );
   };
@@ -1146,7 +1268,7 @@ export function createFramePainter(options: {
       }
       planar.broken = true;
       videoComplained = false;
-      options.onVideoError(
+      say(
         `This browser could not present the decoded picture (${describe(error)}). Reload the page to start the session over.`,
       );
       return false;
@@ -1247,7 +1369,7 @@ export function createFramePainter(options: {
       // banner is a statement about the present, and this is the moment the
       // present changed.
       videoComplained = false;
-      options.onVideoError(null);
+      say(null);
     }
   };
 
@@ -1455,7 +1577,7 @@ export function createFramePainter(options: {
         .catch((error: unknown) => {
           if (!starting.broken) {
             finish(starting);
-            options.onVideoError(
+            say(
               `This browser could not load the graphics compositor (${describe(error)}).`,
             );
           }
@@ -1526,47 +1648,7 @@ export function createFramePainter(options: {
       }
     },
     mirrorGraphics(display, part) {
-      if (!mirror) {
-        // A tab holds no pipeline and no stream: the picture is the whole of
-        // what it shows.
-        releaseVideo();
-        let picture: GraphicsPicture;
-        try {
-          picture = makePicture();
-        } catch (error) {
-          options.onVideoError(
-            `This browser could not show display ${display}'s picture (${describe(error)}).`,
-          );
-          return;
-        }
-        // Shown from its first painted update, and not before: until then the
-        // picture's canvas holds nothing of the display's.
-        const made: Mirror = {
-          picture,
-          shown: false,
-          sink: createRelaySink(
-            makeRelay(),
-            picture,
-            () => {
-              if (mirror === made && !made.shown) {
-                made.shown = true;
-                options.onGraphicsShown?.(true);
-              }
-            },
-            (why) => {
-              if (mirror === made) {
-                releaseMirror();
-                videoComplained = false;
-                options.onVideoError(
-                  `This browser could not show display ${display}'s picture (${why}). Reload the page to start it over.`,
-                );
-              }
-            },
-          ),
-        };
-        mirror = made;
-      }
-      mirror.sink.show(display, part);
+      showMirror(display, part);
     },
     blank(w, h) {
       hidePlanes();
@@ -1577,15 +1659,7 @@ export function createFramePainter(options: {
         standard.picture.resize(w, h);
       }
       if (mirror) {
-        try {
-          mirror.picture.blank(w, h);
-        } catch (error) {
-          const why = describe(error);
-          releaseMirror();
-          options.onVideoError(
-            `This browser could not show the display's picture (${why}). Reload the page to start it over.`,
-          );
-        }
+        blankMirror(mirror, w, h);
         return;
       }
       const current = pipeline;
@@ -1599,6 +1673,7 @@ export function createFramePainter(options: {
       }
     },
     graphicsLost() {
+      loseMirror();
       const current = pipeline;
       // One still loading makes its picture when it has loaded, and learns then.
       if (current?.picture) {
@@ -1613,13 +1688,19 @@ export function createFramePainter(options: {
       }
     },
     graphicsRestored() {
-      // Taken back first: what follows may say something of its own.
-      if (contextNotice) {
-        contextNotice = false;
-        options.onVideoError(null);
+      // Taken back first: what follows may say something of its own. A
+      // sentence that replaced it, a pipeline ended while the context was gone,
+      // stays.
+      if (saying === CONTEXT_LOST) {
+        say(null);
       }
       if (pipeline) {
         restorePipeline(pipeline);
+      }
+      if (mirrorLost) {
+        const { display, part } = mirrorLost;
+        mirrorLost = null;
+        showMirror(display, part);
       }
       if (planar.lost) {
         planar.lost = false;

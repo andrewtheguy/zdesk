@@ -915,6 +915,8 @@ function graphicsPainter(
     blankFails?: boolean;
     /** The run, by its first byte, whose upload finds the context taken away. */
     lostAt?: number;
+    /** Whether the first picture's patches find the context taken away. */
+    patchLost?: boolean;
     video?: () => EgfxVideo;
     relay?: RelayPort;
   } = {},
@@ -939,6 +941,7 @@ function graphicsPainter(
         throw new Error("WebGL 2 is not available");
       }
       pictures.made += 1;
+      const made = pictures.made;
       return {
         upload(run, frames = new Map()) {
           if (run.painted[0] === options.lostAt) {
@@ -960,6 +963,9 @@ function graphicsPainter(
           windows.push(part);
         },
         patch(w, h, rects, pixels) {
+          if (options.patchLost && made === 1) {
+            throw new PictureContextLost();
+          }
           patched.push([w, h, Array.from(rects), pixels.length]);
         },
         blank(w, h) {
@@ -1181,6 +1187,79 @@ test("a tab is painted from the session page's picture, not composed", async () 
   assert.equal(relay.closed(), 1);
 });
 
+test("a tab's mirror is made again, and sent the whole part, when the context is given back", async () => {
+  const { load } = fakeCompositors();
+  const relay = fakeRelay();
+  const p = graphicsPainter(load, { relay: relay.port });
+  p.mirrorGraphics(2, { x: 32, y: 0, w: 32, h: 48 });
+  relay.deliver({
+    kind: "paint",
+    seq: 1,
+    w: 32,
+    h: 48,
+    rects: [0, 0, 32, 48],
+    pixels: new ArrayBuffer(32 * 48 * 4),
+  });
+  p.graphicsLost();
+  assert.deepEqual(shown, [true, false]);
+  assert.deepEqual(pictures, { made: 1, closed: 1 });
+  assert.equal(relay.closed(), 1);
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  // The layout changing while it is gone: kept, and nothing made for it.
+  p.mirrorGraphics(2, { x: 32, y: 0, w: 40, h: 48 });
+  assert.equal(pictures.made, 1);
+  const announced = relay.posted.length;
+  p.graphicsRestored();
+  assert.equal(pictures.made, 2, "a picture made again");
+  assert.deepEqual(
+    relay.posted.slice(announced),
+    [{ kind: "shown", display: 2, part: { x: 32, y: 0, w: 40, h: 48 } }],
+    "and what it shows said, which the session page answers whole",
+  );
+  assert.equal(videoErrors.at(-1), null);
+});
+
+test("a tab's mirror whose patch finds the context gone waits for it back", async () => {
+  const { load } = fakeCompositors();
+  const relay = fakeRelay();
+  const p = graphicsPainter(load, { relay: relay.port, patchLost: true });
+  p.mirrorGraphics(2, { x: 32, y: 0, w: 32, h: 48 });
+  relay.deliver({
+    kind: "paint",
+    seq: 1,
+    w: 32,
+    h: 48,
+    rects: [0, 0, 32, 48],
+    pixels: new ArrayBuffer(32 * 48 * 4),
+  });
+  assert.equal(relay.closed(), 1, "the mirror dropped");
+  assert.deepEqual(
+    videoErrors.filter((error) => error !== null),
+    [videoErrors.at(-1)],
+  );
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  // The browser's word on it, after the patch that found it: said once.
+  p.graphicsLost();
+  assert.equal(videoErrors.filter((error) => error !== null).length, 1);
+  p.graphicsRestored();
+  assert.equal(pictures.made, 2);
+  assert.deepEqual(relay.posted.at(-1), {
+    kind: "shown",
+    display: 2,
+    part: { x: 32, y: 0, w: 32, h: 48 },
+  });
+  relay.deliver({
+    kind: "paint",
+    seq: 2,
+    w: 32,
+    h: 48,
+    rects: [0, 0, 32, 48],
+    pixels: new ArrayBuffer(32 * 48 * 4),
+  });
+  assert.deepEqual(patched, [[32, 48, [0, 0, 32, 48], 32 * 48 * 4]]);
+  assert.deepEqual(shown, [true]);
+});
+
 test("a video format takes the display back from a tab's mirror", async () => {
   // The tab is sent a stream: it is drawn on the desktop's canvas the mirror's
   // picture covered.
@@ -1322,6 +1401,11 @@ test("a run that left a picture on the GPU before the context went ends its pipe
   assert.deepEqual(made[0].fed.length, 2, "nothing composed after it");
   p.graphicsRestored();
   assert.equal(pictures.made, 1, "and no picture made for it again");
+  assert.match(
+    videoErrors.at(-1) ?? "",
+    /Reload the page/,
+    "what replaced the notice is not taken back with it",
+  );
 });
 
 test("a run's H.264 is decoded and supplied before the run is composed", async () => {
