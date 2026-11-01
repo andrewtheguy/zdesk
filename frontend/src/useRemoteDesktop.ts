@@ -368,6 +368,10 @@ const MAX_RETRY_DELAY_MS = 15_000;
 // gateway coming up would have come up, and short enough that nobody has gone to
 // read DNS records yet.
 const ATTEMPTS_BEFORE_REPORTING = 4;
+// Under "Reconnecting" while the browser has the picture's WebGL context: the
+// session starts over once it is given back, and not before.
+const CONTEXT_LOST_HINT =
+  "The browser took the picture's graphics context away. The session starts over when it gives it back.";
 
 // How long `requestClipboard` waits for the server's answer before giving up.
 // Generous rather than tight: the engines answer from an engine-side buffer, but
@@ -1291,6 +1295,8 @@ export function useRemoteDesktop(
     let paintSocket: WebSocket | null = null;
     const handlers: PainterHandlers = {
       onVideoError: setVideoError,
+      onContextLost: () => contextTaken(),
+      onContextRestored: () => contextGiven(),
       // A repaint is what re-announces the stream's format and arms a keyframe on
       // it (`reset_render` in src/encode.rs). Logged rather than
       // shown — the recovery is a frame away and nothing asked the person for it.
@@ -1344,6 +1350,11 @@ export function useRemoteDesktop(
     };
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
+    // While the browser has the picture's WebGL context (desktopPainter.ts). A
+    // retry due meanwhile waits for it: a session started before the context is
+    // back would have no picture to draw into.
+    let contextLost = false;
+    let retryHeld = false;
 
     // Drop any retained framebuffer. Every interstitial (connecting,
     // reconnecting, busy, taken over) and the picker fully hide the canvas
@@ -1404,7 +1415,32 @@ export function useRemoteDesktop(
       }
       const delay = Math.min(1000 * 2 ** attempts, MAX_RETRY_DELAY_MS);
       attempts += 1;
-      retryTimer = setTimeout(() => void connect(false), delay);
+      retryTimer = setTimeout(() => {
+        if (contextLost) {
+          retryHeld = true;
+          setConnectError(CONTEXT_LOST_HINT);
+          return;
+        }
+        void connect(false);
+      }, delay);
+    };
+
+    // The browser took the picture's WebGL context away: what this page held of
+    // its picture went with it, so its display socket goes too, as if dropped,
+    // and the session socket with it (`displayClosed`). The reattach, once the
+    // context is back, brings the picture back from the gateway, which starts a
+    // passed pipeline over for a page that holds nothing and repaints a stream.
+    const contextTaken = () => {
+      contextLost = true;
+      displayWs?.close();
+    };
+    const contextGiven = () => {
+      contextLost = false;
+      if (retryHeld) {
+        retryHeld = false;
+        setConnectError(null);
+        void connect(false);
+      }
     };
 
     // Claim the session slot. Returns the token, "busy" when another browser
@@ -2549,6 +2585,7 @@ export function useRemoteDesktop(
     // User-driven (re)start: initial connect, takeover, take-back.
     const start = (force: boolean) => {
       clearTimeout(retryTimer);
+      retryHeld = false;
       attempts = 0;
       clearDesktop();
       // The budget refills and last time's reason goes with it: it belonged to the
@@ -2573,6 +2610,7 @@ export function useRemoteDesktop(
         return;
       }
       clearTimeout(retryTimer);
+      retryHeld = false;
       closeDisplay();
       clearDesktop();
       endPicture();

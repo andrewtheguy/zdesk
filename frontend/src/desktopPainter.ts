@@ -45,6 +45,13 @@ export interface PainterHandlers {
    * asking for one is the page's job because only it holds the socket.
    */
   onVideoNeedsKeyframe: (reason: string) => void;
+  /**
+   * The browser took the WebGL canvas's context away, and gave it back. The
+   * pictures drawn in it went with it, and nothing draws them again: the page
+   * starts the session over once the context is back, as for a dropped socket.
+   */
+  onContextLost: () => void;
+  onContextRestored: () => void;
   /** One ordered screen batch finished in the worker. */
   onPainted: (
     sequence: number,
@@ -191,25 +198,38 @@ export function desktopPainterFor(
   };
   worker.onmessage = (ev: MessageEvent<PainterEvent>) => {
     const event = ev.data;
-    if (event.type === "graphicsShown") {
-      if (event.epoch === clears) {
-        showGraphics(event.shown);
-      }
-    } else if (event.type === "videoError") {
-      handlers?.onVideoError(event.reason);
-    } else if (event.type === "videoNeedsKeyframe") {
-      handlers?.onVideoNeedsKeyframe(event.reason);
-    } else if (event.type === "resized") {
-      handlers?.onResized(event.seq);
-    } else if (event.type === "reached") {
-      handlers?.onReached(event.seq);
-    } else if (event.type === "painted") {
-      handlers?.onPainted(
-        event.sequence,
-        event.generation,
-        event.queuedMs,
-        event.drawMs,
-      );
+    switch (event.type) {
+      case "graphicsShown":
+        if (event.epoch === clears) {
+          showGraphics(event.shown);
+        }
+        break;
+      case "videoError":
+        handlers?.onVideoError(event.reason);
+        break;
+      case "videoNeedsKeyframe":
+        handlers?.onVideoNeedsKeyframe(event.reason);
+        break;
+      case "contextLost":
+        handlers?.onContextLost();
+        break;
+      case "contextRestored":
+        handlers?.onContextRestored();
+        break;
+      case "resized":
+        handlers?.onResized(event.seq);
+        break;
+      case "reached":
+        handlers?.onReached(event.seq);
+        break;
+      case "painted":
+        handlers?.onPainted(
+          event.sequence,
+          event.generation,
+          event.queuedMs,
+          event.drawMs,
+        );
+        break;
     }
   };
   const post = (command: PainterCommand, transfer: Transferable[] = []) =>

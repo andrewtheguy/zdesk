@@ -282,6 +282,16 @@ ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \
 bunx playwright test '/egfx-passthrough\.spec\.ts$'
 ```
 
+The context-restart spec needs the same target: it ends Chromium's GPU process,
+which takes the page's WebGL context, and asserts that the session is started
+over once the context is back. It runs on Chromium itself rather than the
+headless shell, whose renderer dies with that process:
+
+```sh
+ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \
+bunx playwright test '/webgl-context-restart\.spec\.ts$'
+```
+
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
 `ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 over
 the full screen, which the host draws everything in; by region it would need a

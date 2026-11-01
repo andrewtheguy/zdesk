@@ -10,10 +10,11 @@
 //
 // The browser may take that context away (iOS Safari does, for a tab it puts in
 // the background or short of memory) and give it back. Everything a picture made
-// in it is gone then, and a picture is not drawn again: the paint worker learns
-// of both from the canvas (`watchPictureContext`), drops the picture when it is
-// taken, and makes another when it is given back, filled from what it was drawn
-// from.
+// in it is gone then, and the picture is lost for good: the paint worker hears
+// both from the canvas (`watchPictureContext`) and tells the page, which starts
+// the session over once the context is back, as it does for a dropped socket
+// (useRemoteDesktop.ts). The gateway starts a passed pipeline over for a page
+// that holds nothing, and repaints a stream.
 //
 // Without WebGL 2 there is no such picture: the page says so.
 
@@ -26,20 +27,7 @@ void main() {
   gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-/** What a picture whose context the browser took away says of it. */
-export const CONTEXT_TAKEN =
-  "the browser took the picture's WebGL context away";
-
-/**
- * What a picture throws once the browser has taken its context away: not the
- * picture failing, since the browser may give the context back.
- */
-export class PictureContextLost extends Error {
-  constructor() {
-    super(CONTEXT_TAKEN);
-    this.name = "PictureContextLost";
-  }
-}
+const LOST = "the browser took the picture's WebGL context away";
 
 /**
  * Hear the browser take `canvas`'s WebGL context away and give it back. Taking
@@ -66,7 +54,7 @@ export interface PictureCanvas {
    * picture made is in the one given back.
    */
   lost(): boolean;
-  /** Throws `PictureContextLost` once `lost`. */
+  /** Throws once `lost`. */
   usable(): void;
   /**
    * The canvas at this size, its drawing buffer cleared. WebGL reports a refused
@@ -111,8 +99,12 @@ export function openPictureCanvas(
   if (!gl) {
     throw new Error("WebGL 2 is not available");
   }
-  // Taken for good when the browser says so, or before it does, as soon as the
-  // context reports itself lost.
+  if (gl.isContextLost()) {
+    throw new Error(LOST);
+  }
+  // Taken for good when the browser says so. Until it does, the context's
+  // calls are no-ops, and the picture draws nothing rather than complaining
+  // before the page has heard why.
   let taken = false;
   const listening = new AbortController();
   canvas.addEventListener(
@@ -122,16 +114,12 @@ export function openPictureCanvas(
     },
     { signal: listening.signal },
   );
-  const lost = () => {
-    taken ||= gl.isContextLost();
-    return taken;
-  };
+  const lost = () => taken;
   const usable = () => {
-    if (lost()) {
-      throw new PictureContextLost();
+    if (taken) {
+      throw new Error(LOST);
     }
   };
-  usable();
   const vertex = shader(gl, gl.VERTEX_SHADER, VERTEX);
   const pixels = shader(gl, gl.FRAGMENT_SHADER, fragment);
   const program = gl.createProgram();
@@ -139,7 +127,6 @@ export function openPictureCanvas(
   gl.attachShader(program, pixels);
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    usable();
     throw new Error(
       `WebGL 2 refused the picture's shaders: ${gl.getProgramInfoLog(program) || gl.getShaderInfoLog(pixels)}`,
     );
@@ -153,7 +140,6 @@ export function openPictureCanvas(
     lost,
     usable,
     resize(w, h) {
-      usable();
       if (w > largest || h > largest) {
         throw new Error(
           `the GPU takes no picture over ${largest} pixels a side (this one is ${w}x${h})`,
@@ -162,7 +148,6 @@ export function openPictureCanvas(
       canvas.width = w;
       canvas.height = h;
       if (gl.drawingBufferWidth !== w || gl.drawingBufferHeight !== h) {
-        usable();
         throw new Error(
           `the GPU gave a ${gl.drawingBufferWidth}x${gl.drawingBufferHeight} canvas for a ${w}x${h} picture`,
         );

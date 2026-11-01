@@ -56,12 +56,6 @@ function harness() {
     startGraphics() {
       calls.push("graphics");
     },
-    graphicsLost() {
-      calls.push("graphicsLost");
-    },
-    graphicsRestored() {
-      calls.push("graphicsRestored");
-    },
     startStandard() {
       calls.push("standard");
     },
@@ -103,6 +97,8 @@ function harness() {
     getContext: () => ctx,
   };
 
+  // The WebGL canvas, as far as the worker hears from it.
+  const graphicsCanvas = new EventTarget();
   const host = createPainterWorker(
     (event) => events.push(event),
     (options) => {
@@ -114,7 +110,7 @@ function harness() {
   host.handle({
     type: "init",
     canvas: canvas as unknown as OffscreenCanvas,
-    graphics: new EventTarget() as OffscreenCanvas,
+    graphics: graphicsCanvas as unknown as OffscreenCanvas,
     decoding: {
       runs: { hevc: false },
       nativeHevc: true,
@@ -128,6 +124,7 @@ function harness() {
     drawn,
     ctx,
     canvas,
+    graphicsCanvas,
     stall: () => {
       stallDraws = true;
     },
@@ -625,6 +622,45 @@ test("a picture is shown for the attachment the worker is on, by its count of cl
     [
       { type: "graphicsShown", shown: true, epoch: 0 },
       { type: "graphicsShown", shown: true, epoch: 1 },
+    ],
+  );
+});
+
+test("the WebGL context taken away and given back is told to the page, and asked back", () => {
+  const h = harness();
+  const taken = new Event("webglcontextlost", { cancelable: true });
+  h.graphicsCanvas.dispatchEvent(taken);
+  assert.ok(taken.defaultPrevented, "asked back, or the browser keeps it");
+  h.graphicsCanvas.dispatchEvent(new Event("webglcontextrestored"));
+  assert.deepEqual(h.events, [
+    { type: "contextLost" },
+    { type: "contextRestored" },
+  ]);
+  assert.deepEqual(
+    h.calls,
+    [],
+    "the painter hears nothing: the page starts over",
+  );
+});
+
+test("what a picture says while the context is gone is kept from the page, until the clear", () => {
+  const h = harness();
+  const say = (reason: string | null) =>
+    h.painterOptions().onVideoError(reason);
+  h.graphicsCanvas.dispatchEvent(new Event("webglcontextlost"));
+  say(
+    "This browser could not compose the host's graphics (the browser took the picture's WebGL context away). Reload the page to start the session over.",
+  );
+  h.graphicsCanvas.dispatchEvent(new Event("webglcontextrestored"));
+  say("still not the page's");
+  h.host.handle({ type: "clear" });
+  say(null);
+  say("the next attachment's, said");
+  assert.deepEqual(
+    h.events.filter((event) => event.type === "videoError"),
+    [
+      { type: "videoError", reason: null },
+      { type: "videoError", reason: "the next attachment's, said" },
     ],
   );
 });
