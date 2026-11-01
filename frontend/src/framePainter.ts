@@ -149,6 +149,13 @@ function withGpu(run: ComposedRun): Uint32Array {
   return Uint32Array.from(rects);
 }
 
+// A tile the module decodes rather than the browser: one of wlshare's progressive
+// tiles, or one of its lossless ones, framed alone or in its still stream.
+const isModuleTile = (record: TileMsg) =>
+  record.format === "progressive" ||
+  record.format === "planar" ||
+  record.format === "still";
+
 export function createFramePainter(options: {
   /**
    * The destination, read per batch rather than captured, so a resize that
@@ -718,12 +725,7 @@ export function createFramePainter(options: {
   // One tile's image, decoded by the browser off this thread as soon as its batch
   // lands: null for a record that is no tile, or a tile of no picture of tiles.
   const tileImage = (record: BatchRecord): Promise<ImageBitmap> | null => {
-    if (
-      record.kind !== "tile" ||
-      record.format === "progressive" ||
-      record.format === "planar" ||
-      !tiles
-    ) {
+    if (record.kind !== "tile" || isModuleTile(record) || !tiles) {
       return null;
     }
     const type = `image/${record.format}`;
@@ -774,16 +776,30 @@ export function createFramePainter(options: {
   };
 
   // A tile of the module's, as `R, G, B, A` rows of its rectangle: a progressive
-  // one against what the decoder holds of it, on a desktop the canvas's size, or
-  // a lossless one alone.
+  // one against what the decoder holds of it, on a desktop the canvas's size, a
+  // lossless one alone, or a still lossless one in the still stream.
   const decodeModuleTile = (
     decoder: TilesDecoder,
     { format, x, y, w, h, data }: TileMsg,
     canvas: { width: number; height: number },
-  ): Uint8Array =>
-    format === "planar"
-      ? decoder.planar(w, h, data)
-      : decoder.progressive(canvas.width, canvas.height, x, y, w, h, data);
+  ): Uint8Array => {
+    switch (format) {
+      case "planar":
+        return decoder.planar(w, h, data);
+      case "still":
+        return decoder.still(w, h, data);
+      default:
+        return decoder.progressive(
+          canvas.width,
+          canvas.height,
+          x,
+          y,
+          w,
+          h,
+          data,
+        );
+    }
+  };
 
   // `R, G, B, A` rows put on the canvas at a rectangle.
   const putRgba = (
@@ -812,7 +828,7 @@ export function createFramePainter(options: {
       return;
     }
     breakTileDecoder();
-    const kind = record.format === "planar" ? "lossless" : "progressive";
+    const kind = record.format === "progressive" ? "progressive" : "lossless";
     options.onVideoNeedsKeyframe(
       `a ${kind} tile did not decode: ${describe(error)}`,
     );
@@ -1157,7 +1173,7 @@ export function createFramePainter(options: {
         await paintStandard(record, born);
         return;
       case "tile":
-        if (record.format === "progressive" || record.format === "planar") {
+        if (isModuleTile(record)) {
           await paintModuleTile(record, born);
         } else {
           await paintTile(record, image, born);

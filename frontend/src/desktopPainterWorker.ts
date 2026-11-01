@@ -37,7 +37,7 @@ import { createGraphicsPicture, type PicturePart } from "./egfxPicture.ts";
 import { createFramePainter, type FramePainter } from "./framePainter.ts";
 import type { MosaicView } from "./mosaic.ts";
 import { createPlanesPicture } from "./planesPicture.ts";
-import { binaryFrameKind } from "./protocol.ts";
+import { batchFrameContinued, binaryFrameKind } from "./protocol.ts";
 import { endDecodeWorker } from "./softwareDecoder.ts";
 import type { PageDecoding } from "./softwareSupport.ts";
 import type { VideoFormat } from "./videoDecoder.ts";
@@ -252,13 +252,55 @@ export function createPainterWorker(
   // for a desktop that is gone — and after a clear it may be sharing the canvas with
   // the next attachment's commands, since the clear did not wait for it.
   let epoch = 0;
-  const queued = (task: () => void | Promise<void>) => {
+  // The batches of an update the gateway cut and continued, held until its last
+  // batch: the canvas is shown whenever this worker's task ends, so an update drawn
+  // as each batch lands is shown part this frame and part the last — a moving
+  // picture torn along its tiles' rows. Drawn ahead of whatever is queued next.
+  let held: ArrayBuffer[] = [];
+  // What is held drawn, for the attachment `born` names: a clear while one draws
+  // ends it, and the rest are the gone attachment's.
+  const drawHeld = async (born: number) => {
+    const frames = held;
+    held = [];
+    for (const frame of frames) {
+      if (born !== epoch) {
+        return;
+      }
+      await painter?.draw(frame);
+    }
+  };
+  // A batch, held if it is continued, or drawn after what is held.
+  const drawBatch = async (frame: ArrayBuffer, born: number) => {
+    if (batchFrameContinued(frame)) {
+      held.push(frame);
+      return;
+    }
+    await drawHeld(born);
+    if (born !== epoch) {
+      return;
+    }
+    await painter?.draw(frame);
+    if (born === epoch) {
+      compose();
+    }
+  };
+  // `holding` for a batch, which draws or holds what is held itself; any other
+  // command draws it first, and shows it on a mosaic as a final batch would.
+  const queued = (task: () => void | Promise<void>, holding = false) => {
     const born = epoch;
     queue = queue
-      .then(() => {
-        if (born === epoch) {
-          return task();
+      .then(async () => {
+        if (born !== epoch) {
+          return;
         }
+        if (!holding && held.length > 0) {
+          await drawHeld(born);
+          if (born !== epoch) {
+            return;
+          }
+          compose();
+        }
+        return task();
       })
       .catch(() => {});
   };
@@ -301,11 +343,9 @@ export function createPainterWorker(
             // A batch the painter dropped as malformed is acknowledged too. The
             // acknowledgment is the gateway's send window, not a claim that pixels
             // landed — withholding it would hold that window shut — and the painter
-            // has already asked for the keyframe that repairs the stream.
-            await painter?.draw(command.data);
-            if (born === epoch) {
-              compose();
-            }
+            // has already asked for the keyframe that repairs the stream. So is a
+            // continued batch, held: the rest of its update is behind that window.
+            await drawBatch(command.data, born);
             if (born !== epoch) {
               // A draw the clear did not wait for, landing after it. The painter's
               // own generation already kept its pixels off the new canvas; what is
@@ -323,7 +363,7 @@ export function createPainterWorker(
               queuedMs: milliseconds(startedAt - queuedAt),
               drawMs: milliseconds(finishedAt - startedAt),
             });
-          });
+          }, true);
           break;
         }
         case "resize":
@@ -391,6 +431,7 @@ export function createPainterWorker(
           // directly when it could reach it.
           epoch += 1;
           queue = Promise.resolve();
+          held = [];
           painter?.clear();
           framebuffer = null;
           framebufferCtx = null;

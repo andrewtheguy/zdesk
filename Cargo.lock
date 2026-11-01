@@ -2933,9 +2933,8 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ruzstd"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+version = "0.9.1"
+source = "git+https://github.com/andrewtheguy/zstd-rs?tag=v0.9.1-peek.2#9ccf1fa036da6953df0c213480fd8d6e246d0645"
 dependencies = [
  "twox-hash",
 ]
@@ -4190,8 +4189,8 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wlshare-proto"
-version = "9.0.0"
-source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v9#a8e760b677f5a21f8cf5b9b768a6a864033b2f22"
+version = "10.0.0"
+source = "git+https://github.com/andrewtheguy/wlshare?tag=proto-v10#74aa0e13410077ec0217fee9b2b3266c37a5d50a"
 dependencies = [
  "thiserror",
 ]
@@ -4328,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "zdesk"
-version = "0.0.496"
+version = "0.0.497"
 dependencies = [
  "aes",
  "aes-gcm",

@@ -1838,7 +1838,7 @@ test("a malformed batch ends a Mac's own picture", async () => {
 // image, little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4;
+    format: 1 | 2 | 3 | 4 | 5;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1976,6 +1976,12 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
           rgba[0] = bitmap[0];
           return rgba;
         },
+        still(w, h, body) {
+          calls.push(`still ${w}x${h} [${body[0]}]`);
+          const rgba = new Uint8Array(w * h * 4);
+          rgba[0] = body[0];
+          return rgba;
+        },
         close() {
           closed += 1;
         },
@@ -2062,19 +2068,19 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
     assert.equal(put.at(-1), "9 64x64 at 0,0");
     assert.equal(made, 3);
-    // A lossless tile is decoded by the same module, alone, and put where it
-    // says, in its turn among the rest.
+    // A lossless tile is decoded by the same module, alone or in the still
+    // stream, and put where it says, in its turn among the rest.
     await p.draw(
       tileFrame([
         { format: 4, at: [0, 0, 100, 64], image: [10] },
         { format: 3, at: [0, 64, 64, 16], image: [11] },
-        { format: 4, at: [64, 64, 36, 16], image: [12] },
+        { format: 5, at: [64, 64, 36, 16], image: [12] },
       ]),
     );
     assert.deepEqual(calls.slice(-3), [
       "planar 100x64 [10]",
       "100x80 0,64 64x16 [11]",
-      "planar 36x16 [12]",
+      "still 36x16 [12]",
     ]);
     assert.deepEqual(put.slice(-3), [
       "10 100x64 at 0,0",

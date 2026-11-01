@@ -31,6 +31,9 @@ pub struct Wire {
     /// `Wire` belongs to one attachment; starts at one so zero can remain the
     /// conspicuous value in malformed or hand-built frames.
     next_sequence: u32,
+    /// Whether a batch flushed now is continued ([`batch::FLAG_CONTINUED`]): cut
+    /// inside a run, or the last of a run whose update goes on.
+    in_run: bool,
     pub totals: Totals,
 }
 
@@ -40,6 +43,7 @@ impl Default for Wire {
             pending: Vec::new(),
             pending_bytes: 0,
             next_sequence: 1,
+            in_run: false,
             totals: Totals::default(),
         }
     }
@@ -82,7 +86,11 @@ impl Wire {
                     ServerMsg::Cache(unit) => self.push(Record::Cache(unit), &mut frames)?,
                     // One update of wlshare's tiles ends its batch, as an RDP frame
                     // does: acknowledged once, however many tiles it was.
-                    ServerMsg::Run(records) => {
+                    // A batch cut inside a run, and a run's last where the update
+                    // goes on in the next, are continued: the browser shows an
+                    // update whole ([`ServerMsg::Run`]).
+                    ServerMsg::Run { records, continued } => {
+                        self.in_run = true;
                         for record in records {
                             match record {
                                 ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
@@ -92,7 +100,9 @@ impl Wire {
                                 other => log::warn!("wire: dropping {other:?}, which is not a record of a run"),
                             }
                         }
+                        self.in_run = continued;
                         self.flush(&mut frames)?;
+                        self.in_run = false;
                     }
                     // A frame's last run is its batch's last record: the browser
                     // shows a batch once it has drawn all of it, and acknowledges
@@ -148,7 +158,7 @@ impl Wire {
             .ok_or(WireError::SequenceExhausted)?;
         let mut frame = Vec::with_capacity(batch::HEADER_LEN + self.pending_bytes);
         frame.push(batch::FRAME_KIND);
-        frame.push(0); // flags
+        frame.push(if self.in_run { batch::FLAG_CONTINUED } else { 0 });
         frame.extend_from_slice(&(self.pending.len() as u16).to_le_bytes());
         frame.extend_from_slice(&sequence.to_le_bytes());
         // Each record's share of the queue budget moves to the batch, which is where
@@ -698,13 +708,52 @@ mod tests {
             let mut records: Vec<ServerMsg> = xs.map(|i| tile(i * 64)).collect();
             records.push(ServerMsg::Copy(CopyUnit { sx: 0, sy: 0, x: 0, y: 64, w: 64, h: 64 }));
             records.push(ServerMsg::Cache(CacheUnit { store: true, slot: 1, x: 0, y: 0 }));
-            ServerMsg::Run(records)
+            ServerMsg::Run { records, continued: false }
         };
         let mut wire = Wire::default();
         let frames = wire.encode(vec![run(0..20), run(20..23)]).unwrap();
         let counts: Vec<u16> = binary(&frames).iter().map(|bytes| u16::from_le_bytes([bytes[2], bytes[3]])).collect();
         assert_eq!(counts, vec![22, 5], "records in each batch");
         assert_eq!(wire.totals.tile, 23 + 4, "the tiles, the copies and the caches");
+    }
+
+    /// An update of wlshare's tiles past a batch's worth is shown whole: every batch
+    /// cut inside a run is continued, and a run's last batch is where the update
+    /// goes on, and nowhere else, not even a control message's flush after it.
+    #[test]
+    fn an_update_cut_into_batches_is_continued_to_its_last() {
+        let tile = |x: u16, len: usize| {
+            ServerMsg::Tile(TileUnit {
+                x,
+                y: 0,
+                w: 64,
+                h: 64,
+                format: crate::tiles::Format::Planar,
+                data: vec![0x28; len],
+                held: Held::default(),
+                painted: crate::protocol::Painted::default(),
+            })
+        };
+        let big = MAX_BATCH_BYTES / 2;
+        let run = |xs: std::ops::Range<u16>, continued: bool| ServerMsg::Run { records: xs.map(|x| tile(x * 64, big)).collect(), continued };
+        let mut wire = Wire::default();
+        let frames = wire
+            .encode(vec![
+                run(0..5, true),
+                run(5..6, false),
+                ServerMsg::TilesStart { engine: 0 },
+                run(6..7, false),
+            ])
+            .unwrap();
+        let shape: Vec<String> = frames
+            .iter()
+            .map(|frame| match frame {
+                WireFrame::Batch { bytes, .. } => format!("{}{}", u16::from_le_bytes([bytes[2], bytes[3]]), if bytes[1] == batch::FLAG_CONTINUED { "+" } else { "" }),
+                WireFrame::Text(_) => "text".into(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(shape, ["1+", "1+", "1+", "1+", "1+", "1", "text", "1"], "records in each batch, + where continued");
     }
 
     /// A unit's share of the queue budget rides the batch it went out in.

@@ -561,17 +561,25 @@ holding what wlshare's next blocks are not coded against: it is given back, the
 whole picture is asked for, and no block is decoded until that picture starts.
 Its lossless tiles (experimental) are `WLST` with `WLSL` beside it, for a LAN:
 every tile that changed, still or moving, a planar bitmap of its pixels, RDP 6.0
-bitmap compression with no alpha plane, colour loss or subsampling, as one zstd
-frame, as a Windows host draws its pipeline under its Lossless policy and wraps
-it in its bulk compression
+bitmap compression with no alpha plane, colour loss or subsampling, in zstd, as a
+Windows host draws its pipeline under its Lossless policy and wraps it in its
+bulk compression
 ([Lossless, by the host's policy](rdp-client.md#lossless-by-the-hosts-policy)),
-and no stream, the browser's lag slowing wlshare's updates and never what a tile
-shows. Each is a rectangle inside the desktop of any size, passed as a `TILE`
-record of its own format (`TILE_PLANAR`), and the page decodes it, alone and in
-wire order with the progressive ones, its frame by ruzstd, a zstd decoder in
-Rust, and its bitmap by the same module's planar codec, the one that draws a
+and no H.264 stream, the browser's lag slowing wlshare's updates and never what a
+tile shows. Where the desktop moves each bitmap is a zstd frame of its own, and
+where it is still the still stream's next bytes, one zstd stream across the
+session's still tiles, so a page or a menu shown again is matched against what
+the stream already carried; a body that begins a zstd frame starts it over, as
+wlshare does wherever the picture starts over and after the cache-empty every
+repaint sends. Each is a rectangle inside the desktop of any size, passed as a
+`TILE` record of its own format (`TILE_PLANAR` framed, `TILE_STILL` streamed),
+and the page decodes it in wire order with the progressive ones, its zstd by
+ruzstd, a zstd decoder in Rust — the fork that adds `FrameDecoder::peek`, the
+still stream's newest bytes, which ruzstd keeps back while a frame goes on —
+fed a block at a time and stopped past what a planar bitmap of the rectangle can
+be, and its bitmap by the same module's planar codec, the one that draws a
 Windows host's lossless pipeline; one that does not decode asks for the whole
-picture as a progressive tile does.
+picture as a progressive tile does, and so starts the still stream over.
 Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
@@ -1155,11 +1163,12 @@ block instead, and its lossless tiles every tile a planar bitmap, and no stream
 it sat between a native protocol and the page, done where the compositor's
 pixels are coded once; its rules and measurements are wlshare's
 ([The tiles encoding](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
-Every rectangle of an update is one of nine kinds: a PNG of it, a region
+Every rectangle of an update is one of ten kinds: a PNG of it, a region
 stream's first frame, its next, its end, a copy of what the page holds
 elsewhere, a scroll or a window moved, a tile of it kept in the page's cache
 of tiles, a tile drawn from that cache, a window switched back to or a page
-scrolled back, a progressive tile, or a planar bitmap.
+scrolled back, a progressive tile, a planar bitmap, or the still stream's next
+planar bitmap.
 Nothing is coded here.
 
 - **Listed with which tiles beside it.** `WLST` goes at the head of the list.
@@ -2436,7 +2445,7 @@ has the room, spells it out.
 Screen updates use little-endian binary frames:
 
 ```text
-u8 kind = 0x02 | u8 flags = 0 | u16 record count | u32 sequence | records
+u8 kind = 0x02 | u8 flags | u16 record count | u32 sequence | records
 
 VIDEO    op 0x03: u8 flags | u16 w | u16 h | u32 len | payload[len]
 GRAPHICS op 0x04: u32 len | message[len]
@@ -2455,8 +2464,15 @@ FramebufferUpdate of wlshare's tiles. The engine gathers an update's records and
 hands them on together, cutting them at a batch's 256 KiB. Handed on as they
 were read, they went one or two to a batch on a link that kept up, and every
 batch is acknowledged: a picture of small progressive tiles cost thousands of
-acknowledgments a second, megabits a second from the browser. Receivers reject unknown operations and truncated
-records, and reject a nonzero frame flags byte. A `VIDEO` record's own flags byte
+acknowledgments a second, megabits a second from the browser. An update cut so
+is shown whole: every batch of it but its last has the frame flag `0x01`,
+continued, and the paint worker holds a continued batch, acknowledging it at
+once, as the rest of its update is behind that acknowledgment, and draws it
+with the next batch that is not, or ahead of whatever command comes first.
+The canvas is shown whenever the worker's task ends, so an update drawn a
+batch at a time was shown part one frame and part the last: a moving picture
+of planar or progressive tiles torn along its runs' rows. Receivers reject
+unknown operations and truncated records, and reject any other frame flag. A `VIDEO` record's own flags byte
 is `0x01` for a keyframe, and for a unit that is one strip of the picture
 ([in strips](#apples-media-stream-passed-through)) `0x02`, with the strip's
 number from the top in `0x0C` and `0x10` on the last strip of its frame —

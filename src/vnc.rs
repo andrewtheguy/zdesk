@@ -6252,7 +6252,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             reader.read_exact(&mut header[1..used]).await?;
             let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
             let len = match header {
-                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } | TileHeader::Planar { len } => len,
+                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } | TileHeader::Planar { len } | TileHeader::Still { len } => len,
                 TileHeader::End { .. } | TileHeader::Copy { .. } | TileHeader::Cached { .. } | TileHeader::Store { .. } => 0,
             };
             let mut body = vec![0u8; len];
@@ -6271,6 +6271,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 // The rectangle's pixels, whatever its size inside the desktop: the
                 // page decodes it there alone.
                 TileHeader::Planar { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Planar, body).await?,
+                // The same, in the still stream, which the page reads in order.
+                TileHeader::Still { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body).await?,
                 // One tile on the grid, cut by the desktop's edge, and the block's own
                 // tile the rectangle's: the page decodes it there against what it holds.
                 TileHeader::Progressive { .. } => {
@@ -13421,14 +13423,14 @@ mod tests {
         let task = open_read_loop(wlshare_tiles_update(320, b"t1"), shared, sink);
 
         assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        let Some(ServerMsg::Run(tile)) = rx.recv().await else { panic!("the tile's run") };
+        let Some(ServerMsg::Run { records: tile, .. }) = rx.recv().await else { panic!("the tile's run") };
         assert!(matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e]));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D"));
-        let Some(ServerMsg::Run(region)) = rx.recv().await else { panic!("the region's run") };
+        let Some(ServerMsg::Run { records: region, .. }) = rx.recv().await else { panic!("the region's run") };
         assert!(matches!(&region[..], [ServerMsg::Region(first), ServerMsg::Region(next)]
             if first.keyframe && (first.x, first.y, first.w, first.h) == (0, 16, 320, 192) && !next.keyframe));
         assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
-        let Some(ServerMsg::Run(rest)) = rx.recv().await else { panic!("the copy's and the cache's run") };
+        let Some(ServerMsg::Run { records: rest, .. }) = rx.recv().await else { panic!("the copy's and the cache's run") };
         assert!(matches!(&rest[..], [ServerMsg::Copy(copy), ServerMsg::Cache(store), ServerMsg::Cache(drawn)]
             if *copy == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }
                 && *store == crate::protocol::CacheUnit { store: true, slot: 5, x: 0, y: 0 }
@@ -13518,7 +13520,7 @@ mod tests {
         let wire = wlshare_progressive_update(&[((0, 0, 64, 64), (0, 0)), ((64, 0, 36, 64), (1, 0)), ((64, 64, 36, 16), (1, 1))], b"p1");
         let task = open_read_loop(wire, shared, sink);
         assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        let Some(ServerMsg::Run(tiles)) = rx.recv().await else { panic!("the update's run") };
+        let Some(ServerMsg::Run { records: tiles, .. }) = rx.recv().await else { panic!("the update's run") };
         assert_eq!(tiles.len(), 3, "the update's tiles together");
         for (place, tile) in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)].into_iter().zip(tiles) {
             let ServerMsg::Tile(unit) = tile else { panic!("a tile") };

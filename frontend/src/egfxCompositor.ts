@@ -154,7 +154,7 @@ export type DecodedFrame = Pick<
  * wlshare's tiles the page decodes in the module: its progressive tiles, by the
  * module's RemoteFX Progressive decoder over the desktop, which keeps every
  * tile's coefficients from one block to the next, so blocks go in in wire order;
- * and its lossless tiles, each planar bitmap alone.
+ * and its lossless tiles, each planar bitmap alone or in its still stream.
  */
 export interface TilesDecoder {
   /**
@@ -178,6 +178,14 @@ export interface TilesDecoder {
    * Throws for one that does not decode.
    */
   planar(w: number, h: number, bitmap: Uint8Array): Uint8Array;
+  /**
+   * The pixels of `body`, the still stream's bytes of a planar bitmap of exactly
+   * a `w`×`h` rectangle, read after the bodies before it — one that begins a zstd
+   * frame starts the stream over: `R, G, B, A` rows for the canvas to put there.
+   * Throws for one that does not decode, after which the stream is lost until a
+   * body starts it over.
+   */
+  still(w: number, h: number, body: Uint8Array): Uint8Array;
   /** Give the module back what it holds of every tile. */
   close(): void;
 }
@@ -196,6 +204,7 @@ export async function loadTilesDecoder(
     progressive: (width, height, x, y, w, h, block) =>
       tiles.progressive(width, height, x, y, w, h, block),
     planar: (w, h, bitmap) => tiles.planar(w, h, bitmap),
+    still: (w, h, body) => tiles.still(w, h, body),
     close: () => tiles.free(),
   };
 }

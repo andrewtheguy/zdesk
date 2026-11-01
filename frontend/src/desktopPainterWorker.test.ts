@@ -17,8 +17,10 @@ import type { createFramePainter, FramePainter } from "./framePainter.ts";
 
 // A one-record-free batch frame: kind 0x02, flags 0, count 0, then its u32
 // sequence. Valid enough for the kind check, which is all the worker itself reads.
-const batchFrame = (sequence = 1) =>
-  new Uint8Array([0x02, 0, 0, 0, sequence, 0, 0, 0]).buffer;
+const batchFrame = (sequence = 1, flags = 0) =>
+  new Uint8Array([0x02, flags, 0, 0, sequence, 0, 0, 0]).buffer;
+// A batch the gateway continued: its update goes on in the next.
+const continuedFrame = (sequence: number) => batchFrame(sequence, 0x01);
 // An audio frame's kind byte — the thing the session socket never carries, and
 // the worker must drop rather than hand to the batch parser.
 const audioFrame = () => new Uint8Array([0x03, 0, 0, 0]).buffer;
@@ -83,6 +85,10 @@ function harness() {
     fillRect(x: number, y: number, w: number, h: number) {
       calls.push("fill");
       this.rects.push([x, y, w, h]);
+    },
+    // What a mosaic view composes onto the canvas.
+    drawImage() {
+      calls.push("compose");
     },
   };
   const canvas = {
@@ -160,6 +166,118 @@ test("a batch frame reaches the painter; anything else is dropped", async () => 
       drawMs: 0,
     },
   ]);
+});
+
+test("an update's continued batches are held, acknowledged, and drawn with its last", async () => {
+  const h = harness();
+  const [first, second, last] = [
+    continuedFrame(1),
+    continuedFrame(2),
+    batchFrame(3),
+  ];
+  h.host.handle({ type: "frame", data: first, sequence: 1, generation: 1 });
+  h.host.handle({ type: "frame", data: second, sequence: 2, generation: 1 });
+  await settled();
+  // Nothing drawn, so nothing shown, but the gateway's window kept open.
+  assert.deepEqual(h.drawn, []);
+  assert.deepEqual(
+    h.events.map((event) => event.type === "painted" && event.sequence),
+    [1, 2],
+  );
+  h.host.handle({ type: "frame", data: last, sequence: 3, generation: 1 });
+  await settled();
+  assert.deepEqual(h.drawn, [first, second, last]);
+});
+
+test("held batches are drawn ahead of the next command, and dropped by a clear", async () => {
+  const h = harness();
+  const held = continuedFrame(1);
+  h.host.handle({ type: "frame", data: held, sequence: 1, generation: 1 });
+  h.host.handle({ type: "tilesStart" });
+  await settled();
+  assert.deepEqual(h.calls, ["draw", "tiles"]);
+  h.host.handle({
+    type: "frame",
+    data: continuedFrame(2),
+    sequence: 2,
+    generation: 1,
+  });
+  await settled();
+  h.host.handle({ type: "clear" });
+  h.host.handle({
+    type: "frame",
+    data: batchFrame(3),
+    sequence: 3,
+    generation: 2,
+  });
+  await settled();
+  assert.deepEqual(
+    h.drawn.length,
+    2,
+    "the cleared attachment's held batch is not drawn",
+  );
+});
+
+test("a clear while held batches draw stops them, and the command behind them", async () => {
+  const h = harness();
+  const [first, second] = [continuedFrame(1), continuedFrame(2)];
+  h.host.handle({ type: "frame", data: first, sequence: 1, generation: 1 });
+  h.host.handle({ type: "frame", data: second, sequence: 2, generation: 1 });
+  h.stall();
+  h.host.handle({ type: "mark", seq: 3 });
+  await settled();
+  assert.deepEqual(h.drawn, [first], "the first held batch drawing");
+  h.host.handle({ type: "clear" });
+  h.release();
+  await settled();
+  assert.deepEqual(
+    h.drawn,
+    [first],
+    "nothing of the gone attachment after the clear",
+  );
+  assert.ok(
+    !h.events.some((event) => event.type === "reached"),
+    "the mark behind them was the gone attachment's",
+  );
+});
+
+test("held batches drawn ahead of a command are composed on a mosaic", async () => {
+  const globals = globalThis as { OffscreenCanvas?: unknown };
+  const before = globals.OffscreenCanvas;
+  globals.OffscreenCanvas = class {
+    width: number;
+    height: number;
+    constructor(width: number, height: number) {
+      this.width = width;
+      this.height = height;
+    }
+    getContext() {
+      return { fillStyle: "", fillRect() {}, drawImage() {} };
+    }
+  };
+  try {
+    const h = harness();
+    const draw = { sx: 0, sy: 0, sw: 8, sh: 8, dx: 0, dy: 0, dw: 8, dh: 8 };
+    h.host.handle({
+      type: "view",
+      view: { w: 8, h: 8, scale: 1, draws: [draw] },
+      seq: 1,
+    });
+    await settled();
+    h.calls.length = 0;
+    h.host.handle({
+      type: "frame",
+      data: continuedFrame(2),
+      sequence: 2,
+      generation: 1,
+    });
+    h.host.handle({ type: "mark", seq: 3 });
+    await settled();
+    assert.deepEqual(h.calls, ["draw", "compose"]);
+    assert.ok(h.events.some((event) => event.type === "reached"));
+  } finally {
+    globals.OffscreenCanvas = before;
+  }
 });
 
 test("a mark is echoed only once the draw ahead of it has finished", async () => {

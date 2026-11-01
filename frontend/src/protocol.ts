@@ -490,12 +490,14 @@ export interface StandardMsg {
 // wlshare's progressive tiles: a RemoteFX Progressive
 // tile block of one 64x64 tile, which depends on every block of that tile before
 // it, so it is decoded in wire order too (framePainter.ts). Or one of wlshare's
-// lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless and
-// depending on no other, decoded by the same module in wire order with the
-// progressive ones. See `TileUnit` in src/protocol.rs for the contract.
+// lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless,
+// depending on no other where the desktop moves ("planar") and read after the
+// still stream's bodies before it where it is still ("still"), decoded by the
+// same module in wire order with the progressive ones. See `TileUnit` in
+// src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive" | "planar";
+  format: "jpeg" | "png" | "progressive" | "planar" | "still";
   x: number;
   y: number;
   w: number;
@@ -561,6 +563,9 @@ export type HoldCause = "size";
 
 const BATCH_FRAME_KIND = 0x02;
 const BATCH_HEADER_LEN = 8;
+// A batch header's flag: the update its records belong to goes on in the next
+// batch, and is shown whole with it (`FLAG_CONTINUED` in `src/protocol.rs`).
+const BATCH_CONTINUED = 0x01;
 const AUDIO_FRAME_KIND = 0x03;
 const AUDIO_HEADER_LEN = 4;
 const AUDIO_FLAG_GAP = 0x01;
@@ -583,6 +588,7 @@ const TILE_FORMATS = {
   2: "png",
   3: "progressive",
   4: "planar",
+  5: "still",
 } as const;
 
 const OP_REGION = 0x07;
@@ -616,7 +622,7 @@ const VIDEO_STRIP_FLAGS = VIDEO_STRIP | VIDEO_STRIP_INDEX | VIDEO_STRIP_ENDS;
 // matching `batch` in `src/protocol.rs`):
 //
 //   offset 0: u8  frame kind, always 0x02 (batch)
-//   offset 1: u8  flags, always 0
+//   offset 1: u8  flags: bit 0 continued, and nothing else
 //   offset 2: u16 record count
 //   offset 4: u32 sequence, increasing per attachment
 //   offset 8: records, back to back
@@ -662,11 +668,25 @@ export function batchFrameSequence(buf: ArrayBuffer): number | null {
     return null;
   }
   const view = new DataView(buf);
-  if (view.getUint8(0) !== BATCH_FRAME_KIND || view.getUint8(1) !== 0) {
+  if (
+    view.getUint8(0) !== BATCH_FRAME_KIND ||
+    (view.getUint8(1) & ~BATCH_CONTINUED) !== 0
+  ) {
     return null;
   }
   const sequence = view.getUint32(4, true);
   return sequence === 0 ? null : sequence;
+}
+
+/**
+ * Whether a batch is continued: the update its records belong to goes on in
+ * the next batch, which the paint worker waits for before drawing any of it.
+ */
+export function batchFrameContinued(buf: ArrayBuffer): boolean {
+  return (
+    batchFrameSequence(buf) !== null &&
+    (new DataView(buf).getUint8(1) & BATCH_CONTINUED) !== 0
+  );
 }
 
 function decodeRecord(
@@ -750,7 +770,7 @@ function decodeTile(
     return null;
   }
   const format = view.getUint8(at + 1);
-  if (format !== 1 && format !== 2 && format !== 3 && format !== 4) {
+  if (!(format in TILE_FORMATS)) {
     return null;
   }
 
@@ -765,7 +785,7 @@ function decodeTile(
   return {
     record: {
       kind: "tile",
-      format: TILE_FORMATS[format],
+      format: TILE_FORMATS[format as keyof typeof TILE_FORMATS],
       x,
       y,
       w,

@@ -377,7 +377,7 @@ pub fn paint_ack(frame: &[u8]) -> String {
 ///
 /// One parser for every test that looks at what was painted, so a wire change is
 /// applied once. Asserts the envelope's own invariants on the way through — kind,
-/// zero flags, a record count that matches the records present, and records that
+/// no flag but continued, a record count that matches the records present, and records that
 /// exactly fill the frame — so every test that reads a record also checks the frame
 /// carrying it was well formed.
 #[allow(dead_code)]
@@ -386,7 +386,7 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
 
     assert!(frame.len() >= batch::HEADER_LEN, "frame is shorter than a batch header");
     assert_eq!(frame[0], batch::FRAME_KIND, "unexpected frame kind");
-    assert_eq!(frame[1], 0, "flags must be zero");
+    assert_eq!(frame[1] & !batch::FLAG_CONTINUED, 0, "no flag but continued");
     let count = u16::from_le_bytes([frame[2], frame[3]]);
 
     let mut at = batch::HEADER_LEN;
@@ -424,6 +424,8 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
                     // A zstd frame, of a planar bitmap.
                     batch::TILE_PLANAR => image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]),
+                    // The still stream's next bytes, a zstd frame's start or not.
+                    batch::TILE_STILL => true,
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");

@@ -541,6 +541,7 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
     .unwrap();
     let (mut size, mut picture, mut formats) = ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
     let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
+    let mut still: Option<ruzstd::decoding::FrameDecoder> = None;
     let mut frame_no = 0;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
@@ -599,6 +600,28 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
                             let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
                             put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);
                         }
+                        batch::TILE_STILL => {
+                            let mut source = &tile.image[..];
+                            if source.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+                                let mut frame = ruzstd::decoding::FrameDecoder::new();
+                                frame.init(&mut source).expect("the still stream's frame header");
+                                still = Some(frame);
+                            }
+                            let frame = still.as_mut().expect("a still that starts the stream before any that continues it");
+                            // What the bodies before left held back is theirs; the
+                            // body's flushed blocks decode whole, and its bitmap is
+                            // what the frame holds back past them.
+                            frame.collect_to_writer(std::io::sink()).unwrap();
+                            let before = { let (a, b) = frame.peek(); a.len() + b.len() };
+                            let (read, _) = frame.decode_from_to(source, &mut []).expect("the page's decoder reads wlshare's still stream");
+                            assert_eq!(read, source.len(), "a still body of whole blocks");
+                            let bitmap = { let (a, b) = frame.peek(); [a, b].concat().split_off(before) };
+                            let (mut planes, mut bgrx) = (Vec::new(), Vec::new());
+                            zdesk_rdp_graphics::proto::planar::decompress(&bitmap, &mut planes, &mut bgrx, tile.w, tile.h)
+                                .expect("the page's decoder reads wlshare's planar bitmap");
+                            let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
+                            put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);
+                        }
                         other => panic!("a tile of format {other:#x} in a test that draws PNG, progressive and planar tiles"),
                     }
                 }
@@ -633,9 +656,9 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
 }
 
 /// A session started with wlshare's lossless tiles is sent them alone, passed:
-/// `TILE` records of the planar format, which the page's planar codec reads into
-/// exactly the desktop wlshare's tiles with motion show; and wlshare was asked for
-/// lossless tiles.
+/// `TILE` records of the still format, the still stream's planar bitmaps, which
+/// the page's zstd and planar decoders read into exactly the desktop wlshare's
+/// tiles with motion show; and wlshare was asked for lossless tiles.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
 async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
@@ -646,29 +669,48 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
     assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are lossless PNG while nothing moves");
     let (lw, lh, planar, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
     assert_eq!((lw, lh), (w, h), "the same desktop");
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_PLANAR].into(), "planar tiles alone");
+    assert_eq!(formats, [zdesk::protocol::batch::TILE_STILL].into(), "a still desktop's planar tiles, in the still stream alone");
     assert!(planar == png, "the lossless tiles show the desktop exactly as the PNG tiles do");
     let logs = container.logs();
     assert!(logs.contains("asked for lossless tiles"), "wlshare was not asked for its lossless tiles:\n{logs}");
 }
 
+/// A moving desktop's lossless tiles are both kinds, each read as the page reads
+/// it: what moves — a ball, which crosses the link as fast as it moves — a planar
+/// bitmap in a zstd frame of its own, and what is still the still stream's, every
+/// body of it read in order.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed_where_it_is_still() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+    play_video(&container, "ball").await;
+    let addr = spawn_app(vnc_port).await;
+    let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-lossless", 6).await;
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_PLANAR, zdesk::protocol::batch::TILE_STILL].into(),
+        "what moves framed, what is still streamed"
+    );
+}
+
 /// A video to play on the desktop of the test that wants it moving: a file on this
 /// machine, of anything GStreamer decodes, played from its start in the one window
 /// sway tiles over the whole output, and moving over most of it, so that an update
-/// is many tiles. Unset, the desktop plays GStreamer's snow, every pixel new each
-/// frame.
+/// is many tiles. Unset, the desktop plays GStreamer's test `pattern`: `snow`,
+/// every pixel new each frame, or `ball`, a ball moving over black.
 const VIDEO_ENV: &str = "ZDESK_TEST_WLSHARE_VIDEO";
 
 /// Play [`VIDEO_ENV`]'s video, or the test pattern, on the desktop, and fail where
 /// its player is not running two seconds on. Not `waylandsink fullscreen=true`,
 /// which stops at its first frame on sway with "Window has no size set".
-async fn play_video(container: &Arc<common::Container>) {
+async fn play_video(container: &Arc<common::Container>, pattern: &str) {
     let source = match std::env::var_os(VIDEO_ENV) {
         Some(path) => {
             container.copy_in(std::path::Path::new(&path), "/tmp/video");
-            "filesrc location=/tmp/video ! decodebin"
+            "filesrc location=/tmp/video ! decodebin".to_owned()
         }
-        None => "videotestsrc is-live=true pattern=snow ! video/x-raw,width=1024,height=768,framerate=30/1",
+        None => format!("videotestsrc is-live=true pattern={pattern} ! video/x-raw,width=1024,height=768,framerate=30/1"),
     };
     exec(
         container,
@@ -693,7 +735,7 @@ async fn play_video(container: &Arc<common::Container>) {
 async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
-    play_video(&container).await;
+    play_video(&container, "snow").await;
     let addr = spawn_app(vnc_port).await;
     let cookie = common::login(addr).await;
     let token = common::claim_session(addr, &cookie).await;
