@@ -26,13 +26,17 @@ void main() {
   gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
+/** What a picture whose context the browser took away says of it. */
+export const CONTEXT_TAKEN =
+  "the browser took the picture's WebGL context away";
+
 /**
  * What a picture throws once the browser has taken its context away: not the
  * picture failing, since the browser may give the context back.
  */
 export class PictureContextLost extends Error {
   constructor() {
-    super("the browser took the picture's WebGL context away");
+    super(CONTEXT_TAKEN);
     this.name = "PictureContextLost";
   }
 }
@@ -56,7 +60,13 @@ export interface PictureCanvas {
   readonly gl: WebGL2RenderingContext;
   /** The picture's program, in use. */
   readonly program: WebGLProgram;
-  /** Throws `PictureContextLost` once the browser has taken the context away. */
+  /**
+   * Whether the browser has taken the context away since this picture was
+   * made: true for good, the context given back included, since nothing the
+   * picture made is in the one given back.
+   */
+  lost(): boolean;
+  /** Throws `PictureContextLost` once `lost`. */
   usable(): void;
   /**
    * The canvas at this size, its drawing buffer cleared. WebGL reports a refused
@@ -68,7 +78,7 @@ export interface PictureCanvas {
   draw(): void;
   /**
    * Give the program back and leave the canvas black, its context as it was
-   * found: what it shows next is another picture's.
+   * found: what it shows next is another picture's. Nothing, once `lost`.
    */
   close(): void;
 }
@@ -101,8 +111,23 @@ export function openPictureCanvas(
   if (!gl) {
     throw new Error("WebGL 2 is not available");
   }
+  // Taken for good when the browser says so, or before it does, as soon as the
+  // context reports itself lost.
+  let taken = false;
+  const listening = new AbortController();
+  canvas.addEventListener(
+    "webglcontextlost",
+    () => {
+      taken = true;
+    },
+    { signal: listening.signal },
+  );
+  const lost = () => {
+    taken ||= gl.isContextLost();
+    return taken;
+  };
   const usable = () => {
-    if (gl.isContextLost()) {
+    if (lost()) {
       throw new PictureContextLost();
     }
   };
@@ -125,6 +150,7 @@ export function openPictureCanvas(
   return {
     gl,
     program,
+    lost,
     usable,
     resize(w, h) {
       usable();
@@ -147,11 +173,11 @@ export function openPictureCanvas(
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     },
     close() {
-      // Nothing of a lost context's is there to give back. A picture is closed
-      // while its context is lost, not after the browser gives it back: its
-      // objects are not the restored context's, and deleting one is an error a
-      // later picture's allocation check would read.
-      if (gl.isContextLost()) {
+      listening.abort();
+      // Nothing of a lost context's is there to give back, and deleting one of
+      // its objects in the context given back is an error a later picture's
+      // allocation check would read.
+      if (lost()) {
         return;
       }
       gl.deleteProgram(program);

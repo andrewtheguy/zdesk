@@ -344,8 +344,11 @@ export function createPlanesPicture(canvas: OffscreenCanvas): PlanesPicture {
       return true;
     },
     close() {
-      for (const texture of textures) {
-        gl.deleteTexture(texture);
+      // Its textures went with a context taken away (glPicture.ts).
+      if (!surface.lost()) {
+        for (const texture of textures) {
+          gl.deleteTexture(texture);
+        }
       }
       surface.close();
     },

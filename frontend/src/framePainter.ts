@@ -20,7 +20,7 @@ import {
 } from "./egfxCompositor.ts";
 import type { GraphicsPicture, PicturePart } from "./egfxPicture.ts";
 import { createEgfxVideo, drawnAsCoded, type EgfxVideo } from "./egfxVideo.ts";
-import { PictureContextLost } from "./glPicture.ts";
+import { CONTEXT_TAKEN, PictureContextLost } from "./glPicture.ts";
 import type { PlanesPicture } from "./planesPicture.ts";
 import {
   type BatchRecord,
@@ -469,6 +469,16 @@ export function createFramePainter(options: {
     }
   };
 
+  // A software decoder's picture, dropped with the context the browser took,
+  // until it gives it back.
+  const losePlanes = () => {
+    hidePlanes();
+    planar.picture?.close();
+    planar.picture = null;
+    planar.lost = true;
+    sayContextLost();
+  };
+
   const releasePlanes = () => {
     hidePlanes();
     planar.picture?.close();
@@ -598,23 +608,30 @@ export function createFramePainter(options: {
     }
   };
 
-  // A pipeline's picture, dropped with the context the browser took. What only
-  // the GPU held, the pictures an H.264 decoder left there, went with it: no
-  // compositor holds them, and its next run may read them, so that pipeline
-  // ends. Every other pixel is in its framebuffer, and it goes on composing.
+  // A pipeline whose pictures only the GPU held, the ones an H.264 decoder
+  // left there, went with the context the browser took: no compositor holds
+  // them, and its next run may read them, so it ends, its picture dropped.
+  const endWithGpuPictures = (current: Pipeline) => {
+    current.picture?.close();
+    current.picture = null;
+    endPipeline(
+      current,
+      `${CONTEXT_TAKEN}, with the H.264 pictures only it held`,
+    );
+  };
+
+  // A pipeline's picture, dropped with the context the browser took. Every
+  // pixel but the GPU's own is in its framebuffer, and it goes on composing.
   const losePipeline = (current: Pipeline) => {
     if (current.broken || current.lost) {
       return;
     }
-    current.picture?.close();
-    current.picture = null;
     if (current.compositor && current.compositor.gpuAreas().length > 0) {
-      endPipeline(
-        current,
-        `${new PictureContextLost().message}, with the H.264 pictures only it held`,
-      );
+      endWithGpuPictures(current);
       return;
     }
+    current.picture?.close();
+    current.picture = null;
     current.lost = true;
     sayContextLost();
   };
@@ -675,8 +692,10 @@ export function createFramePainter(options: {
 
   // A tab's mirror of display `display`, `part` of the session page's picture:
   // made the first time, and told what it shows every time. While the browser
-  // has the context only what it shows is kept.
-  const showMirror = (display: number, part: PicturePart) => {
+  // has the context only what it shows is kept. One made again when the
+  // context is given back (`fresh` false) replaces nothing, and what is said
+  // stays as `graphicsRestored` left it.
+  const showMirror = (display: number, part: PicturePart, fresh = true) => {
     if (mirrorLost) {
       mirrorLost = { display, part };
       return;
@@ -684,7 +703,9 @@ export function createFramePainter(options: {
     if (!mirror) {
       // A tab holds no pipeline and no stream: the picture is the whole of
       // what it shows.
-      releaseVideo();
+      if (fresh) {
+        releaseVideo();
+      }
       let picture: GraphicsPicture;
       try {
         picture = makePicture();
@@ -699,19 +720,6 @@ export function createFramePainter(options: {
         );
         return;
       }
-      // A patch that finds the context gone: the mirror is dropped and made
-      // again when it is given back, not ended.
-      let lostInPatch = false;
-      const patching: Pick<GraphicsPicture, "patch"> = {
-        patch(w, h, rects, pixels) {
-          try {
-            picture.patch(w, h, rects, pixels);
-          } catch (error) {
-            lostInPatch = error instanceof PictureContextLost;
-            throw error;
-          }
-        },
-      };
       // Shown from its first painted update, and not before: until then the
       // picture's canvas holds nothing of the display's.
       const made: Mirror = {
@@ -721,25 +729,27 @@ export function createFramePainter(options: {
         part,
         sink: createRelaySink(
           makeRelay(),
-          patching,
+          picture,
           () => {
             if (mirror === made && !made.shown) {
               made.shown = true;
               options.onGraphicsShown?.(true);
             }
           },
-          (why) => {
+          (error) => {
             if (mirror !== made) {
               return;
             }
-            if (lostInPatch) {
+            // A patch that found the context gone: dropped, and made again when
+            // it is given back, not ended.
+            if (error instanceof PictureContextLost) {
               loseMirror();
               return;
             }
             releaseMirror();
             videoComplained = false;
             say(
-              `This browser could not show display ${made.display}'s picture (${why}). Reload the page to start it over.`,
+              `This browser could not show display ${made.display}'s picture (${describe(error)}). Reload the page to start it over.`,
             );
           },
         ),
@@ -942,7 +952,12 @@ export function createFramePainter(options: {
       }
       return compositor.compose(commands);
     } catch (error) {
-      endPipeline(current, describe(error));
+      // A read back that found the context gone: what it read went with it.
+      if (error instanceof PictureContextLost) {
+        endWithGpuPictures(current);
+      } else {
+        endPipeline(current, describe(error));
+      }
       return null;
     }
   };
@@ -962,10 +977,7 @@ export function createFramePainter(options: {
         run.gpu.length > 0 ||
         (current.compositor?.gpuAreas().length ?? 0) > 0
       ) {
-        endPipeline(
-          current,
-          `${new PictureContextLost().message}, with the H.264 pictures only it held`,
-        );
+        endWithGpuPictures(current);
         return false;
       }
       return true;
@@ -1025,6 +1037,34 @@ export function createFramePainter(options: {
     if (current.picture && run.width > 0 && run.height > 0) {
       showPipeline(current);
     }
+  };
+
+  // The current pipeline's picture for the second display's tab: the framebuffer
+  // whole, what the GPU shows read back into it. Without a picture the GPU holds
+  // nothing (`losePipeline`). Null where there is none to send.
+  const relayedPicture = () => {
+    const current = pipeline;
+    if (
+      !current?.compositor ||
+      !(current.picture || current.lost) ||
+      current.broken
+    ) {
+      return null;
+    }
+    const { compositor, picture } = current;
+    try {
+      if (picture) {
+        restoreFromGpu(compositor, picture, compositor.gpuAreas());
+      }
+    } catch (error) {
+      if (error instanceof PictureContextLost) {
+        endWithGpuPictures(current);
+      } else {
+        endPipeline(current, describe(error));
+      }
+      return null;
+    }
+    return compositor.picture();
   };
 
   // One tile's image, decoded by the browser off this thread as soon as its batch
@@ -1275,14 +1315,13 @@ export function createFramePainter(options: {
         return false;
       }
     } catch (error) {
+      if (error instanceof PictureContextLost) {
+        losePlanes();
+        return false;
+      }
       hidePlanes();
       planar.picture?.close();
       planar.picture = null;
-      if (error instanceof PictureContextLost) {
-        planar.lost = true;
-        sayContextLost();
-        return false;
-      }
       planar.broken = true;
       videoComplained = false;
       say(
@@ -1550,27 +1589,7 @@ export function createFramePainter(options: {
       if (!source) {
         try {
           // The framebuffer whole, what the GPU shows read back into it.
-          source = createRelaySource(makeRelay(), () => {
-            const current = pipeline;
-            if (
-              !current?.compositor ||
-              !(current.picture || current.lost) ||
-              current.broken
-            ) {
-              return null;
-            }
-            const { compositor, picture } = current;
-            // Without a picture the GPU holds nothing (`losePipeline`).
-            try {
-              if (picture) {
-                restoreFromGpu(compositor, picture, compositor.gpuAreas());
-              }
-            } catch (error) {
-              endPipeline(current, describe(error));
-              return null;
-            }
-            return compositor.picture();
-          });
+          source = createRelaySource(makeRelay(), relayedPicture);
         } catch (error) {
           console.warn("the second display's channel did not open:", error);
         }
@@ -1697,11 +1716,7 @@ export function createFramePainter(options: {
         losePipeline(current);
       }
       if (planar.picture) {
-        hidePlanes();
-        planar.picture.close();
-        planar.picture = null;
-        planar.lost = true;
-        sayContextLost();
+        losePlanes();
       }
     },
     graphicsRestored() {
@@ -1715,7 +1730,7 @@ export function createFramePainter(options: {
       if (mirrorLost) {
         const { display, part } = mirrorLost;
         mirrorLost = null;
-        showMirror(display, part);
+        showMirror(display, part, false);
       }
       if (planar.lost) {
         planar.lost = false;

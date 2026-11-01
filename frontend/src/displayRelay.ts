@@ -291,7 +291,7 @@ export interface RelaySink {
 
 /**
  * The tab's end, on `port`, painting what it is sent into `picture`. `onPainted`
- * is told after each update is on it, and `onError` why one could not be, after
+ * is told after each update is on it, and `onError` what kept one off it, after
  * which nothing more is painted.
  */
 export function createRelaySink(
@@ -305,7 +305,7 @@ export function createRelaySink(
     ): void;
   },
   onPainted: () => void,
-  onError: (why: string) => void,
+  onError: (error: unknown) => void,
 ): RelaySink {
   let shown: { display: number; part: PicturePart } | null = null;
   let broken = false;
@@ -334,7 +334,7 @@ export function createRelaySink(
           );
         } catch (error) {
           broken = true;
-          onError(error instanceof Error ? error.message : String(error));
+          onError(error);
           return;
         }
         port.post({ kind: "painted", seq: message.seq });

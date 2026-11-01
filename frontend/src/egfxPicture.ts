@@ -476,6 +476,13 @@ export function createGraphicsPicture(
       gl.clear(gl.COLOR_BUFFER_BIT);
     },
     close() {
+      // Its objects went with a context taken away (glPicture.ts).
+      if (surface.lost()) {
+        texture = null;
+        pass = null;
+        surface.close();
+        return;
+      }
       gl.deleteTexture(texture);
       texture = null;
       if (pass) {
