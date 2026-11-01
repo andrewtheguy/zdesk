@@ -20,6 +20,7 @@ import type {
 import type { PicturePart } from "./egfxPicture.ts";
 import type { EgfxVideo } from "./egfxVideo.ts";
 import { createFramePainter, type FramePainter } from "./framePainter.ts";
+import { PictureContextLost } from "./glPicture.ts";
 import { placedAfter } from "./planesPicture.ts";
 
 const OP_VIDEO = 0x03;
@@ -674,6 +675,8 @@ function fakeCompositors(
     fail?: boolean;
     /** What each run's plan says, by the run's first byte: none shown from the GPU else. */
     plan?: (commands: Uint8Array) => RunPlan;
+    /** What the pictures shown from the GPU hold: nothing else. */
+    gpuAreas?: GpuArea[];
   } = {},
 ) {
   const made: {
@@ -741,7 +744,7 @@ function fakeCompositors(
           record.onGpu.push(number);
           showing.push(number);
         },
-        gpuAreas: () => [],
+        gpuAreas: () => options.gpuAreas ?? [],
         restore(area, read) {
           assert.equal(read.length, area.w * area.h * 4);
           record.events.push(`restore ${area.x},${area.y}`);
@@ -910,6 +913,8 @@ function graphicsPainter(
   options: {
     noPicture?: boolean;
     blankFails?: boolean;
+    /** The run, by its first byte, whose upload finds the context taken away. */
+    lostAt?: number;
     video?: () => EgfxVideo;
     relay?: RelayPort;
   } = {},
@@ -936,6 +941,9 @@ function graphicsPainter(
       pictures.made += 1;
       return {
         upload(run, frames = new Map()) {
+          if (run.painted[0] === options.lostAt) {
+            throw new PictureContextLost();
+          }
           uploaded.push([...run.painted]);
           uploadedShown.push(
             [...frames].map(([number, frame]) => {
@@ -1210,6 +1218,73 @@ test("a picture that cannot be blanked ends its pipeline", async () => {
   assert.deepEqual(made[0].fed, [[1]]);
   const said = videoErrors.filter((error) => error !== null);
   assert.match(said[0] ?? "", /the GPU refused the picture/);
+});
+
+test("a pipeline goes on composing while the browser has its picture's context, and is drawn whole when it is given back", async () => {
+  const { made, load } = fakeCompositors();
+  const p = graphicsPainter(load);
+  p.setGraphicsView({ x: 0, y: 0, w: 32, h: 48 });
+  p.startGraphics();
+  await p.draw(graphicsFrame([[1]]));
+  p.graphicsLost();
+  assert.deepEqual(pictures, { made: 1, closed: 1 }, "the picture dropped");
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  await p.draw(graphicsFrame([[2], [3]]));
+  assert.deepEqual(made[0].fed, [[1], [2], [3]], "composed all the same");
+  assert.deepEqual(uploaded, [[1, 2, 3, 4]], "and not drawn");
+  p.graphicsRestored();
+  assert.equal(pictures.made, 2, "a picture made again");
+  assert.deepEqual(
+    uploaded.at(-1),
+    [0, 0, 64, 48],
+    "drawn whole, out of the framebuffer",
+  );
+  assert.deepEqual(windows.at(-1), { x: 0, y: 0, w: 32, h: 48 });
+  assert.equal(videoErrors.at(-1), null, "and what was said taken back");
+  await p.draw(graphicsFrame([[4]]));
+  assert.deepEqual(uploaded.at(-1), [4, 2, 3, 4]);
+  assert.deepEqual(shown, [true], "shown throughout");
+  assert.deepEqual(videoKeyframeAsks, [], "nothing asked of the host");
+});
+
+test("a picture whose context is gone in a draw is dropped, not its pipeline", async () => {
+  const { made, load } = fakeCompositors();
+  const p = graphicsPainter(load, { lostAt: 2 });
+  p.startGraphics();
+  await p.draw(graphicsFrame([[1], [2], [3]]));
+  assert.deepEqual(made[0].fed, [[1], [2], [3]]);
+  assert.deepEqual(uploaded, [[1, 2, 3, 4]]);
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  // The browser's word on it, after the draw that found it: said once.
+  p.graphicsLost();
+  assert.equal(videoErrors.filter((error) => error !== null).length, 1);
+  p.graphicsRestored();
+  assert.deepEqual(uploaded.at(-1), [0, 0, 64, 48]);
+});
+
+test("a pipeline whose H.264 pictures only the GPU held ends with the context", async () => {
+  const area: GpuArea = {
+    surface: 1,
+    x: 0,
+    y: 0,
+    w: 4,
+    h: 4,
+    outputX: 0,
+    outputY: 0,
+  };
+  const { made, load } = fakeCompositors({ gpuAreas: [area] });
+  const p = graphicsPainter(load);
+  p.startGraphics();
+  await p.draw(graphicsFrame([[1]]));
+  p.graphicsLost();
+  await p.draw(graphicsFrame([[2]]));
+  assert.deepEqual(made[0].fed, [[1]], "nothing composed after it");
+  assert.match(
+    videoErrors.at(-1) ?? "",
+    /could not compose the host's graphics \(the browser took the picture's WebGL context away, with the H.264 pictures only it held\)/,
+  );
+  p.graphicsRestored();
+  assert.equal(pictures.made, 1, "and no picture made for it again");
 });
 
 test("a run's H.264 is decoded and supplied before the run is composed", async () => {
@@ -1662,6 +1737,23 @@ test("the attachment's end gives the software decoder's picture back", async () 
   p.clear();
   assert.deepEqual(shown, [true, false]);
   assert.deepEqual([planes.made, planes.closed], [1, 1]);
+});
+
+test("the software decoder's picture waits out a lost context, and asks for a keyframe when it is given back", async () => {
+  const p = planesPainter();
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
+  p.graphicsLost();
+  assert.deepEqual(shown, [true, false]);
+  assert.deepEqual([planes.made, planes.closed], [1, 1]);
+  assert.match(videoErrors.at(-1) ?? "", /took the picture's GPU context away/);
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: [1], keyframe: false }]));
+  assert.equal(planes.made, 1, "nothing drawn while it is gone");
+  p.graphicsRestored();
+  assert.equal(videoErrors.at(-1), null);
+  assert.equal(videoKeyframeAsks.length, 1, "the next picture asked for");
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
+  assert.equal(planes.made, 2, "drawn on a picture made again");
+  assert.deepEqual(shown, [true, false, true]);
 });
 
 /** A batch of a Mac's own rectangles: op 0x05, x, y, w, h, a length, the body. */
