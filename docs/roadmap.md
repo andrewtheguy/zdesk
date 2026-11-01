@@ -36,7 +36,7 @@ to the same rate control:
 ### A second display's tab that says when the session's page is gone
 
 On `rdp`, `ard-high-performance` and `wlshare` targets with two displays
-([Windows](https://zdesk.dev/guide#windows)), when the session's page goes — closed,
+([Windows](https://zdesk.dev/guides/zdesk#windows)), when the session's page goes — closed,
 reloading, or its socket dropped — the tab showing the second display carries on
 with no word of it: its input still reaches the remote through the reattach
 grace, and only the engine ending takes the display away. The tab's display
@@ -201,7 +201,7 @@ when both exist.
 A served gateway would follow the TUI. Its ID would be the operator's host
 name. WebAuthn requires a secure context, and the HTTPS that the gateway
 already needs from its reverse proxy provides one
-([The client](https://zdesk.dev/guide#the-client)). Two questions come first: where a gateway
+([The client](https://zdesk.dev/guides/zdesk#the-client)). Two questions come first: where a gateway
 running in a container keeps the public keys, and how an operator locked out by
 a failed passkey gets back in from outside the machine. Its password login
 stays as the way to register the first passkey, and as that way back in, until

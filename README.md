@@ -25,7 +25,7 @@ browser ── HTTPS or localhost ── zDesk ── RDP / VNC ── your desk
 ```
 
 `zdesk serve` is single-user: one login, a list of your targets, and one
-active session. Native installs also include [`zdesk tui`](https://zdesk.dev/guide#local-instances),
+active session. Native installs also include [`zdesk tui`](https://zdesk.dev/guides/zdesk#local-instances),
 a local control plane that runs several independent gateway instances side by
 side.
 
@@ -215,7 +215,7 @@ password_ref = "workstation"
 ```
 
 Then paste in the passwords, kept under your master password (see
-[Target passwords](https://zdesk.dev/guide#target-passwords)): `password master create`
+[Target passwords](https://zdesk.dev/guides/zdesk#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
 prints a `[master]` block for the config; `password hash` prints the web login's
 password hashed one way, pasted as `site_passwd_hash = "…"`, and `password encrypt`
@@ -265,7 +265,7 @@ zdesk tui
 It listens on loopback only, at <http://zdesk.localhost:52380>. Press `n` to
 create an instance, `e` to add a target to its config, `p` to encrypt the
 target's password, `s` to start the instance and `o` to open it in the browser.
-[Local instances](https://zdesk.dev/guide#local-instances) lists every key. The container
+[Local instances](https://zdesk.dev/guides/zdesk#local-instances) lists every key. The container
 image has no control plane.
 
 [Installing zDesk](docs/install.md) covers every platform, upgrades and
@@ -273,7 +273,7 @@ removal.
 
 ## Documentation
 
-- [Using zDesk](https://zdesk.dev/guide): the browser client, starting a session, setting up Windows, Mac, wlshare and VNC targets, `zdesk tui`
+- [Using zDesk](https://zdesk.dev/guides/zdesk): the browser client, starting a session, setting up Windows, Mac, wlshare and VNC targets, `zdesk tui`
 - [Installing zDesk](docs/install.md): packages, first configuration, upgrade, removal
 - [`zdesk.example.toml`](zdesk.example.toml): every configuration key, annotated
 - [Known issues](docs/known-issues.md): faults worth recognising rather than re-investigating
@@ -297,7 +297,7 @@ cargo run -- serve -c zdesk.toml
 The copied example names `[passwords].example` but leaves it and
 `[server].site_passwd_hash` for you to add. Set up the master-password file and the
 passwords as described in
-[Target passwords](https://zdesk.dev/guide#target-passwords): `password encrypt`
+[Target passwords](https://zdesk.dev/guides/zdesk#target-passwords): `password encrypt`
 prints each target's value and `password hash` the web login's. For a target with an empty
 password, add `example = ""` under `[passwords]` instead.
 

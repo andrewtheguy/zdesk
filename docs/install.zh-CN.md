@@ -115,13 +115,13 @@ zdesk password hash      # 网页登录的密码
 zdesk password encrypt   # 目标的密码
 ```
 
-见[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)。在前台启动网关：
+见[目标密码](https://zdesk.dev/zh-CN/guides/zdesk#target-passwords)。在前台启动网关：
 
 ```sh
 zdesk serve
 ```
 
-然后打开 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-CN/guide) 介绍各类目标如何设置，以及如何从另一台计算机访问页面。
+然后打开 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-CN/guides/zdesk) 介绍各类目标如何设置，以及如何从另一台计算机访问页面。
 
 ## 容器
 

@@ -152,14 +152,14 @@ zdesk password hash      # the web login's password
 zdesk password encrypt   # the target's
 ```
 
-See [Target passwords](https://zdesk.dev/guide#target-passwords). Start the gateway in the
+See [Target passwords](https://zdesk.dev/guides/zdesk#target-passwords). Start the gateway in the
 foreground:
 
 ```sh
 zdesk serve
 ```
 
-Then open <http://localhost:52380>. [Using zDesk](https://zdesk.dev/guide) says how each
+Then open <http://localhost:52380>. [Using zDesk](https://zdesk.dev/guides/zdesk) says how each
 kind of target is set up and how the page is reached from another machine.
 
 ## Container
