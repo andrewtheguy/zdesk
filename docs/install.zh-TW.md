@@ -115,13 +115,13 @@ zdesk password hash      # 網頁登入的密碼
 zdesk password encrypt   # 目標的密碼
 ```
 
-請見[目標密碼](https://zdesk.dev/zh-TW/guide#target-passwords)。在前景啟動閘道：
+請見[目標密碼](https://zdesk.dev/zh-TW/guides/zdesk#target-passwords)。在前景啟動閘道：
 
 ```sh
 zdesk serve
 ```
 
-然後開啟 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-TW/guide) 說明各類目標如何設定，以及如何從另一台電腦存取頁面。
+然後開啟 <http://localhost:52380>。[使用 zDesk](https://zdesk.dev/zh-TW/guides/zdesk) 說明各類目標如何設定，以及如何從另一台電腦存取頁面。
 
 ## 容器
 

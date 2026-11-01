@@ -15,7 +15,7 @@ cargo run -- serve -c zdesk.toml
 
 The copied example references `[passwords].example` without defining it.
 Configure the target's encrypted password and `[server].master_password_file`
-using [Target passwords](https://zdesk.dev/guide#target-passwords). If the target has an empty
+using [Target passwords](https://zdesk.dev/guides/zdesk#target-passwords). If the target has an empty
 password, add `example = ""` under `[passwords]`; no master password is needed
 for that placeholder.
 

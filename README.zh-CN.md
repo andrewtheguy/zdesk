@@ -15,7 +15,7 @@ Windows 和 macOS 主机无需安装任何软件，只需打开系统自带的�
 浏览器 ── HTTPS 或 localhost ── zDesk ── RDP / VNC ── 你的桌面
 ```
 
-`zdesk serve` 是单用户的：一个登录、一份目标列表、一个活动会话。原生安装包还包含 [`zdesk tui`](https://zdesk.dev/zh-CN/guide#local-instances)，这是一个本地控制面，可以并排运行多个相互独立的网关实例。
+`zdesk serve` 是单用户的：一个登录、一份目标列表、一个活动会话。原生安装包还包含 [`zdesk tui`](https://zdesk.dev/zh-CN/guides/zdesk#local-instances)，这是一个本地控制面，可以并排运行多个相互独立的网关实例。
 
 > [!WARNING]
 > **不保证向后兼容。** zDesk 的[方向](docs/architecture.md#direction)仍在调整中，任何版本都可能更改或移除某个配置项、WebSocket 协议或某项功能，且不再读取旧的写法。升级时请对照 [`zdesk.example.toml`](zdesk.example.toml) 检查你的配置。页面和网关属于同一个版本：升级时仍打开着的标签页会显示两者的版本号，并提示重新加载。这里说的是兼容性，而不是稳定性：我一直在实际使用未标注为实验性的功能，它们一直很稳定。
@@ -122,7 +122,7 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-然后粘贴各个密码，它们都在你的主密码之下保存（见 [目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password hash` 输出网页登录密码的单向哈希，以 `site_passwd_hash = "…"` 的形式粘贴；`password encrypt` 输出目标的加密密码，以 `workstation = "…"` 的形式添加到 `[passwords]` 下。
+然后粘贴各个密码，它们都在你的主密码之下保存（见 [目标密码](https://zdesk.dev/zh-CN/guides/zdesk#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password hash` 输出网页登录密码的单向哈希，以 `site_passwd_hash = "…"` 的形式粘贴；`password encrypt` 输出目标的加密密码，以 `workstation = "…"` 的形式添加到 `[passwords]` 下。
 
 ```sh
 zdesk password master create
@@ -156,13 +156,14 @@ docker run -d --name zdesk -p 52380:52380 \
 zdesk tui
 ```
 
-它只监听回环地址，位于 <http://zdesk.localhost:52380>。按 `n` 创建实例，按 `e` 在其配置中添加目标，按 `p` 加密目标的密码，按 `s` 启动实例，按 `o` 在浏览器中打开它。[本地实例](https://zdesk.dev/zh-CN/guide#local-instances)列出了所有按键。容器镜像不包含控制面。
+它只监听回环地址，位于 <http://zdesk.localhost:52380>。按 `n` 创建实例，按 `e` 在其配置中添加目标，按 `p` 加密目标的密码，按 `s` 启动实例，按 `o` 在浏览器中打开它。[本地实例](https://zdesk.dev/zh-CN/guides/zdesk#local-instances)列出了所有按键。容器镜像不包含控制面。
 
 [安装 zDesk](docs/install.zh-CN.md) 涵盖所有平台、升级和卸载。
 
 ## 文档
 
-- [使用 zDesk](https://zdesk.dev/zh-CN/guide)：浏览器客户端、启动会话、设置 Windows、Mac、wlshare 和 VNC 目标、`zdesk tui`
+- [使用 zDesk](https://zdesk.dev/zh-CN/guides/zdesk)：浏览器客户端、启动会话、设置 Windows、Mac、wlshare 和 VNC 目标、`zdesk tui`
+- [设置 wlshare](https://zdesk.dev/zh-CN/guides/wlshare)：zDesk 连接的 Linux 服务器，运行在 wlroots 桌面上：安装、谁可以连接、开机即启动的无头桌面
 - [安装 zDesk](docs/install.zh-CN.md)：软件包、首次配置、升级、卸载
 
 以下文档只有英文版：
@@ -186,7 +187,7 @@ cp zdesk.example.toml zdesk.toml
 cargo run -- serve -c zdesk.toml
 ```
 
-复制的示例引用了 `[passwords].example`，但该值和 `[server].site_passwd_hash` 需要你自己添加。按[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)设置主密码文件和各个密码：`password encrypt` 为每个目标输出对应的值，`password hash` 输出网页登录密码的值。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`。
+复制的示例引用了 `[passwords].example`，但该值和 `[server].site_passwd_hash` 需要你自己添加。按[目标密码](https://zdesk.dev/zh-CN/guides/zdesk#target-passwords)设置主密码文件和各个密码：`password encrypt` 为每个目标输出对应的值，`password hash` 输出网页登录密码的值。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`。
 
 Cargo 会构建前端并将其编译进二进制文件，因此网关是唯一提供页面的程序。检查命令：
 
