@@ -118,13 +118,13 @@
 # The passwords. A target never writes one: it names it, with password_ref or
 # vnc_password_ref, and [passwords] keeps it under that name, encrypted with a
 # key derived from your master password and the salt in [master]; the web
-# login's is [server].site_passwd_enc, encrypted the same way. Neither table is
-# typed: each is printed for you to paste here.
+# login's is [server].site_passwd_hash, a one-way hash under the same key. None
+# of them is typed: each is printed for you to paste here.
 #
 #   zdesk password master create -c zdesk.toml  # writes the master password file, prints [master]
 #   zdesk password master show -c zdesk.toml    # prints [master] under the file already there
-#   zdesk password encrypt -c zdesk.toml        # prints the ciphertext to paste as example = "…",
-#                                               # or as site_passwd_enc = "…"
+#   zdesk password encrypt -c zdesk.toml        # prints the ciphertext to paste as example = "…"
+#   zdesk password hash -c zdesk.toml           # prints the hash to paste as site_passwd_hash = "…"
 #
 # A served gateway reads the master password from the file
 # [server].master_password_file names; `password` reads it there too, or asks
@@ -164,10 +164,10 @@
 # HTTP origin and up to five WebSocket paths, /ws/display from a second display's
 # tab — so whatever terminates the proxy is what it talks to.
 # Web login (required): the one username and password guarding the whole
-# surface. The password is encrypted under [master], as a target's is: paste
-# what `zdesk password encrypt -c zdesk.toml` prints.
+# surface. The password is kept as a one-way hash under [master]: paste what
+# `zdesk password hash -c zdesk.toml` prints.
 site_username = "admin"
-site_passwd_enc = ""
+site_passwd_hash = ""
 
 # A file holding the master password that opens [passwords]: a container's
 # secret, a systemd credential, a file only the gateway's account reads. A

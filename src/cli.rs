@@ -109,9 +109,9 @@ pub enum Commands {
         worker: bool,
     },
 
-    /// Encrypt the config's passwords, printing what to paste: the web login's
-    /// as [server].site_passwd_enc, and each target's under [passwords], by the name
-    /// its password_ref or vnc_password_ref gives.
+    /// Hash the web login's password and encrypt the targets', printing what to
+    /// paste: the login's as [server].site_passwd_hash, and each target's under
+    /// [passwords], by the name its password_ref or vnc_password_ref gives.
     ///
     /// The master password is the config's [server].master_password_file when
     /// it names one, else asked for here; `password master create` writes that
@@ -132,12 +132,21 @@ pub enum PasswordAction {
         #[command(subcommand)]
         action: MasterAction,
     },
-    /// Print a password encrypted under the config's [master], to paste as
-    /// [server].site_passwd_enc = "…" for the web login, or under its [passwords] as
-    /// NAME = "…", NAME being what a target's password_ref or vnc_password_ref
-    /// says. Prompts for it (twice on a terminal; one line when piped)
+    /// Print a target's password encrypted under the config's [master], to paste
+    /// under its [passwords] as NAME = "…", NAME being what a target's
+    /// password_ref or vnc_password_ref says. Prompts for it (twice on a
+    /// terminal; one line when piped)
     Encrypt {
         /// The config whose [master] to encrypt under; nothing in it is changed
+        /// (default: the installed global config)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+    /// Print the web login's password hashed one way under the config's
+    /// [master], to paste as [server].site_passwd_hash = "…". Prompts for it
+    /// (twice on a terminal; one line when piped)
+    Hash {
+        /// The config whose [master] to hash under; nothing in it is changed
         /// (default: the installed global config)
         #[arg(short, long)]
         config: Option<PathBuf>,

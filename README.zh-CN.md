@@ -111,7 +111,7 @@ sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
 ```toml
 [server]
 site_username = "admin"
-site_passwd_enc = "$ZD;1;AES-256-GCM;…"
+site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -122,11 +122,11 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-然后粘贴各个密码，它们用你的主密码加密（见 [目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password encrypt` 每次输出一个值，所以要运行两次：一次为网页登录的密码，以 `site_passwd_enc = "…"` 的形式粘贴；一次为目标的密码，以 `workstation = "…"` 的形式添加到 `[passwords]` 下。
+然后粘贴各个密码，它们都在你的主密码之下保存（见 [目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)）：`password master create` 询问新的主密码，把它写入该文件（只有你能读取），并输出配置所需的 `[master]` 块；`password hash` 输出网页登录密码的单向哈希，以 `site_passwd_hash = "…"` 的形式粘贴；`password encrypt` 输出目标的加密密码，以 `workstation = "…"` 的形式添加到 `[passwords]` 下。
 
 ```sh
 zdesk password master create
-zdesk password encrypt   # 网页登录的密码
+zdesk password hash      # 网页登录的密码
 zdesk password encrypt   # 目标的密码
 ```
 
@@ -186,7 +186,7 @@ cp zdesk.example.toml zdesk.toml
 cargo run -- serve -c zdesk.toml
 ```
 
-复制的示例引用了 `[passwords].example`，但该值和 `[server].site_passwd_enc` 需要你自己添加。按[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)设置主密码文件和加密的密码：`password encrypt` 为每个密码输出对应的值，网页登录的密码也包括在内。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`。
+复制的示例引用了 `[passwords].example`，但该值和 `[server].site_passwd_hash` 需要你自己添加。按[目标密码](https://zdesk.dev/zh-CN/guide#target-passwords)设置主密码文件和各个密码：`password encrypt` 为每个目标输出对应的值，`password hash` 输出网页登录密码的值。如果目标使用空密码，可在 `[passwords]` 下添加 `example = ""`。
 
 Cargo 会构建前端并将其编译进二进制文件，因此网关是唯一提供页面的程序。检查命令：
 

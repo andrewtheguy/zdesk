@@ -4008,6 +4008,16 @@ key, tells a wrong master password apart before any value is tried. One master
 password opens every config made under it, while each file's salt gives each
 its own key. Inline `password` and `vnc_password` are unknown keys.
 
+The web login's password is not among them. A gateway only ever checks it, so
+`[server].site_passwd_hash` keeps it as a one-way
+`$ZD;1;HMAC-SHA256;<base64(HMAC(login key, password))>`, the login key an HMAC
+of a fixed message under the file's key. Without the master password nobody
+holding the file can test a guess against it, and with it they hold every
+target's password anyway, so the hash is keyed rather than stretched: a login
+attempt costs one HMAC and a constant-time compare, and needs no turn, no
+blocking thread and no memory of its own. The gateway keeps the login key, not
+the password.
+
 An empty value is a placeholder, the empty password set up before the real
 one is encrypted over it: it decrypts to nothing, so it needs no `[master]`,
 and a config whose targets name only placeholders needs no master password to
@@ -4056,10 +4066,10 @@ Where the master password comes from is each audience's:
   TUI reads it; a container build, which has neither, links no credential
   store.
 
-`zdesk password master show` and `create` print a `[master]` block and
-`zdesk password encrypt` prints one value under a config's `[master]`, each taking the master
+`zdesk password master show` and `create` print a `[master]` block, and
+`zdesk password encrypt` and `hash` print one value under a config's `[master]`, each taking the master
 password from the config's `[server].master_password_file`, else asking at the
-terminal, and neither touches the keychain. Neither writes the config: a served
+terminal, and none touches the keychain. Neither writes the config: a served
 gateway's config is assembled by whoever deploys it, by hand or from Helm values, and the
 output goes wherever that is. The one file written is the master password's own:
 `password master create` asks for a new one twice and writes the file the config

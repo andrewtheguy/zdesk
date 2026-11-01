@@ -203,7 +203,7 @@ file the gateway reads its master password from:
 ```toml
 [server]
 site_username = "admin"
-site_passwd_enc = "$ZD;1;AES-256-GCM;…"
+site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -214,16 +214,16 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-Then paste in the passwords, encrypted under your master password (see
+Then paste in the passwords, kept under your master password (see
 [Target passwords](https://zdesk.dev/guide#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
-prints a `[master]` block for the config; `password encrypt` prints a value, so
-run it twice: once for the web login's password, pasted as `site_passwd_enc = "…"`,
-and once for the target's, added as `workstation = "…"` under `[passwords]`.
+prints a `[master]` block for the config; `password hash` prints the web login's
+password hashed one way, pasted as `site_passwd_hash = "…"`, and `password encrypt`
+the target's, added as `workstation = "…"` under `[passwords]`.
 
 ```sh
 zdesk password master create
-zdesk password encrypt   # the web login's password
+zdesk password hash      # the web login's password
 zdesk password encrypt   # the target's
 ```
 
@@ -295,10 +295,10 @@ cargo run -- serve -c zdesk.toml
 ```
 
 The copied example names `[passwords].example` but leaves it and
-`[server].site_passwd_enc` for you to add. Set up the master-password file and the
-encrypted passwords as described in
+`[server].site_passwd_hash` for you to add. Set up the master-password file and the
+passwords as described in
 [Target passwords](https://zdesk.dev/guide#target-passwords): `password encrypt`
-prints the value for each, the web login's included. For a target with an empty
+prints each target's value and `password hash` the web login's. For a target with an empty
 password, add `example = ""` under `[passwords]` instead.
 
 Cargo builds the frontend and compiles it into the binary, so the gateway is

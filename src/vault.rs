@@ -1,13 +1,15 @@
 //! The config's passwords, kept encrypted in the config that holds them.
 //!
 //! A target names its password (`password_ref = "win11"`) rather than writing it,
-//! and the config's `[passwords]` table holds each one as an AES-256-GCM value; a
-//! served gateway's web login holds its own in `[server].site_passwd_enc`:
+//! and the config's `[passwords]` table holds each one as an AES-256-GCM value. A
+//! served gateway's web login only ever checks its password, so it keeps none to
+//! decrypt: `[server].site_passwd_hash` is a one-way HMAC-SHA256 of it under a key
+//! derived from the same one:
 //!
 //! ```toml
 //! [server]
 //! site_username = "admin"
-//! site_passwd_enc = "$ZD;1;AES-256-GCM;…"
+//! site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
 //!
 //! [master]
 //! salt = "…"
@@ -24,7 +26,12 @@
 //! a wrong master password is told as one at start-up, before any value is tried.
 //! A value is the password alone: what it is called is the config's to say, so
 //! `zdesk password encrypt` prints one to paste under whatever name a target
-//! gives it, or as `site_passwd_enc`.
+//! gives it, and `zdesk password hash` the one to paste as `site_passwd_hash`.
+//!
+//! The hash is keyed rather than stretched. Without the master password nobody
+//! holding the file can test a guess at the login's password, and with it they
+//! hold every target's password anyway; so a login costs one HMAC, and a gateway
+//! checks any number of them as cheaply as it serves a page.
 //!
 //! Where the master password comes from is the deployment's to say, and each
 //! audience has its own answer — `[server].master_password_file` for a served
@@ -45,6 +52,9 @@ use std::path::{Path, PathBuf};
 /// and the cipher, so a value says what it is to anyone reading the file.
 pub const PREFIX: &str = "$ZD;1;AES-256-GCM;";
 
+/// What every web login hash starts with, as [`PREFIX`] does an encrypted value.
+pub const HASH_PREFIX: &str = "$ZD;1;HMAC-SHA256;";
+
 /// Argon2id's cost: 64 MiB, three passes, one lane — RFC 9106's second
 /// recommendation, a fraction of a second on a laptop, paid once per start and once
 /// per `zdesk password` run.
@@ -55,6 +65,10 @@ const ARGON2_LANES: u32 = 1;
 /// What `[master].check` authenticates. A constant, because the check proves the
 /// key and nothing else.
 const CHECK_MESSAGE: &[u8] = b"zdesk master password check";
+
+/// What the web login's own key is derived from, under a config's key, so a login
+/// hash is never a MAC anything else under that key could have made.
+const LOGIN_KEY_MESSAGE: &[u8] = b"zdesk site login key";
 
 const SALT_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
@@ -234,7 +248,7 @@ impl Key {
     }
 
     /// The password `value` holds; `field` is where the config keeps it
-    /// (`[passwords].win11`, `[server].site_passwd_enc`), for the error.
+    /// (`[passwords].win11`), for the error.
     pub fn decrypt(&self, field: &str, value: &str) -> anyhow::Result<String> {
         let blob = decode_value(field, value)?;
         let (nonce, sealed) = blob.split_at(NONCE_LEN);
@@ -252,6 +266,19 @@ impl Key {
         String::from_utf8(plain).with_context(|| format!("{field} is not UTF-8"))
     }
 
+    /// The key a web login's password is hashed under: its own, derived from this
+    /// one, so what checks a login can open no `[passwords]` value.
+    pub fn login_key(&self) -> LoginKey {
+        let mut mac = self.mac();
+        mac.update(LOGIN_KEY_MESSAGE);
+        LoginKey(mac.finalize().into_bytes().into())
+    }
+
+    /// A `[server].site_passwd_hash` value for `password`.
+    pub fn hash(&self, password: &str) -> String {
+        format!("{HASH_PREFIX}{}", BASE64.encode(self.login_key().hash(password).0))
+    }
+
     /// The key as one line, for a control plane to hand its worker down a pipe.
     pub fn to_line(&self) -> String {
         BASE64.encode(self.0)
@@ -264,6 +291,75 @@ impl Key {
             .try_into()
             .map_err(|_| anyhow::anyhow!("the key is not 32 bytes"))?;
         Ok(Self(key))
+    }
+}
+
+/// The key a web login is checked with, from [`Key::login_key`].
+#[derive(Clone)]
+pub struct LoginKey([u8; 32]);
+
+// Manual Debug, for the reason [`MasterPassword`]'s is.
+impl std::fmt::Debug for LoginKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LoginKey(..)")
+    }
+}
+
+impl LoginKey {
+    /// A login key of its own, under no config's key: for a login made in memory
+    /// from a password, which no file holds.
+    pub fn generate() -> Self {
+        let mut key = [0u8; 32];
+        rand::fill(&mut key[..]);
+        Self(key)
+    }
+
+    /// `password` hashed under this key.
+    pub fn hash(&self, password: &str) -> LoginHash {
+        LoginHash(self.mac(password).finalize().into_bytes().into())
+    }
+
+    fn mac(&self, password: &str) -> Hmac<Sha256> {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.0).expect("HMAC takes any key length");
+        mac.update(password.as_bytes());
+        mac
+    }
+
+    /// Whether `password` is the one `hash` was made from, compared in constant
+    /// time.
+    pub fn verify(&self, password: &str, hash: &LoginHash) -> bool {
+        self.mac(password).verify_slice(&hash.0).is_ok()
+    }
+}
+
+/// A `[server].site_passwd_hash` value, decoded.
+#[derive(Clone)]
+pub struct LoginHash([u8; 32]);
+
+// Manual Debug: a hash of the password is still for nobody to print.
+impl std::fmt::Debug for LoginHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LoginHash(..)")
+    }
+}
+
+impl LoginHash {
+    /// The hash `value`, kept at `field`, holds: what [`Key::hash`] wrote, read
+    /// without the key.
+    pub fn parse(field: &str, value: &str) -> anyhow::Result<Self> {
+        let encoded = value.strip_prefix(HASH_PREFIX).with_context(|| {
+            format!(
+                "{field} is not a password hash (it starts with {HASH_PREFIX:?}): paste \
+                 what `zdesk password hash` prints rather than the password"
+            )
+        })?;
+        let bytes = BASE64
+            .decode(encoded)
+            .with_context(|| format!("{field} is not base64 after its prefix"))?;
+        let hash = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("{field} is not a 32-byte hash"))?;
+        Ok(Self(hash))
     }
 }
 
@@ -426,6 +522,33 @@ mod tests {
 
         let err = Key::derive(&master("battery staple"), &section).unwrap_err();
         assert!(format!("{err:#}").contains("does not open"), "{err:#}");
+    }
+
+    #[test]
+    fn a_login_hash_checks_its_password_under_its_own_master_only() {
+        let (section, key) = Key::create(&master("correct horse")).unwrap();
+        let value = key.hash("hunter2");
+        assert!(value.starts_with(HASH_PREFIX), "{value}");
+        assert_eq!(key.hash("hunter2"), value, "one key hashes a password one way");
+        let hash = LoginHash::parse("[server].site_passwd_hash", &value).unwrap();
+
+        let login = Key::derive(&master("correct horse"), &section).unwrap().login_key();
+        assert!(login.verify("hunter2", &hash));
+        assert!(!login.verify("hunter", &hash));
+        assert!(!login.verify("", &hash));
+
+        let (_, other) = Key::create(&master("correct horse")).unwrap();
+        assert!(!other.login_key().verify("hunter2", &hash), "another config's key");
+        assert_ne!(key.check(), key.login_key().0, "the login key is not the key's check");
+    }
+
+    #[test]
+    fn a_plaintext_login_hash_is_refused_by_shape() {
+        let err = LoginHash::parse("[server].site_passwd_hash", "hunter2").unwrap_err();
+        assert!(format!("{err:#}").contains("zdesk password hash"), "{err:#}");
+        let (_, key) = Key::create(&master("m")).unwrap();
+        let encrypted = key.encrypt("hunter2").unwrap();
+        assert!(LoginHash::parse("[server].site_passwd_hash", &encrypted).is_err());
     }
 
     #[test]

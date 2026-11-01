@@ -5,8 +5,8 @@
 //! is what keeps each mode free of the other's machinery.
 //!
 //! **The login.** `[server].site_username` names the one user, and
-//! `[server].site_passwd_enc` holds that user's password, encrypted like a
-//! target's (see [`crate::vault`]). `/api/auth/login` verifies a
+//! `[server].site_passwd_hash` holds a one-way hash of that user's password, keyed
+//! from the config's master key (see [`crate::vault`]). `/api/auth/login` verifies a
 //! username/password pair against them and mints a session token, and everything
 //! guarded (the rest of `/api/*`, `/ws`) requires that token in the cookie.
 //! Sessions live in memory only — a server restart logs every browser out,
@@ -26,7 +26,7 @@
 //! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tui")]
@@ -35,40 +35,33 @@ use base64::Engine as _;
 use rand::RngExt as _;
 use sha2::Digest as _;
 
+use crate::vault::{LoginHash, LoginKey};
+
 /// Name of the auth session cookie.
 pub const COOKIE_NAME: &str = "zdesk_session";
 
 /// Sliding session lifetime: every validated request pushes the expiry out.
 const SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// Argon2id's cost for checking a login: 19 MiB and two passes, OWASP's minimum.
-/// Every guess at `/api/auth/login` pays it, which is what makes guessing a human's
-/// password slow; a lighter cost than the vault's, which is paid once per start.
-const LOGIN_ARGON2_MEMORY_KIB: u32 = 19 * 1024;
-const LOGIN_ARGON2_PASSES: u32 = 2;
-const LOGIN_SALT_LEN: usize = 16;
-
-/// A served gateway's web login: the one username allowed to log in and its
-/// password, `[server].site_username` and `[server].site_passwd_enc`, decrypted by
-/// [`crate::config::ConfigFile::unlock`].
+/// A served gateway's web login: the one username allowed to log in,
+/// `[server].site_username`, and `[server].site_passwd_hash` with the key it was
+/// made under, given by [`crate::config::ConfigFile::unlock`].
 ///
 /// The username is kept as a SHA-256 digest, so it is compared at one length
-/// whatever was typed. The password is kept as Argon2id of it under a salt drawn
-/// at start, so the password itself is not held for the life of the process and
-/// every guess costs [`LOGIN_ARGON2_MEMORY_KIB`] and its passes.
+/// whatever was typed. The password is checked by one HMAC under the login key, so
+/// a check costs what serving a page does, and nothing the gateway holds is the
+/// password or opens to it.
 #[derive(Clone)]
 pub struct SiteLogin {
     username: String,
     username_digest: [u8; 32],
-    /// `None` when no password was decrypted (a config only checked, not
-    /// served): such a login lets nobody in.
-    password_hash: Option<[u8; 32]>,
-    salt: [u8; LOGIN_SALT_LEN],
-    /// The one turn to check a password: see [`Self::try_turn`].
-    turn: Arc<tokio::sync::Semaphore>,
+    hash: LoginHash,
+    /// `None` when the config was only checked, never unlocked: such a login lets
+    /// nobody in.
+    key: Option<LoginKey>,
 }
 
-// Manual Debug so an AppConfig dump never prints a hash of the password.
+// Manual Debug, so an AppConfig dump prints the username and nothing else.
 impl std::fmt::Debug for SiteLogin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SiteLogin")
@@ -78,29 +71,22 @@ impl std::fmt::Debug for SiteLogin {
 }
 
 impl SiteLogin {
-    /// The login for `username` and its decrypted `password`. An empty password
-    /// is one never decrypted, and opens to nothing.
-    pub fn new(username: &str, password: &str) -> anyhow::Result<Self> {
+    /// The login for `username`, whose password `hash` was made under `key`.
+    pub fn new(username: &str, hash: LoginHash, key: Option<LoginKey>) -> anyhow::Result<Self> {
         anyhow::ensure!(!username.is_empty(), "the login username is empty");
-        let mut salt = [0u8; LOGIN_SALT_LEN];
-        rand::fill(&mut salt[..]);
-        let password_hash = (!password.is_empty()).then(|| stretch(password, &salt)).transpose()?;
         Ok(Self {
             username: username.to_owned(),
             username_digest: digest(username),
-            password_hash,
-            salt,
-            turn: Arc::new(tokio::sync::Semaphore::new(1)),
+            hash,
+            key,
         })
     }
 
-    /// The turn to check a password, or `None` while another check holds it. Taken
-    /// before the check is started and held until it ends, so one check runs at a
-    /// time and an attempt arriving meanwhile is refused rather than queued: each
-    /// takes Argon2id's memory, and a queue would leave a burst of guesses still
-    /// being checked long after it stopped.
-    pub fn try_turn(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        self.turn.clone().try_acquire_owned().ok()
+    /// The login for `username` and `password` made in memory, under a login key
+    /// of its own: for a gateway built without a config file.
+    pub fn with_password(username: &str, password: &str) -> anyhow::Result<Self> {
+        let key = LoginKey::generate();
+        Self::new(username, key.hash(password), Some(key))
     }
 
     /// The username allowed to log in (for startup logging).
@@ -109,32 +95,16 @@ impl SiteLogin {
     }
 
     /// Check a login attempt. Both halves are compared in full whatever the other
-    /// said, so a wrong username and a wrong password take the same time. Blocks
-    /// for Argon2id's cost, so call it off the async workers, holding the turn
-    /// [`Self::try_turn`] gave.
+    /// said, so a wrong username and a wrong password take the same time.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
-        let Some(expected) = &self.password_hash else {
-            return false;
-        };
-        let password_ok = stretch(password, &self.salt).is_ok_and(|hash| bytes_match(&hash, expected));
+        let password_ok = self.key.as_ref().is_some_and(|key| key.verify(password, &self.hash));
         username_ok & password_ok
     }
 }
 
 fn digest(text: &str) -> [u8; 32] {
     sha2::Sha256::digest(text.as_bytes()).into()
-}
-
-/// Argon2id of a login password under `salt`, at the login's cost.
-fn stretch(password: &str, salt: &[u8; LOGIN_SALT_LEN]) -> anyhow::Result<[u8; 32]> {
-    let params = argon2::Params::new(LOGIN_ARGON2_MEMORY_KIB, LOGIN_ARGON2_PASSES, 1, Some(32))
-        .map_err(|error| anyhow::anyhow!("invalid Argon2 parameters: {error}"))?;
-    let mut hash = [0u8; 32];
-    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
-        .hash_password_into(password.as_bytes(), salt, &mut hash)
-        .map_err(|error| anyhow::anyhow!("Argon2id failed: {error}"))?;
-    Ok(hash)
 }
 
 /// How this process decides that a request may proceed at all.
@@ -182,12 +152,10 @@ impl GatewayAuth {
 /// The secret a worker and its one client share: 32 random bytes,
 /// base64url, minted per launch.
 ///
-/// Deliberately neither encrypted nor stretched the way a [`SiteLogin`]'s password
-/// is. Encryption protects a credential at rest against whoever reads where it
-/// rests, and this one never rests: it is generated in memory, written once to a
-/// pipe held by the process that spawned this one, and gone when this one exits.
-/// And there is nobody to be slow for: Argon2id's cost exists to make guessing a
-/// *human's* password expensive, and 32 random bytes are not guessable at any cost.
+/// Deliberately not hashed under the master key the way a [`SiteLogin`]'s password
+/// is. That protects a credential at rest against whoever reads where it rests,
+/// and this one never rests: it is generated in memory, written once to a pipe
+/// held by the process that spawned this one, and gone when this one exits.
 #[cfg(feature = "tui")]
 #[derive(Clone)]
 pub struct WorkerToken(String);
@@ -325,40 +293,33 @@ mod tests {
 
     use super::*;
 
+    fn login(password: &str, unlocked: bool) -> SiteLogin {
+        let key = LoginKey::generate();
+        SiteLogin::new("admin", key.hash(password), unlocked.then_some(key)).unwrap()
+    }
+
     #[test]
     fn a_login_takes_its_username_and_password_and_nothing_else() {
-        let login = SiteLogin::new("admin", "hunter2").unwrap();
+        let login = login("hunter2", true);
         assert_eq!(login.username(), "admin");
         assert!(login.verify("admin", "hunter2"));
         assert!(!login.verify("admin", "wrong"));
         assert!(!login.verify("admin", "hunter"), "a prefix");
         assert!(!login.verify("mallory", "hunter2"), "username must match too");
-        assert!(SiteLogin::new("", "hunter2").is_err());
+        assert!(SiteLogin::with_password("", "hunter2").is_err());
     }
 
-    /// A config that is only checked resolves its login with the password never
-    /// decrypted: that login must open to nothing, the empty password included.
+    /// A config that is only checked resolves its login with no key: that login
+    /// must open to nothing.
     #[test]
-    fn an_empty_password_never_logs_in() {
-        let login = SiteLogin::new("admin", "").unwrap();
-        assert!(!login.verify("admin", ""));
-    }
-
-    /// One check at a time: a second turn is refused while the first is held, and
-    /// given again once it is dropped.
-    #[test]
-    fn one_login_check_holds_the_turn() {
-        let login = SiteLogin::new("admin", "hunter2").unwrap();
-        let turn = login.try_turn().expect("the first turn");
-        assert!(login.clone().try_turn().is_none(), "a clone shares the one turn");
-        drop(turn);
-        assert!(login.try_turn().is_some());
+    fn a_login_without_its_key_never_logs_in() {
+        let login = login("hunter2", false);
+        assert!(!login.verify("admin", "hunter2"));
     }
 
     #[test]
     fn a_login_is_not_in_its_debug_output() {
-        let login = SiteLogin::new("admin", "hunter2").unwrap();
-        let rendered = format!("{:?}", GatewayAuth::Login(login));
+        let rendered = format!("{:?}", GatewayAuth::Login(login("hunter2", true)));
         assert!(rendered.contains("admin") && !rendered.contains("hunter2"), "{rendered}");
     }
 

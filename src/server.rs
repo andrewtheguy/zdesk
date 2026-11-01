@@ -532,20 +532,7 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    // One check at a time, its turn taken before anything is spawned: an attempt
-    // arriving during another's check is refused, so a burst of guesses neither
-    // fills the blocking pool nor leaves a backlog behind it.
-    let turn = login.try_turn().ok_or(AppError::LoginBusy)?;
-    let login = login.clone();
-    // A check costs Argon2id's memory and passes by design — keep it off the async
-    // workers. It holds the turn until it ends, even if the client has gone.
-    let ok = tokio::task::spawn_blocking(move || {
-        let _turn = turn;
-        login.verify(&req.username, &req.password)
-    })
-    .await
-    .map_err(anyhow::Error::from)?;
-    if !ok {
+    if !login.verify(&req.username, &req.password) {
         return Err(AppError::Unauthorized);
     }
     let token = state.auth.create();
@@ -1098,7 +1085,7 @@ mod tests {
                 virtual_displays: 1,
                 virtual_display: false,
             }],
-            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::new("admin", "hunter2").unwrap()),
+            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::with_password("admin", "hunter2").unwrap()),
             branding: crate::config::Branding {
                 text: "zDesk".to_owned(),
                 logo: None,

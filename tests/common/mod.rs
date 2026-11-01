@@ -26,7 +26,7 @@ pub const TEST_PASSWORD: &str = "hunter2";
 /// (`tests/tui_worker_e2e.rs`).
 #[allow(dead_code)]
 pub fn test_auth() -> zdesk::auth::GatewayAuth {
-    zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::new(TEST_USER, TEST_PASSWORD).unwrap())
+    zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::with_password(TEST_USER, TEST_PASSWORD).unwrap())
 }
 
 /// Pull `name` out of the operator's UAT config, for a test that borrows a
