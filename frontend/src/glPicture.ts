@@ -8,6 +8,13 @@
 // once, and its WebGL context is the one it will ever have. A picture is what one
 // session keeps in that context, and gives back.
 //
+// The browser may take that context away (iOS Safari does, for a tab it puts in
+// the background or short of memory) and give it back. Everything a picture made
+// in it is gone then, and a picture is not drawn again: the paint worker learns
+// of both from the canvas (`watchPictureContext`), drops the picture when it is
+// taken, and makes another when it is given back, filled from what it was drawn
+// from.
+//
 // Without WebGL 2 there is no such picture: the page says so.
 
 // One triangle over the whole canvas, `uv` from its top left corner's (0, 1) down
@@ -19,13 +26,47 @@ void main() {
   gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-const LOST = "the browser took the picture's WebGL context away";
+/** What a picture whose context the browser took away says of it. */
+export const CONTEXT_TAKEN =
+  "the browser took the picture's WebGL context away";
+
+/**
+ * What a picture throws once the browser has taken its context away: not the
+ * picture failing, since the browser may give the context back.
+ */
+export class PictureContextLost extends Error {
+  constructor() {
+    super(CONTEXT_TAKEN);
+    this.name = "PictureContextLost";
+  }
+}
+
+/**
+ * Hear the browser take `canvas`'s WebGL context away and give it back. Taking
+ * it is answered by asking for it back, without which the browser keeps it.
+ */
+export function watchPictureContext(
+  canvas: OffscreenCanvas,
+  on: { lost(): void; restored(): void },
+) {
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    on.lost();
+  });
+  canvas.addEventListener("webglcontextrestored", () => on.restored());
+}
 
 export interface PictureCanvas {
   readonly gl: WebGL2RenderingContext;
   /** The picture's program, in use. */
   readonly program: WebGLProgram;
-  /** Throws once the browser has taken the GPU away (a lost context). */
+  /**
+   * Whether the browser has taken the context away since this picture was
+   * made: true for good, the context given back included, since nothing the
+   * picture made is in the one given back.
+   */
+  lost(): boolean;
+  /** Throws `PictureContextLost` once `lost`. */
   usable(): void;
   /**
    * The canvas at this size, its drawing buffer cleared. WebGL reports a refused
@@ -37,7 +78,7 @@ export interface PictureCanvas {
   draw(): void;
   /**
    * Give the program back and leave the canvas black, its context as it was
-   * found: what it shows next is another picture's.
+   * found: what it shows next is another picture's. Nothing, once `lost`.
    */
   close(): void;
 }
@@ -70,19 +111,27 @@ export function openPictureCanvas(
   if (!gl) {
     throw new Error("WebGL 2 is not available");
   }
-  if (gl.isContextLost()) {
-    throw new Error(LOST);
-  }
-  let lost = false;
+  // Taken for good when the browser says so, or before it does, as soon as the
+  // context reports itself lost.
+  let taken = false;
   const listening = new AbortController();
   canvas.addEventListener(
     "webglcontextlost",
-    (event) => {
-      event.preventDefault();
-      lost = true;
+    () => {
+      taken = true;
     },
     { signal: listening.signal },
   );
+  const lost = () => {
+    taken ||= gl.isContextLost();
+    return taken;
+  };
+  const usable = () => {
+    if (lost()) {
+      throw new PictureContextLost();
+    }
+  };
+  usable();
   const vertex = shader(gl, gl.VERTEX_SHADER, VERTEX);
   const pixels = shader(gl, gl.FRAGMENT_SHADER, fragment);
   const program = gl.createProgram();
@@ -90,6 +139,7 @@ export function openPictureCanvas(
   gl.attachShader(program, pixels);
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    usable();
     throw new Error(
       `WebGL 2 refused the picture's shaders: ${gl.getProgramInfoLog(program) || gl.getShaderInfoLog(pixels)}`,
     );
@@ -100,12 +150,10 @@ export function openPictureCanvas(
   return {
     gl,
     program,
-    usable() {
-      if (lost) {
-        throw new Error(LOST);
-      }
-    },
+    lost,
+    usable,
     resize(w, h) {
+      usable();
       if (w > largest || h > largest) {
         throw new Error(
           `the GPU takes no picture over ${largest} pixels a side (this one is ${w}x${h})`,
@@ -114,6 +162,7 @@ export function openPictureCanvas(
       canvas.width = w;
       canvas.height = h;
       if (gl.drawingBufferWidth !== w || gl.drawingBufferHeight !== h) {
+        usable();
         throw new Error(
           `the GPU gave a ${gl.drawingBufferWidth}x${gl.drawingBufferHeight} canvas for a ${w}x${h} picture`,
         );
@@ -125,7 +174,10 @@ export function openPictureCanvas(
     },
     close() {
       listening.abort();
-      if (lost) {
+      // Nothing of a lost context's is there to give back, and deleting one of
+      // its objects in the context given back is an error a later picture's
+      // allocation check would read.
+      if (lost()) {
         return;
       }
       gl.deleteProgram(program);

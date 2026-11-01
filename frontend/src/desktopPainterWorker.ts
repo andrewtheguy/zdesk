@@ -35,6 +35,7 @@
 import { stopEgfx } from "./egfxCompositor.ts";
 import { createGraphicsPicture, type PicturePart } from "./egfxPicture.ts";
 import { createFramePainter, type FramePainter } from "./framePainter.ts";
+import { watchPictureContext } from "./glPicture.ts";
 import type { MosaicView } from "./mosaic.ts";
 import { createPlanesPicture } from "./planesPicture.ts";
 import { batchFrameContinued, binaryFrameKind } from "./protocol.ts";
@@ -325,6 +326,12 @@ export function createPainterWorker(
             onGraphicsShown: (shown) =>
               post({ type: "graphicsShown", shown, epoch }),
             decoding: command.decoding,
+          });
+          // Heard as it happens, not behind the batches queued: a run waiting
+          // on one finds the picture as the context left it.
+          watchPictureContext(command.graphics, {
+            lost: () => painter?.graphicsLost(),
+            restored: () => painter?.graphicsRestored(),
           });
           break;
         case "frame": {
