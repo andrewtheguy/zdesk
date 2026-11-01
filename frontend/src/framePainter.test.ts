@@ -1865,6 +1865,22 @@ test("a refusal the context notice replaced is said again when the context is gi
   assert.equal(videoErrors.at(-1), refusal, "the refusal still stands");
 });
 
+test("a format announced while the context is gone lets the next picture take the refusal down", async () => {
+  const p = planesPainter();
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
+  refused = 0xbd;
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: [...KEYFRAME, 0xbd] }]));
+  const refusal = videoErrors.at(-1);
+  assert.match(String(refusal), /cannot decode/);
+  p.graphicsLost();
+  // Another configuration: the refusal no longer stands.
+  p.setVideoFormat({ decode: "hev1.4.10.L153.BE.8" });
+  p.graphicsRestored();
+  assert.equal(videoErrors.at(-1), refusal, "said until a picture paints");
+  await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));
+  assert.equal(videoErrors.at(-1), null, "and taken down by it");
+});
+
 test("the attachment's end gives the software decoder's picture back", async () => {
   const p = planesPainter();
   await p.draw(batchFrame([{ w: 640, h: 480, payload: KEYFRAME }]));

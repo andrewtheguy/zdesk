@@ -580,10 +580,13 @@ export function createFramePainter(options: {
     }
   };
 
+  // A format announced while the notice was up may have ended the refusal it
+  // replaced (`announce`), leaving it for the next painted frame to take down:
+  // that is kept.
   const unsayContextLost = () => {
     if (saying === CONTEXT_LOST) {
       say(displaced.reason);
-      videoComplained = displaced.complained;
+      videoComplained ||= displaced.complained;
     }
   };
 
