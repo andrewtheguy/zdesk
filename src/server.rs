@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tui")]
 use crate::auth::GatewayAuth;
 use crate::{
-    auth::{self, AuthSessions},
+    auth::{self, AuthSessions, LoginThrottle},
     config::AppConfig,
     error::{ApiResult, AppError},
     hevc_wasm::HevcDecoder,
@@ -34,6 +34,8 @@ pub struct AppState {
     /// worker's requests carry the launch token the control plane adds in that
     /// same cookie and there is no session to look up, so this stays empty there.
     pub auth: Arc<AuthSessions>,
+    /// The process-wide throttle on failed logins.
+    pub login_throttle: Arc<LoginThrottle>,
     /// Every browser socket's byte counters, and the database `[meter]` records them in.
     pub throughput: Throughput,
     /// The software HEVC decoder, read at start-up.
@@ -266,6 +268,7 @@ pub fn router_with_sessions(
         config,
         sessions,
         auth: Arc::new(AuthSessions::default()),
+        login_throttle: Arc::new(LoginThrottle::default()),
         throughput,
         hevc_decoder,
     };
@@ -519,7 +522,9 @@ struct OkResponse {
 }
 
 /// Verify the credentials against the `[server]` login and set the session
-/// cookie. 401 on a mismatch, with no hint which of the two fields was wrong.
+/// cookie. 401 on a mismatch, with no hint which of the two fields was wrong, and
+/// 429 without checking while failed logins have locked it out (see
+/// [`LoginThrottle`]).
 async fn login_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -532,7 +537,11 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    if !login.verify(&req.username, &req.password) {
+    let ok = state
+        .login_throttle
+        .attempt(std::time::Instant::now(), || login.verify(&req.username, &req.password))
+        .map_err(AppError::LoginLocked)?;
+    if !ok {
         return Err(AppError::Unauthorized);
     }
     let token = state.auth.create();

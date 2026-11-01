@@ -4018,6 +4018,14 @@ attempt costs one HMAC and a constant-time compare, and needs no turn, no
 blocking thread and no memory of its own. The gateway keeps the login key, not
 the password.
 
+Guessing online is slowed by one process-wide throttle (`LoginThrottle` in
+`src/auth.rs`), not by client address, which behind a proxy is the proxy's and in a
+forwarded header is the client's to write. Five failures in a row are free; each
+after locks logins out for 1 s, doubling to 60 s, and an attempt during a lockout
+is answered 429 with `Retry-After` without being checked. A success clears the
+count. Someone guessing can keep the one user waiting up to 60 s past their last
+guess, which a single-user gateway takes over unlimited guesses.
+
 An empty value is a placeholder, the empty password set up before the real
 one is encrypted over it: it decrypts to nothing, so it needs no `[master]`,
 and a config whose targets name only placeholders needs no master password to

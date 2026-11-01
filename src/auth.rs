@@ -26,7 +26,7 @@
 //! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "tui")]
@@ -223,6 +223,59 @@ fn bytes_match(expected: &[u8], presented: &[u8]) -> bool {
     difference == 0
 }
 
+/// Failed logins allowed in a row before each further one locks logins out.
+const FREE_FAILURES: u32 = 5;
+
+/// The longest lockout a run of failures earns.
+const MAX_LOCKOUT: Duration = Duration::from_secs(60);
+
+/// The one throttle on login attempts, for the whole process.
+///
+/// Not by client address: behind a reverse proxy every attempt comes from the
+/// proxy, and a forwarded header is whatever the client wrote. So it counts failed
+/// attempts in a row, whoever made them. The first [`FREE_FAILURES`] cost nothing;
+/// each one after locks logins out for 1 s, then 2 s, 4 s and so on up to
+/// [`MAX_LOCKOUT`], and an attempt during a lockout is refused without being
+/// checked, the right password included. A successful login clears the count.
+///
+/// The price is that someone guessing can keep the one user locked out too, for at
+/// most [`MAX_LOCKOUT`] past their last guess: for a single-user program, a short
+/// wait for its user over unlimited guesses for anyone.
+#[derive(Debug, Default)]
+pub struct LoginThrottle {
+    state: Mutex<ThrottleState>,
+}
+
+#[derive(Debug, Default)]
+struct ThrottleState {
+    failures: u32,
+    locked_until: Option<Instant>,
+}
+
+impl LoginThrottle {
+    /// Run the check `verify` makes, unless a lockout is running at `now`: then
+    /// `Err` with how long it has left. The lockout, the check and its count are
+    /// one step under the lock, so a burst of attempts sent at once is counted
+    /// one by one rather than all let through before the first failure lands.
+    pub fn attempt(&self, now: Instant, verify: impl FnOnce() -> bool) -> Result<bool, Duration> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(until) = state.locked_until.filter(|until| *until > now) {
+            return Err(until - now);
+        }
+        let ok = verify();
+        if ok {
+            *state = ThrottleState::default();
+        } else {
+            state.failures = state.failures.saturating_add(1);
+            if let Some(over) = state.failures.checked_sub(FREE_FAILURES + 1) {
+                let lockout = Duration::from_secs(1u64 << over.min(16)).min(MAX_LOCKOUT);
+                state.locked_until = Some(now + lockout);
+            }
+        }
+        Ok(ok)
+    }
+}
+
 /// In-memory auth sessions: token → expiry, with a sliding TTL. The map only
 /// ever holds this single user's handful of logins, so expired entries are
 /// swept opportunistically on create/validate instead of by a timer.
@@ -315,6 +368,36 @@ mod tests {
     fn a_login_without_its_key_never_logs_in() {
         let login = login("hunter2", false);
         assert!(!login.verify("admin", "hunter2"));
+    }
+
+    /// Five failures are free; each after locks out for twice as long, up to the
+    /// cap, refusing even the right password; and a success clears the count.
+    #[test]
+    fn failed_logins_lock_out_longer_each_time() {
+        let throttle = LoginThrottle::default();
+        let start = Instant::now();
+        for _ in 0..FREE_FAILURES {
+            assert_eq!(throttle.attempt(start, || false), Ok(false));
+        }
+        assert_eq!(throttle.attempt(start, || false), Ok(false), "the sixth is checked");
+        assert_eq!(throttle.attempt(start, || true), Err(Duration::from_secs(1)), "then locked");
+
+        let later = start + Duration::from_secs(1);
+        assert_eq!(throttle.attempt(later, || false), Ok(false));
+        assert_eq!(throttle.attempt(later, || unreachable!()), Err(Duration::from_secs(2)));
+
+        let mut now = later;
+        for _ in 0..20 {
+            now += MAX_LOCKOUT;
+            assert_eq!(throttle.attempt(now, || false), Ok(false));
+        }
+        assert_eq!(throttle.attempt(now, || true), Err(MAX_LOCKOUT), "capped");
+
+        now += MAX_LOCKOUT;
+        assert_eq!(throttle.attempt(now, || true), Ok(true));
+        for _ in 0..FREE_FAILURES {
+            assert_eq!(throttle.attempt(now, || false), Ok(false), "a success clears the count");
+        }
     }
 
     #[test]

@@ -38,7 +38,9 @@ export default function Login({
       setError(
         res.status === 401
           ? "Invalid credentials"
-          : `Login failed (${res.status})`,
+          : res.status === 429
+            ? `Too many failed logins. Try again in ${res.headers.get("Retry-After") ?? "a few"} seconds.`
+            : `Login failed (${res.status})`,
       );
     } catch (cause) {
       // What went wrong, not the word "network": `fetch` rejects for a request that
