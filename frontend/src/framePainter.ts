@@ -35,6 +35,7 @@ import {
   type TileMsg,
   type VideoMsg,
 } from "./protocol.ts";
+import { RECONNECT } from "./reconnect.ts";
 import { createRegionStreams, type RegionStreams } from "./regionStreams.ts";
 import { type DecodedPicture, isSoftwarePlanes } from "./softwareDecoder.ts";
 import type { PageDecoding } from "./softwareSupport.ts";
@@ -518,7 +519,7 @@ export function createFramePainter(options: {
     stop(broken);
     videoComplained = false;
     options.onVideoError(
-      `This browser could not compose the host's graphics (${why}). Reload the page to start the session over.`,
+      `This browser could not compose the host's graphics (${why}). ${RECONNECT}`,
     );
   };
 
@@ -535,7 +536,7 @@ export function createFramePainter(options: {
     broken.picture = null;
     videoComplained = false;
     options.onVideoError(
-      `This browser could not decode the Mac's picture (${why}). Reload the page to start the session over.`,
+      `This browser could not decode the Mac's picture (${why}). ${RECONNECT}`,
     );
   };
 
@@ -976,7 +977,7 @@ export function createFramePainter(options: {
       planar.broken = true;
       videoComplained = false;
       options.onVideoError(
-        `This browser could not present the decoded picture (${describe(error)}). Reload the page to start the session over.`,
+        `This browser could not present the decoded picture (${describe(error)}). ${RECONNECT}`,
       );
       return false;
     }
@@ -1372,7 +1373,7 @@ export function createFramePainter(options: {
                 releaseMirror();
                 videoComplained = false;
                 options.onVideoError(
-                  `This browser could not show display ${display}'s picture (${why}). Reload the page to start it over.`,
+                  `This browser could not show display ${display}'s picture (${why}). ${RECONNECT}`,
                 );
               }
             },
@@ -1397,7 +1398,7 @@ export function createFramePainter(options: {
           const why = describe(error);
           releaseMirror();
           options.onVideoError(
-            `This browser could not show the display's picture (${why}). Reload the page to start it over.`,
+            `This browser could not show the display's picture (${why}). ${RECONNECT}`,
           );
         }
         return;
