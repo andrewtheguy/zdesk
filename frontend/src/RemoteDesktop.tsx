@@ -344,6 +344,7 @@ export default function RemoteDesktop({
     sendClipboard,
     setBottomInset,
     canvasGeneration,
+    pictureHeld,
   } = useRemoteDesktop(
     canvasRef,
     graphicsRef,
@@ -425,8 +426,8 @@ export default function RemoteDesktop({
       {/* The floating menu is desktop-only; its End session button returns to
           the picker (see FloatingMenu.tsx), and Log out ends the login. A second
           display's tab has a menu of its own instead, for this tab's full screen.
-          Not while the picture is lost: the session's socket is closed, and
-          what the menu sends goes nowhere until Reconnect. */}
+          Not from a lost picture until a session socket opens again: what the
+          menu sends goes nowhere before then, Reconnect's attempt included. */}
       {mode === "desktop" &&
         (tabDisplay !== null ? (
           <DisplayMenu
@@ -440,7 +441,7 @@ export default function RemoteDesktop({
             onViewOnlyChange={setViewOnly}
             onDisconnect={releaseTab}
           />
-        ) : status === "pictureLost" ? null : (
+        ) : pictureHeld ? null : (
           <FloatingMenu
             onLogout={onLogout}
             onUnauthorized={onUnauthorized}
