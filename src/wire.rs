@@ -179,7 +179,9 @@ impl Wire {
                 Record::Video(unit) => {
                     self.totals.video(unit.record_len());
                     unit.write_record(&mut frame);
-                    painted.push(unit.painted);
+                    if unit.painted.owed() {
+                        painted.push(unit.painted);
+                    }
                     unit.held
                 }
                 Record::Graphics(unit) => {
@@ -695,6 +697,29 @@ mod tests {
             })
             .collect();
         assert_eq!(shape, vec![(2, 1), (1, 1), (2, 0)], "records, and frames owed, in each batch");
+    }
+
+    /// A unit that owes its paint acknowledgement, an RDP host's frame's last,
+    /// ends its batch and the batch carries what it owes; units owing nothing
+    /// carry nothing.
+    #[test]
+    fn a_unit_that_ends_a_frame_ends_its_batch() {
+        use crate::protocol::Painted;
+        let video = |seed: u8, painted: Painted| {
+            ServerMsg::Video(VideoUnit { w: 64, h: 64, strip: None, keyframe: false, data: vec![seed; 4], held: Held::default(), painted })
+        };
+        let mut wire = Wire::default();
+        let frames = wire
+            .encode(vec![video(0, Painted::default()), video(1, Painted::new(|| {})), video(2, Painted::default())])
+            .unwrap();
+        let shape: Vec<(u16, usize)> = frames
+            .iter()
+            .map(|frame| match frame {
+                WireFrame::Batch { bytes, painted, .. } => (u16::from_le_bytes([bytes[2], bytes[3]]), painted.len()),
+                other => panic!("expected a batch, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(shape, vec![(2, 1), (1, 0)], "records, and acknowledgements owed, in each batch");
     }
 
     /// A run of wlshare's tiles ends its batch, as a frame's last run does: one

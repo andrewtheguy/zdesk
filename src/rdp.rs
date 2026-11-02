@@ -1963,10 +1963,11 @@ async fn active_loop(
                     // The whole desktop in H.264 starts again at a keyframe, which
                     // only the host can draw: asked for, and the units before it
                     // are not passed. A page that lost its place in the stream
-                    // asks for this too.
+                    // asks for this too, and is asked for at once: a keyframe
+                    // asked for a moment ago may have come before it.
                     if video {
                         sink.restart_pass();
-                        ask_keyframe(input, &mut keyframe_asked, false);
+                        ask_keyframe(input, &mut keyframe_asked, true);
                         continue;
                     }
                     // A passed pipeline has no repaint this end can make: the
@@ -2085,7 +2086,7 @@ async fn active_loop(
                     if matches!(*made, ClientMsg::Refresh) {
                         shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
                         if video {
-                            ask_keyframe(input, &mut keyframe_asked, false);
+                            ask_keyframe(input, &mut keyframe_asked, true);
                         }
                         continue;
                     }
