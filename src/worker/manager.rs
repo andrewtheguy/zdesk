@@ -86,7 +86,7 @@ const SETTINGS_TEMPLATE: &str = r#"# zDesk TUI settings. Edit them with E in the
 
 # The order the TUI and its landing page list instances in, by name. Instances
 # not named here follow in alphabetical order, and a name with no instance is
-# passed over.
+# passed over. K and J in the TUI move the selected instance and write it here.
 #
 # order = ["work", "home"]
 "#;
@@ -102,14 +102,59 @@ struct Settings {
 
 impl Settings {
     /// The settings in `root`, or the defaults when it holds no settings file.
-    fn load(root: &Path) -> anyhow::Result<Self> {
+    /// Also the file's text, or `None` when there is no file, for
+    /// [`Self::store_order`] to tell whether it changed since.
+    fn load(root: &Path) -> anyhow::Result<(Self, Option<String>)> {
         let path = root.join(SETTINGS_FILE);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
+        let Some(text) = read_settings(&path)? else {
+            return Ok((Self::default(), None));
         };
-        Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))
+        let settings = Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))?;
+        Ok((settings, Some(text)))
+    }
+
+    /// Write `order` into the settings file in `root`, creating it from the
+    /// template when missing. Only `order` changes: the file's comments and its
+    /// other settings stay as they are. A file that does not parse is left
+    /// alone, so a move never overwrites what somebody is half way through, and
+    /// so is one whose text is not `seen`, the text the TUI last read or wrote:
+    /// `order` is the list as the TUI shows it, and a file saved since may hold
+    /// another. Returns the text written, the next `seen`.
+    fn store_order(root: &Path, order: &[String], seen: Option<&str>) -> anyhow::Result<String> {
+        let path = root.join(SETTINGS_FILE);
+        let current = read_settings(&path)?;
+        let text = current.as_deref().unwrap_or(SETTINGS_TEMPLATE);
+        Self::parse(text).with_context(|| format!("{} is not valid; E edits it", path.display()))?;
+        anyhow::ensure!(
+            current.as_deref() == seen,
+            "{} changed since the TUI read it; R reloads it",
+            path.display()
+        );
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("{} is not valid", path.display()))?;
+        let mut array: toml_edit::Array = order.iter().collect();
+        array.fmt();
+        let updated = match document.get_mut("order").and_then(toml_edit::Item::as_value_mut) {
+            // In place, keeping the comment after it.
+            Some(value) => {
+                let decor = value.decor().clone();
+                *value = array.into();
+                *value.decor_mut() = decor;
+                document.to_string()
+            }
+            // At the end: a key toml_edit adds goes above the comments that
+            // end the file, which here are the ones explaining it.
+            None => {
+                let mut text = text.to_owned();
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(&format!("order = {array}\n"));
+                text
+            }
+        };
+        write_file(&path, &updated)?;
+        Ok(updated)
     }
 
     fn parse(text: &str) -> anyhow::Result<Self> {
@@ -120,6 +165,15 @@ impl Settings {
             anyhow::ensure!(seen.insert(name), "order names {name:?} twice");
         }
         Ok(settings)
+    }
+}
+
+/// The settings file's text, or `None` when there is none.
+fn read_settings(path: &Path) -> anyhow::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
     }
 }
 
@@ -174,6 +228,10 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
+    // Whether `message` answers the last key, any but the arrows, and so
+    // outranks the selected instance's detail on the status line; the next key
+    // gives the line back.
+    let mut notice = false;
     let mut view = View::List;
     let mut problems = Vec::new();
     if let Err(error) = keychain {
@@ -195,7 +253,15 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
         selected = selected.min(instances.len().saturating_sub(1));
         let size = terminal::size().context("cannot read terminal size")?;
         screen.draw(
-            render(size, &options, &access.pin(), &instances, selected, &view, &message)?,
+            render(
+                size,
+                &options,
+                &access.pin(),
+                &instances,
+                selected,
+                &view,
+                status_line(&instances, selected, &message, notice),
+            )?,
             &mut std::io::stdout().lock(),
         )?;
 
@@ -216,6 +282,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                 let event = event.context("cannot read terminal input")?;
                 let Event::Key(key) = event else { continue };
                 if key.kind != KeyEventKind::Press { continue; }
+                notice = false;
 
                 if let View::Naming(name) = &mut view {
                     match key.code {
@@ -267,6 +334,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     break;
                 }
                 let Some(action) = action_for(key.code) else { continue };
+                notice = !matches!(action, Action::Up | Action::Down);
                 match action {
                     Action::Quit => break,
                     Action::Up => selected = selected.saturating_sub(1),
@@ -306,6 +374,18 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                         };
                         selected = kept.and_then(|name| supervisor.position(&name)).unwrap_or(selected);
                     }
+                    Action::MoveUp | Action::MoveDown => {
+                        if let Some(instance) = instances.get(selected) {
+                            let name = instance.name.clone();
+                            let up = action == Action::MoveUp;
+                            message = match supervisor.move_instance(&name, up).await {
+                                Ok(true) => format!("moved {name}; the order is kept in {SETTINGS_FILE}"),
+                                Ok(false) => format!("{name} is already {}", if up { "first" } else { "last" }),
+                                Err(error) => format!("{error:#}"),
+                            };
+                            selected = supervisor.position(&name).unwrap_or(selected);
+                        }
+                    }
                     Action::OpenDirectory => {
                         let dir = &options.instances_dir;
                         message = match open_directory(dir) {
@@ -324,12 +404,11 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                                 terminal.resume()?;
                                 screen.invalidate();
                                 events = EventStream::new();
-                                match edited {
-                                    Ok(()) => match supervisor.reload_settings().await {
-                                        Ok(()) => "TUI settings applied".to_owned(),
-                                        Err(error) => format!("{error:#}"),
-                                    },
-                                    Err(error) => format!("{error:#}"),
+                                // Read whatever the editor left, even when it failed: the file
+                                // may have been created above or saved before it failed.
+                                match (edited, supervisor.reload_settings().await) {
+                                    (Ok(()), Ok(())) => "TUI settings applied".to_owned(),
+                                    (Err(error), _) | (Ok(()), Err(error)) => format!("{error:#}"),
                                 }
                             }
                         };
@@ -823,6 +902,8 @@ enum Action {
     New,
     StartAll,
     Rescan,
+    MoveUp,
+    MoveDown,
     OpenDirectory,
     EditSettings,
     NewPin,
@@ -965,6 +1046,22 @@ const BINDINGS: &[Binding] = &[
         codes: &[KeyCode::Char('R')],
         label: "rescan",
         about: "rescan the instances directory and reload the TUI settings",
+        group: Group::Instances,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::MoveUp,
+        codes: &[KeyCode::Char('K')],
+        label: "move up",
+        about: "move the selected instance up the list, keeping the order in tui.toml",
+        group: Group::Instances,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::MoveDown,
+        codes: &[KeyCode::Char('J')],
+        label: "move down",
+        about: "move the selected instance down the list, keeping the order in tui.toml",
         group: Group::Instances,
         bar: Some(3),
     },
@@ -1150,6 +1247,8 @@ fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
             vec![
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 (dashed(digits), Some(Color::Magenta), true),
+                // The PIN form takes it either way, as its own hint says.
+                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
             ],
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
@@ -1175,6 +1274,17 @@ const LIST_TOP: u16 = 10;
 /// The rows below it: a blank row, the rule, the message and the key bar.
 const LIST_BOTTOM: u16 = 4;
 
+/// The line above the key bar: the selected instance's detail, saying how it
+/// ended, unless `message` is a `notice` answering the last key, or there is no
+/// detail.
+fn status_line<'a>(instances: &'a [InstanceInfo], selected: usize, message: &'a str, notice: bool) -> &'a str {
+    instances
+        .get(selected)
+        .and_then(|instance| instance.detail.as_deref())
+        .filter(|_| !notice)
+        .unwrap_or(message)
+}
+
 fn render(
     size: (u16, u16),
     options: &TuiOptions,
@@ -1182,7 +1292,7 @@ fn render(
     instances: &[InstanceInfo],
     selected: usize,
     view: &View,
-    message: &str,
+    status: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let (width, height) = size;
     let port = options.port;
@@ -1259,11 +1369,7 @@ fn render(
         )?;
         key_bar(&mut frame, rule + 2, width, &[("Enter".to_owned(), "create"), ("Esc".to_owned(), "cancel")])?;
     } else {
-        let detail = instances
-            .get(selected)
-            .and_then(|instance| instance.detail.as_deref())
-            .unwrap_or(message);
-        line(&mut frame, rule + 1, width, detail, None, false)?;
+        line(&mut frame, rule + 1, width, status, None, false)?;
         key_bar(&mut frame, rule + 2, width, &list_bar(width))?;
     }
     Ok(frame)
@@ -1648,6 +1754,9 @@ pub struct Supervisor {
     routes: RouteTable,
     /// The instances listed first, from [`Settings::order`].
     order: Vec<String>,
+    /// The settings file's text as the TUI last read or wrote it, `None` for no
+    /// file: what a move checks the file against before replacing it.
+    settings_seen: Option<String>,
 }
 
 impl Supervisor {
@@ -1659,6 +1768,7 @@ impl Supervisor {
             instances: Vec::new(),
             routes: RouteTable::default(),
             order: Vec::new(),
+            settings_seen: None,
         };
         manager.rescan().await?;
         Ok(manager)
@@ -1738,9 +1848,39 @@ impl Supervisor {
     /// Read the settings file again and list the instances by its order. Settings
     /// that cannot be read leave the order as it was, and are the error.
     pub async fn reload_settings(&mut self) -> anyhow::Result<()> {
-        self.order = Settings::load(&self.root)?.order;
+        let (settings, text) = Settings::load(&self.root)?;
+        self.order = settings.order;
+        self.settings_seen = text;
         self.arrange().await;
         Ok(())
+    }
+
+    /// Move `name` one place up the list, or down, and keep the whole list's
+    /// order in the settings file. An instance already at that end stays, and
+    /// says so by returning false.
+    pub async fn move_instance(&mut self, name: &str, up: bool) -> anyhow::Result<bool> {
+        let from = self.index(name)?;
+        let to = if up { from.checked_sub(1) } else { Some(from + 1).filter(|to| *to < self.instances.len()) };
+        let Some(to) = to else { return Ok(false) };
+        // The file's order with every listed instance added after it, so a name
+        // with no instance just now (a share not mounted) keeps its place; the
+        // list is this order without such names, so swapping the two in it
+        // swaps them on screen.
+        let mut order = self.order.clone();
+        for instance in &self.instances {
+            if !order.contains(&instance.name) {
+                order.push(instance.name.clone());
+            }
+        }
+        let place = |name: &str| order.iter().position(|named| named == name);
+        let (Some(a), Some(b)) = (place(name), place(&self.instances[to].name)) else {
+            unreachable!("every listed instance was just added to the order");
+        };
+        order.swap(a, b);
+        self.settings_seen = Some(Settings::store_order(&self.root, &order, self.settings_seen.as_deref())?);
+        self.order = order;
+        self.arrange().await;
+        Ok(true)
     }
 
     /// Where an instance is listed, if it is.
@@ -2121,6 +2261,25 @@ fn bootstrap_file(path: &Path, contents: &str) -> anyhow::Result<()> {
     if path.exists() {
         return Ok(());
     }
+    write_file(path, contents)
+}
+
+/// Replace `path` with `contents` all at once: written beside it and renamed
+/// over it, so a reader never sees half of either. A file already there is
+/// somebody's, so a link is followed to the file it names, which is the one
+/// replaced, and the replacement keeps its permissions.
+fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
+    let (path, permissions) = match std::fs::canonicalize(path) {
+        Ok(target) => {
+            let permissions = std::fs::metadata(&target)
+                .with_context(|| format!("cannot read {}", target.display()))?
+                .permissions();
+            (target, Some(permissions))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (path.to_owned(), None),
+        Err(error) => return Err(error).with_context(|| format!("cannot resolve {}", path.display())),
+    };
+    let path = path.as_path();
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.new", std::process::id()));
     let temporary = PathBuf::from(temporary);
@@ -2138,6 +2297,10 @@ fn bootstrap_file(path: &Path, contents: &str) -> anyhow::Result<()> {
             .with_context(|| format!("cannot create {}", temporary.display()))?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
+        if let Some(permissions) = permissions {
+            std::fs::set_permissions(&temporary, permissions)
+                .with_context(|| format!("cannot set the permissions of {}", temporary.display()))?;
+        }
         std::fs::rename(&temporary, path)
             .with_context(|| format!("cannot install {}", path.display()))
     })();
@@ -2738,7 +2901,7 @@ mod tests {
         // A wide terminal names every ranked key.
         let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
         assert_eq!(list_bar(u16::MAX).len(), every.len());
-        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::OpenDirectory, Action::EditSettings] {
+        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::MoveUp, Action::MoveDown, Action::OpenDirectory, Action::EditSettings] {
             assert!(every.iter().any(|binding| binding.action == action), "{action:?}");
         }
 
@@ -2784,6 +2947,17 @@ mod tests {
             assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
         }
 
+        // An answer to the last key outranks a failed instance's detail, which
+        // the next key brings back.
+        let failed = [InstanceInfo {
+            status: InstanceStatus::Failed,
+            detail: Some("exit code 1".to_owned()),
+            ..instances[0].clone()
+        }];
+        assert_eq!(status_line(&failed, 0, "work is already first", false), "exit code 1");
+        assert_eq!(status_line(&failed, 0, "work is already first", true), "work is already first");
+        assert_eq!(status_line(&instances, 0, "started work", false), "started work");
+
         // Too narrow for the keys page and quitting together, the screen still
         // names quitting.
         assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
@@ -2807,6 +2981,7 @@ mod tests {
             vec![
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 ("123-456".to_owned(), Some(Color::Magenta), true),
+                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
             ]
         );
         let used = PinState::Used { at: "14:25".to_owned() };
@@ -3043,6 +3218,90 @@ mod tests {
             supervisor.reload_settings().await.unwrap_err();
             assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"], "{broken}");
         }
+    }
+
+    /// K and J move an instance and write the whole order into the settings
+    /// file, keeping its comments and other lines; a file that does not parse
+    /// is left alone and the order with it.
+    #[tokio::test]
+    async fn moving_an_instance_keeps_the_order_in_the_settings_file() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["alpha", "beta", "gamma"] {
+            std::fs::create_dir(temp.path().join(name)).unwrap();
+        }
+        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
+        supervisor.reload_settings().await.unwrap();
+        let names = |supervisor: &Supervisor| -> Vec<String> {
+            supervisor.instances().into_iter().map(|instance| instance.name).collect()
+        };
+
+        // No file yet: the first move creates it from the template.
+        assert!(!supervisor.move_instance("alpha", true).await.unwrap(), "already first");
+        assert!(supervisor.move_instance("gamma", true).await.unwrap());
+        assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
+        let settings = temp.path().join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(text, format!("{SETTINGS_TEMPLATE}order = [\"alpha\", \"gamma\", \"beta\"]\n"));
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "gamma", "beta"]);
+
+        // A file somebody wrote keeps its own lines.
+        std::fs::write(&settings, "# mine\norder = [\"beta\"] # trailing\n").unwrap();
+        supervisor.reload_settings().await.unwrap();
+        assert_eq!(names(&supervisor), ["beta", "alpha", "gamma"]);
+        assert!(supervisor.move_instance("beta", false).await.unwrap());
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(text, "# mine\norder = [\"alpha\", \"beta\", \"gamma\"] # trailing\n");
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "beta", "gamma"]);
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+        assert!(!supervisor.move_instance("gamma", false).await.unwrap(), "already last");
+
+        // A file saved elsewhere since is not overwritten until R reads it.
+        std::fs::write(&settings, "order = [\"gamma\"]\n").unwrap();
+        let error = supervisor.move_instance("beta", true).await.unwrap_err();
+        assert!(format!("{error:#}").contains("changed since the TUI read it"), "{error:#}");
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "order = [\"gamma\"]\n");
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+        supervisor.reload_settings().await.unwrap();
+        assert!(supervisor.move_instance("beta", true).await.unwrap());
+        assert_eq!(names(&supervisor), ["gamma", "beta", "alpha"]);
+        // So is a removed one.
+        std::fs::remove_file(&settings).unwrap();
+        supervisor.move_instance("beta", true).await.unwrap_err();
+        assert!(!settings.exists());
+        supervisor.reload_settings().await.unwrap();
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+
+        // A name with no instance just now keeps its place.
+        std::fs::write(&settings, "order = [\"gamma\", \"away\", \"alpha\"]\n").unwrap();
+        supervisor.reload_settings().await.unwrap();
+        assert_eq!(names(&supervisor), ["gamma", "alpha", "beta"]);
+        assert!(supervisor.move_instance("alpha", true).await.unwrap());
+        assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "gamma", "beta"]);
+
+        // A file that is a link stays one, and the file it names keeps its mode.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let elsewhere = temp.path().join("dotfiles-tui.toml");
+            std::fs::rename(&settings, &elsewhere).unwrap();
+            std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &settings).unwrap();
+            assert!(supervisor.move_instance("beta", true).await.unwrap());
+            assert!(std::fs::symlink_metadata(&settings).unwrap().file_type().is_symlink());
+            let text = std::fs::read_to_string(&elsewhere).unwrap();
+            assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "beta", "gamma"]);
+            assert_eq!(std::fs::metadata(&elsewhere).unwrap().permissions().mode() & 0o777, 0o644);
+            std::fs::remove_file(&settings).unwrap();
+            std::fs::rename(&elsewhere, &settings).unwrap();
+            supervisor.reload_settings().await.unwrap();
+        }
+
+        std::fs::write(&settings, "order = [\"beta\", \"beta\"]\n").unwrap();
+        supervisor.move_instance("beta", true).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "order = [\"beta\", \"beta\"]\n");
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
     }
 
     /// A path cmd would read as variables — `%TEMP%`, `!x!` — or as operators
