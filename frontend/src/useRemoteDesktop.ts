@@ -1233,12 +1233,6 @@ export function useRemoteDesktop(
     // another, bound in its turn. `bound` is the one bound last, which a clear
     // goes to rather than building a worker to clear.
     let bound: DesktopPainter | null = null;
-    // Whether a desktop is up, rather than the picker: `mode`, as this run set it.
-    let onDesktop = false;
-    const showMode = (next: SessionMode) => {
-      onDesktop = next === "desktop";
-      setMode(next);
-    };
     const painter = (): DesktopPainter | null => {
       const next =
         canvasRef.current && graphicsRef.current
@@ -1423,16 +1417,13 @@ export function useRemoteDesktop(
     // Whether the session's picture was lost with its context, until the person
     // reconnects (`start`): an attempt already under way opens nothing.
     let pictureGone = false;
-    // The browser took the GPU canvas's context away. A desktop's session leaves
-    // the page as for a takeover, and the overlay says why, beside Reconnect. On
-    // the picker there is no picture to lose: the worker holding the context goes,
-    // so the next session is drawn on new canvases.
+    // The browser took the GPU canvas's context away. The session leaves the page
+    // as for a takeover, and the overlay says why, beside Reconnect. On the picker
+    // too: the display socket is not ordered against the session socket, so a
+    // picture may have started on the worker ahead of the `connected` that shows
+    // it, and what started it is not sent again to a new worker.
     const pictureLost = () => {
       if (disposed || pictureGone) {
-        return;
-      }
-      if (!onDesktop) {
-        endPicture();
         return;
       }
       pictureGone = true;
@@ -1770,7 +1761,7 @@ export function useRemoteDesktop(
         return;
       }
       setStatus("connected");
-      showMode("desktop");
+      setMode("desktop");
       lastHostDisplay = null;
       sendHostDisplay();
       lastTabViewport = null;
@@ -2258,7 +2249,7 @@ export function useRemoteDesktop(
       // desktop.
       setConnectError(null);
       setPendingTarget(null);
-      showMode("desktop");
+      setMode("desktop");
       setCanAudio(msg.audio);
       const block = settleAudioBlock(msg);
       seedAudioForAttachment(msg.audio && block === null);
@@ -2583,7 +2574,7 @@ export function useRemoteDesktop(
           // engine that ended): show the picker. Drop any retained framebuffer so a later
           // connect starts from a clean "waiting for the desktop" state.
           setPendingTarget(null);
-          showMode("picker");
+          setMode("picker");
           setConnection("");
           endDesktop();
           endedEngines = Math.max(endedEngines, msg.engines);
