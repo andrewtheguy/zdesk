@@ -835,6 +835,12 @@ impl VideoSink {
         self.shared.pass_restart.store(true, Ordering::Relaxed);
     }
 
+    /// Whether the passed stream waits for a keyframe to start over at
+    /// ([`Self::restart_pass`]).
+    pub fn awaits_keyframe(&self) -> bool {
+        self.shared.pass_restart.load(Ordering::Relaxed)
+    }
+
     /// Queue a `w`×`h` frame of wlshare's video stream, H.264, as the next access
     /// unit, untouched ([`crate::h264::Whole`]).
     ///

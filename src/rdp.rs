@@ -1219,9 +1219,10 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
 struct KeyframeAsks {
     /// When one was last asked for.
     asked: Option<Instant>,
-    /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for. A
-    /// stream that lost its place after the last one's keyframe needs another,
-    /// and a still desktop sends no unit that would ask again.
+    /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for, if a
+    /// stream still waits then. A stream that lost its place after the last
+    /// one's keyframe needs another, and a still desktop sends no unit that would
+    /// ask again.
     due: Option<Instant>,
 }
 
@@ -2289,8 +2290,14 @@ async fn active_loop(
                 clipboard.retry(input);
                 continue;
             }
+            // Asked for only where a stream still waits: one that lost its
+            // place before the last ask's keyframe came started over at it, and
+            // another ask would reset the host's graphics for nothing.
             _ = keyframe_due => {
-                keyframes.ask(input, true);
+                keyframes.due = None;
+                if sink.awaits_keyframe() || tab.as_ref().is_some_and(|tab| tab.sink.awaits_keyframe()) {
+                    keyframes.ask(input, true);
+                }
             }
             _ = layout_retry => {
                 layout_retry_at = None;
