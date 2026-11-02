@@ -643,7 +643,7 @@ test("the WebGL context taken away and given back is told to the page, and asked
   );
 });
 
-test("what a picture says while the context is gone is kept from the page, until the clear", () => {
+test("what a picture says while the context is gone is kept from the page", () => {
   const h = harness();
   const say = (reason: string | null) =>
     h.painterOptions().onVideoError(reason);
@@ -651,10 +651,14 @@ test("what a picture says while the context is gone is kept from the page, until
   say(
     "This browser could not compose the host's graphics (the browser took the picture's WebGL context away). Reload the page to start the session over.",
   );
-  h.graphicsCanvas.dispatchEvent(new Event("webglcontextrestored"));
-  say("still not the page's");
-  h.host.handle({ type: "clear" });
+  say("the GPU refused a 1x1 picture");
   say(null);
+  h.graphicsCanvas.dispatchEvent(new Event("webglcontextrestored"));
+  // Back: an old picture used now says so by name, and is kept by it; what
+  // the next attachment says is said, with or without a clear between.
+  say(
+    "This browser could not show display 2's picture (the browser took the picture's WebGL context away). Reload the page to start it over.",
+  );
   say("the next attachment's, said");
   assert.deepEqual(
     h.events.filter((event) => event.type === "videoError"),

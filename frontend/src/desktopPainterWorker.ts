@@ -183,11 +183,13 @@ export function createPainterWorker(
   let canvas: OffscreenCanvas | null = null;
   let ctx: OffscreenCanvasRenderingContext2D | null = null;
   let painter: FramePainter | null = null;
-  // While the browser has the WebGL canvas's context, until the clear that
-  // ends the attachment: what a picture drawn in it says of itself meanwhile
-  // is not the page's to show, since the page starts the session over once
-  // the context is back. A picture may find the context gone ahead of the
-  // browser's event, and says so by name: that is kept the same way.
+  // While the browser has the WebGL canvas's context: what a picture drawn in
+  // it says of itself meanwhile is not the page's to show, since the page
+  // starts the session over once the context is back. A picture may find the
+  // context gone ahead of the browser's event, or be used after the context is
+  // back, and says so by name either way: that is kept the same way. Not held
+  // past the context's return: the next attachment may start before the clear
+  // that ends this one, where the loss fell in the gap between two.
   let contextGone = false;
   const keptFromPage = (reason: string | null) =>
     reason !== null && (contextGone || reason.includes(CONTEXT_TAKEN));
@@ -351,7 +353,10 @@ export function createPainterWorker(
               contextGone = true;
               post({ type: "contextLost" });
             },
-            restored: () => post({ type: "contextRestored" }),
+            restored: () => {
+              contextGone = false;
+              post({ type: "contextRestored" });
+            },
           });
           break;
         case "frame": {
