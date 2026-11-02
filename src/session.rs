@@ -578,7 +578,8 @@ struct State {
     /// answer never reached the page (a reset connection, a phone changing
     /// networks, the page giving up waiting) leaves the page holding it, and its
     /// retry must resume rather than end the session. Set only by an owner's
-    /// reclaim; any other claim, and a log out, clears it. Never an attach token.
+    /// reclaim; the current token's attach, which proves the answer arrived, any
+    /// other claim, and a log out clear it. Never an attach token.
     reclaimed_with: Option<String>,
     /// The selected session: `None` is the picker state, `Some` is a live (or
     /// just-ended) desktop. It has no engine beside it only while the owner's
@@ -1016,6 +1017,9 @@ impl SessionManager {
         if st.claim.as_deref() != Some(token) {
             return Err(InvalidToken);
         }
+        // Attaching proves the page received this token, so the one its reclaim
+        // presented is no longer a lost answer's fallback.
+        st.reclaimed_with = None;
         // A second attach on the same token supersedes the first (e.g. the
         // browser reconnected before its stale socket timed out).
         if let Some(old) = st.client.take() {
@@ -3756,9 +3760,12 @@ mod tests {
         // Only the current token attaches.
         assert!(mgr.attach(&token, None, Decoders::ALL).await.is_err());
 
-        // Once the page reclaims with the token it received, the older one is spent.
+        // Attaching proved the new token arrived, so the old one is spent: a delayed
+        // or replayed claim with it is refused while the owner is attached…
+        assert!(mgr.claim(false, Some(&token), "login").is_err());
+        assert!(!engine.0.is_closed(), "the attached owner keeps its session");
+        // …and is a different browser's claim once it is not.
         mgr.detach(att.id);
-        mgr.claim(false, Some(&resumed), "login").unwrap();
         mgr.claim(false, Some(&token), "login").unwrap();
         assert!(engine.0.is_closed(), "the spent token is a different browser's claim");
     }

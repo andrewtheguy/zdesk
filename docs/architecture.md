@@ -2228,8 +2228,8 @@ reclaiming its token resumes the running engine, with a full-repaint request
 instead of a reconnect. Every claim mints a new token, so a reclaim the gateway
 answered but whose answer never reached the page leaves the page holding the
 token that reclaim replaced; the gateway keeps counting the token of the
-owner's last reclaim as the owner's, so the page's retry resumes too. Any other
-claim, and a log out, forgets it.
+owner's last reclaim as the owner's, so the page's retry resumes too. It forgets
+it once the new token attaches, at any other claim, and at a log out.
 
 ### What a session is started with
 
