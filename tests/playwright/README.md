@@ -48,7 +48,7 @@ whose memory the paint worker could not make says the page ran out of memory and
 offers a reload, which comes back to the session composing, and a page whose
 session another browser takes over ends its paint worker. A compositor that refused a command
 says so in the DOM, which is what stands in for the picture here. Started with
-the picker's Adaptive (ALPHA), H.264 over the full screen, it also asserts
+the picker's H.264 region (ALPHA), it also asserts
 that the page said it decodes H.264, that the session says it carries it, and that
 a batch whose commands draw with H.264 is acknowledged: the acknowledgment follows
 the decode of every access unit in the batch, and a decoder that gave no picture
@@ -282,8 +282,8 @@ bunx playwright test '/egfx-passthrough\.spec\.ts$'
 ```
 
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
-`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 by
-region, which the page composes. The host draws H.264 only where the desktop
+`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's H.264 region, which the
+page composes. The host draws H.264 only where the desktop
 moves like video, so it needs a video playing on the host:
 
 ```sh

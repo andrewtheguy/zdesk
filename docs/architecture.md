@@ -161,7 +161,7 @@ A Windows host's pipeline is not a choice: it is passed
 in every session of a target with the pipeline on, and a browser that cannot
 compose it cannot start that target. The passed pipeline follows the browser's
 link by the host's own pacing: fewer frames for a page that composes slowly, and
-with Adaptive coarser ones too, by the host's rate control and by its socket
+under either H.264 choice coarser ones too, by the host's rate control and by its socket
 backing up. A High quality session is drawn for the link to the gateway alone.
 A Mac's passed stream does not: its rate control walks its target between 20
 and 60 Mbit/s by the link to the gateway alone. That is a target and not a
@@ -453,15 +453,16 @@ the newest pixels whenever a round goes.
 #### The browser's three answers
 
 The browser is asked three questions that it states on the session socket, each
-once at page load, in four flags: whether it decodes a High Performance Mac's
+once at page load, in five flags: whether it decodes a High Performance Mac's
 HEVC, which is two flags, `apple_media` for its own decoder and `page_hevc` for
 the page's software one, counted only where the gateway serves that decoder
 (`Decoders::stated`); whether it
 composes an RDP host's graphics pipeline; and whether it decodes the H.264 such
-a pipeline may carry. The last refuses nobody: it decides only whether a passed
-pipeline's host is told it may draw with H.264, in a session started with
-Adaptive; a browser that says no has Adaptive greyed, and a `connect` from it
-that names Adaptive all the same is drawn without it.
+a pipeline may carry, which is two flags, `rdp_h264` for the regions the
+compositor paints and `rdp_video` for the whole desktop played as video. The last
+decides which of the picker's H.264 choices the browser has: one that says no has
+that choice greyed, H.264 region or H.264 full screen, and a `connect` from it
+that names it all the same is refused (`ConnectError::NoH264`).
 The other two say which passthrough the browser
 can take. The Mac's greys its HEVC at the picker, where a browser that says
 no can instead choose H.264 if it has `VideoDecoder`; without either path it
@@ -828,11 +829,11 @@ gateway's tiles; with the pipeline on, the pipeline is the only picture, and no
 bitmap update is decoded or coded.
 
 How the host draws the pipeline is chosen at the picker: High quality, the
-pipeline's codecs without H.264, by default, or Adaptive
-(alpha), H.264 the host fits to
-the browser's link, over the whole desktop or only where it moves like video.
-The gateway has no H.264 decoder and is not given one. Adaptive is started only
-for a page that said it decodes H.264, and a session whose host turns out to draw
+pipeline's codecs without H.264, by default; *H.264 full screen* (alpha), the
+whole desktop in H.264; or *H.264 region* (alpha), H.264 only where the desktop
+moves like video, both rate-controlled by the host to the browser's link.
+The gateway has no H.264 decoder and is not given one. Either H.264 choice is
+started only for a page that said it decodes that H.264, and a session whose host turns out to draw
 no H.264 ends with an error rather than going on in other codecs
 ([H.264 asked for and not drawn](rdp-client.md#h264-asked-for-and-not-drawn)).
 By region, the access units ride inside the pipeline's commands, the page decodes
@@ -1626,7 +1627,7 @@ is sent as it is, and nothing of it is tuned here. A browser that cannot compose
 it cannot start the target, and there are no tiles to fall back to: a target
 with `egfx = false` is the one for it. The host still follows the browser's link
 by its own pacing, as *The page paces the host* and *The host finds a slow page
-for itself* below describe, and with Adaptive by its rate control
+for itself* below describe, and under either H.264 choice by its rate control
 ([A passed stream and the browser's link](#a-passed-stream-and-the-browsers-link)).
 
 The compositor the page runs is the gateway's own, unit tested
@@ -1676,11 +1677,11 @@ the pipeline.
   times smaller on planar drawing, 2.07 times on scrolling. A compression of the
   gateway's own does better
   ([Roadmap](roadmap.md#the-pipeline-compressed-again-for-the-browser)).
-- **H.264, where the session chose Adaptive** (ALPHA). Otherwise the host is
+- **H.264, where the session chose H.264 full screen or H.264 region** (ALPHA). Otherwise the host is
   told its client takes none. With it, a session
   whose page said it decodes H.264 advertises the capability sets that take it
   (`caps_advertise` in the graphics crate's `proto/gfx.rs`). Under *H.264 full
-  screen*, the default, they carry `AVC_THINCLIENT` (MS-RDPEGFX 2.2.3.6), and a
+  screen* they carry `AVC_THINCLIENT` (MS-RDPEGFX 2.2.3.6), and a
   Windows host draws the whole desktop in AVC444v2. Under *H.264 region* the
   flag is left out, and a Windows host draws what moves like video with AVC420,
   in the same frames as the other codecs: one H.264 stream for each surface,
@@ -1692,8 +1693,9 @@ the pipeline.
   picture before the next unit is handed over, laid out as the compositor reads
   it, and copy into shared memory. A decoder that holds a picture back for the
   units after it gives none in time, which is a no: a run cannot wait on units
-  the host has not sent. A page that says no has Adaptive greyed, and is not
-  turned away from a session that chose it: its host is told to send none.
+  the host has not sent. A page that says no has H.264 region greyed, and a
+  `connect` from it that names it all the same is refused
+  (`ConnectError::NoH264`).
 
   A run that carries H.264 is composed in three steps, and its batch is
   acknowledged after the third, so the host is still paced by what the page has
@@ -1847,12 +1849,12 @@ the pipeline.
   four to a batch and showed 8 a second of the 28 it composed, a quarter of a
   second and then two thirds behind; paced this way it shows 28 a second, each
   35 ms after the last, a tenth of a second behind.
-- **In an Adaptive session the host finds a slow page for itself.** A Windows
+- **Under either H.264 choice the host finds a slow page for itself.** A Windows
   host sends coarser RemoteFX Progressive frames
   to a client its own socket backs up behind, and to no other: not for late
   acknowledgements. The gateway reads that
   socket at the speed of its own network, which would hide the page's link from
-  the host. So in a session started with Adaptive, while two large frames wait
+  the host. So in a session started with either H.264 choice, while two large frames wait
   for the page's `paintAck`, past its distance as above, the RDP
   client leaves the socket unread through a small receive buffer, and the host
   finds the page's pace in its own writes
@@ -2131,7 +2133,7 @@ six, the Mac's HEVC and H.264 in one row:
 | wlshare's tiles with motion (`wlshare` subtype, passed where chosen) | No one: its moving regions are held at wlshare's dial (`WLSD`) | Each fence echo is held as the video's is, and nothing adapts to it |
 | wlshare's progressive tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: the stage of each first pass, then frame rate | Each fence echo is held as the video's is |
 | wlshare's lossless tiles (`wlshare` subtype, passed where chosen) | wlshare's `QualityWalk`: frame rate alone, every tile exact | Each fence echo is held as the video's is |
-| An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; with Adaptive, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; with Adaptive, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more |
+| An RDP host's graphics pipeline (passed whenever it is on) | The Windows host: frame rate by acknowledgements; under either H.264 choice, its H.264's rate control by its network detection, and its Progressive quality by its socket | Frames are acknowledged once the page has composed them; under either H.264 choice, the detection is answered at the page's pace, and while two large frames wait the host's socket goes unread through a small receive buffer; with High quality, nothing more |
 | A High Performance Mac's HEVC or H.264 (beta), always passed | The Mac's rate controller, a target of 20–60 Mbit/s that a still screen comes far under | Nothing: the delay in its rate reports ends at the gateway |
 | A Standard Mac's Adaptive picture (passed where chosen) | The Mac: how many updates it sends, and whether it refines them while the screen moves | Its connection, read as the page paints, through a small receive buffer |
 
@@ -2147,7 +2149,7 @@ six, the Mac's HEVC and H.264 in one row:
   client the host rate-controls its H.264 to the bandwidth it is told, and sends
   each RemoteFX Progressive tile whole at full quality over a fast link, where
   it otherwise sends a coarser first pass and refines it. A session started
-  with Adaptive tells it the page's link, read from how fast the page composes while a
+  with either H.264 choice tells it the page's link, read from how fast the page composes while a
   frame has waited for it longer than its distance, its smallest recent ping,
   with each round trip held for that distance (`Paced` in
   `src/rdp_client/session.rs`). Measured with
@@ -2162,7 +2164,7 @@ six, the Mac's HEVC and H.264 in one row:
   [The connection sequence](rdp-client.md#the-connection-sequence). Beside that,
   the host adapts in two more ways. It draws no more than about eleven frames ahead of its
   acknowledgements, so a page that composes slowly sets the frame rate. It sends
-  coarser Progressive frames when its own socket backs up, so in an Adaptive
+  coarser Progressive frames when its own socket backs up, so in an H.264
   session the gateway lets the socket
   fill while the page is behind. Measured against a Windows 11 host with a stand-in
   page on an 8 Mbit/s link, its RemoteFX Progressive frames halved and the page
@@ -2230,9 +2232,10 @@ on the same browser twice to build a refusal on, and a refusal phrased as "this
 browser accepted none" turns any fault near the path into an accusation against
 the browser.
 
-What the browser states is three answers, in four flags, the HEVC answer being
-two. One decides what a host is told and nothing else: whether this browser decodes the H.264 a passed RDP pipeline may
-carry, which greys the picker's Adaptive for a "no". The other two say which
+What the browser states is three answers, in five flags, the HEVC answer and the
+H.264 answer being two each. One decides which of the picker's H.264 choices this
+browser has: whether it decodes the H.264 a passed RDP pipeline may carry, by
+region or as the whole desktop, which greys that choice for a "no". The other two say which
 passthrough the browser can take: a High Performance Mac's HEVC, and an RDP
 host's graphics pipeline. They decide what the picker offers before a session
 starts, where a "no" greys the Mac's HEVC, leaving its H.264 to a page with
