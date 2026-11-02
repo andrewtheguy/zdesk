@@ -86,7 +86,7 @@ const SETTINGS_TEMPLATE: &str = r#"# zDesk TUI settings. Edit them with E in the
 
 # The order the TUI and its landing page list instances in, by name. Instances
 # not named here follow in alphabetical order, and a name with no instance is
-# passed over.
+# passed over. K and J in the TUI move the selected instance and write it here.
 #
 # order = ["work", "home"]
 "#;
@@ -110,6 +110,44 @@ impl Settings {
             Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
         };
         Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))
+    }
+
+    /// Write `order` into the settings file in `root`, creating it from the
+    /// template when missing. Only `order` changes: the file's comments and its
+    /// other settings stay as they are. A file that does not parse is left
+    /// alone, so a move never overwrites what somebody is half way through.
+    fn store_order(root: &Path, order: &[String]) -> anyhow::Result<()> {
+        let path = root.join(SETTINGS_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => SETTINGS_TEMPLATE.to_owned(),
+            Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
+        };
+        Self::parse(&text).with_context(|| format!("{} is not valid; E edits it", path.display()))?;
+        let mut document: toml_edit::DocumentMut =
+            text.parse().with_context(|| format!("{} is not valid", path.display()))?;
+        let mut array: toml_edit::Array = order.iter().collect();
+        array.fmt();
+        let updated = match document.get_mut("order").and_then(toml_edit::Item::as_value_mut) {
+            // In place, keeping the comment after it.
+            Some(value) => {
+                let decor = value.decor().clone();
+                *value = array.into();
+                *value.decor_mut() = decor;
+                document.to_string()
+            }
+            // At the end: a key toml_edit adds goes above the comments that
+            // end the file, which here are the ones explaining it.
+            None => {
+                let mut text = text;
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(&format!("order = {array}\n"));
+                text
+            }
+        };
+        write_file(&path, &updated)
     }
 
     fn parse(text: &str) -> anyhow::Result<Self> {
@@ -305,6 +343,18 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                             Err(error) => format!("{error:#}"),
                         };
                         selected = kept.and_then(|name| supervisor.position(&name)).unwrap_or(selected);
+                    }
+                    Action::MoveUp | Action::MoveDown => {
+                        if let Some(instance) = instances.get(selected) {
+                            let name = instance.name.clone();
+                            let up = action == Action::MoveUp;
+                            message = match supervisor.move_instance(&name, up).await {
+                                Ok(true) => format!("moved {name}; the order is kept in {SETTINGS_FILE}"),
+                                Ok(false) => format!("{name} is already {}", if up { "first" } else { "last" }),
+                                Err(error) => format!("{error:#}"),
+                            };
+                            selected = supervisor.position(&name).unwrap_or(selected);
+                        }
                     }
                     Action::OpenDirectory => {
                         let dir = &options.instances_dir;
@@ -823,6 +873,8 @@ enum Action {
     New,
     StartAll,
     Rescan,
+    MoveUp,
+    MoveDown,
     OpenDirectory,
     EditSettings,
     NewPin,
@@ -965,6 +1017,22 @@ const BINDINGS: &[Binding] = &[
         codes: &[KeyCode::Char('R')],
         label: "rescan",
         about: "rescan the instances directory and reload the TUI settings",
+        group: Group::Instances,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::MoveUp,
+        codes: &[KeyCode::Char('K')],
+        label: "move up",
+        about: "move the selected instance up the list, keeping the order in tui.toml",
+        group: Group::Instances,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::MoveDown,
+        codes: &[KeyCode::Char('J')],
+        label: "move down",
+        about: "move the selected instance down the list, keeping the order in tui.toml",
         group: Group::Instances,
         bar: Some(3),
     },
@@ -1745,6 +1813,21 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Move `name` one place up the list, or down, and keep the whole list's
+    /// order in the settings file. An instance already at that end stays, and
+    /// says so by returning false.
+    pub async fn move_instance(&mut self, name: &str, up: bool) -> anyhow::Result<bool> {
+        let from = self.index(name)?;
+        let to = if up { from.checked_sub(1) } else { Some(from + 1).filter(|to| *to < self.instances.len()) };
+        let Some(to) = to else { return Ok(false) };
+        let mut order: Vec<String> = self.instances.iter().map(|instance| instance.name.clone()).collect();
+        order.swap(from, to);
+        Settings::store_order(&self.root, &order)?;
+        self.order = order;
+        self.arrange().await;
+        Ok(true)
+    }
+
     /// Where an instance is listed, if it is.
     pub fn position(&self, name: &str) -> Option<usize> {
         self.instances.iter().position(|instance| instance.name == name)
@@ -2123,6 +2206,12 @@ fn bootstrap_file(path: &Path, contents: &str) -> anyhow::Result<()> {
     if path.exists() {
         return Ok(());
     }
+    write_file(path, contents)
+}
+
+/// Replace `path` with `contents` all at once: written beside it and renamed
+/// over it, so a reader never sees half of either.
+fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.new", std::process::id()));
     let temporary = PathBuf::from(temporary);
@@ -2740,7 +2829,7 @@ mod tests {
         // A wide terminal names every ranked key.
         let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
         assert_eq!(list_bar(u16::MAX).len(), every.len());
-        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::OpenDirectory, Action::EditSettings] {
+        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::MoveUp, Action::MoveDown, Action::OpenDirectory, Action::EditSettings] {
             assert!(every.iter().any(|binding| binding.action == action), "{action:?}");
         }
 
@@ -3046,6 +3135,47 @@ mod tests {
             supervisor.reload_settings().await.unwrap_err();
             assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"], "{broken}");
         }
+    }
+
+    /// K and J move an instance and write the whole order into the settings
+    /// file, keeping its comments and other lines; a file that does not parse
+    /// is left alone and the order with it.
+    #[tokio::test]
+    async fn moving_an_instance_keeps_the_order_in_the_settings_file() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["alpha", "beta", "gamma"] {
+            std::fs::create_dir(temp.path().join(name)).unwrap();
+        }
+        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
+        supervisor.reload_settings().await.unwrap();
+        let names = |supervisor: &Supervisor| -> Vec<String> {
+            supervisor.instances().into_iter().map(|instance| instance.name).collect()
+        };
+
+        // No file yet: the first move creates it from the template.
+        assert!(!supervisor.move_instance("alpha", true).await.unwrap(), "already first");
+        assert!(supervisor.move_instance("gamma", true).await.unwrap());
+        assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
+        let settings = temp.path().join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(text, format!("{SETTINGS_TEMPLATE}order = [\"alpha\", \"gamma\", \"beta\"]\n"));
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "gamma", "beta"]);
+
+        // A file somebody wrote keeps its own lines.
+        std::fs::write(&settings, "# mine\norder = [\"beta\"] # trailing\n").unwrap();
+        supervisor.reload_settings().await.unwrap();
+        assert_eq!(names(&supervisor), ["beta", "alpha", "gamma"]);
+        assert!(supervisor.move_instance("beta", false).await.unwrap());
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(text, "# mine\norder = [\"alpha\", \"beta\", \"gamma\"] # trailing\n");
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "beta", "gamma"]);
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+        assert!(!supervisor.move_instance("gamma", false).await.unwrap(), "already last");
+
+        std::fs::write(&settings, "order = [\"beta\", \"beta\"]\n").unwrap();
+        supervisor.move_instance("beta", true).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "order = [\"beta\", \"beta\"]\n");
+        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
     }
 
     /// A path cmd would read as variables — `%TEMP%`, `!x!` — or as operators
