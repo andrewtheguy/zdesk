@@ -128,7 +128,8 @@ rule as an exception, rather than refusing it or bending the rule unlisted.
   a device's memory with `xcrun xctrace record --template "Activity Monitor"`,
   reading the tab's WebContent physical footprint against the gateway log's
   session lines, with the device on USB and Auto-Lock off, since a lock ends the
-  recording.
+  recording, and read it with `tests/xctrace_memory.py` as
+  [Memory in the browser](docs/browser-memory.md#how-it-was-measured) describes.
 - When a test on a Mac needs a still screen, do not rely on the desktop or the
   lock screen for one: something not yet identified keeps them sending changes
   that do not show or are hard to see, which inflates a measured bitrate or picture rate. Put up

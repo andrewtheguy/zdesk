@@ -1182,11 +1182,19 @@ impl Tab {
     }
 }
 
-/// How long a keyframe asked of the host is waited for before a stream still
-/// waiting asks again. Measured against a Windows 11 host, the IDR came 90 ms
-/// after the layout that asks for one; this is for a layout that went nowhere,
-/// sent before Display Control opened.
+/// How long after the host's last answer a stream still waiting for a keyframe
+/// asks again, so that it does not ask for every unit. Measured against a
+/// Windows 11 host, the IDR came 90 ms after the layout that asks for one.
 const KEYFRAME_AGAIN: Duration = Duration::from_secs(2);
+
+/// How long a keyframe, wanted at once or not, waits on layouts the host has not
+/// answered before it is asked for, taking them as gone. Their answer, new
+/// surfaces each starting at an IDR, serves it. Each layout is a reset
+/// of the host's graphics, and a host slow to answer works through every one it
+/// was sent, so a host that is behind is not sent more; a host made to reset
+/// again and again can end the session with
+/// `ERRINFO_CLOSE_STACK_ON_DRIVER_FAILURE`.
+const KEYFRAME_UNANSWERED: Duration = Duration::from_secs(10);
 
 /// The surface whose stream a column is, of a pipeline passed as video: the one
 /// mapped at the column's top left. A Windows host draws each monitor of a layout
@@ -1212,50 +1220,84 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
 }
 
 /// The keyframes asked of the host ([`client::Input::keyframe`]) for a pipeline
-/// passed as video, no more than one each [`KEYFRAME_AGAIN`] unless one is
-/// wanted `now` and the last has been answered: each resets the host's graphics,
-/// a stream that waits for one is not to ask again for every unit, and one
-/// asked for and not yet answered serves every stream, since the host answers
-/// with new surfaces, each starting at an IDR.
+/// passed as video. Each is a monitor layout, and the host answers each layout
+/// it is sent, a keyframe's or a resize's, with a graphics reset and new
+/// surfaces, each starting at an IDR. So one unanswered serves every stream, and
+/// while any is, nothing more is asked for [`KEYFRAME_UNANSWERED`], wanted `now`
+/// or not. Once the host has answered them all, one wanted `now` is asked for at
+/// once, and a stream that waits asks no sooner than [`KEYFRAME_AGAIN`] after
+/// the answer.
 #[derive(Default)]
 struct KeyframeAsks {
-    /// When one was last asked for.
-    asked: Option<Instant>,
-    /// Whether the host has answered it with a surface since.
-    answered: bool,
-    /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for, if a
-    /// stream still waits then. A stream that lost its place after the last
-    /// one's keyframe needs another, and a still desktop sends no unit that would
-    /// ask again.
+    /// When a layout, a keyframe's or a resize's, was last sent.
+    sent: Option<Instant>,
+    /// How many layouts sent the host has not answered with a reset.
+    owed: u32,
+    /// When the host last answered all it had been sent.
+    answered: Option<Instant>,
+    /// When one held back is asked for, if a stream still waits then. A stream
+    /// that lost its place after the last one's keyframe needs another, and a
+    /// still desktop sends no unit that would ask again.
     due: Option<Instant>,
+    /// Whether the one due was wanted `now`.
+    due_now: bool,
 }
 
 impl KeyframeAsks {
-    fn ask(&mut self, input: &Input, now: bool) {
-        if self.asks(Instant::now(), now) {
+    /// Ask for one, where `reachable`, Display Control being open: a layout sent
+    /// before then goes nowhere, so it is not counted, and is asked for again
+    /// once [`KEYFRAME_AGAIN`] is past.
+    fn ask(&mut self, input: &Input, now: bool, reachable: bool) {
+        if self.asks(Instant::now(), now, reachable) {
             input.keyframe();
         }
     }
 
-    /// Whether one wanted `at` is asked for then: otherwise it is due once the
-    /// limit is past, should a stream still wait.
-    fn asks(&mut self, at: Instant, now: bool) -> bool {
-        if let Some(asked) = self.asked.filter(|asked| at < *asked + KEYFRAME_AGAIN)
-            && (!now || !self.answered)
-        {
-            self.due = Some(asked + KEYFRAME_AGAIN);
+    /// Whether one wanted `at` is asked for then: otherwise it is due once its
+    /// wait is past, should a stream still wait.
+    fn asks(&mut self, at: Instant, now: bool, reachable: bool) -> bool {
+        if !reachable {
+            self.defer(at + KEYFRAME_AGAIN, now);
             return false;
         }
-        self.asked = Some(at);
-        self.answered = false;
+        let until = match (self.sent, self.owed) {
+            (Some(sent), 1..) => sent + KEYFRAME_UNANSWERED,
+            _ if now => at,
+            _ => self.answered.map_or(at, |answered| answered + KEYFRAME_AGAIN),
+        };
+        if at < until {
+            self.defer(until, now);
+            return false;
+        }
+        // Layouts unanswered this long went nowhere.
+        if self.sent.is_some_and(|sent| at >= sent + KEYFRAME_UNANSWERED) {
+            self.owed = 0;
+        }
+        self.sent(at);
         self.due = None;
+        self.due_now = false;
         true
     }
 
-    /// The host mapped a surface, which is how it answers an ask: a stream that
-    /// loses its place from here on needs another.
-    fn answered(&mut self) {
-        self.answered = true;
+    fn defer(&mut self, until: Instant, now: bool) {
+        self.due = Some(self.due.map_or(until, |due| due.min(until)));
+        self.due_now |= now;
+    }
+
+    /// A layout went to the host, a keyframe's or a resize's.
+    fn sent(&mut self, at: Instant) {
+        self.sent = Some(at);
+        self.owed += 1;
+    }
+
+    /// The host reset its graphics, which answers one layout it was sent.
+    fn reset(&mut self, at: Instant) {
+        if self.owed > 0 {
+            self.owed -= 1;
+            if self.owed == 0 {
+                self.answered = Some(at);
+            }
+        }
     }
 }
 
@@ -1652,7 +1694,7 @@ async fn active_loop(
         {
             install_layout(wanted.with_second(None), view.current(applied), &mut pending_layout, &mut layout_retry_at);
         }
-        // A keyframe wanted within the limit of the last, asked for once it is past.
+        // A keyframe held back, asked for once its wait is past.
         let keyframe_due = async {
             match keyframes.due {
                 Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -1783,13 +1825,12 @@ async fn active_loop(
                         }
                         drop(ack);
                         if wanted {
-                            keyframes.ask(input, false);
+                            keyframes.ask(input, false, resize_ready);
                         }
                     }
                     Event::Surface { surface, rect } => match rect {
                         Some(rect) => {
                             surfaces.insert(surface, rect);
-                            keyframes.answered();
                         }
                         None => {
                             surfaces.remove(&surface);
@@ -1814,7 +1855,7 @@ async fn active_loop(
                             shown = true;
                         }
                         if shown {
-                            keyframes.ask(input, false);
+                            keyframes.ask(input, false, resize_ready);
                         }
                     }
                     Event::Drawn(fidelity) => {
@@ -1848,6 +1889,7 @@ async fn active_loop(
                     // session on its own, which is why `applied` follows the
                     // pending layout rather than assuming there was one.
                     Event::Resize { width, height, monitors } => {
+                        keyframes.reset(Instant::now());
                         // The framebuffer the host paints: every display it laid
                         // out, as it placed them. What the browser sees is `view`'s
                         // column of it.
@@ -2023,7 +2065,7 @@ async fn active_loop(
                     // asked for a moment ago may have come before it.
                     if video {
                         sink.restart_pass();
-                        keyframes.ask(input, true);
+                        keyframes.ask(input, true, resize_ready);
                         continue;
                     }
                     // A passed pipeline has no repaint this end can make: the
@@ -2082,7 +2124,7 @@ async fn active_loop(
                                 if video {
                                     // Another surface's stream, from its next IDR.
                                     sink.restart_pass();
-                                    keyframes.ask(input, true);
+                                    keyframes.ask(input, true, resize_ready);
                                 } else {
                                     sink.msg(view.graphics_view()).await?;
                                 }
@@ -2108,7 +2150,7 @@ async fn active_loop(
                             };
                             shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
                             if video {
-                                keyframes.ask(input, true);
+                                keyframes.ask(input, true, resize_ready);
                             }
                             tab = Some(shown);
                         }
@@ -2142,7 +2184,7 @@ async fn active_loop(
                     if matches!(*made, ClientMsg::Refresh) {
                         shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
                         if video {
-                            keyframes.ask(input, true);
+                            keyframes.ask(input, true, resize_ready);
                         }
                         continue;
                     }
@@ -2309,8 +2351,9 @@ async fn active_loop(
             // another ask would reset the host's graphics for nothing.
             _ = keyframe_due => {
                 keyframes.due = None;
+                let now = std::mem::take(&mut keyframes.due_now);
                 if sink.awaits_keyframe() || tab.as_ref().is_some_and(|tab| tab.sink.awaits_keyframe()) {
-                    keyframes.ask(input, true);
+                    keyframes.ask(input, now, resize_ready);
                 }
             }
             _ = layout_retry => {
@@ -2319,7 +2362,13 @@ async fn active_loop(
                     continue; // a resize confirmed it first
                 };
                 let wanted = pending.layout;
-                match request_layout(input, resize_ready, view.current(applied), wanted, monitors) {
+                let asked = request_layout(input, resize_ready, view.current(applied), wanted, monitors);
+                // A layout the host will answer with a reset, as it does a
+                // keyframe's.
+                if asked == Asked::Sent {
+                    keyframes.sent(Instant::now());
+                }
+                match asked {
                     // Sent, but nothing acknowledges a layout — so ask again
                     // until a resize proves it or the schedule runs out.
                     // Dropping the request is all that giving up takes: `applied`
@@ -2938,43 +2987,93 @@ fn pack_rgb(frame: &Frame, rect: Rect, buf: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
-    /// A keyframe wanted within the limit of the last is not asked for then, nor
-    /// forgotten: it is due when the limit is past, as a stream that lost its
-    /// place again after the last one's keyframe needs. One wanted now after the
-    /// host answered is asked for at once, and takes the place of one due.
+    /// Once the host has answered, a keyframe a waiting stream wants is asked for
+    /// no sooner than the limit after that answer, however late it came, and is
+    /// not forgotten: it is due then. One wanted now is asked for at once.
     #[test]
-    fn a_keyframe_held_back_by_the_limit_is_asked_for_after_it() {
+    fn a_keyframe_held_back_by_the_limit_is_asked_for_after_the_answer() {
         let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
         let mut asks = KeyframeAsks::default();
-        assert!(asks.asks(start, false));
+        assert!(asks.asks(start, false, true));
         assert_eq!(asks.due, None);
-        let lost = start + Duration::from_millis(500);
-        assert!(!asks.asks(lost, false));
-        assert!(!asks.asks(lost + Duration::from_millis(100), false), "still one ask, however many want it");
-        assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN));
-        assert!(asks.asks(start + KEYFRAME_AGAIN, true), "asked for when due");
-        assert_eq!(asks.due, None);
-        assert!(!asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(1), false));
-        asks.answered();
-        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now, once answered, is now");
+        // A slow host's answer: the limit runs from it, not from the ask.
+        asks.reset(at(6_000));
+        assert!(!asks.asks(at(6_100), false, true));
+        assert!(!asks.asks(at(6_200), false, true), "still one ask, however many want it");
+        assert_eq!(asks.due, Some(at(6_000) + KEYFRAME_AGAIN));
+        assert!(asks.asks(at(6_300), true, true), "one wanted now is asked for at once");
         assert_eq!(asks.due, None);
     }
 
-    /// One asked for and not yet answered serves a stream that wants one now as
-    /// well, as a page and its second display's tab reloading together do; once
-    /// the host has answered, one wanted now is asked for at once.
+    /// While the host has not answered, nothing more is asked until it has gone
+    /// [`KEYFRAME_UNANSWERED`] without, wanted now or not: its answer serves
+    /// every stream, as it does a page and its second display's tab reloading
+    /// together.
     #[test]
-    fn a_keyframe_not_yet_answered_serves_every_stream() {
+    fn nothing_more_is_asked_of_a_host_that_has_not_answered() {
+        let start = Instant::now();
+        let at = |s| start + Duration::from_secs(s);
+        let mut asks = KeyframeAsks::default();
+        assert!(asks.asks(start, true, true), "the page");
+        assert!(!asks.asks(start + Duration::from_millis(50), true, true), "its tab, served by the same");
+        for waited in [2, 4, 6, 9] {
+            assert!(!asks.asks(at(waited), false, true), "a waiting stream at {waited} s");
+            assert!(!asks.asks(at(waited), true, true), "a display switched at {waited} s");
+        }
+        assert_eq!((asks.due, asks.due_now), (Some(at(10)), true), "asked for again if nothing came");
+        assert!(asks.asks(at(10), true, true));
+        asks.reset(at(11));
+        assert!(asks.asks(at(11), true, true), "answered, one wanted now goes at once");
+    }
+
+    /// A resize is a layout the host answers with a reset as it does a
+    /// keyframe's, so a keyframe waits on it, and a reset answers one layout:
+    /// the resize's does not answer the keyframe's sent after it.
+    #[test]
+    fn a_resize_unanswered_holds_a_keyframe_back() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut asks = KeyframeAsks::default();
+        asks.sent(start);
+        asks.sent(at(750));
+        assert!(!asks.asks(at(1_000), true, true), "a resize sent twice, unanswered");
+        asks.reset(at(1_200));
+        assert!(!asks.asks(at(1_300), true, true), "one of its layouts answered, not both");
+        asks.reset(at(1_400));
+        assert!(asks.asks(at(1_500), true, true));
+    }
+
+    /// A layout sent while a keyframe is held back moves its wait out: the one
+    /// due by the earlier wait asks nothing then, and is due again at the new
+    /// deadline, once.
+    #[test]
+    fn a_layout_sent_meanwhile_moves_a_held_keyframe_out() {
+        let start = Instant::now();
+        let at = |s| start + Duration::from_secs(s);
+        let mut asks = KeyframeAsks::default();
+        assert!(asks.asks(start, true, true));
+        assert!(!asks.asks(at(1), false, true));
+        assert_eq!(asks.due, Some(at(10)));
+        asks.sent(at(5));
+        // The timer at the earlier deadline clears it and asks again.
+        asks.due = None;
+        assert!(!asks.asks(at(10), false, true), "nothing before the resize's own wait is past");
+        assert_eq!(asks.due, Some(at(15)));
+        assert!(!asks.asks(at(12), false, true));
+        assert_eq!(asks.due, Some(at(15)), "due once, at the new deadline");
+        assert!(asks.asks(at(15), false, true));
+    }
+
+    /// A keyframe wanted before Display Control opens would go nowhere: it is
+    /// not counted as asked, and is due once the limit is past.
+    #[test]
+    fn a_keyframe_wanted_before_display_control_is_asked_for_later() {
         let start = Instant::now();
         let mut asks = KeyframeAsks::default();
-        assert!(asks.asks(start, true), "the page");
-        let tab = start + Duration::from_millis(50);
-        assert!(!asks.asks(tab, true), "its tab, served by the same");
-        assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN), "and asked for again if nothing came");
-        asks.answered();
-        let lost = start + Duration::from_millis(500);
-        assert!(asks.asks(lost, true), "a page whose decoder failed after the answer");
-        assert!(!asks.asks(lost + Duration::from_millis(10), false));
+        assert!(!asks.asks(start, true, false));
+        assert_eq!((asks.sent, asks.owed, asks.due, asks.due_now), (None, 0, Some(start + KEYFRAME_AGAIN), true));
+        assert!(asks.asks(start + KEYFRAME_AGAIN, true, true), "once open, at once");
     }
 
     /// A column's stream is the surface mapped at its corner, as a Windows host

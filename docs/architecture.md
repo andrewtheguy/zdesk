@@ -1770,7 +1770,10 @@ the pipeline.
   page says on its session socket whether its `VideoDecoder` takes the host's
   H.264, `rdp_video=true|false` (`frontend/src/videoCodecs.ts`), and a page
   that cannot compose the pipeline still starts such a target under H.264 full
-  screen, with the other ways of drawing it greyed.
+  screen, with the other ways of drawing it greyed. It also costs an iPhone the
+  least memory of the three ways of drawing the pipeline, and a fraction of the
+  CPU, which the phone's video decoder takes on: see
+  [Memory in the browser](browser-memory.md).
 
   Its colour is said with it. The host's stream says it is full range and names
   no colour space, which MS-RDPEGFX makes full-range BT.709, and browsers read
@@ -1799,14 +1802,25 @@ the pipeline.
   meanwhile. A unit whose command does not read, which a compositor would end
   the pipeline on, starts its stream waiting for an IDR the same way, as does a
   command that carries a chroma view, which the stream cannot be passed
-  without. A stream that keeps losing units asks the host no more often than
-  one waiting does, since each ask resets the host's graphics: an ask held back
-  is made once the limit is past, if a stream still waits, since a still desktop
-  sends no unit that would ask again. An ask the host has not answered yet
-  serves every display, since its answer is new surfaces, each starting at an
-  IDR: a page and its second display's tab reloading together ask once. A
-  surface no display shows asks for nothing. A pipeline that starts over, its channel
-  closed and opened again, starts with no surfaces.
+  without.
+
+  Each ask is a layout, and the host answers every layout it is sent, a
+  keyframe's or a resize's, with a graphics reset; a host that is behind works
+  through all of them, and one made to reset again and again can end the session
+  with a display driver failure. So the engine counts the layouts the host has
+  not answered (`KeyframeAsks`), and an ask unanswered serves every display,
+  since its answer is new surfaces, each starting at an IDR: a page and its
+  second display's tab reloading together ask once. While one is unanswered,
+  nothing more is asked for 10 s, by a waiting stream or by the person's reload,
+  display switched or tab opened, and it is taken as gone after that. Once the
+  host has answered, one the person asked for goes at once, and a stream that
+  waits asks no sooner than 2 s after the answer. An ask held back is made once
+  its wait is past, if a stream still waits, since a still desktop sends no
+  unit that would ask again.
+  An ask made before Display Control opens would go nowhere, so it is made once
+  2 s are past instead. A surface no display shows asks for nothing. A
+  pipeline that starts over, its channel closed and opened again, starts with
+  no surfaces.
 
   Each frame is acknowledged to the host once the page has painted its last
   unit: the record that carries it owes the acknowledgement (`VideoUnit::painted`)
