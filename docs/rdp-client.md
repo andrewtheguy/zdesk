@@ -515,11 +515,39 @@ separated. wlshare's lossless tiles model this picture
 
 Lossless takes no H.264 either. A session that offered it, with something
 moving on the host's screen, was drawn with planar and uncompressed rectangles
-alone, so an Adaptive session against such a host is drawn that way too, at that
-cost. Nothing here needs to change for it: every codec the host chose is one the
+alone, so an Adaptive session against such a host ends
+([H.264 asked for and not drawn](#h264-asked-for-and-not-drawn)). High quality
+needs nothing changed for it: every codec the host chose is one the
 compositor decodes losslessly, and the pipeline keeps its resize, which bitmap
 updates do not have. So a target that needs a lossless picture keeps `egfx` on
 and has its host set to Lossless; `egfx = false` is not the way to it.
+
+### H.264 asked for and not drawn
+
+A session started with H.264, full screen or by region, ends with an error once
+its host shows it will draw none, rather than going on in the pipeline's other
+codecs, which the session was not started for. Two things show it:
+
+- **The confirmed set.** A set that leaves no H.264 (version 8, 8.1 without
+  `AVC420_ENABLED`, or a later one with `AVC_DISABLED`, MS-RDPEGFX 2.2.3.1 to
+  2.2.3.10) ends the session at the confirmation (`proto/gfx.rs::confirms_h264`).
+- **The opening frame.** A Windows host set to Lossless says nothing of it in
+  the confirmation: against both advertises it confirmed 10.7, with
+  `AVC_THINCLIENT` for the whole desktop (flags `0xc2`) and without it by region
+  (`0x82`), as a host at its default does (`windows-ci-build` against
+  `windows-ent-sandbox`, 2026-11-01). What tells them apart is the first frame
+  that draws anything, judged by its codecs once it ends (`no_h264` in
+  `session.rs`). Asked for the whole desktop, a host at its default drew that
+  frame in AVC444v2, so one drawn without H.264 ends the session. By region a
+  host draws H.264 only where something moves like video, so the opening frame
+  says nothing of H.264 itself; a Lossless host drew it with planar alone, and
+  one at its default with ClearCodec and then RemoteFX Progressive, so an
+  opening frame of nothing but planar, uncompressed and alpha rectangles
+  (`Fidelity::as_lossless_host`) ends either kind.
+
+The error says what the host drew and to start the session High quality. A
+browser that said it decodes no H.264 is not started such a session at all
+(`ConnectError::NoH264`); the picker greys both choices for it.
 
 Whether a host draws losslessly is read off the codecs it draws with, by
 `fidelity.rs` in the graphics crate, and shown in the Info card's *Host's

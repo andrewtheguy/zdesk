@@ -551,6 +551,21 @@ pub fn caps_advertise(h264: H264) -> Vec<u8> {
     pdu(CMD_CAPS_ADVERTISE, &w.finish())
 }
 
+/// Whether the capability set a host confirmed leaves it H.264 to draw with:
+/// version 8 has none, 8.1 only with `AVC420_ENABLED`, and every later set unless
+/// it carries `AVC_DISABLED` (10.1's sixteen reserved bytes carry no flags) —
+/// [MS-RDPEGFX] 2.2.3.1 to 2.2.3.10. A host may still draw none under a set that
+/// leaves it H.264: a Windows host whose image quality policy is Lossless
+/// confirms 10.7 with `AVC_THINCLIENT` and draws planar alone.
+pub fn confirms_h264(version: u32, flags: u32) -> bool {
+    match version {
+        CAPVERSION_8 => false,
+        CAPVERSION_81 => flags & CAPS_AVC420_ENABLED != 0,
+        CAPVERSION_101 => true,
+        _ => flags & CAPS_AVC_DISABLED == 0,
+    }
+}
+
 /// The acknowledgement every EndFrame is owed. `decoded` is how many frames this
 /// client has finished in all, which the server uses to notice a client that has
 /// fallen behind.
@@ -911,5 +926,20 @@ mod tests {
             7, 0, 0, 0, // frameId
             3, 0, 0, 0, // totalFramesDecoded
         ]);
+    }
+
+    /// A confirmed set leaves H.264 by its version and flags: none in version 8,
+    /// in 8.1 only flagged on, and from 10 unless flagged off.
+    #[test]
+    fn a_confirmed_set_says_whether_it_leaves_h264() {
+        assert!(!confirms_h264(CAPVERSION_8, CAPS_SMALL_CACHE));
+        assert!(!confirms_h264(CAPVERSION_81, CAPS_SMALL_CACHE));
+        assert!(confirms_h264(CAPVERSION_81, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert!(!confirms_h264(CAPVERSION_10, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED));
+        assert!(confirms_h264(CAPVERSION_10, CAPS_SMALL_CACHE));
+        assert!(confirms_h264(CAPVERSION_101, 0));
+        // What a Lossless Windows host confirmed to each adaptive advertise.
+        assert!(confirms_h264(CAPVERSION_107, 0xc2));
+        assert!(confirms_h264(CAPVERSION_107, 0x82));
     }
 }

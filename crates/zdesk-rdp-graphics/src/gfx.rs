@@ -78,8 +78,9 @@ const CACHE_BUDGET: usize = 64 << 20;
 pub enum Update {
     /// The host confirmed the pipeline: everything it draws from here on comes
     /// inside a frame. Reported before the first paint, which is what a consumer
-    /// that paces frames itself needs to know before it receives one.
-    Confirmed,
+    /// that paces frames itself needs to know before it receives one. With the
+    /// capability set it confirmed, by its version and flags.
+    Confirmed { version: u32, flags: u32 },
     /// The output was laid out again: its size, and where each monitor is in it,
     /// the primary first — one, the whole of it, when the host's definitions do
     /// not make it up ([`gfx::arrangement`]). The framebuffer has already been
@@ -793,7 +794,7 @@ impl Graphics {
                     // A pipeline that starts over has drawn with nothing yet, so
                     // the codecs it draws with again are reported again.
                     self.fidelity = Fidelity::default();
-                    updates.push(Update::Confirmed);
+                    updates.push(Update::Confirmed { version, flags });
                 }
                 Some(Message::ResetGraphics { width, height, monitors }) => {
                     affordable(width, height)?;
@@ -815,7 +816,7 @@ impl Graphics {
             Message::CapsConfirm { version, flags } => {
                 self.tally.command(gfx::CMD_CAPS_CONFIRM);
                 info!("rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}");
-                updates.push(Update::Confirmed);
+                updates.push(Update::Confirmed { version, flags });
             }
             Message::ResetGraphics { width, height, monitors } => {
                 self.tally.command(gfx::CMD_RESET_GRAPHICS);
@@ -1803,7 +1804,7 @@ mod tests {
         w.u32_le(0); // flags
         let confirm = pdu(CMD_CAPS_CONFIRM, &w.finish());
         let updates = receive(&mut graphics, &framebuffer, &[confirm, reset(4, 4)]);
-        assert_eq!(updates, vec![Update::Confirmed, Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] }]);
+        assert_eq!(updates, vec![Update::Confirmed { version: 0x000A_0002, flags: 0 }, Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] }]);
     }
 
     fn confirm() -> Vec<u8> {
@@ -1831,7 +1832,7 @@ mod tests {
         let mut drawn = Fidelity::default();
         drawn.saw(CODEC_UNCOMPRESSED, &[]);
         assert_eq!(updates, vec![
-            Update::Confirmed,
+            Update::Confirmed { version: gfx::CAPVERSION_10, flags: 0x22 },
             Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] },
             Update::Drawn(drawn),
             Update::Passed { wrapped: packet(&pdus), frames: vec![1] },

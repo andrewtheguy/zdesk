@@ -125,6 +125,10 @@ pub enum ConnectError {
     /// The passthrough chosen is one this browser said it cannot take.
     #[error("this browser cannot take {}, passed through", .0.stream())]
     Beyond(Passthrough),
+    /// H.264 was chosen for an RDP host's pipeline, and this browser said it
+    /// decodes none.
+    #[error("this browser decodes no H.264, which the session was started to be drawn with")]
+    NoH264,
 }
 
 /// A [`SessionManager::attach_camera`] or [`SessionManager::attach_mic`] was refused.
@@ -1702,8 +1706,9 @@ impl SessionManager {
     /// `choices` is what was ticked under the target at the picker, kept beside
     /// it for the life of the session. A choice the target's type does not offer
     /// is refused, and so is a passthrough this browser said it cannot take,
-    /// whether chosen or one the target passes in every session: the picker
-    /// starts neither, so either is a client that did not ask it. Each tells the
+    /// whether chosen or one the target passes in every session, and H.264 on an
+    /// RDP host's pipeline chosen by a browser that said it decodes none: the
+    /// picker starts none of them, so each is a client that did not ask it. Each tells the
     /// browser with a [`ServerMsg::Error`] and leaves the slot as it was.
     ///
     /// `display` is the client's screen from [`ClientMsg::Connect`], handed to
@@ -1737,7 +1742,9 @@ impl SessionManager {
             };
             let refused = match target.accepts(choices) {
                 Err(not_offered) => Some(ConnectError::NotOffered(not_offered)),
-                Ok(()) => target.beyond(choices, decoders).map(ConnectError::Beyond),
+                Ok(()) => target.beyond(choices, decoders).map(ConnectError::Beyond).or_else(|| {
+                    (choices.pipeline.h264() && !decoders.rdp_h264).then_some(ConnectError::NoH264)
+                }),
             };
             if let Some(refused) = refused {
                 Self::notify(st.client.as_ref(), ServerMsg::Error { message: refused.to_string() });
@@ -2889,6 +2896,39 @@ mod tests {
         let h264 = Choices { passthrough: Some(Passthrough::AppleH264), ..RESIZE };
         mgr.connect(att.id, "mac", None, h264).await.unwrap();
         assert!(matches!(hook_rx.try_recv(), Ok(RenderPlan { apple_media: false, apple_h264: true, .. })));
+    }
+
+    /// H.264 on the pipeline is started only by a browser that decodes it: one that
+    /// said it does not is told why, and nothing is started.
+    #[tokio::test]
+    async fn h264_on_the_pipeline_is_refused_to_a_browser_that_decodes_none() {
+        let (hook_tx, hook_rx) = std_mpsc::channel();
+        let spawner: EngineSpawner = Box::new(
+            move |_target, _choices, plan, _display, _input_rx, _frame_tx, _audio, _camera, _feedback| {
+                hook_tx.send(plan).unwrap();
+            },
+        );
+        let win = TargetConfig { protocol: Protocol::Rdp, ..fake_target("win") };
+        let mgr = Arc::new(SessionManager::with_spawner(vec![win], spawner));
+        let token = mgr.claim(false, None, "login").unwrap();
+        let mut att = mgr.attach(&token, None, DECLINES).await.unwrap();
+        expect_picker(&mut att.events).await;
+        for pipeline in [Pipeline::AdaptiveDesktop, Pipeline::AdaptiveRegion] {
+            let choices = Choices { pipeline, ..RESIZE };
+            assert!(matches!(mgr.connect(att.id, "win", None, choices).await, Err(ConnectError::NoH264)));
+            match recv(&mut att.events).await {
+                AttachEvent::Msg(ServerMsg::Error { message }) => assert!(message.contains("H.264"), "{message}"),
+                other => panic!("expected an error, got {other:?}"),
+            }
+        }
+        assert!(hook_rx.try_recv().is_err(), "nothing was started");
+
+        let decodes = Decoders { rdp_h264: true, ..DECLINES };
+        let mut att = mgr.attach(&token, None, decodes).await.unwrap();
+        expect_picker(&mut att.events).await;
+        let choices = Choices { pipeline: Pipeline::AdaptiveRegion, ..RESIZE };
+        mgr.connect(att.id, "win", None, choices).await.unwrap();
+        assert!(matches!(hook_rx.try_recv(), Ok(RenderPlan { rdp_graphics: true, rdp_h264: true, .. })));
     }
 
     /// A passed graphics pipeline is never resumed: the host draws against what its

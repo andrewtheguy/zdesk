@@ -514,9 +514,10 @@ pub struct Choices {
     /// Where the second virtual display sits.
     #[serde(default)]
     pub placement: Placement,
-    /// How the host draws the graphics pipeline. Adaptive H.264 reaches only a
-    /// browser that said it decodes it ([`Decoders::rdp_h264`]): a session of any
-    /// other is drawn high quality.
+    /// How the host draws the graphics pipeline. Adaptive H.264 is started only
+    /// by a browser that said it decodes it ([`Decoders::rdp_h264`]), and a
+    /// session whose host turns out to draw none ends with an error rather than
+    /// going on without it ([`crate::rdp_client`]).
     #[serde(default)]
     pub pipeline: Pipeline,
     /// How a Standard Mac's screens are shown: one at a time, its own picture
@@ -757,8 +758,9 @@ pub struct Decoders {
     pub rdp_graphics: bool,
     /// Whether it decodes the H.264 an RDP host may draw with on that pipeline
     /// ([`Pipeline::h264`]): a `VideoDecoder` that takes it and hands its
-    /// pictures into the compositor's memory. Unlike the two above it turns no
-    /// session away: a browser that says no is passed a pipeline without H.264.
+    /// pictures into the compositor's memory. A browser that says no is not
+    /// started a session that chose H.264
+    /// ([`crate::session::ConnectError::NoH264`]).
     pub rdp_h264: bool,
 }
 

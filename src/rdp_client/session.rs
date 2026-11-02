@@ -281,6 +281,35 @@ pub enum Event {
 /// that is slow to.
 const PIPELINE_WAIT: Duration = Duration::from_secs(20);
 
+/// Why a pipeline asked for H.264 `h264` will draw none, judged by `opening`, what
+/// its first frame that drew anything was drawn with: `None` where it may.
+///
+/// No capability or PDU says so: a Windows host whose image quality policy is
+/// Lossless confirms the same set as one left at its default, and then draws
+/// planar and uncompressed rectangles alone, H.264 never. A host asked for the
+/// whole desktop in H.264 draws its opening frame in it, so one that does not
+/// draws the session in something else. One asked for H.264 by region draws it
+/// only where something moves like video, so its opening frame says nothing of
+/// H.264; what tells a Lossless host there is that it opens with planar and
+/// uncompressed rectangles, where a host at its default opens with ClearCodec
+/// and RemoteFX Progressive.
+fn no_h264(h264: gfx_proto::H264, opening: &Fidelity) -> Option<String> {
+    let drawn = opening.names().join(", ");
+    let lossless = opening.as_lossless_host();
+    match h264 {
+        gfx_proto::H264::Refused => None,
+        _ if lossless => Some(format!(
+            "the host drew its opening frame with {drawn} alone, as a host whose image quality policy is \
+             Lossless does, and such a host draws no H.264; start the session High quality"
+        )),
+        gfx_proto::H264::WholeDesktop if !opening.h264() => Some(format!(
+            "the host was asked for H.264 full screen and drew its opening frame with {drawn}; \
+             start the session High quality"
+        )),
+        gfx_proto::H264::ByRegion | gfx_proto::H264::WholeDesktop => None,
+    }
+}
+
 /// How many frames of a passed pipeline the caller is left holding, uncomposed,
 /// before the host is kept from drawing another.
 ///
@@ -993,6 +1022,10 @@ struct Active<'a> {
     /// it by then ([`PIPELINE_WAIT`]); `None` while a pipeline runs, and always
     /// on one that does not pass it.
     pipeline_due: Option<Instant>,
+    /// What a pipeline asked for H.264 has drawn with since its confirmation,
+    /// until the first frame that drew anything ends, which is judged by it
+    /// ([`no_h264`]); `None` once judged, and always on one not asked for H.264.
+    opening: Option<Fidelity>,
     /// Whether a bitmap update dropped under the pipeline has been logged.
     bitmaps_dropped: bool,
     /// Whether [`Event::ResizeReady`] has gone out.
@@ -1299,6 +1332,7 @@ impl<'a> Active<'a> {
             caller_paced: config.paced,
             paced: Paced::default(),
             pipeline_due: config.egfx.then(|| Instant::now() + PIPELINE_WAIT),
+            opening: None,
             bitmaps_dropped: false,
             resize_ready: false,
             pending_resize: None,
@@ -1694,7 +1728,17 @@ impl<'a> Active<'a> {
             match update {
                 // The host confirmed the pipeline, so every paint from here on
                 // arrives inside a marked frame; said before the first of them.
-                gfx::Update::Confirmed => {
+                // A pipeline asked for H.264 that the confirmed set refuses it ends
+                // here, and one it leaves H.264 is judged by its opening frame.
+                gfx::Update::Confirmed { version, flags } => {
+                    let h264 = self.dynamics.h264;
+                    if h264 != gfx_proto::H264::Refused && !gfx_proto::confirms_h264(version, flags) {
+                        bail!(
+                            "the host confirmed graphics pipeline version {version:#010x} with flags {flags:#x}, \
+                             which leaves it no H.264 to draw with; start the session High quality"
+                        );
+                    }
+                    self.opening = (h264 != gfx_proto::H264::Refused).then(Fidelity::default);
                     self.pipeline_due = None;
                     self.send(Event::FramesMarked).await;
                 }
@@ -1714,6 +1758,12 @@ impl<'a> Active<'a> {
                 // go with the first of them, and any after it end in the same
                 // message, with nothing more to compose.
                 gfx::Update::Passed { wrapped, frames } => {
+                    if !frames.is_empty()
+                        && let Some(opening) = self.opening.take_if(|opening| !opening.is_empty())
+                        && let Some(refusal) = no_h264(self.dynamics.h264, &opening)
+                    {
+                        bail!(refusal);
+                    }
                     let now = Instant::now();
                     self.passed.handed(wrapped.len(), frames.first().copied(), now);
                     for &frame in frames.iter().skip(1) {
@@ -1725,7 +1775,12 @@ impl<'a> Active<'a> {
                         self.send(Event::Frame).await;
                     }
                 }
-                gfx::Update::Drawn(fidelity) => self.send(Event::Drawn(fidelity)).await,
+                gfx::Update::Drawn(fidelity) => {
+                    if let Some(opening) = &mut self.opening {
+                        opening.clone_from(&fidelity);
+                    }
+                    self.send(Event::Drawn(fidelity)).await;
+                }
                 // What a pipeline composed here would report, and none is.
                 gfx::Update::Paint(_) | gfx::Update::Frame { .. } => {
                     bail!("the graphics pipeline, passed on, composed a frame here")
@@ -2787,5 +2842,32 @@ mod tests {
         let replies = answer(dvc::Message::Close { channel: 11 }, &mut dynamics).unwrap();
         assert_eq!(replies, vec![dvc::close(11)], "the Close is echoed");
         assert_eq!((dynamics.control, dynamics.caps), (None, None));
+    }
+
+    /// A pipeline asked for H.264 is judged by its opening frame: a Lossless host's
+    /// planar ends either kind, and one asked for the whole desktop ends unless it
+    /// drew it in H.264. Drawn as measured on 2026-11-01.
+    #[test]
+    fn an_opening_frame_without_h264_ends_a_session_that_asked_for_it() {
+        use gfx_proto::H264;
+        let opened = |codecs: &[u16]| {
+            let mut fidelity = Fidelity::default();
+            for &codec in codecs {
+                fidelity.saw(codec, &[]);
+            }
+            fidelity
+        };
+        let lossless = opened(&[gfx_proto::CODEC_PLANAR]);
+        let whole = opened(&[gfx_proto::CODEC_AVC444_V2]);
+        let region = opened(&[gfx_proto::CODEC_CLEARCODEC]);
+        for h264 in [H264::WholeDesktop, H264::ByRegion] {
+            let refusal = no_h264(h264, &lossless).expect("a Lossless host draws no H.264");
+            assert!(refusal.contains("Lossless") && refusal.contains("Planar"), "{refusal}");
+        }
+        assert_eq!(no_h264(H264::WholeDesktop, &whole), None);
+        let refusal = no_h264(H264::WholeDesktop, &region).expect("no H.264 for the whole desktop");
+        assert!(refusal.contains("H.264 full screen") && refusal.contains("ClearCodec"), "{refusal}");
+        assert_eq!(no_h264(H264::ByRegion, &region), None, "by region H.264 waits for video");
+        assert_eq!(no_h264(H264::Refused, &lossless), None);
     }
 }
