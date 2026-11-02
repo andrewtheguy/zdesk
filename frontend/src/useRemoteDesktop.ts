@@ -1514,10 +1514,27 @@ export function useRemoteDesktop(
       await claimAndOpen(force);
     };
 
+    // A claim that succeeded replaced the one before, even with the picture lost
+    // meanwhile: its token is the one the next claim, Reconnect's, reclaims the
+    // session with.
+    const keepToken = (claimed: Awaited<ReturnType<typeof claim>>) => {
+      if (
+        typeof claimed === "string" &&
+        claimed !== "busy" &&
+        claimed !== "unauthorized"
+      ) {
+        sessionStorage.setItem(SESSION_KEY, claimed);
+      }
+    };
+
     // Claim the session slot, then open the WebSocket with the token.
     const claimAndOpen = async (force: boolean) => {
       const claimed = await claim(force);
-      if (disposed || pictureGone) {
+      if (disposed) {
+        return;
+      }
+      keepToken(claimed);
+      if (pictureGone) {
         return;
       }
       if (claimed === "busy") {
@@ -1536,7 +1553,6 @@ export function useRemoteDesktop(
         failed(claimed);
         return;
       }
-      sessionStorage.setItem(SESSION_KEY, claimed);
       open(claimed);
     };
 
