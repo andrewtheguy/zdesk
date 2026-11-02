@@ -741,6 +741,11 @@ impl Painted {
     pub fn new(then: impl FnOnce() + Send + Sync + 'static) -> Self {
         Self { then: Some(Box::new(then)) }
     }
+
+    /// Whether anything is owed.
+    pub fn owed(&self) -> bool {
+        self.then.is_some()
+    }
 }
 
 impl Drop for Painted {
@@ -818,6 +823,10 @@ pub struct VideoUnit {
     pub data: Vec<u8>,
     /// This payload's share of the queue budget — see [`Held`].
     pub held: Held,
+    /// What the unit is owed once the browser has painted it: for an RDP host's
+    /// H.264, the acknowledgement of the frame it ends ([`Painted`]). A unit that
+    /// owes one ends its batch.
+    pub painted: Painted,
 }
 
 impl VideoUnit {
@@ -2647,7 +2656,7 @@ mod tests {
     // says so, which is what keeps a caller from sending one on its own.
     #[test]
     fn an_access_unit_has_no_text_encoding() {
-        let unit = VideoUnit { w: 1, h: 1, strip: None, keyframe: true, data: vec![1], held: Held::default() };
+        let unit = VideoUnit { w: 1, h: 1, strip: None, keyframe: true, data: vec![1], held: Held::default(), painted: Painted::default() };
         assert!((ServerMsg::Video(unit)).text_frame().is_none());
     }
 
@@ -2661,6 +2670,7 @@ mod tests {
             keyframe: true,
             data: vec![0xAA, 0xBB],
             held: Held::default(),
+            painted: Painted::default(),
         };
         let mut out = Vec::new();
         unit.write_record(&mut out);

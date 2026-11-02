@@ -316,7 +316,8 @@ whose bitmap updates are sent as tiles by the gateway.
   the previous engine exits; only the owning browser's reattach to the same
   target resumes an engine, and not one whose picture is drawn against what the
   page holds, an RDP host's pipeline or a Mac's own Standard picture, which it
-  starts over. Preserve the takeover and fresh-session behavior in
+  starts over. An RDP session drawn in *H.264 full screen* is a stream, not the
+  pipeline, and resumes at a keyframe. Preserve the takeover and fresh-session behavior in
   [Session lifecycle](#session-lifecycle).
 - A session's displays may be shown in more than one tab of the browser that
   holds it, and in no other browser: each display rides a display socket of its
@@ -328,7 +329,8 @@ whose bitmap updates are sent as tiles by the gateway.
   In a session that passes an RDP host's pipeline, the second display's
   socket carries no picture: the tab is painted from the picture the session's
   page composes, handed across the browser
-  ([RDP's graphics pipeline](#rdps-graphics-pipeline)).
+  ([RDP's graphics pipeline](#rdps-graphics-pipeline)). Under *H.264 full
+  screen* each display's socket carries its own display's stream.
 - Size, sound, which of the Mac's streams is passed if any, whether a Standard
   Mac's screens are shown one at a time or as Combined Display, and how an RDP
   host draws its pipeline are
@@ -832,10 +834,28 @@ the browser's link, over the whole desktop or only where it moves like video.
 The gateway has no H.264 decoder and is not given one. Adaptive is started only
 for a page that said it decodes H.264, and a session whose host turns out to draw
 no H.264 ends with an error rather than going on in other codecs
-([H.264 asked for and not drawn](rdp-client.md#h264-asked-for-and-not-drawn)):
-the access units ride inside the pipeline's commands, the page decodes them with
-the browser's `VideoDecoder`, and the compositor paints the pictures. It adds no
-wire format, no record and no second stream. See
+([H.264 asked for and not drawn](rdp-client.md#h264-asked-for-and-not-drawn)).
+By region, the access units ride inside the pipeline's commands, the page decodes
+them with the browser's `VideoDecoder`, and the compositor paints the pictures:
+it adds no wire format, no record and no second stream. See
+[RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
+
+Exception, *H.264 full screen*: not passed as the pipeline, but as each
+display's video stream. A host asked for the whole desktop in H.264 draws
+nothing else, one surface for each display, each surface one H.264 stream of
+its whole picture, so the gateway unwraps the pipeline, as it does anyway to read
+the commands' headers, and passes each surface's access units untouched, the
+luma view alone, as `VIDEO` records behind a `videoFormat`, the way wlshare's
+video is passed. The page needs no compositor, no WebAssembly and no copy out of
+the decoder for it, only the desktop's own decoder, which starts again at a
+keyframe after it fails, where a compositor's failure ends the pipeline; on an
+iPhone, whose hardware decoder fails now and then mid-session, that is the
+difference between a picture that comes back and a session that has to be
+reloaded. The trade-off is what the page does not do: a chroma view would be
+shown at half chroma, and anything a host drew beside its H.264 would not be
+shown; neither has been seen from a Windows host
+([The whole desktop, handed on as video](rdp-client.md#the-whole-desktop-handed-on-as-video)).
+See *H.264 full screen, passed as video* under
 [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
 
 #### Camera and microphone
@@ -1735,6 +1755,43 @@ the pipeline.
   `AVC_THINCLIENT`, AVC444v2 in luma views alone. AVC444, and AVC444v2's chroma
   views, are implemented from the specification and tested against pictures
   built from its tables; no host has been seen to send both of their views.
+- **H.264 full screen, passed as video.** A session started with it is not
+  composed: the RDP client reads the pipeline for its H.264
+  (`Graphics::streaming` in `crates/zdesk-rdp-graphics/src/gfx.rs`) and hands
+  on, for each frame, the access units it drew, each with its surface, the
+  luma view alone, Annex B as the host coded it (`Event::Video`), with where
+  each surface is mapped. The engine passes each display the stream of the
+  surface mapped at its corner (`VideoSink::pass_rdp`), checked as wlshare's
+  whole desktop is (`h264::Whole`), as `VIDEO` records behind a
+  `videoFormat`, and the page decodes them with the desktop's own decoder
+  (`frontend/src/videoDecoder.ts`). On *All Displays* the tab's socket carries
+  its display's stream; nothing is handed across the browser. Nothing of the
+  page's compositor is loaded.
+
+  The whole picture is what the masks show. A unit's metablock names the
+  rectangles of its picture to show, and the page paints the whole picture: over
+  788 units of a full-screen video and 196 of a desktop in use from a Windows 11
+  host, a picture painted only through each unit's mask matched the whole
+  picture in every sample of every plane, since the host codes what it does not
+  show as unchanged.
+
+  A stream starts at an IDR and has no other. The host sends one where a
+  surface is created, and nothing asks for one: a repaint is answered with a P
+  picture of the whole surface, which a decoder starting afresh cannot decode.
+  What brings one is a monitor layout the same as the desktop's, which the host
+  answers with a graphics reset and new surfaces (`Input::keyframe`). So a page
+  whose decoder failed, or went quiet, asks for a `refresh` as for any passed
+  stream, and the engine stops passing units until the next IDR and asks the
+  host for one; the same happens on a reattach, which resumes such a session,
+  and when the picker switches displays. The page keeps its last picture
+  meanwhile. A unit whose command does not read, which a compositor would end
+  the pipeline on, starts its stream waiting for an IDR the same way.
+
+  Each frame is acknowledged to the host once the page has painted its last
+  unit: the record that carries it owes the acknowledgement (`VideoUnit::painted`)
+  and ends its batch, so the host is paced as a composed pipeline's is (*The
+  page paces the host* below). A frame that draws nothing on the page's display
+  is acknowledged at once.
 - **The page paces the host.** A frame is acknowledged to the host when the
   page has composed it, not when the gateway read it. Nothing between the host
   and the page can drop a frame — every command is state the next one draws
@@ -1857,7 +1914,9 @@ the pipeline.
   engine ends when the page detaches, and every reattach to an RDP session with
   the pipeline on starts another ([Session lifecycle](#session-lifecycle)), which is a logon to
   the session the host kept. A `refresh` from a page that still holds the pipeline's state is
-  passed to the host as a repaint.
+  passed to the host as a repaint. A session in *H.264 full screen* is the
+  exception: it is a stream of each display, which starts again at a keyframe
+  the host is asked for, so a reattach resumes it.
 - **A host without the pipeline is refused.** With the pipeline on, nothing of
   the picture is decoded or encoded here: the RDP client sizes no framebuffer,
   drops a bitmap update undecoded, before the host confirms the pipeline or

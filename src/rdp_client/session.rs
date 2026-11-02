@@ -200,6 +200,25 @@ pub enum Event {
     /// [`Event::FramesMarked`] is where a pipeline begins, and it is sent again when
     /// a host closes the channel and opens another.
     Graphics { wrapped: Vec<u8>, frame: Option<u32> },
+    /// One frame of a pipeline whose picture is its H.264 alone, a session asked
+    /// for the whole desktop in it ([`gfx_proto::H264::WholeDesktop`]): the access
+    /// units it drew, each with the surface whose stream it is, Annex B as the host
+    /// coded them, the luma view alone. Nothing else of the pipeline is handed on,
+    /// and the caller needs none of it to show them: each surface's units are one
+    /// H.264 stream of the whole surface, decoded in order.
+    ///
+    /// `frame` is owed an acknowledgement once the caller has shown its units, as
+    /// [`Event::Graphics`]' is, said with [`Input::frame_composed`].
+    ///
+    /// A stream starts at an IDR picture and has no other: a caller that loses its
+    /// place in one asks for a new one with [`Input::keyframe`].
+    Video { units: Vec<(u16, Vec<u8>)>, frame: u32 },
+    /// A surface of such a pipeline was mapped to the output at `rect`, or with
+    /// `None`, deleted: whatever stream it had is over.
+    Surface { surface: u16, rect: Option<Rect> },
+    /// A surface's stream lost a unit, one whose command did not read: its units
+    /// after it are drawn against a picture the caller does not have.
+    UnitLost { surface: u16 },
     /// The server confirmed the graphics pipeline, so every [`Event::Paint`] from
     /// here on arrives inside a frame that ends in an [`Event::Frame`]. Sent before
     /// the first such paint, so a consumer pacing frames itself stops guessing
@@ -1031,6 +1050,15 @@ struct Active<'a> {
     /// recent, since a resize supersedes every earlier one rather than queueing
     /// behind it.
     pending_resize: Option<MonitorRow>,
+    /// The monitor layout last sent, or the one the desktop was last laid out as,
+    /// which a host asked for a keyframe is sent again ([`Self::keyframe`]).
+    layout: Option<MonitorRow>,
+    /// The scale the session opened at ([`Connect::scale_percent`]), which the
+    /// desktop has until a layout says otherwise.
+    opening_scale: u32,
+    /// The access units of the frame a streamed pipeline is drawing, until its end
+    /// ([`Event::Video`]).
+    streamed: Vec<(u16, Vec<u8>)>,
     /// Whether the server has sent Monitor Ready, which is what opens the clipboard:
     /// nothing may be said on that channel before this end's capabilities answer it.
     clip_ready: bool,
@@ -1324,7 +1352,11 @@ impl<'a> Active<'a> {
                 audio: wants_audio,
                 ..Dynamics::default()
             },
-            graphics: config.egfx.then(Graphics::passing),
+            // The whole desktop in H.264 is that picture alone, handed on unit by
+            // unit; every other pipeline is handed on as the host sent it.
+            graphics: config.egfx.then(|| {
+                if config.h264 == gfx_proto::H264::WholeDesktop { Graphics::streaming() } else { Graphics::passing() }
+            }),
             passed: PassedFrames::default(),
             caller_paced: config.paced,
             paced: Paced::default(),
@@ -1332,6 +1364,9 @@ impl<'a> Active<'a> {
             bitmaps_dropped: false,
             resize_ready: false,
             pending_resize: None,
+            layout: None,
+            opening_scale: config.scale_percent,
+            streamed: Vec::new(),
             clip_ready: false,
             pending_formats: None,
             deferred,
@@ -1592,7 +1627,18 @@ impl<'a> Active<'a> {
     async fn on_dynamic(&mut self, payload: &[u8]) -> Result<()> {
         let (replies, updates) = {
             let Self {
-                chunks, incoming, dynamics, graphics, passed, pipeline_due, sound, capture, recorder, framebuffer, ..
+                chunks,
+                incoming,
+                dynamics,
+                graphics,
+                passed,
+                pipeline_due,
+                sound,
+                capture,
+                recorder,
+                framebuffer,
+                streamed,
+                ..
             } = self;
             let pdu = match chunks.push(payload)? {
                 Chunk::Whole(pdu) => pdu,
@@ -1629,6 +1675,7 @@ impl<'a> Active<'a> {
                     // for a channel that is no longer there to be told. The
                     // caller's distance is the caller's, and is not said again.
                     *passed = PassedFrames { distance: passed.distance, ..PassedFrames::default() };
+                    streamed.clear();
                     // And it was the only picture, so another is waited for as
                     // the first was.
                     *pipeline_due = Some(Instant::now() + PIPELINE_WAIT);
@@ -1772,6 +1819,20 @@ impl<'a> Active<'a> {
                         self.send(Event::Frame).await;
                     }
                 }
+                // A streamed pipeline's frame, handed on whole at its end, with
+                // the units it drew; a frame that drew none is owed its
+                // acknowledgement all the same, through the caller.
+                gfx::Update::Unit { surface, unit } => self.streamed.push((surface, unit)),
+                gfx::Update::Ended { frame } => {
+                    let units = std::mem::take(&mut self.streamed);
+                    let bytes = units.iter().map(|(_, unit)| unit.len()).sum();
+                    self.passed.handed(bytes, Some(frame), Instant::now());
+                    self.send(Event::Video { units, frame }).await;
+                    self.send(Event::Frame).await;
+                }
+                gfx::Update::Mapped { surface, rect } => self.send(Event::Surface { surface, rect: Some(rect) }).await,
+                gfx::Update::Deleted { surface } => self.send(Event::Surface { surface, rect: None }).await,
+                gfx::Update::Lost { surface } => self.send(Event::UnitLost { surface }).await,
                 gfx::Update::Drawn(fidelity) => self.send(Event::Drawn(fidelity)).await,
                 // Judged as its frame ends, by that frame's draws alone.
                 gfx::Update::Opened(opening) => {
@@ -2074,6 +2135,11 @@ impl<'a> Active<'a> {
         self.damage.clear();
         let monitors =
             if monitors.is_empty() { vec![Placed { x: 0, y: 0, w: width, h: height }] } else { monitors };
+        // The layout the desktop has, where none has been sent.
+        if self.layout.is_none() {
+            let sizes = monitors.iter().map(|monitor| (monitor.w, monitor.h)).collect();
+            self.layout = Some((sizes, vec![self.opening_scale]));
+        }
         self.send(Event::Resize { width, height, monitors }).await;
     }
 
@@ -2114,6 +2180,34 @@ impl<'a> Active<'a> {
         let sizes = &sizes[..monitors];
         debug!("rdp: sending a monitor layout of {sizes:?} at {scales:?}%");
         let layout = display::monitor_layout(sizes, self.dynamics.placement, &scales);
+        self.layout = Some((sizes.to_vec(), scales));
+        self.write_channel(dynamic, &dvc::data(control, &layout)?).await
+    }
+
+    /// Ask the host for a keyframe of every surface's H.264, for a caller that
+    /// lost its place in a stream ([`Input::keyframe`]).
+    ///
+    /// No PDU asks for one. A Refresh Rect or a Suppress Output is answered with a
+    /// P picture of the whole surface, which a decoder starting afresh cannot
+    /// decode, and a capability advertise sent again is answered with an IDR and
+    /// then the end of the session (ERRINFO_GRAPHICSSUBSYSTEMFAILED). A monitor
+    /// layout the same as the desktop's is answered with a graphics reset and new
+    /// surfaces, whose streams start at an IDR: measured against a Windows 11 host,
+    /// its IDR came 90 ms after the layout and the picture whole 50 ms later, with
+    /// nothing on the desktop moved. So the layout the desktop has is sent again:
+    /// the last one sent, or the one the host laid the desktop out as, at the scale
+    /// the session opened at, which no layout has changed since.
+    async fn keyframe(&mut self) -> Result<()> {
+        let (Some(control), Some(dynamic), true) = (self.dynamics.control, self.dynamic, self.resize_ready) else {
+            debug!("rdp: a keyframe is wanted and Display Control is not open to ask for one");
+            return Ok(());
+        };
+        let Some((sizes, scales)) = self.layout.clone() else {
+            debug!("rdp: a keyframe is wanted before the desktop has a layout");
+            return Ok(());
+        };
+        info!("rdp: asking the host for a keyframe with its layout, {sizes:?} at {scales:?}%");
+        let layout = display::monitor_layout(&sizes, self.dynamics.placement, &scales);
         self.write_channel(dynamic, &dvc::data(control, &layout)?).await
     }
 
@@ -2137,6 +2231,7 @@ impl<'a> Active<'a> {
                     match other {
                         Command::Shutdown => return Ok(true),
                         Command::Refresh => self.refresh().await?,
+                        Command::Keyframe => self.keyframe().await?,
                         Command::Resize { sizes, scales } => {
                             self.pending_resize = Some((sizes, scales));
                             self.send_layout().await?;

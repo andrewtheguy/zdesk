@@ -2544,6 +2544,7 @@ mod tests {
                     keyframe: seed == 1,
                     data: vec![seed; 10_000],
                     held: Held::take(&budget, 10_000, 100_000).await,
+                    painted: crate::protocol::Painted::default(),
                 })
             }
         };

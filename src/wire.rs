@@ -78,7 +78,16 @@ impl Wire {
                 // variant added later without a `text_frame` arm should cost that
                 // one message, not the whole attachment.
                 None => match msg {
-                    ServerMsg::Video(unit) => self.push(Record::Video(unit), &mut frames)?,
+                    // A unit an RDP host's frame ends with ends its batch, as the
+                    // frame's run does on a passed pipeline: its acknowledgement is
+                    // the batch's.
+                    ServerMsg::Video(unit) => {
+                        let ends_frame = unit.painted.owed();
+                        self.push(Record::Video(unit), &mut frames)?;
+                        if ends_frame {
+                            self.flush(&mut frames)?;
+                        }
+                    }
                     ServerMsg::Standard(unit) => self.push(Record::Standard(unit), &mut frames)?,
                     ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
                     ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
@@ -170,6 +179,7 @@ impl Wire {
                 Record::Video(unit) => {
                     self.totals.video(unit.record_len());
                     unit.write_record(&mut frame);
+                    painted.push(unit.painted);
                     unit.held
                 }
                 Record::Graphics(unit) => {
@@ -354,7 +364,7 @@ mod tests {
         if let Some(first) = data.first_mut() {
             *first = seed;
         }
-        ServerMsg::Video(VideoUnit { w: 1600, h: 1000, strip: None, keyframe, data, held: Held::default() })
+        ServerMsg::Video(VideoUnit { w: 1600, h: 1000, strip: None, keyframe, data, held: Held::default(), painted: Default::default() })
     }
 
     fn resize() -> ServerMsg {

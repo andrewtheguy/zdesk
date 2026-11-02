@@ -677,7 +677,7 @@ link it gives up frames and keeps its quantizers, unless the client takes the
 network detection and offers UDP, as an Adaptive session does
 ([The connection sequence](#the-connection-sequence)).
 
-The access units ride in the commands handed on, and the caller composes a run
+By region, the access units ride in the commands handed on, and the caller composes a run
 that has any in three steps (`avc.rs`): `avc::scan` finds the units and the
 surfaces whose streams have ended, the caller decodes each unit through its
 surface's decoder and supplies the picture (`Compositor::supply`), and the run is
@@ -695,6 +695,54 @@ host's session passes with it, test-side (`Page`). It is right only for a
 pipeline it has followed from
 its first command, which is why `Event::FramesMarked` is where a caller starts
 one.
+
+### The whole desktop, handed on as video
+
+With `H264::WholeDesktop` the pipeline is not handed on. A Windows host asked
+for the whole desktop in H.264 draws nothing else: one surface for each monitor
+of the layout, mapped where the monitor is, each surface one H.264 stream of its
+whole picture, every command a WireToSurface1 in AVC444v2 carrying its luma
+view alone. Measured against a Windows 11 host, at 1280×800 on one monitor and
+on two, over a desktop in use and over a full-screen video, the commands were
+CapsConfirm, ResetGraphics, CreateSurface, MapSurfaceToOutput, StartFrame,
+WireToSurface1 and EndFrame, and nothing else. So `Graphics::streaming` reads
+each message here, out of its bulk compression, and hands on what a video
+stream needs (`Event::Video`): each frame's access units, each with its surface,
+the luma view's bitstream as the host coded it, at the frame's end; where each
+surface is mapped, and when one is deleted (`Event::Surface`). The picture is
+coded in whole macroblocks and not cropped: a 1280×900 surface is a 1280×912
+picture, whose last rows the page clips (`h264::Whole::macroblocks`). A chroma view is
+dropped, so a host that sent one would be shown at half chroma, as AVC420 is,
+and anything drawn with another codec or command is not shown; each is said once
+in the log. A command whose H.264 does not read is `Event::UnitLost`, the
+surface's stream having lost its place, and not the end of the session. Each
+frame is acknowledged as one handed on is, when the caller says it has shown it
+(`Input::frame_composed`), with `PASSED_AHEAD` as above.
+
+A unit's metablock still names the rectangles of the picture to show. What is
+outside them is what the picture already held: over 788 units of a full-screen
+video and 196 of a desktop in use, a picture painted only through each unit's
+mask matched the whole decoded picture in every sample of all three planes,
+decoded with FFmpeg. So the caller shows each picture whole.
+
+A stream starts at an IDR picture, and the host sends one only where it creates
+a surface: none in 40 s of a desktop in use. Asking for one is
+`Input::keyframe`. Measured against the same host:
+
+- A Refresh Rect, or Suppress Output off and on, is answered with a P picture of
+  the whole surface, about 108 KB at 1280×800 after a 5.5 KB one: no IDR, so
+  nothing a decoder starting afresh can begin at.
+- The capability advertise sent again on the channel is answered with a
+  confirmation, a new surface and an IDR of 141 KB, and then the end of the
+  session, ERRINFO_GRAPHICSSUBSYSTEMFAILED (`0x0000112F`).
+- A monitor layout on Display Control the same as the desktop's is answered with
+  a ResetGraphics of the same size, the surfaces deleted and created again, and
+  an IDR of each, 90 ms after the layout, and the picture whole in a P picture
+  50 ms after that, every time, with nothing on the desktop moved.
+
+So `Input::keyframe` sends the layout the desktop has: the last one sent, or,
+where none has been, the monitors the host laid out at the scale the session
+opened at.
 
 ### Bitmap updates
 

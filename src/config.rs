@@ -283,6 +283,12 @@ pub struct RenderPlan {
     /// to a browser that decodes it ([`Decoders::rdp_h264`]). Never set without
     /// [`Self::rdp_graphics`].
     pub rdp_h264: bool,
+    /// That H.264 is the whole desktop ([`Pipeline::AdaptiveDesktop`]), which is
+    /// passed as a video stream, one surface's units at a time, and not as the
+    /// pipeline: the host draws nothing else, so the page composes nothing and
+    /// decodes the stream as it does wlshare's, starting again at a keyframe the
+    /// host is asked for. Never set without [`Self::rdp_h264`].
+    pub rdp_video: bool,
 }
 
 /// A remote's own stream, passed to the browser as it came instead of decoded
@@ -801,7 +807,8 @@ impl RenderPlan {
     /// Whether a browser that comes back can be given this plan's running session
     /// ([`Passthrough::resumes`]).
     pub fn resumes(&self) -> bool {
-        self.passthrough().is_none_or(Passthrough::resumes)
+        // The whole desktop in H.264 is a stream that starts again at a keyframe.
+        self.rdp_video || self.passthrough().is_none_or(Passthrough::resumes)
     }
 
     /// The stream this plan passes untouched, if any.
@@ -841,6 +848,9 @@ impl RenderPlan {
         }
         if self.wlshare {
             return "H.264 video".to_owned();
+        }
+        if self.rdp_video {
+            return "the host's H.264 of the whole desktop, passed through".to_owned();
         }
         if let Some(passthrough) = self.passthrough() {
             let h264 = if self.rdp_h264 { " with H.264" } else { "" };
@@ -1141,6 +1151,7 @@ impl TargetConfig {
         let rdp_graphics = passthrough == Some(Passthrough::RdpGraphics);
         let apple_combined = self.offers().standard_view && choices.standard_view == StandardView::Combined;
         let rdp_h264 = rdp_graphics && choices.pipeline.h264() && decoders.rdp_h264;
+        let rdp_video = rdp_h264 && choices.pipeline == Pipeline::AdaptiveDesktop;
         RenderPlan {
             wlshare,
             wlshare_tiles,
@@ -1151,6 +1162,7 @@ impl TargetConfig {
             apple_combined,
             rdp_graphics,
             rdp_h264,
+            rdp_video,
         }
     }
 
@@ -3582,6 +3594,7 @@ mod tests {
                 apple_standard: None, apple_combined: false,
                 rdp_graphics: false,
                 rdp_h264: false,
+                rdp_video: false,
                 wlshare: false, wlshare_tiles: None,
             }
         );
@@ -4634,7 +4647,18 @@ vnc_password_ref = \"x\"")).unwrap();
             assert_eq!(win.accepts(adaptive), Ok(()));
             let plan = win.render_plan(adaptive, decodes);
             assert!(plan.rdp_graphics && plan.rdp_h264, "{pipeline:?}");
-            assert_eq!(plan.describe(), "the host's graphics pipeline with H.264, passed through");
+            // Full screen is the whole desktop's H.264 as a stream, which resumes.
+            let whole = pipeline == Pipeline::AdaptiveDesktop;
+            assert_eq!(plan.rdp_video, whole, "{pipeline:?}");
+            assert_eq!(plan.resumes(), whole, "{pipeline:?}");
+            assert_eq!(
+                plan.describe(),
+                if whole {
+                    "the host's H.264 of the whole desktop, passed through"
+                } else {
+                    "the host's graphics pipeline with H.264, passed through"
+                }
+            );
             let cannot = Decoders { rdp_h264: false, ..decodes };
             let without = win.render_plan(adaptive, cannot);
             assert!(without.rdp_graphics && !without.rdp_h264, "a browser that cannot is passed a pipeline without it");
@@ -4820,7 +4844,7 @@ vnc_password_ref = \"x\"")).unwrap();
             let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
             target.accepts(tiles).expect("the tiles are offered");
             let plan = target.render_plan(tiles, Decoders::ALL);
-            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
+            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
             assert_eq!(plan.describe(), describe);
             assert_eq!(plan.passthrough(), Some(passthrough));
         }

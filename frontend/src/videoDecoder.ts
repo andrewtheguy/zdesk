@@ -1,8 +1,9 @@
 // A WebCodecs `VideoDecoder` for the desktop's one stream.
 //
 // This decodes the whole desktop as one inter-frame stream, passed through as the
-// remote coded it: wlshare's H.264, or the HEVC or H.264 a High Performance Mac
-// made (see `VideoUnit` in src/protocol.rs). The decoder is the browser's
+// remote coded it: wlshare's H.264, the HEVC or H.264 a High Performance Mac
+// made, or an RDP host's H.264 full screen, a display's surface (see `VideoUnit`
+// in src/protocol.rs). The decoder is the browser's
 // `VideoDecoder`, or for a stream the page decodes itself, a decoder of the same
 // shape over a WebAssembly module (softwareDecoder.ts): a Mac's HEVC where the
 // browser's own decoder does not take it. H.264 is always the browser's own

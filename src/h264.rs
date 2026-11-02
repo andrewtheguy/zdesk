@@ -52,6 +52,12 @@ pub fn nal_units(unit: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
+/// Whether an Annex B access unit holds an IDR picture: where a decoder can
+/// start, with the parameter sets the host puts ahead of every one.
+pub fn idr(unit: &[u8]) -> bool {
+    nal_units(unit).iter().any(|nal| nal[0] & 0x1f == 5)
+}
+
 /// Check a `w`×`h` region's frame of wlshare's H.264: Annex B with at least
 /// one NAL unit, within the ceiling every passed picture is held to, and
 /// where it carries a sequence parameter set, one of a picture the region's
@@ -61,6 +67,33 @@ pub fn nal_units(unit: &[u8]) -> Vec<&[u8]> {
 /// unit, which is what a decoder starting there needs; one without is
 /// refused, since the browser could neither start at it nor be told not to.
 pub fn pass(w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Region> {
+    check(w, h, unit, Fit::Cropped)
+}
+
+/// How a stream's coded picture may differ from the rectangle it shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Fit {
+    /// Cropped to it, as wlshare crops its own: a pixel wider or taller at most,
+    /// since a 4:2:0 picture is cropped in pairs.
+    #[default]
+    Cropped,
+    /// Whole macroblocks, uncropped, as a Windows host codes a surface: up to
+    /// fifteen pixels wider or taller, which the page clips.
+    Macroblocks,
+}
+
+impl Fit {
+    /// Whether a side the parameter set states fits a rectangle's side.
+    fn fits(self, side: u16, coded: u16) -> bool {
+        let most = match self {
+            Self::Cropped => side.saturating_add(1),
+            Self::Macroblocks => side.saturating_add(15) / 16 * 16,
+        };
+        (side..=most).contains(&coded)
+    }
+}
+
+fn check(w: u16, h: u16, unit: &[u8], fit: Fit) -> anyhow::Result<Region> {
     let nals = nal_units(unit);
     anyhow::ensure!(!nals.is_empty(), "the server's H.264 frame is not an Annex B access unit");
     check_picture((w, h))?;
@@ -73,7 +106,7 @@ pub fn pass(w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Region> {
                 let params = parse_h264_sps(nal).ok_or_else(|| anyhow::anyhow!("the server's H.264 frame carries a sequence parameter set this gateway cannot read"))?;
                 let (sw, sh) = params.size;
                 anyhow::ensure!(
-                    (w..=w.saturating_add(1)).contains(&sw) && (h..=h.saturating_add(1)).contains(&sh),
+                    fit.fits(w, sw) && fit.fits(h, sh),
                     "the server's H.264 frame is of a {sw}x{sh} picture, not the {w}x{h} region's"
                 );
                 decode = Some(params.decode);
@@ -97,9 +130,17 @@ pub fn pass(w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Region> {
 #[derive(Debug, Default)]
 pub struct Whole {
     stream: Option<(String, (u16, u16))>,
+    fit: Fit,
 }
 
 impl Whole {
+    /// The whole desktop's stream of an RDP host's surface, coded in whole
+    /// macroblocks with no cropping: a Windows host codes a 1280×900 surface as a
+    /// 1280×912 picture, whose last rows the page clips.
+    pub fn macroblocks() -> Self {
+        Self { stream: None, fit: Fit::Macroblocks }
+    }
+
     /// Check a `w`×`h` frame of wlshare's video, as [`pass`] checks a region's,
     /// and name the decoder it needs: its own sequence parameter set's, or the
     /// last one's. The stream starts at an IDR with its parameter sets, and so
@@ -107,7 +148,7 @@ impl Whole {
     /// than the one its parameter set was of, is refused: no decoder the browser
     /// could be told of would draw it.
     pub fn pass(&mut self, w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Passed> {
-        let frame = pass(w, h, unit)?;
+        let frame = check(w, h, unit, self.fit)?;
         if let Some(decode) = frame.decode {
             let stream = (decode, (w, h));
             // A decoder starts only at an IDR: parameter sets anywhere else may
@@ -247,6 +288,17 @@ mod tests {
         baseline.pass(320, 192, BASELINE_KEYFRAME).unwrap();
         assert!(baseline.pass(320, 192, &p_with_params).is_err(), "another stream's parameter sets");
         assert_eq!(baseline.pass(320, 192, BASELINE_FRAME).unwrap().decode, "avc1.42C00C", "the stream it had is kept");
+    }
+
+    /// An RDP host's surface is coded in whole macroblocks, uncropped: its stream
+    /// is held to that and no further.
+    #[test]
+    fn an_rdp_hosts_stream_may_be_coded_in_whole_macroblocks() {
+        let mut whole = Whole::macroblocks();
+        assert!(whole.pass(320, 180, KEYFRAME).is_ok(), "192 rows for 180");
+        assert!(whole.pass(320, 180, FRAME).is_ok());
+        assert!(Whole::macroblocks().pass(320, 176, KEYFRAME).is_err(), "a macroblock's rows more");
+        assert!(Whole::default().pass(320, 180, KEYFRAME).is_err(), "wlshare crops its own");
     }
 
     #[test]

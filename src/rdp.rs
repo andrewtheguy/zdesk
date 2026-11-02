@@ -23,6 +23,7 @@
 //!
 //! See docs/architecture.md for the design.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use log::{debug, info, warn};
@@ -31,7 +32,7 @@ use tokio::time::{Duration, Instant};
 
 use crate::audio::{AudioBridge, PcmFormat};
 use crate::config::{Choices, Pipeline, Placement, RenderPlan, Sizing, TargetConfig};
-use crate::encode::{Oversize, VideoSink};
+use crate::encode::{Oversize, RdpPassed, VideoSink};
 use crate::engine::{self, clamp_u16};
 use crate::keymap;
 use crate::protocol::{
@@ -260,7 +261,7 @@ async fn session(
     }
     // A passed pipeline is composed whole in the browser: which part of it the
     // canvas shows goes with every size it is told.
-    if plan.rdp_graphics && sink.msg(view.graphics_view()).await.is_err() {
+    if plan.rdp_graphics && !plan.rdp_video && sink.msg(view.graphics_view()).await.is_err() {
         return; // browser already gone
     }
     // No RDP server ships for macOS, so a Mac never answers here.
@@ -282,6 +283,7 @@ async fn session(
             restates: config.egfx(),
             ceiling: config.egfx(),
             pass_graphics: plan.rdp_graphics,
+            video: plan.rdp_video,
             monitors: narrow(asked),
         },
         applied,
@@ -466,6 +468,10 @@ struct Flags {
     /// Whether the host's graphics pipeline is on, and so passed to the browser
     /// ([`RenderPlan::rdp_graphics`]): its frames are never in the framebuffer.
     pass_graphics: bool,
+    /// Whether that pipeline's picture is the whole desktop in H.264, passed as a
+    /// video stream of each surface ([`RenderPlan::rdp_video`]) rather than as the
+    /// pipeline.
+    video: bool,
     /// How many monitors every layout asks for: the target's `virtual_displays`.
     monitors: u16,
 }
@@ -1132,25 +1138,88 @@ impl Tab {
         }
     }
 
-    /// The desktop was laid out again as `view`: the tab's size, and which part of
-    /// the browser's picture the column now is.
-    async fn resized(&mut self, view: View, density: Density) {
+    /// The desktop was laid out again as `view`: the tab's size, and, where the
+    /// session's page `composes` the pipeline, which part of its picture the
+    /// column now is.
+    async fn resized(&mut self, view: View, density: Density, composes: bool) {
         let (w, h) = view.column_size(self.column());
         self.msg(ServerMsg::Resize { w, h, scale: density.scale() }).await;
-        self.msg(graphics_view(view.column_rect(self.column()))).await;
+        if composes {
+            self.msg(graphics_view(view.column_rect(self.column()))).await;
+        }
     }
 
     /// Everything a socket holding nothing is owed: the size, the remote's system,
-    /// the pointer, and which part of the browser's own picture the column is —
-    /// the tab is painted from the picture the session's page composes
-    /// ([`ServerMsg::GraphicsView`]).
-    async fn repaint(&mut self, view: View, density: Density, pointer: ServerMsg) {
+    /// the pointer, and, where the session's page `composes` the pipeline, which
+    /// part of its picture the column is — the tab is painted from that picture
+    /// ([`ServerMsg::GraphicsView`]). Otherwise the tab is passed its column's
+    /// own stream ([`Self::pass`]), from its next keyframe.
+    async fn repaint(&mut self, view: View, density: Density, pointer: ServerMsg, composes: bool) {
         let (w, h) = view.column_size(self.column());
         self.msg(ServerMsg::Resize { w, h, scale: density.scale() }).await;
         self.msg(ServerMsg::RemoteOs { macos: false }).await;
         self.msg(pointer).await;
-        self.msg(graphics_view(view.column_rect(self.column()))).await;
+        if composes {
+            self.msg(graphics_view(view.column_rect(self.column()))).await;
+        } else {
+            self.sink.restart_pass();
+        }
     }
+
+    /// One unit of its column's stream, where the session passes the whole
+    /// desktop's H.264 as video: whether it waits for a keyframe.
+    async fn pass(&mut self, w: u16, h: u16, unit: Vec<u8>) -> bool {
+        if self.failed {
+            return false;
+        }
+        match self.sink.pass_rdp(w, h, unit, Painted::default()).await {
+            Ok(passed) => waits(passed, "its tab"),
+            Err(e) => {
+                self.note(Err(e));
+                false
+            }
+        }
+    }
+}
+
+/// How long a keyframe asked of the host is waited for before a stream still
+/// waiting asks again. Measured against a Windows 11 host, the IDR came 90 ms
+/// after the layout that asks for one; this is for a layout that went nowhere,
+/// sent before Display Control opened.
+const KEYFRAME_AGAIN: Duration = Duration::from_secs(2);
+
+/// The surface whose stream a column is, of a pipeline passed as video: the one
+/// mapped at the column's top left. A Windows host draws each monitor of a layout
+/// in a surface of its own, mapped where the monitor is.
+fn surface_at(surfaces: &BTreeMap<u16, client::Rect>, (x, y): (u16, u16)) -> Option<u16> {
+    surfaces
+        .iter()
+        .find(|(_, rect)| rect.x == u32::from(x) && rect.y == u32::from(y))
+        .map(|(&surface, _)| surface)
+}
+
+/// Whether a unit passed to `whom` left its stream waiting for a keyframe,
+/// saying why where the check refused it.
+fn waits(passed: RdpPassed, whom: &str) -> bool {
+    match passed {
+        RdpPassed::Queued => false,
+        RdpPassed::Waiting => true,
+        RdpPassed::Refused(e) => {
+            warn!("rdp: a unit of the host's H.264 for {whom} was refused, waiting for a keyframe: {e:#}");
+            true
+        }
+    }
+}
+
+/// Ask the host for a keyframe ([`client::Input::keyframe`]), unless one was
+/// asked for within [`KEYFRAME_AGAIN`] and `now` is not set: a stream that waits
+/// for it is not to ask again for every unit.
+fn ask_keyframe(input: &Input, asked: &mut Option<Instant>, now: bool) {
+    if !now && asked.is_some_and(|at| at.elapsed() < KEYFRAME_AGAIN) {
+        return;
+    }
+    *asked = Some(Instant::now());
+    input.keyframe();
 }
 
 /// A decoded pointer as the shape the browser draws, or `None` for one it should
@@ -1421,7 +1490,10 @@ async fn active_loop(
     mut input_rx: mpsc::UnboundedReceiver<ClientMsg>,
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    let Flags { resize, kept, restates, ceiling, pass_graphics, monitors } = flags;
+    let Flags { resize, kept, restates, ceiling, pass_graphics, video, monitors } = flags;
+    // Whether the browser composes the pipeline: passed whole, rather than as the
+    // video stream of its H.264.
+    let composes = pass_graphics && !video;
     let input = session.input();
     let framebuffer = session.framebuffer();
 
@@ -1452,6 +1524,11 @@ async fn active_loop(
     // The display shown in a tab of its own, while *All Displays* is chosen and its
     // socket is attached. One at most: a session has two columns at most.
     let mut tab: Option<Tab> = None;
+    // Where each surface of a pipeline passed as video is on the output: a
+    // column's stream is the surface mapped at its corner ([`surface_at`]).
+    let mut surfaces: BTreeMap<u16, client::Rect> = BTreeMap::new();
+    // When a keyframe was last asked of the host, for a stream passed as video.
+    let mut keyframe_asked: Option<Instant> = None;
     // The tab's window as it last reported it, in points, for as long as *All
     // Displays* is chosen: what a change of its screen's density re-expresses.
     // The layout's own pixels will not do, being already held under the ceiling:
@@ -1611,7 +1688,7 @@ async fn active_loop(
                         host_picture = None;
                         // This is where a pipeline begins, and the browser
                         // composes it from here.
-                        if pass_graphics {
+                        if composes {
                             sink.graphics_start().await?;
                             // A tab is painted from the browser's picture, which
                             // starts over here, and is told again which part.
@@ -1630,6 +1707,59 @@ async fn active_loop(
                             Painted::new(move || input.frame_composed(frame))
                         });
                         sink.pass_graphics(wrapped, frame).await?;
+                    }
+                    // A frame of the whole desktop in H.264: each unit to the
+                    // display whose column its surface is, and the frame's
+                    // acknowledgement with the last the session's page shows,
+                    // said when the page has painted it, or at once where the
+                    // page shows none.
+                    Event::Video { units, frame } => {
+                        let mut ack = Some({
+                            let input = input.clone();
+                            Painted::new(move || input.frame_composed(frame))
+                        });
+                        let shown = surface_at(&surfaces, view.column_origin(view.active));
+                        let tabbed = tab.as_ref().and_then(|tab| surface_at(&surfaces, view.column_origin(tab.column())));
+                        let last = units.iter().rposition(|(surface, _)| Some(*surface) == shown);
+                        let mut wanted = false;
+                        for (at, (surface, unit)) in units.into_iter().enumerate() {
+                            let Some(rect) = surfaces.get(&surface) else { continue };
+                            let (w, h) = (narrow(rect.width), narrow(rect.height));
+                            if Some(surface) == shown {
+                                let painted = if Some(at) == last { ack.take().unwrap_or_default() } else { Painted::default() };
+                                wanted |= waits(sink.pass_rdp(w, h, unit, painted).await?, "the session's page");
+                            } else if Some(surface) == tabbed
+                                && let Some(tab) = tab.as_mut()
+                            {
+                                wanted |= tab.pass(w, h, unit).await;
+                            }
+                        }
+                        drop(ack);
+                        if wanted {
+                            ask_keyframe(input, &mut keyframe_asked, false);
+                        }
+                    }
+                    Event::Surface { surface, rect } => match rect {
+                        Some(rect) => {
+                            surfaces.insert(surface, rect);
+                        }
+                        None => {
+                            surfaces.remove(&surface);
+                        }
+                    },
+                    // The units after a lost one are drawn against a picture
+                    // nobody has: the display showing it starts again at a
+                    // keyframe.
+                    Event::UnitLost { surface } => {
+                        if surface_at(&surfaces, view.column_origin(view.active)) == Some(surface) {
+                            sink.restart_pass();
+                        }
+                        if let Some(tab) = tab.as_mut()
+                            && surface_at(&surfaces, view.column_origin(tab.column())) == Some(surface)
+                        {
+                            tab.sink.restart_pass();
+                        }
+                        ask_keyframe(input, &mut keyframe_asked, true);
                     }
                     Event::Drawn(fidelity) => {
                         let msg = ServerMsg::HostPicture { lossless: fidelity.lossless(), codecs: fidelity.names() };
@@ -1707,7 +1837,7 @@ async fn active_loop(
                             last_pos.1.min(desktop.1.saturating_sub(1)),
                         );
                         sink.msg(ServerMsg::Resize { w, h, scale: applied.of(view.active).scale() }).await?;
-                        if pass_graphics {
+                        if composes {
                             sink.msg(view.graphics_view()).await?;
                         }
                         // A tab whose column the host took away goes with it.
@@ -1715,7 +1845,7 @@ async fn active_loop(
                             tab = None;
                         }
                         if let Some(tab) = &mut tab {
-                            tab.resized(view, applied.of(tab.column())).await;
+                            tab.resized(view, applied.of(tab.column()), composes).await;
                         }
                         if let Some(msg) = view.displays(applied) {
                             sink.msg(msg).await?;
@@ -1746,7 +1876,12 @@ async fn active_loop(
                         // is not obliged to repaint, so ask — through the queue,
                         // which the RDP client drains only once the resize has
                         // finished and the connection can carry client PDUs again.
-                        input.refresh();
+                        // The whole desktop in H.264 starts each new surface at
+                        // an IDR and paints it whole unasked, where a repaint
+                        // would only add a picture of it all.
+                        if !video {
+                            input.refresh();
+                        }
                     }
                     // The clipboard channel, whose six events are the whole of
                     // MS-RDPECLIP as this end sees it. None of them can arrive on a
@@ -1822,8 +1957,17 @@ async fn active_loop(
                     // Not part of the repaint: the pixels carry no pointer, and
                     // the server only names a shape when it changes.
                     sink.msg(pointer.attached()).await?;
-                    if pass_graphics {
+                    if composes {
                         sink.msg(view.graphics_view()).await?;
+                    }
+                    // The whole desktop in H.264 starts again at a keyframe, which
+                    // only the host can draw: asked for, and the units before it
+                    // are not passed. A page that lost its place in the stream
+                    // asks for this too.
+                    if video {
+                        sink.restart_pass();
+                        ask_keyframe(input, &mut keyframe_asked, false);
+                        continue;
                     }
                     // A passed pipeline has no repaint this end can make: the
                     // framebuffer holds nothing of it. The host is asked instead,
@@ -1878,7 +2022,13 @@ async fn active_loop(
                                 info!("rdp: showing display {} of {}", view.active + 1, view.columns);
                                 let (w, h) = view.size();
                                 sink.msg(ServerMsg::Resize { w, h, scale: applied.of(view.active).scale() }).await?;
-                                sink.msg(view.graphics_view()).await?;
+                                if video {
+                                    // Another surface's stream, from its next IDR.
+                                    sink.restart_pass();
+                                    ask_keyframe(input, &mut keyframe_asked, true);
+                                } else {
+                                    sink.msg(view.graphics_view()).await?;
+                                }
                             }
                             if let Some(msg) = view.displays(applied) {
                                 sink.msg(msg).await?;
@@ -1899,7 +2049,10 @@ async fn active_loop(
                                 sink: VideoSink::new("rdp", feed.frames, feed.feedback, Oversize::Refuse),
                                 failed: false,
                             };
-                            shown.repaint(view, applied.of(shown.column()), pointer.current()).await;
+                            shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
+                            if video {
+                                ask_keyframe(input, &mut keyframe_asked, true);
+                            }
                             tab = Some(shown);
                         }
                         Some(_) => debug!("rdp: display {display} is not shown in a tab"),
@@ -1930,7 +2083,10 @@ async fn active_loop(
                         continue;
                     };
                     if matches!(*made, ClientMsg::Refresh) {
-                        shown.repaint(view, applied.of(shown.column()), pointer.current()).await;
+                        shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
+                        if video {
+                            ask_keyframe(input, &mut keyframe_asked, false);
+                        }
                         continue;
                     }
                     // The tab's window: the second monitor's size, in points, as
@@ -2715,6 +2871,17 @@ fn pack_rgb(frame: &Frame, rect: Rect, buf: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A column's stream is the surface mapped at its corner, as a Windows host
+    /// maps one surface for each monitor; a corner nothing is mapped at has none.
+    #[test]
+    fn a_columns_stream_is_the_surface_at_its_corner() {
+        let rect = |x, width| client::Rect { x, y: 0, width, height: 800 };
+        let surfaces = BTreeMap::from([(0, rect(1280, 1280)), (1, rect(0, 1280))]);
+        assert_eq!(surface_at(&surfaces, (0, 0)), Some(1));
+        assert_eq!(surface_at(&surfaces, (1280, 0)), Some(0));
+        assert_eq!(surface_at(&surfaces, (640, 0)), None);
+    }
 
     /// Monitors of these sizes as a host places them left to right, top-aligned.
     fn row(sizes: &[(u32, u32)]) -> Vec<Placed> {
