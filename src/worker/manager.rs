@@ -123,8 +123,8 @@ impl Settings {
     fn store_order(root: &Path, order: &[String], seen: Option<&str>) -> anyhow::Result<String> {
         let path = root.join(SETTINGS_FILE);
         let current = read_settings(&path)?;
-        let text = current.clone().unwrap_or_else(|| SETTINGS_TEMPLATE.to_owned());
-        Self::parse(&text).with_context(|| format!("{} is not valid; E edits it", path.display()))?;
+        let text = current.as_deref().unwrap_or(SETTINGS_TEMPLATE);
+        Self::parse(text).with_context(|| format!("{} is not valid; E edits it", path.display()))?;
         anyhow::ensure!(
             current.as_deref() == seen,
             "{} changed since the TUI read it; R reloads it",
@@ -145,7 +145,7 @@ impl Settings {
             // At the end: a key toml_edit adds goes above the comments that
             // end the file, which here are the ones explaining it.
             None => {
-                let mut text = text;
+                let mut text = text.to_owned();
                 if !text.is_empty() && !text.ends_with('\n') {
                     text.push('\n');
                 }
@@ -228,8 +228,9 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
-    // Whether `message` answers the last key and so outranks the selected
-    // instance's detail on the status line; the next key gives the line back.
+    // Whether `message` answers the last key, any but the arrows, and so
+    // outranks the selected instance's detail on the status line; the next key
+    // gives the line back.
     let mut notice = false;
     let mut view = View::List;
     let mut problems = Vec::new();
@@ -333,6 +334,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     break;
                 }
                 let Some(action) = action_for(key.code) else { continue };
+                notice = !matches!(action, Action::Up | Action::Down);
                 match action {
                     Action::Quit => break,
                     Action::Up => selected = selected.saturating_sub(1),
@@ -381,7 +383,6 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                                 Ok(false) => format!("{name} is already {}", if up { "first" } else { "last" }),
                                 Err(error) => format!("{error:#}"),
                             };
-                            notice = true;
                             selected = supervisor.position(&name).unwrap_or(selected);
                         }
                     }
@@ -403,12 +404,11 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                                 terminal.resume()?;
                                 screen.invalidate();
                                 events = EventStream::new();
-                                match edited {
-                                    Ok(()) => match supervisor.reload_settings().await {
-                                        Ok(()) => "TUI settings applied".to_owned(),
-                                        Err(error) => format!("{error:#}"),
-                                    },
-                                    Err(error) => format!("{error:#}"),
+                                // Read whatever the editor left, even when it failed: the file
+                                // may have been created above or saved before it failed.
+                                match (edited, supervisor.reload_settings().await) {
+                                    (Ok(()), Ok(())) => "TUI settings applied".to_owned(),
+                                    (Err(error), _) | (Ok(()), Err(error)) => format!("{error:#}"),
                                 }
                             }
                         };
@@ -1862,8 +1862,21 @@ impl Supervisor {
         let from = self.index(name)?;
         let to = if up { from.checked_sub(1) } else { Some(from + 1).filter(|to| *to < self.instances.len()) };
         let Some(to) = to else { return Ok(false) };
-        let mut order: Vec<String> = self.instances.iter().map(|instance| instance.name.clone()).collect();
-        order.swap(from, to);
+        // The file's order with every listed instance added after it, so a name
+        // with no instance just now (a share not mounted) keeps its place; the
+        // list is this order without such names, so swapping the two in it
+        // swaps them on screen.
+        let mut order = self.order.clone();
+        for instance in &self.instances {
+            if !order.contains(&instance.name) {
+                order.push(instance.name.clone());
+            }
+        }
+        let place = |name: &str| order.iter().position(|named| named == name);
+        let (Some(a), Some(b)) = (place(name), place(&self.instances[to].name)) else {
+            unreachable!("every listed instance was just added to the order");
+        };
+        order.swap(a, b);
         self.settings_seen = Some(Settings::store_order(&self.root, &order, self.settings_seen.as_deref())?);
         self.order = order;
         self.arrange().await;
@@ -2252,8 +2265,21 @@ fn bootstrap_file(path: &Path, contents: &str) -> anyhow::Result<()> {
 }
 
 /// Replace `path` with `contents` all at once: written beside it and renamed
-/// over it, so a reader never sees half of either.
+/// over it, so a reader never sees half of either. A file already there is
+/// somebody's, so a link is followed to the file it names, which is the one
+/// replaced, and the replacement keeps its permissions.
 fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
+    let (path, permissions) = match std::fs::canonicalize(path) {
+        Ok(target) => {
+            let permissions = std::fs::metadata(&target)
+                .with_context(|| format!("cannot read {}", target.display()))?
+                .permissions();
+            (target, Some(permissions))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (path.to_owned(), None),
+        Err(error) => return Err(error).with_context(|| format!("cannot resolve {}", path.display())),
+    };
+    let path = path.as_path();
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.new", std::process::id()));
     let temporary = PathBuf::from(temporary);
@@ -2271,6 +2297,10 @@ fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
             .with_context(|| format!("cannot create {}", temporary.display()))?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
+        if let Some(permissions) = permissions {
+            std::fs::set_permissions(&temporary, permissions)
+                .with_context(|| format!("cannot set the permissions of {}", temporary.display()))?;
+        }
         std::fs::rename(&temporary, path)
             .with_context(|| format!("cannot install {}", path.display()))
     })();
@@ -3240,6 +3270,33 @@ mod tests {
         assert!(!settings.exists());
         supervisor.reload_settings().await.unwrap();
         assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+
+        // A name with no instance just now keeps its place.
+        std::fs::write(&settings, "order = [\"gamma\", \"away\", \"alpha\"]\n").unwrap();
+        supervisor.reload_settings().await.unwrap();
+        assert_eq!(names(&supervisor), ["gamma", "alpha", "beta"]);
+        assert!(supervisor.move_instance("alpha", true).await.unwrap());
+        assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
+        let text = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "gamma", "beta"]);
+
+        // A file that is a link stays one, and the file it names keeps its mode.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let elsewhere = temp.path().join("dotfiles-tui.toml");
+            std::fs::rename(&settings, &elsewhere).unwrap();
+            std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &settings).unwrap();
+            assert!(supervisor.move_instance("beta", true).await.unwrap());
+            assert!(std::fs::symlink_metadata(&settings).unwrap().file_type().is_symlink());
+            let text = std::fs::read_to_string(&elsewhere).unwrap();
+            assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "beta", "gamma"]);
+            assert_eq!(std::fs::metadata(&elsewhere).unwrap().permissions().mode() & 0o777, 0o644);
+            std::fs::remove_file(&settings).unwrap();
+            std::fs::rename(&elsewhere, &settings).unwrap();
+            supervisor.reload_settings().await.unwrap();
+        }
 
         std::fs::write(&settings, "order = [\"beta\", \"beta\"]\n").unwrap();
         supervisor.move_instance("beta", true).await.unwrap_err();

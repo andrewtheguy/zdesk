@@ -3778,7 +3778,10 @@ never an instance: its `order` lists the instances it names first, the rest by
 name after them, in the TUI and on the landing page alike. A file that does not
 parse keeps the order the TUI already had and says why. K and J move the selected
 instance and write the whole list's order back, changing only `order`'s value
-and leaving the file's comments and other lines; they leave alone a file that
+(a comment inside the list is not kept) and leaving the rest of the file,
+comments included, as it was. A name with no instance just now keeps its place
+in it. They follow a link to the file it names and keep its permissions, and
+they leave alone a file that
 does not parse, and one saved elsewhere since the TUI last read it, which R
 reads first.
 
