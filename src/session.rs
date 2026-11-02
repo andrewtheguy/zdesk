@@ -131,6 +131,19 @@ pub enum ConnectError {
     NoH264,
 }
 
+impl ConnectError {
+    /// Why a session started with `choices` on `target` cannot be this
+    /// `decoders`' browser's: a passthrough it cannot take, or H.264 on an RDP
+    /// host's pipeline where it decodes none. Asked at a connect and at a
+    /// reattach alike.
+    fn beyond(target: &TargetConfig, choices: Choices, decoders: Decoders) -> Option<Self> {
+        target
+            .beyond(choices, decoders)
+            .map(Self::Beyond)
+            .or_else(|| (choices.pipeline.h264() && !decoders.rdp_h264).then_some(Self::NoH264))
+    }
+}
+
 /// A [`SessionManager::attach_camera`] or [`SessionManager::attach_mic`] was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum UplinkRefused {
@@ -1050,12 +1063,12 @@ impl SessionManager {
         let id = st.next_attach_id;
         st.attachment_epoch = st.attachment_epoch.wrapping_add(1);
 
-        // The session's passthrough, where this browser said it cannot take it:
-        // nothing the engine sends could be shown here, and what to start
-        // instead is a choice, which is made at the picker.
-        let beyond = st.selected.as_ref().and_then(|s| s.target.beyond(s.choices, decoders));
+        // The session's passthrough, or its H.264, where this browser said it
+        // cannot take it: nothing the engine sends could be shown here, and what
+        // to start instead is a choice, which is made at the picker.
+        let beyond = st.selected.as_ref().and_then(|s| ConnectError::beyond(&s.target, s.choices, decoders));
         if beyond.is_some() {
-            info!("session: this browser cannot take the session's passthrough; the session ends");
+            info!("session: this browser cannot take what the session was started with; the session ends");
             st.take_engine();
             st.clear_selection();
         }
@@ -1073,8 +1086,8 @@ impl SessionManager {
 
         // Tell the freshly attached browser which post-login state it is in. The
         // channel is empty, so try_send always lands.
-        if let Some(passthrough) = beyond {
-            let message = ConnectError::Beyond(passthrough).to_string();
+        if let Some(beyond) = beyond {
+            let message = beyond.to_string();
             let _ = event_tx.try_send(AttachEvent::Msg(ServerMsg::Error { message }));
         }
         let resumed = st.selected.is_some() && st.engine.is_some();
@@ -1742,9 +1755,7 @@ impl SessionManager {
             };
             let refused = match target.accepts(choices) {
                 Err(not_offered) => Some(ConnectError::NotOffered(not_offered)),
-                Ok(()) => target.beyond(choices, decoders).map(ConnectError::Beyond).or_else(|| {
-                    (choices.pipeline.h264() && !decoders.rdp_h264).then_some(ConnectError::NoH264)
-                }),
+                Ok(()) => ConnectError::beyond(&target, choices, decoders),
             };
             if let Some(refused) = refused {
                 Self::notify(st.client.as_ref(), ServerMsg::Error { message: refused.to_string() });
@@ -2929,6 +2940,13 @@ mod tests {
         let choices = Choices { pipeline: Pipeline::AdaptiveRegion, ..RESIZE };
         mgr.connect(att.id, "win", None, choices).await.unwrap();
         assert!(matches!(hook_rx.try_recv(), Ok(RenderPlan { rdp_graphics: true, rdp_h264: true, .. })));
+
+        // Nor is it started again for a reload that says it decodes none: the
+        // session ends, said, and nothing is drawn High quality in its place.
+        let mut ended = mgr.attach(&token, None, DECLINES).await.unwrap();
+        expect_beyond_then_picker(&mut ended.events, "H.264").await;
+        assert!(hook_rx.try_recv().is_err(), "nothing was started");
+        assert!(mgr.state.lock().unwrap().selected.is_none());
     }
 
     /// A passed graphics pipeline is never resumed: the host draws against what its

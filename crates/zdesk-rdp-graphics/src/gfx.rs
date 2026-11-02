@@ -102,6 +102,11 @@ pub enum Update {
     /// has drawn with so far, all of it ([`Fidelity`]). Ahead of the run that
     /// carries that draw.
     Drawn(Fidelity),
+    /// A passed pipeline ended the first frame since its confirmation that drew
+    /// anything: what that frame was drawn with ([`Fidelity`]), and nothing of the
+    /// frames after it, though the same message carry them. Reported once a
+    /// confirmation, where that EndFrame is, among the [`Self::Drawn`] around it.
+    Opened(Fidelity),
 }
 
 /// A rectangle of a surface whose pixels are a picture the page shows from its
@@ -412,6 +417,9 @@ pub struct Graphics {
     unit: u32,
     /// What a passed pipeline has drawn with.
     fidelity: Fidelity,
+    /// Whether a passed pipeline's opening frame has been reported since its
+    /// confirmation ([`Update::Opened`]).
+    opened: bool,
 }
 
 impl Default for Graphics {
@@ -442,6 +450,7 @@ impl Graphics {
             gpu_paints: Vec::new(),
             unit: 0,
             fidelity: Fidelity::default(),
+            opened: false,
         }
     }
 
@@ -794,6 +803,7 @@ impl Graphics {
                     // A pipeline that starts over has drawn with nothing yet, so
                     // the codecs it draws with again are reported again.
                     self.fidelity = Fidelity::default();
+                    self.opened = false;
                     updates.push(Update::Confirmed { version, flags });
                 }
                 Some(Message::ResetGraphics { width, height, monitors }) => {
@@ -803,7 +813,15 @@ impl Graphics {
                     self.output = Some((width, height));
                     updates.push(Update::Reset { width, height, monitors });
                 }
-                Some(Message::EndFrame { frame }) => frames.push(frame),
+                Some(Message::EndFrame { frame }) => {
+                    // Everything drawn since the confirmation is this frame's: the
+                    // frames before it drew nothing.
+                    if !self.opened && !self.fidelity.is_empty() {
+                        self.opened = true;
+                        updates.push(Update::Opened(self.fidelity.clone()));
+                    }
+                    frames.push(frame);
+                }
                 _ => {}
             }
         }
@@ -1815,6 +1833,36 @@ mod tests {
         pdu(CMD_CAPS_CONFIRM, &w.finish())
     }
 
+    /// The opening frame is reported as it ends, with its own draws alone: a frame
+    /// before it that drew nothing has none, and a frame after it in the same
+    /// message adds none, though its draw is reported in turn. Once a confirmation.
+    #[test]
+    fn a_passed_pipelines_opening_frame_is_its_own_draws() {
+        let framebuffer = Framebuffer::new();
+        let mut graphics = Graphics::passing();
+        let opening = [confirm(), reset(4, 4), create(1, 4, 4), map(1, 0, 0)];
+        let empty = [start(1), end(1)];
+        let first = [start(2), wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[1, 2, 3, 0]), end(2)];
+        let second = [start(3), wire(1, CODEC_PLANAR, (0, 0, 1, 1), &[]), end(3)];
+        let pdus: Vec<Vec<u8>> = opening.iter().chain(&empty).chain(&first).chain(&second).cloned().collect();
+
+        let updates = receive(&mut graphics, &framebuffer, &pdus);
+        let mut uncompressed = Fidelity::default();
+        uncompressed.saw(CODEC_UNCOMPRESSED, &[]);
+        let mut both = uncompressed.clone();
+        both.saw(CODEC_PLANAR, &[]);
+        assert_eq!(updates[2..], [
+            Update::Drawn(uncompressed.clone()),
+            Update::Opened(uncompressed),
+            Update::Drawn(both),
+            Update::Passed { wrapped: packet(&pdus), frames: vec![1, 2, 3] },
+        ]);
+
+        let later = [start(4), wire(1, CODEC_PLANAR, (0, 0, 1, 1), &[]), end(4)];
+        let updates = receive(&mut graphics, &framebuffer, &later);
+        assert!(!updates.iter().any(|update| matches!(update, Update::Opened(_))), "{updates:?}");
+    }
+
     /// A passing pipeline hands every message on as the host sent it, still
     /// compressed, and draws none of its commands: what it says for itself is the
     /// confirmation and the reset, ahead of the message that carries them, and the
@@ -1834,7 +1882,8 @@ mod tests {
         assert_eq!(updates, vec![
             Update::Confirmed { version: gfx::CAPVERSION_10, flags: 0x22 },
             Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] },
-            Update::Drawn(drawn),
+            Update::Drawn(drawn.clone()),
+            Update::Opened(drawn),
             Update::Passed { wrapped: packet(&pdus), frames: vec![1] },
         ]);
         framebuffer.with(|frame| assert_eq!((frame.width, frame.height), (0, 0), "nothing is drawn here"));

@@ -1022,10 +1022,6 @@ struct Active<'a> {
     /// it by then ([`PIPELINE_WAIT`]); `None` while a pipeline runs, and always
     /// on one that does not pass it.
     pipeline_due: Option<Instant>,
-    /// What a pipeline asked for H.264 has drawn with since its confirmation,
-    /// until the first frame that drew anything ends, which is judged by it
-    /// ([`no_h264`]); `None` once judged, and always on one not asked for H.264.
-    opening: Option<Fidelity>,
     /// Whether a bitmap update dropped under the pipeline has been logged.
     bitmaps_dropped: bool,
     /// Whether [`Event::ResizeReady`] has gone out.
@@ -1332,7 +1328,6 @@ impl<'a> Active<'a> {
             caller_paced: config.paced,
             paced: Paced::default(),
             pipeline_due: config.egfx.then(|| Instant::now() + PIPELINE_WAIT),
-            opening: None,
             bitmaps_dropped: false,
             resize_ready: false,
             pending_resize: None,
@@ -1738,7 +1733,6 @@ impl<'a> Active<'a> {
                              which leaves it no H.264 to draw with; start the session High quality"
                         );
                     }
-                    self.opening = (h264 != gfx_proto::H264::Refused).then(Fidelity::default);
                     self.pipeline_due = None;
                     self.send(Event::FramesMarked).await;
                 }
@@ -1758,12 +1752,6 @@ impl<'a> Active<'a> {
                 // go with the first of them, and any after it end in the same
                 // message, with nothing more to compose.
                 gfx::Update::Passed { wrapped, frames } => {
-                    if !frames.is_empty()
-                        && let Some(opening) = self.opening.take_if(|opening| !opening.is_empty())
-                        && let Some(refusal) = no_h264(self.dynamics.h264, &opening)
-                    {
-                        bail!(refusal);
-                    }
                     let now = Instant::now();
                     self.passed.handed(wrapped.len(), frames.first().copied(), now);
                     for &frame in frames.iter().skip(1) {
@@ -1775,11 +1763,12 @@ impl<'a> Active<'a> {
                         self.send(Event::Frame).await;
                     }
                 }
-                gfx::Update::Drawn(fidelity) => {
-                    if let Some(opening) = &mut self.opening {
-                        opening.clone_from(&fidelity);
+                gfx::Update::Drawn(fidelity) => self.send(Event::Drawn(fidelity)).await,
+                // Judged as its frame ends, by that frame's draws alone.
+                gfx::Update::Opened(opening) => {
+                    if let Some(refusal) = no_h264(self.dynamics.h264, &opening) {
+                        bail!(refusal);
                     }
-                    self.send(Event::Drawn(fidelity)).await;
                 }
                 // What a pipeline composed here would report, and none is.
                 gfx::Update::Paint(_) | gfx::Update::Frame { .. } => {
