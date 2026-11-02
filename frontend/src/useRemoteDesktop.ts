@@ -372,6 +372,11 @@ const ATTEMPTS_BEFORE_REPORTING = 4;
 // session starts over once it is given back, and not before.
 const CONTEXT_LOST_HINT =
   "The browser took the picture's graphics context away. The session starts over when it gives it back.";
+// How many retries a tab let go of its display makes for the context before it
+// reports the display unavailable after all: enough, with the backoff, to span
+// the session's engine starting over, and no more than a display that is not
+// coming back costs.
+const TAB_RECOVERY_ATTEMPTS = 4;
 
 // How long `requestClipboard` waits for the server's answer before giving up.
 // Generous rather than tight: the engines answer from an engine-side buffer, but
@@ -1359,8 +1364,11 @@ export function useRemoteDesktop(
     // A tab's display socket closed for the context, until the display is shown
     // on it again: the session's page starts its session over meanwhile, which
     // lets this tab's display go and announces it again only once the engine
-    // is back, so a refusal in between is waited out, not reported.
+    // is back, so a refusal in between is waited out, not reported. The let-go
+    // may land before this tab hears of the context, and is remembered for it
+    // (`tabLetGo`): the context's loss then starts the same recovery.
     let tabRecovering = false;
+    let tabLetGo = false;
 
     // Drop any retained framebuffer. Every interstitial (connecting,
     // reconnecting, busy, taken over) and the picker fully hide the canvas
@@ -1437,8 +1445,15 @@ export function useRemoteDesktop(
     // passed pipeline over for a page that holds nothing and repaints a stream.
     const contextTaken = () => {
       contextLost = true;
-      if (tabDisplay !== null && displayWs) {
-        tabRecovering = true;
+      if (tabDisplay !== null) {
+        if (displayWs) {
+          tabRecovering = true;
+        } else if (tabLetGo) {
+          tabLetGo = false;
+          tabRecovering = true;
+          scheduleRetry();
+          return;
+        }
       }
       displayWs?.close();
     };
@@ -1722,15 +1737,17 @@ export function useRemoteDesktop(
         return;
       }
       const reason = unavailableReason(display, code);
+      const letGo = code === CLOSE_EVICTED || code === CLOSE_UNSUPPORTED;
       if (
         reason === null ||
-        (tabRecovering &&
-          (code === CLOSE_EVICTED || code === CLOSE_UNSUPPORTED))
+        (tabRecovering && letGo && attempts < TAB_RECOVERY_ATTEMPTS)
       ) {
         scheduleRetry();
         return;
       }
       // Nothing to wait for: opening it again is the Retry.
+      tabRecovering = false;
+      tabLetGo = letGo;
       clearDesktop();
       endPicture();
       setConnectError(reason);
@@ -1777,6 +1794,7 @@ export function useRemoteDesktop(
       if (attachedSocket !== socket) {
         attachedSocket = socket;
         tabRecovering = false;
+        tabLetGo = false;
         tabAttached();
       }
       if (typeof data === "string") {
@@ -2646,6 +2664,8 @@ export function useRemoteDesktop(
       }
       clearTimeout(retryTimer);
       heldForce = null;
+      tabRecovering = false;
+      tabLetGo = false;
       closeDisplay();
       clearDesktop();
       endPicture();
