@@ -292,8 +292,12 @@ Playwright's CLI runs under node rather than bun:
 
 ```sh
 ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \
+ZDESK_PLAYWRIGHT_EGFX_DISPLAYS_TARGET='win2' \
 bunx playwright test '/webgl-context-restart\.spec\.ts$'
 ```
+
+Its two-display case, which checks that a second display's tab comes back with
+the session, needs the two-display spec's target named too, and runs only then.
 
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
 `ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 over

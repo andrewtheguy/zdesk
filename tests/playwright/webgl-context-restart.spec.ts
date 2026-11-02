@@ -19,12 +19,19 @@
 //     ZDESK_PLAYWRIGHT_USERNAME=admin \
 //     ZDESK_PLAYWRIGHT_PASSWORD=… \
 //     ZDESK_PLAYWRIGHT_EGFX_TARGET=win \
+//     ZDESK_PLAYWRIGHT_EGFX_DISPLAYS_TARGET=win2 \
 //     bunx playwright test '/webgl-context-restart\.spec\.ts$'
+//
+// The two-display case needs the second, a target asked for two virtual
+// displays, and runs only when it is named.
 import { expect, type Page, test } from "@playwright/test";
 
 import { leaveSession, logInAndConnectTo } from "./support";
 
 const EGFX_TARGET = process.env.ZDESK_PLAYWRIGHT_EGFX_TARGET;
+/// The same for a target over two virtual displays, as the two-display spec has
+/// it: its second display is a tab's, whose context goes with the same GPU.
+const DISPLAYS_TARGET = process.env.ZDESK_PLAYWRIGHT_EGFX_DISPLAYS_TARGET;
 
 /// What a session page says of itself while its sockets are down.
 const RECONNECTING = "Reconnecting…";
@@ -105,5 +112,76 @@ test.describe("a picture drawn on the GPU", () => {
       (await said()).filter((text) => /[Rr]eload the page/.test(text)),
       "no reload asked for",
     ).toEqual([]);
+  });
+});
+
+test.describe("a picture drawn on the GPU, over two displays", () => {
+  test.skip(
+    !DISPLAYS_TARGET,
+    "set ZDESK_PLAYWRIGHT_EGFX_DISPLAYS_TARGET to a target over two virtual displays",
+  );
+
+  test.afterEach(async ({ page }) => {
+    await leaveSession(page);
+  });
+
+  // The session's page starts its session over, which lets the tab's display go
+  // and announces it again only once the engine is back. The tab, whose context
+  // went with the same GPU, rides that out: it is shown its display again, and
+  // asks nobody to retry or reload.
+  test("brings a second display's tab back with the session", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(120_000);
+    await logInAndConnectTo(page, DISPLAYS_TARGET ?? "", "", {});
+    const graphics = page.locator("canvas.graphics");
+    await expect(graphics).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: "Open menu" }).click();
+    const opening = context.waitForEvent("page");
+    await page.getByRole("link", { name: "Open Display 2 ↗" }).click();
+    const tab = await opening;
+    await page.getByRole("button", { name: "Close menu" }).click();
+    await tab.waitForURL(/\/display\/2$/);
+    const tabGraphics = tab.locator("canvas.graphics");
+    await expect(tabGraphics).toBeVisible({ timeout: 20_000 });
+    await expect(tab.getByRole("alert")).toHaveCount(0);
+    const said = await recordSaid(page);
+    const tabSaid = await recordSaid(tab);
+
+    const browser = page.context().browser();
+    if (!browser) {
+      throw new Error("no browser to end the GPU process of");
+    }
+    const cdp = await browser.newBrowserCDPSession();
+    await cdp.send("Browser.crashGpuProcess");
+    await cdp.detach();
+
+    await expect
+      .poll(async () => (await said()).includes(RECONNECTING), {
+        message: "the session's page said it was reconnecting",
+        timeout: 20_000,
+      })
+      .toBe(true);
+    await expect(page.getByText(RECONNECTING)).toHaveCount(0, {
+      timeout: 40_000,
+    });
+    await expect(graphics).toBeVisible({ timeout: 20_000 });
+    // The tab's retries back off while the engine starts over: shown again
+    // within a few of them, and never left on a refusal.
+    await expect(tab.getByText(RECONNECTING)).toHaveCount(0, {
+      timeout: 60_000,
+    });
+    await expect(tabGraphics).toBeVisible({ timeout: 20_000 });
+    await expect(tab.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await expect(tab.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    expect(
+      [...(await said()), ...(await tabSaid())].filter((text) =>
+        /[Rr]eload the page|Retry/.test(text),
+      ),
+      "no reload or retry asked for",
+    ).toEqual([]);
+    await tab.close();
   });
 });

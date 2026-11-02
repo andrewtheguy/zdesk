@@ -1356,6 +1356,11 @@ export function useRemoteDesktop(
     // draw into.
     let contextLost = false;
     let heldForce: boolean | null = null;
+    // A tab's display socket closed for the context, until the display is shown
+    // on it again: the session's page starts its session over meanwhile, which
+    // lets this tab's display go and announces it again only once the engine
+    // is back, so a refusal in between is waited out, not reported.
+    let tabRecovering = false;
 
     // Drop any retained framebuffer. Every interstitial (connecting,
     // reconnecting, busy, taken over) and the picker fully hide the canvas
@@ -1432,6 +1437,9 @@ export function useRemoteDesktop(
     // passed pipeline over for a page that holds nothing and repaints a stream.
     const contextTaken = () => {
       contextLost = true;
+      if (tabDisplay !== null && displayWs) {
+        tabRecovering = true;
+      }
       displayWs?.close();
     };
     const contextGiven = () => {
@@ -1714,7 +1722,11 @@ export function useRemoteDesktop(
         return;
       }
       const reason = unavailableReason(display, code);
-      if (reason === null) {
+      if (
+        reason === null ||
+        (tabRecovering &&
+          (code === CLOSE_EVICTED || code === CLOSE_UNSUPPORTED))
+      ) {
         scheduleRetry();
         return;
       }
@@ -1764,6 +1776,7 @@ export function useRemoteDesktop(
       }
       if (attachedSocket !== socket) {
         attachedSocket = socket;
+        tabRecovering = false;
         tabAttached();
       }
       if (typeof data === "string") {
