@@ -81,7 +81,7 @@ impl Compositor {
                 }
                 Update::Paint(rect) => composed.painted.push(rect),
                 Update::Frame { .. } => composed.frames += 1,
-                Update::Confirmed | Update::Passed { .. } | Update::Drawn(_) => {}
+                Update::Confirmed { .. } | Update::Passed { .. } | Update::Drawn(_) | Update::Opened(_) => {}
             }
         }
         composed.gpu = self.graphics.take_gpu_paints();

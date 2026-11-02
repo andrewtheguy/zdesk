@@ -829,8 +829,10 @@ How the host draws the pipeline is chosen at the picker: High quality, the
 pipeline's codecs without H.264, by default, or Adaptive
 (alpha), H.264 the host fits to
 the browser's link, over the whole desktop or only where it moves like video.
-The gateway has no H.264 decoder and is not given one. Adaptive reaches only a
-page that said it decodes H.264, and a session of any other is drawn High quality:
+The gateway has no H.264 decoder and is not given one. Adaptive is started only
+for a page that said it decodes H.264, and a session whose host turns out to draw
+no H.264 ends with an error rather than going on in other codecs
+([H.264 asked for and not drawn](rdp-client.md#h264-asked-for-and-not-drawn)):
 the access units ride inside the pipeline's commands, the page decodes them with
 the browser's `VideoDecoder`, and the compositor paints the pictures. It adds no
 wire format, no record and no second stream. See
@@ -2340,7 +2342,7 @@ and `GET /api/targets` carries it:
   is refused (`ConnectError::Beyond`). Adaptive is greyed for a browser whose
   `VideoDecoder` cannot decode the host's H.264, with "This browser has no
   VideoDecoder that takes the host's H.264."; a `connect` that names it all the
-  same is drawn High quality rather than refused.
+  same is refused (`ConnectError::NoH264`).
 - **The host draws the pipeline high quality or adaptive.** `choices.pipeline` says
   `high-quality`, `adaptive-desktop` or `adaptive-region` (`Pipeline` in
   `src/config.rs`), offered by an `rdp` target with the pipeline on and refused

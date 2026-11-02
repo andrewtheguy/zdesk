@@ -139,6 +139,19 @@ impl Fidelity {
         self.seen.is_empty()
     }
 
+    /// Whether anything so far was drawn with H.264, in any of its shapes.
+    pub fn h264(&self) -> bool {
+        self.seen.iter().any(|drawn| matches!(drawn, Drawn::Avc420 | Drawn::Avc444 | Drawn::Avc444v2))
+    }
+
+    /// Whether what was drawn is what a host set to Lossless draws with: something,
+    /// and nothing but uncompressed, planar and alpha rectangles. A host left at
+    /// its default opens with ClearCodec and RemoteFX Progressive, or with H.264
+    /// where it was asked for the whole desktop in it.
+    pub fn as_lossless_host(&self) -> bool {
+        !self.is_empty() && self.seen.iter().all(|drawn| matches!(drawn, Drawn::Uncompressed | Drawn::Planar | Drawn::Alpha))
+    }
+
     /// The codecs drawn with, by name, in a fixed order.
     pub fn names(&self) -> Vec<&'static str> {
         self.seen.iter().map(|drawn| drawn.name()).collect()
@@ -220,5 +233,26 @@ mod tests {
         ] {
             assert!(!Drawn::of(codec, &[]).lossless(), "{}", gfx::codec_name(codec));
         }
+    }
+
+    /// What a Lossless host opened with, against a host at its default asked for
+    /// H.264 full screen and by region (2026-11-01).
+    #[test]
+    fn a_lossless_hosts_opening_is_told_from_a_default_hosts() {
+        let opened = |codecs: &[u16]| {
+            let mut fidelity = Fidelity::default();
+            for &codec in codecs {
+                fidelity.saw(codec, &[]);
+            }
+            fidelity
+        };
+        let lossless = opened(&[gfx::CODEC_PLANAR, gfx::CODEC_UNCOMPRESSED]);
+        assert!(lossless.as_lossless_host() && !lossless.h264());
+        let whole = opened(&[gfx::CODEC_AVC444_V2]);
+        assert!(!whole.as_lossless_host() && whole.h264());
+        // ClearCodec without NSCodec is lossless, but no Lossless host draws with it.
+        let region = opened(&[gfx::CODEC_CLEARCODEC]);
+        assert!(region.lossless() && !region.as_lossless_host() && !region.h264());
+        assert!(!Fidelity::default().as_lossless_host(), "nothing drawn says nothing");
     }
 }
