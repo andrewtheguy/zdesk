@@ -205,7 +205,6 @@ export function createPlanesPicture(canvas: OffscreenCanvas): PlanesPicture {
     });
     const error = gl.getError();
     if (error !== gl.NO_ERROR) {
-      surface.usable();
       throw new Error(
         `the GPU refused a ${w}x${h} picture (WebGL error 0x${error.toString(16)})`,
       );
@@ -344,11 +343,8 @@ export function createPlanesPicture(canvas: OffscreenCanvas): PlanesPicture {
       return true;
     },
     close() {
-      // Its textures went with a context taken away (glPicture.ts).
-      if (!surface.lost()) {
-        for (const texture of textures) {
-          gl.deleteTexture(texture);
-        }
+      for (const texture of textures) {
+        gl.deleteTexture(texture);
       }
       surface.close();
     },

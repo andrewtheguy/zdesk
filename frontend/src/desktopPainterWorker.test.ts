@@ -56,12 +56,6 @@ function harness() {
     startGraphics() {
       calls.push("graphics");
     },
-    graphicsLost() {
-      calls.push("graphicsLost");
-    },
-    graphicsRestored() {
-      calls.push("graphicsRestored");
-    },
     startStandard() {
       calls.push("standard");
     },
@@ -114,7 +108,7 @@ function harness() {
   host.handle({
     type: "init",
     canvas: canvas as unknown as OffscreenCanvas,
-    graphics: new EventTarget() as OffscreenCanvas,
+    graphics: {} as OffscreenCanvas,
     decoding: {
       runs: { hevc: false },
       nativeHevc: true,

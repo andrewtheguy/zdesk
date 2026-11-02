@@ -255,8 +255,8 @@ test("the tab's end paints what it is sent, says so, and says what it shows when
     () => {
       painted += 1;
     },
-    (error) => {
-      errors.push(error instanceof Error ? error.message : String(error));
+    (why) => {
+      errors.push(why);
     },
   );
   // Asked before it shows anything, it says nothing.
