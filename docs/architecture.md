@@ -1800,8 +1800,9 @@ the pipeline.
   the pipeline on, starts its stream waiting for an IDR the same way, as does a
   command that carries a chroma view, which the stream cannot be passed
   without. A stream that keeps losing units asks the host no more often than
-  one waiting does, since each ask resets the host's graphics, and a surface no
-  display shows asks for nothing. A pipeline that starts over, its channel
+  one waiting does, since each ask resets the host's graphics: an ask held back
+  is made once the limit is past, since a still desktop sends no unit that would
+  ask again. A surface no display shows asks for nothing. A pipeline that starts over, its channel
   closed and opened again, starts with no surfaces.
 
   Each frame is acknowledged to the host once the page has painted its last

@@ -1211,15 +1211,38 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
     }
 }
 
-/// Ask the host for a keyframe ([`client::Input::keyframe`]), unless one was
-/// asked for within [`KEYFRAME_AGAIN`] and `now` is not set: a stream that waits
-/// for it is not to ask again for every unit.
-fn ask_keyframe(input: &Input, asked: &mut Option<Instant>, now: bool) {
-    if !now && asked.is_some_and(|at| at.elapsed() < KEYFRAME_AGAIN) {
-        return;
+/// The keyframes asked of the host ([`client::Input::keyframe`]) for a pipeline
+/// passed as video, no more than one each [`KEYFRAME_AGAIN`] unless one is
+/// wanted `now`: each resets the host's graphics, and a stream that waits for one
+/// is not to ask again for every unit.
+#[derive(Default)]
+struct KeyframeAsks {
+    /// When one was last asked for.
+    asked: Option<Instant>,
+    /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for. A
+    /// stream that lost its place after the last one's keyframe needs another,
+    /// and a still desktop sends no unit that would ask again.
+    due: Option<Instant>,
+}
+
+impl KeyframeAsks {
+    fn ask(&mut self, input: &Input, now: bool) {
+        if self.asks(Instant::now(), now) {
+            input.keyframe();
+        }
     }
-    *asked = Some(Instant::now());
-    input.keyframe();
+
+    /// Whether one wanted `at` is asked for then: otherwise it is due once the
+    /// limit is past.
+    fn asks(&mut self, at: Instant, now: bool) -> bool {
+        if !now && let Some(asked) = self.asked.filter(|asked| at < *asked + KEYFRAME_AGAIN) {
+            self.due = Some(asked + KEYFRAME_AGAIN);
+            return false;
+        }
+        self.asked = Some(at);
+        self.due = None;
+        true
+    }
 }
 
 /// A decoded pointer as the shape the browser draws, or `None` for one it should
@@ -1527,8 +1550,8 @@ async fn active_loop(
     // Where each surface of a pipeline passed as video is on the output: a
     // column's stream is the surface mapped at its corner ([`surface_at`]).
     let mut surfaces: BTreeMap<u16, client::Rect> = BTreeMap::new();
-    // When a keyframe was last asked of the host, for a stream passed as video.
-    let mut keyframe_asked: Option<Instant> = None;
+    // The keyframes asked of the host, for a stream passed as video.
+    let mut keyframes = KeyframeAsks::default();
     // The tab's window as it last reported it, in points, for as long as *All
     // Displays* is chosen: what a change of its screen's density re-expresses.
     // The layout's own pixels will not do, being already held under the ceiling:
@@ -1615,6 +1638,13 @@ async fn active_loop(
         {
             install_layout(wanted.with_second(None), view.current(applied), &mut pending_layout, &mut layout_retry_at);
         }
+        // A keyframe wanted within the limit of the last, asked for once it is past.
+        let keyframe_due = async {
+            match keyframes.due {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
         let layout_retry = async {
             match layout_retry_at {
                 Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -1739,7 +1769,7 @@ async fn active_loop(
                         }
                         drop(ack);
                         if wanted {
-                            ask_keyframe(input, &mut keyframe_asked, false);
+                            keyframes.ask(input, false);
                         }
                     }
                     Event::Surface { surface, rect } => match rect {
@@ -1769,7 +1799,7 @@ async fn active_loop(
                             shown = true;
                         }
                         if shown {
-                            ask_keyframe(input, &mut keyframe_asked, false);
+                            keyframes.ask(input, false);
                         }
                     }
                     Event::Drawn(fidelity) => {
@@ -1978,7 +2008,7 @@ async fn active_loop(
                     // asked for a moment ago may have come before it.
                     if video {
                         sink.restart_pass();
-                        ask_keyframe(input, &mut keyframe_asked, true);
+                        keyframes.ask(input, true);
                         continue;
                     }
                     // A passed pipeline has no repaint this end can make: the
@@ -2037,7 +2067,7 @@ async fn active_loop(
                                 if video {
                                     // Another surface's stream, from its next IDR.
                                     sink.restart_pass();
-                                    ask_keyframe(input, &mut keyframe_asked, true);
+                                    keyframes.ask(input, true);
                                 } else {
                                     sink.msg(view.graphics_view()).await?;
                                 }
@@ -2063,7 +2093,7 @@ async fn active_loop(
                             };
                             shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
                             if video {
-                                ask_keyframe(input, &mut keyframe_asked, true);
+                                keyframes.ask(input, true);
                             }
                             tab = Some(shown);
                         }
@@ -2097,7 +2127,7 @@ async fn active_loop(
                     if matches!(*made, ClientMsg::Refresh) {
                         shown.repaint(view, applied.of(shown.column()), pointer.current(), composes).await;
                         if video {
-                            ask_keyframe(input, &mut keyframe_asked, true);
+                            keyframes.ask(input, true);
                         }
                         continue;
                     }
@@ -2258,6 +2288,9 @@ async fn active_loop(
             _ = clipboard_retry => {
                 clipboard.retry(input);
                 continue;
+            }
+            _ = keyframe_due => {
+                keyframes.ask(input, true);
             }
             _ = layout_retry => {
                 layout_retry_at = None;
@@ -2883,6 +2916,27 @@ fn pack_rgb(frame: &Frame, rect: Rect, buf: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A keyframe wanted within the limit of the last is not asked for then, nor
+    /// forgotten: it is due when the limit is past, as a stream that lost its
+    /// place again after the last one's keyframe needs. One wanted now is asked
+    /// for at once, and takes the place of one due.
+    #[test]
+    fn a_keyframe_held_back_by_the_limit_is_asked_for_after_it() {
+        let start = Instant::now();
+        let mut asks = KeyframeAsks::default();
+        assert!(asks.asks(start, false));
+        assert_eq!(asks.due, None);
+        let lost = start + Duration::from_millis(500);
+        assert!(!asks.asks(lost, false));
+        assert!(!asks.asks(lost + Duration::from_millis(100), false), "still one ask, however many want it");
+        assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN));
+        assert!(asks.asks(start + KEYFRAME_AGAIN, true), "asked for when due");
+        assert_eq!(asks.due, None);
+        assert!(!asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(1), false));
+        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now is now");
+        assert_eq!(asks.due, None);
+    }
 
     /// A column's stream is the surface mapped at its corner, as a Windows host
     /// maps one surface for each monitor; a corner nothing is mapped at has none.
