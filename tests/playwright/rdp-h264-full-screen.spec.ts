@@ -107,6 +107,13 @@ interface Seen {
   decodesVideo?: string | null;
   /** The display socket's batches, since it last attached. */
   batches: Batch[];
+  /**
+   * How many of `batches` had come when the stream was last announced, or null
+   * before it was on this socket. Those before are units the gateway had queued
+   * before the page attached, which a page with no format yet drops, and
+   * acknowledges.
+   */
+  formatAt: number | null;
   acknowledged: number[];
   /** Messages the page sent on its session socket, by `type`. */
   sent: string[];
@@ -120,6 +127,7 @@ function watch(page: Page): Seen {
     controlTypes: [],
     formats: [],
     batches: [],
+    formatAt: null,
     acknowledged: [],
     sent: [],
     wasm: [],
@@ -140,6 +148,7 @@ function watch(page: Page): Seen {
     }
     if (message.type === "videoFormat") {
       seen.formats.push(message.decode);
+      seen.formatAt = seen.batches.length;
     }
   };
   page.on("websocket", (ws) => {
@@ -163,6 +172,7 @@ function watch(page: Page): Seen {
     }
     // A display socket is an attachment of its own, numbered from one.
     seen.batches = [];
+    seen.formatAt = null;
     seen.acknowledged = [];
     ws.on("framesent", ({ payload }) => {
       if (typeof payload !== "string") {
@@ -186,14 +196,17 @@ function watch(page: Page): Seen {
   return seen;
 }
 
-const units = (seen: Seen): Unit[] => seen.batches.flatMap((b) => b.units);
-const keyframes = (seen: Seen): number =>
-  units(seen).filter((unit) => unit.keyframe).length;
-
+/// The batches since the stream was last announced.
+const announced = (seen: Seen): Batch[] =>
+  seen.formatAt === null ? [] : seen.batches.slice(seen.formatAt);
+const units = (seen: Seen): Unit[] => announced(seen).flatMap((b) => b.units);
+/// Whether the page has painted a batch of the stream as last announced.
+const paintsAnnounced = (seen: Seen): boolean =>
+  announced(seen).some((batch) => seen.acknowledged.includes(batch.sequence));
 /// Whether every unit is what the page was promised: a keyframe flag on exactly
 /// the units with an IDR picture, each with its parameter sets ahead of it.
 function checkUnits(seen: Seen) {
-  for (const batch of seen.batches) {
+  for (const batch of announced(seen)) {
     expect(
       batch.exact,
       "records must be VIDEO and exactly fill the frame",
@@ -265,14 +278,19 @@ test.describe("a target started with H.264 full screen", () => {
 
     // The same session, reattached: the stream announced again and started
     // again at a keyframe, which the host was asked for.
+    // What the first page's display socket saw is forgotten here, and not when
+    // the next one opens, which may be after the page shows its menu.
     const before = seen.controlTypes.length;
+    seen.batches = [];
+    seen.formatAt = null;
+    seen.acknowledged = [];
     await page.reload();
     await expect(page.getByRole("button", { name: "Open menu" })).toBeVisible({
       timeout: 20_000,
     });
     await expect
-      .poll(() => seen.acknowledged.length, { timeout: 20_000 })
-      .toBeGreaterThan(0);
+      .poll(() => paintsAnnounced(seen), { timeout: 20_000 })
+      .toBe(true);
     const after = seen.controlTypes.slice(before);
     expect(after).toContain("connected");
     expect(after).toContain("videoFormat");
@@ -333,28 +351,23 @@ test.describe("a target started with H.264 full screen", () => {
     const seen = watch(page);
     await logInAndConnectTo(page, TARGET ?? "", "", FULL_SCREEN);
     await expect
-      .poll(() => seen.acknowledged.length, { timeout: 20_000 })
-      .toBeGreaterThan(0);
+      .poll(() => paintsAnnounced(seen), { timeout: 20_000 })
+      .toBe(true);
+    const announcements = seen.formats.length;
     const failed = await worker?.evaluate(() =>
       (globalThis as { failDecoder?: () => boolean }).failDecoder?.(),
     );
     expect(failed, "the paint worker's first decoder was failed").toBe(true);
 
-    // The page asks for a keyframe, the gateway asks the host, and the picture
-    // comes back on a second decoder, with the session still the same one.
+    // The page asks for a keyframe, the gateway asks the host, and the stream
+    // is announced again and painted from it on a second decoder, with the
+    // session still the same one.
     await expect
       .poll(() => seen.sent.includes("refresh"), { timeout: 30_000 })
       .toBe(true);
     await expect
-      .poll(() => keyframes(seen), { timeout: 20_000 })
-      .toBeGreaterThan(1);
-    const resumedAt = seen.batches.length;
-    await expect
       .poll(
-        () =>
-          seen.batches
-            .slice(resumedAt)
-            .some((batch) => seen.acknowledged.includes(batch.sequence)),
+        () => seen.formats.length > announcements && paintsAnnounced(seen),
         { timeout: 20_000 },
       )
       .toBe(true);
