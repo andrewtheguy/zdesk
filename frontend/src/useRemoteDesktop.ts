@@ -1351,10 +1351,11 @@ export function useRemoteDesktop(
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
     // While the browser has the picture's WebGL context (desktopPainter.ts). A
-    // retry due meanwhile waits for it: a session started before the context is
-    // back would have no picture to draw into.
+    // connect due meanwhile waits for it, `heldForce` what it was asked with: a
+    // session started before the context is back would have no picture to
+    // draw into.
     let contextLost = false;
-    let retryHeld = false;
+    let heldForce: boolean | null = null;
 
     // Drop any retained framebuffer. Every interstitial (connecting,
     // reconnecting, busy, taken over) and the picker fully hide the canvas
@@ -1415,14 +1416,13 @@ export function useRemoteDesktop(
       }
       const delay = Math.min(1000 * 2 ** attempts, MAX_RETRY_DELAY_MS);
       attempts += 1;
-      retryTimer = setTimeout(() => {
-        if (contextLost) {
-          retryHeld = true;
-          setConnectError(CONTEXT_LOST_HINT);
-          return;
-        }
-        void connect(false);
-      }, delay);
+      retryTimer = setTimeout(() => void connect(false), delay);
+    };
+
+    // A connect that found the context gone, kept for when it is back.
+    const holdForContext = (force: boolean) => {
+      heldForce = force;
+      setConnectError(CONTEXT_LOST_HINT);
     };
 
     // The browser took the picture's WebGL context away: what this page held of
@@ -1436,10 +1436,11 @@ export function useRemoteDesktop(
     };
     const contextGiven = () => {
       contextLost = false;
-      if (retryHeld) {
-        retryHeld = false;
+      if (heldForce !== null) {
+        const force = heldForce;
+        heldForce = null;
         setConnectError(null);
-        void connect(false);
+        void connect(force);
       }
     };
 
@@ -1499,24 +1500,45 @@ export function useRemoteDesktop(
     // A page showing a display in a tab of its own claims nothing — a claim would
     // take the session from the tab that holds it — and opens that display's
     // socket. Every other page claims the session.
+    // Held while the context is gone, asked again after each wait: a socket
+    // opened into a context that went meanwhile would start a session with
+    // nothing to draw into, and nothing would start it over.
     const connect = async (force: boolean) => {
       if (disposed) {
         return;
       }
+      if (contextLost) {
+        holdForContext(force);
+        return;
+      }
       if (tabDisplay !== null) {
-        const tab = await tabId();
-        if (!disposed) {
-          openDisplay(tabDisplay, { id: tab, takeover: force });
-        }
+        await openTab(tabDisplay, force);
         return;
       }
       await claimAndOpen(force);
+    };
+
+    // A tab's one socket, for the display it shows, once its id is known.
+    const openTab = async (display: number, force: boolean) => {
+      const tab = await tabId();
+      if (disposed) {
+        return;
+      }
+      if (contextLost) {
+        holdForContext(force);
+        return;
+      }
+      openDisplay(display, { id: tab, takeover: force });
     };
 
     // Claim the session slot, then open the WebSocket with the token.
     const claimAndOpen = async (force: boolean) => {
       const claimed = await claim(force);
       if (disposed) {
+        return;
+      }
+      if (contextLost) {
+        holdForContext(force);
         return;
       }
       if (claimed === "busy") {
@@ -2585,7 +2607,7 @@ export function useRemoteDesktop(
     // User-driven (re)start: initial connect, takeover, take-back.
     const start = (force: boolean) => {
       clearTimeout(retryTimer);
-      retryHeld = false;
+      heldForce = null;
       attempts = 0;
       clearDesktop();
       // The budget refills and last time's reason goes with it: it belonged to the
@@ -2610,7 +2632,7 @@ export function useRemoteDesktop(
         return;
       }
       clearTimeout(retryTimer);
-      retryHeld = false;
+      heldForce = null;
       closeDisplay();
       clearDesktop();
       endPicture();

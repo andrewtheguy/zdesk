@@ -27,7 +27,9 @@ void main() {
   gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-const LOST = "the browser took the picture's WebGL context away";
+/** What a picture whose context the browser took away says of it. */
+export const CONTEXT_TAKEN =
+  "the browser took the picture's WebGL context away";
 
 /**
  * Hear the browser take `canvas`'s WebGL context away and give it back. Taking
@@ -54,7 +56,11 @@ export interface PictureCanvas {
    * picture made is in the one given back.
    */
   lost(): boolean;
-  /** Throws once `lost`. */
+  /**
+   * Throws `CONTEXT_TAKEN` once `lost`, or as soon as the context reports
+   * itself lost, ahead of the browser's event: its calls are no-ops from then
+   * on, and what they report is not the GPU refusing anything.
+   */
   usable(): void;
   /**
    * The canvas at this size, its drawing buffer cleared. WebGL reports a refused
@@ -99,12 +105,7 @@ export function openPictureCanvas(
   if (!gl) {
     throw new Error("WebGL 2 is not available");
   }
-  if (gl.isContextLost()) {
-    throw new Error(LOST);
-  }
-  // Taken for good when the browser says so. Until it does, the context's
-  // calls are no-ops, and the picture draws nothing rather than complaining
-  // before the page has heard why.
+  // Taken for good when the browser says so.
   let taken = false;
   const listening = new AbortController();
   canvas.addEventListener(
@@ -116,10 +117,11 @@ export function openPictureCanvas(
   );
   const lost = () => taken;
   const usable = () => {
-    if (taken) {
-      throw new Error(LOST);
+    if (taken || gl.isContextLost()) {
+      throw new Error(CONTEXT_TAKEN);
     }
   };
+  usable();
   const vertex = shader(gl, gl.VERTEX_SHADER, VERTEX);
   const pixels = shader(gl, gl.FRAGMENT_SHADER, fragment);
   const program = gl.createProgram();
@@ -127,6 +129,7 @@ export function openPictureCanvas(
   gl.attachShader(program, pixels);
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    usable();
     throw new Error(
       `WebGL 2 refused the picture's shaders: ${gl.getProgramInfoLog(program) || gl.getShaderInfoLog(pixels)}`,
     );
@@ -148,6 +151,7 @@ export function openPictureCanvas(
       canvas.width = w;
       canvas.height = h;
       if (gl.drawingBufferWidth !== w || gl.drawingBufferHeight !== h) {
+        usable();
         throw new Error(
           `the GPU gave a ${gl.drawingBufferWidth}x${gl.drawingBufferHeight} canvas for a ${w}x${h} picture`,
         );

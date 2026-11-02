@@ -172,6 +172,7 @@ export function createGraphicsPicture(
     gl.deleteShader(vertex);
     gl.deleteShader(fragment);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      surface.usable();
       throw new Error(
         `WebGL 2 refused the H.264 picture's shaders: ${gl.getProgramInfoLog(program)}`,
       );
@@ -210,6 +211,7 @@ export function createGraphicsPicture(
     const error = gl.getError();
     if (error !== gl.NO_ERROR) {
       gl.deleteTexture(decoded);
+      surface.usable();
       throw new Error(
         `the GPU refused a ${w}x${h} H.264 picture (WebGL error 0x${error.toString(16)})`,
       );
@@ -235,6 +237,7 @@ export function createGraphicsPicture(
     try {
       const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
       if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        surface.usable();
         throw new Error(
           `the GPU will not draw into the picture (framebuffer status 0x${status.toString(16)})`,
         );
@@ -327,6 +330,7 @@ export function createGraphicsPicture(
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
     const error = gl.getError();
     if (error !== gl.NO_ERROR) {
+      surface.usable();
       throw new Error(
         `the GPU refused a ${w}x${h} picture (WebGL error 0x${error.toString(16)})`,
       );

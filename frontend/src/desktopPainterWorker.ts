@@ -35,7 +35,7 @@
 import { stopEgfx } from "./egfxCompositor.ts";
 import { createGraphicsPicture, type PicturePart } from "./egfxPicture.ts";
 import { createFramePainter, type FramePainter } from "./framePainter.ts";
-import { watchPictureContext } from "./glPicture.ts";
+import { CONTEXT_TAKEN, watchPictureContext } from "./glPicture.ts";
 import type { MosaicView } from "./mosaic.ts";
 import { createPlanesPicture } from "./planesPicture.ts";
 import { batchFrameContinued, binaryFrameKind } from "./protocol.ts";
@@ -186,8 +186,11 @@ export function createPainterWorker(
   // While the browser has the WebGL canvas's context, until the clear that
   // ends the attachment: what a picture drawn in it says of itself meanwhile
   // is not the page's to show, since the page starts the session over once
-  // the context is back.
+  // the context is back. A picture may find the context gone ahead of the
+  // browser's event, and says so by name: that is kept the same way.
   let contextGone = false;
+  const keptFromPage = (reason: string | null) =>
+    reason !== null && (contextGone || reason.includes(CONTEXT_TAKEN));
   // While a composition is set, the framebuffer the painter draws into, off
   // screen; the canvas then shows `view` drawn from it. Null otherwise, when the
   // painter draws straight onto the canvas.
@@ -331,7 +334,7 @@ export function createPainterWorker(
           painter = makePainter({
             context: () => (framebuffer ? framebufferCtx : ctx),
             onVideoError: (reason) => {
-              if (!contextGone || reason === null) {
+              if (!keptFromPage(reason)) {
                 post({ type: "videoError", reason });
               }
             },

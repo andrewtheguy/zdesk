@@ -285,7 +285,10 @@ bunx playwright test '/egfx-passthrough\.spec\.ts$'
 The context-restart spec needs the same target: it ends Chromium's GPU process,
 which takes the page's WebGL context, and asserts that the session is started
 over once the context is back. It runs on Chromium itself rather than the
-headless shell, whose renderer dies with that process:
+headless shell, whose renderer dies with that process, and it needs a GPU:
+under WSL's software rendering the page itself dies with the GPU process more
+often than not, so run it on the Windows host, with a node on the path so
+Playwright's CLI runs under node rather than bun:
 
 ```sh
 ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \

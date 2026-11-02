@@ -664,3 +664,15 @@ test("what a picture says while the context is gone is kept from the page, until
     ],
   );
 });
+
+test("a picture that found the context gone ahead of the browser's event is kept from the page too", () => {
+  const h = harness();
+  h.painterOptions().onVideoError(
+    "This browser could not present the decoded picture (the browser took the picture's WebGL context away). Reload the page to start the session over.",
+  );
+  h.painterOptions().onVideoError("the GPU refused a 1x1 picture");
+  assert.deepEqual(
+    h.events.filter((event) => event.type === "videoError"),
+    [{ type: "videoError", reason: "the GPU refused a 1x1 picture" }],
+  );
+});

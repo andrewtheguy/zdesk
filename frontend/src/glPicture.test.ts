@@ -55,14 +55,14 @@ test("a picture whose context was taken stays lost when it is given back", () =>
   assert.deepEqual(calls, [], "nothing of the old context deleted in the new");
 });
 
-test("a picture is lost by the browser's word, not before", () => {
+test("a picture is unusable as soon as its context says so, lost by the browser's word", () => {
   const { canvas, state } = fakeCanvas();
   const picture = openPictureCanvas(canvas, FRAGMENT);
-  // The context reports itself lost ahead of the event: its calls are no-ops,
-  // and the picture says nothing yet.
+  // The context reports itself lost ahead of the event: what its calls report
+  // is not the GPU refusing anything, and the picture says so by name.
   state.lost = true;
   assert.equal(picture.lost(), false);
-  picture.usable();
+  assert.throws(() => picture.usable(), /took the picture's WebGL context/);
   canvas.dispatchEvent(new Event("webglcontextlost"));
   assert.equal(picture.lost(), true);
 });
