@@ -107,6 +107,17 @@
 //! ZDESK_UAT_TARGET=<rdp target> \
 //!   cargo run --example rdp_client_probe -- a_real_host_draws_video_with_h264
 //! ```
+//!
+//! Asked for the whole desktop in H.264 instead (`H264::WholeDesktop`), the
+//! session hands on each surface's access units and nothing else of the
+//! pipeline, and [`stream_whole_desktop`] asserts each stream starts at a
+//! keyframe of a mapped surface, and that a keyframe asked for once the stream
+//! is going comes within a second. It needs nothing playing.
+//!
+//! ```sh
+//! ZDESK_UAT_TARGET=<rdp target> \
+//!   cargo run --example rdp_client_probe -- a_real_host_streams_the_whole_desktop_in_h264
+//! ```
 
 #[path = "../tests/common/mod.rs"]
 #[allow(dead_code)]
@@ -125,6 +136,7 @@ use zdesk::rdp_client::{
 };
 use zdesk::rdp_clipboard::{self, CF_UNICODETEXT};
 use zdesk_rdp_graphics::avc::{Scanned, scan};
+use zdesk_rdp_graphics::proto::avc::access_unit;
 use tokio::sync::mpsc::Receiver;
 
 /// Which target in `tmp/test_uat.toml` to drive — see the module docs.
@@ -570,6 +582,11 @@ async fn pump(
                 }
             }
             Event::Drawn(fidelity) => tally.host_picture = Some(fidelity),
+            // Only from a session asked for the whole desktop in H.264, which
+            // these cases are not.
+            Event::Video { .. } | Event::Surface { .. } | Event::UnitLost { .. } => {
+                panic!("a pipeline passed whole handed on its H.264 alone")
+            }
             Event::Cursor(_) => tally.cursors += 1,
             Event::Resize { width, height, .. } => tally.resizes.push((width, height)),
             Event::ResizeReady { .. } => tally.resize_ready = true,
@@ -1189,6 +1206,104 @@ async fn a_real_host_draws_video_with_h264() {
     pass_h264().await;
 }
 
+/// The whole desktop in H.264, handed on as each surface's stream
+/// ([`Event::Video`]): every surface mapped before its units, each stream
+/// starting at a keyframe naming its profile, every frame acknowledged, and a
+/// keyframe asked for ([`Input::keyframe`]) answered with an IDR of every
+/// surface within a second. See "H.264" in the module docs.
+async fn stream_whole_desktop() {
+    common::init_logging();
+    let name = std::env::var(TARGET_ENV).unwrap_or_else(|_| {
+        panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
+    });
+    let target = common::uat_target(&name);
+    println!("rdp_client_probe: {name} ({}:{}), the whole desktop in H.264", target.host, target.port);
+    let (session, mut events) = Session::start(Connect {
+        host: target.host.clone(),
+        port: target.port,
+        username: target.username.clone(),
+        password: target.password.clone(),
+        domain: target.domain.clone(),
+        width: OPENING.0,
+        height: OPENING.1,
+        scale_percent: 0,
+        monitors: 1,
+        placement: zdesk::config::Placement::Right,
+        resize: true,
+        egfx: true,
+        h264: H264::WholeDesktop,
+        autodetect: false,
+        multitransport: false,
+        paced: false,
+        audio: None,
+        camera: None,
+        microphone: None,
+    });
+    let input = session.input().clone();
+    let mut mapped = BTreeSet::new();
+    let mut started = BTreeSet::new();
+    let (mut frames, mut units, mut keys, mut bytes) = (0u64, 0u64, 0u64, 0u64);
+    let mut ready = false;
+    let mut asked: Option<(Instant, u64)> = None;
+    let mut answered = None;
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while answered.is_none() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let Ok(event) = tokio::time::timeout(left, events.recv()).await else { break };
+        match event.expect("the event channel closed without an Ended") {
+            Event::Graphics { .. } => panic!("the whole desktop in H.264 was passed as the pipeline"),
+            Event::Surface { surface, rect } => {
+                if rect.is_some() {
+                    mapped.insert(surface);
+                } else {
+                    mapped.remove(&surface);
+                    started.remove(&surface);
+                }
+            }
+            Event::UnitLost { surface } => panic!("surface {surface} lost a unit"),
+            Event::ResizeReady { .. } => ready = true,
+            Event::Video { units: drawn, frame } => {
+                frames += 1;
+                for (surface, unit) in &drawn {
+                    assert!(mapped.contains(surface), "a unit of surface {surface}, which is not mapped");
+                    let read = access_unit(unit);
+                    if started.insert(*surface) {
+                        assert!(read.key, "surface {surface}'s stream did not start at a keyframe");
+                        let profile = read.profile.expect("a keyframe carries its parameter sets");
+                        println!("  surface {surface}: a stream starts, avc1.{:02x}{:02x}{:02x}", profile[0], profile[1], profile[2]);
+                    }
+                    units += 1;
+                    keys += u64::from(read.key);
+                    bytes += unit.len() as u64;
+                    if read.key && let Some((at, before)) = asked && keys > before {
+                        answered = Some(at.elapsed());
+                    }
+                }
+                input.frame_composed(frame);
+            }
+            Event::Ended(result) => panic!("the session ended: {result:?}"),
+            _ => {}
+        }
+        // Once the stream is going, a keyframe is asked for.
+        if asked.is_none() && ready && units >= 20 {
+            println!("  asking for a keyframe after {units} units ({keys} keyframes)");
+            input.keyframe();
+            asked = Some((Instant::now(), keys));
+        }
+    }
+    println!("  {frames} frames carrying {units} access units ({keys} keyframes) in {bytes} bytes");
+    assert!(units > 0, "the host drew nothing in H.264");
+    let answered = answered.expect("no keyframe answered the one asked for");
+    println!("  the keyframe asked for came {answered:?} later");
+    assert!(answered < Duration::from_secs(1), "the keyframe took {answered:?}");
+    drop(session);
+}
+
+/// A case: Drives a real RDP host named in tmp/test_uat.toml; something moving on its desktop helps.
+async fn a_real_host_streams_the_whole_desktop_in_h264() {
+    stream_whole_desktop().await;
+}
+
 /// A case: Drives a real RDP host named in tmp/test_uat.toml.
 async fn a_real_host_paints_and_resizes() {
     case().await;
@@ -1210,7 +1325,7 @@ async fn a_real_host_records_the_microphone() {
 }
 
 /// The cases this runs, named on its command line, in the order named.
-const CASES: &[&str] = &["a_real_host_draws_video_with_h264", "a_real_host_paints_and_resizes", "a_real_host_round_trips_the_clipboard", "a_real_host_streams_the_camera", "a_real_host_records_the_microphone"];
+const CASES: &[&str] = &["a_real_host_draws_video_with_h264", "a_real_host_streams_the_whole_desktop_in_h264", "a_real_host_paints_and_resizes", "a_real_host_round_trips_the_clipboard", "a_real_host_streams_the_camera", "a_real_host_records_the_microphone"];
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -1223,6 +1338,7 @@ async fn main() {
         println!("== {case}");
         match case.as_str() {
             "a_real_host_draws_video_with_h264" => a_real_host_draws_video_with_h264().await,
+            "a_real_host_streams_the_whole_desktop_in_h264" => a_real_host_streams_the_whole_desktop_in_h264().await,
             "a_real_host_paints_and_resizes" => a_real_host_paints_and_resizes().await,
             "a_real_host_round_trips_the_clipboard" => a_real_host_round_trips_the_clipboard().await,
             "a_real_host_streams_the_camera" => a_real_host_streams_the_camera().await,

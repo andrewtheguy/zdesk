@@ -283,13 +283,22 @@ bunx playwright test '/egfx-passthrough\.spec\.ts$'
 ```
 
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
-`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 over
-the full screen, which the host draws everything in; by region it would need a
-video playing:
+`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 by
+region, which the page composes. The host draws H.264 only where the desktop
+moves like video, so it needs a video playing on the host:
 
 ```sh
 ZDESK_PLAYWRIGHT_EGFX_H264_TARGET='win-h264' \
 bunx playwright test '/egfx-passthrough\.spec\.ts$'
+```
+
+H.264 full screen is passed as each display's video stream, not as the
+pipeline, and has its own spec, on the same target and opt-in. The host draws
+the whole desktop in H.264, so nothing has to play:
+
+```sh
+ZDESK_PLAYWRIGHT_EGFX_H264_TARGET='win-h264' \
+bunx playwright test '/rdp-h264-full-screen\.spec\.ts$'
 ```
 
 The Standard passthrough spec needs a live Mac in an `ard` target, named by

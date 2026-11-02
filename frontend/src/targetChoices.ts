@@ -190,8 +190,16 @@ export interface Abilities {
    */
   appleMedia: boolean;
   rdpGraphics: boolean;
-  /** Whether it decodes the H.264 an RDP host may draw with (rdpH264.ts). */
+  /**
+   * Whether it decodes the H.264 an RDP host draws regions of its pipeline with,
+   * into the compositor (rdpH264.ts).
+   */
   rdpH264: boolean;
+  /**
+   * Whether it decodes an RDP host's H.264 of the whole desktop, passed as video
+   * and composed by nothing (videoCodecs.ts).
+   */
+  rdpVideo: boolean;
   /**
    * Whether it has a `VideoDecoder`, taken to decode a High Performance Mac's
    * H.264 without asking (videoCodecs.ts).
@@ -343,10 +351,14 @@ export interface TargetOptions {
 // it on, so said and not offered.
 const RDP_GRAPHICS: PassedNote & { blocked: string } = {
   label: "Always passed through",
-  note: "egfx is on for this target, so every session passes the host's graphics pipeline through, for this browser to compose.",
+  note: "egfx is on for this target, so every session passes the host's graphics pipeline through: composed by this browser, or under H.264 full screen played as video.",
   blocked:
-    "This browser cannot compose the host's graphics pipeline, which this target always passes: that needs WebGL 2 and a cross-origin isolated page. Use a browser that can, or a target with egfx disabled.",
+    "This browser can neither compose the host's graphics pipeline, which this target always passes, nor play its H.264 full screen: composing needs WebGL 2 and a cross-origin isolated page, and full screen a VideoDecoder that takes the host's H.264. Use a browser that can, or a target with egfx disabled.",
 };
+
+// Why a way of drawing the pipeline that this browser would compose is greyed.
+const NO_COMPOSING =
+  "This browser cannot compose the host's graphics pipeline: that needs WebGL 2 and a cross-origin isolated page.";
 
 // Why wlshare's progressive tiles are greyed: the module that composes an RDP
 // host's pipeline decodes them, and this page cannot run it.
@@ -652,60 +664,73 @@ const PLACEMENTS: PlacementOption[] = [
 /**
  * `target`'s pipeline as the picker shows it: nothing where it is no choice, and
  * otherwise high quality or adaptive, adaptive's H.264 over the whole desktop by
- * default or by region. A browser that cannot decode the H.264 has adaptive
- * greyed; an adaptive one remembered from before is not sent, and stays
- * remembered for a browser that can.
+ * default or by region. Each is greyed where this browser cannot have it: high
+ * quality and the region are composed here, and full screen is played as video,
+ * which needs a decoder alone. One remembered from before that is greyed is not
+ * sent, and stays remembered for a browser that can; what is sent instead is
+ * high quality, or full screen in a browser that cannot compose.
  */
 function pipelineRow(
   target: TargetInfo,
   remembered: Pipeline | undefined,
-  decodes: boolean,
+  abilities: Pick<Abilities, "rdpGraphics" | "rdpH264" | "rdpVideo">,
 ): { row: PipelineRow | null; pipeline: Pipeline } {
   if (!target.pipeline) {
     return { row: null, pipeline: "high-quality" };
   }
+  const composes = abilities.rdpGraphics;
+  const noDecoder =
+    "This browser has no VideoDecoder that takes the host's H.264.";
   const h264: PipelineRow["h264"] = [
     {
       value: "adaptive-desktop",
       label: "H.264 full screen",
-      note: "The whole desktop in H.264, which the host fits to the link.",
-      disabled: false,
+      note: abilities.rdpVideo
+        ? "The whole desktop in H.264, which the host fits to the link."
+        : noDecoder,
+      disabled: !abilities.rdpVideo,
     },
     {
       value: "adaptive-region",
       label: "H.264 region",
-      note: "H.264 only where the desktop moves like video, the rest as High quality draws it, which the host does not fit to the link.",
-      disabled: false,
+      note: !composes
+        ? NO_COMPOSING
+        : abilities.rdpH264
+          ? "H.264 only where the desktop moves like video, the rest as High quality draws it, which the host does not fit to the link."
+          : noDecoder,
+      disabled: !composes || !abilities.rdpH264,
     },
   ];
-  const pipeline =
-    remembered !== undefined &&
-    (remembered === "high-quality" ||
-      (decodes && h264.some((option) => option.value === remembered)))
-      ? remembered
-      : "high-quality";
-  return {
-    row: {
-      modes: [
-        {
-          value: "high-quality",
-          label: "High quality",
-          note: "The pipeline's codecs without H.264. For a LAN.",
-          disabled: false,
-        },
-        {
-          value: "adaptive",
-          label: "Adaptive (alpha)",
-          note: decodes
-            ? "H.264, which the host fits to the link this browser is on."
-            : "This browser has no VideoDecoder that takes the host's H.264.",
-          disabled: !decodes,
-        },
-      ],
-      h264,
+  const adaptive = h264.some((option) => !option.disabled);
+  const modes: PipelineRow["modes"] = [
+    {
+      value: "high-quality",
+      label: "High quality",
+      note: composes
+        ? "The pipeline's codecs without H.264. For a LAN."
+        : NO_COMPOSING,
+      disabled: !composes,
     },
-    pipeline,
-  };
+    {
+      value: "adaptive",
+      label: "Adaptive (alpha)",
+      note: adaptive
+        ? "H.264, which the host fits to the link this browser is on."
+        : noDecoder,
+      disabled: !adaptive,
+    },
+  ];
+  const able = (pipeline: Pipeline) =>
+    pipeline === "high-quality"
+      ? composes
+      : h264.some((option) => option.value === pipeline && !option.disabled);
+  const pipeline =
+    remembered !== undefined && able(remembered)
+      ? remembered
+      : !composes && abilities.rdpVideo
+        ? "adaptive-desktop"
+        : "high-quality";
+  return { row: { modes, h264 }, pipeline };
 }
 
 /**
@@ -762,7 +787,7 @@ export function targetOptions(
     abilities.audio,
     abilities.lossless,
   );
-  const drawn = pipelineRow(target, remembered?.pipeline, abilities.rdpH264);
+  const drawn = pipelineRow(target, remembered?.pipeline, abilities);
   const camera = deviceRow(target, "camera", remembered?.camera);
   const microphone = deviceRow(target, "microphone", remembered?.microphone);
   // An RDP host's pipeline is passed whatever is chosen.
@@ -833,7 +858,11 @@ function blockedReason(
   abilities: Abilities,
   pictured: boolean,
 ): string | null {
-  if (target.passthroughs.includes("rdp-graphics") && !abilities.rdpGraphics) {
+  if (
+    target.passthroughs.includes("rdp-graphics") &&
+    !abilities.rdpGraphics &&
+    !(target.pipeline && abilities.rdpVideo)
+  ) {
     return RDP_GRAPHICS.blocked;
   }
   if (target.passthroughs.includes("apple-media") && !pictured) {

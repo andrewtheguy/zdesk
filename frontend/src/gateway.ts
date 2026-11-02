@@ -56,6 +56,7 @@ export function gatewaySocketUrl(
     pageHevc: boolean;
     rdpGraphics: boolean;
     rdpH264: boolean;
+    rdpVideo: boolean;
   },
 ): string {
   const url = new URL(gatewayUrl(path));
@@ -70,6 +71,7 @@ export function gatewaySocketUrl(
     url.searchParams.set("page_hevc", String(client.pageHevc));
     url.searchParams.set("rdp_graphics", String(client.rdpGraphics));
     url.searchParams.set("rdp_h264", String(client.rdpH264));
+    url.searchParams.set("rdp_video", String(client.rdpVideo));
   }
   return url.toString();
 }

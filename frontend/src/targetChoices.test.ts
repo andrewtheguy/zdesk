@@ -19,6 +19,7 @@ const ABLE: Abilities = {
   appleMedia: true,
   rdpGraphics: true,
   rdpH264: true,
+  rdpVideo: true,
   appleH264: true,
   wlshareH264: true,
   audio: true,
@@ -30,6 +31,7 @@ const UNABLE: Abilities = {
   appleMedia: false,
   rdpGraphics: false,
   rdpH264: false,
+  rdpVideo: false,
   appleH264: false,
   wlshareH264: false,
   audio: false,
@@ -674,7 +676,8 @@ test("an RDP host's pipeline is always passed, and needs a page that composes it
   assert.equal(able.choices.passthrough, null, "passed without being named");
   assert.equal(able.blocked, null);
 
-  // A browser that cannot compose it cannot start the target: nothing stands in.
+  // A browser that can neither compose it nor play it as video cannot start the
+  // target: nothing stands in.
   const unable = targetOptions(RDP, undefined, UNABLE);
   assert.match(unable.blocked ?? "", /WebGL 2/);
   assert.ok(unable.passed);
@@ -712,7 +715,7 @@ test("how the host draws the pipeline is high quality until somebody chooses ada
 });
 
 test("a browser that cannot decode the H.264 is offered high quality alone", () => {
-  const NO_H264: Abilities = { ...ABLE, rdpH264: false };
+  const NO_H264: Abilities = { ...ABLE, rdpH264: false, rdpVideo: false };
   const options = targetOptions(RDP, { pipeline: "adaptive-region" }, NO_H264);
   const adaptive = options.pipelineRow?.modes[1];
   assert.equal(adaptive?.disabled, true);
@@ -723,6 +726,56 @@ test("a browser that cannot decode the H.264 is offered high quality alone", () 
     "remembered, not sent",
   );
   assert.equal(options.blocked, null, "the target still starts, high quality");
+});
+
+test("a browser that cannot compose plays the host's H.264 full screen, and nothing else", () => {
+  const VIDEO_ONLY: Abilities = {
+    ...ABLE,
+    rdpGraphics: false,
+    rdpH264: false,
+  };
+  for (const remembered of [
+    undefined,
+    "high-quality",
+    "adaptive-region",
+  ] as const) {
+    const options = targetOptions(
+      RDP,
+      remembered && { pipeline: remembered },
+      VIDEO_ONLY,
+    );
+    assert.equal(options.blocked, null, String(remembered));
+    assert.equal(options.choices.pipeline, "adaptive-desktop");
+  }
+  const options = targetOptions(RDP, undefined, VIDEO_ONLY);
+  assert.deepEqual(
+    options.pipelineRow?.modes.map((mode) => [mode.value, mode.disabled]),
+    [
+      ["high-quality", true],
+      ["adaptive", false],
+    ],
+  );
+  assert.deepEqual(
+    options.pipelineRow?.h264.map((option) => [option.value, option.disabled]),
+    [
+      ["adaptive-desktop", false],
+      ["adaptive-region", true],
+    ],
+  );
+  assert.match(options.pipelineRow?.modes[0].note ?? "", /WebGL 2/);
+  assert.match(options.passed?.note ?? "", /full screen/);
+
+  // One that composes but takes no H.264 as video has full screen greyed.
+  const composeOnly = targetOptions(
+    RDP,
+    { pipeline: "adaptive-desktop" },
+    { ...ABLE, rdpVideo: false },
+  );
+  assert.equal(composeOnly.choices.pipeline, "high-quality");
+  assert.deepEqual(
+    composeOnly.pipelineRow?.h264.map((option) => option.disabled),
+    [true, false],
+  );
 });
 
 const storage = new Map<string, string>();

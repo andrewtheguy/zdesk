@@ -1,7 +1,8 @@
 // What the page reads of the browser's video decoding: any `VideoDecoder` is
 // offered the Mac's H.264 unasked, wlshare's only where its decoder takes both
-// profiles wlshare codes, and a browser with none is offered neither; and the
-// answers are read once, and not before they are asked.
+// profiles wlshare codes, an RDP host's as video only where its decoder takes it,
+// and a browser with none is offered none; and the answers are read once, and not
+// before they are asked.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -18,6 +19,7 @@ const globals = globalThis as unknown as {
 const {
   askVideoCodecs,
   decodesAppleH264,
+  decodesRdpVideo,
   decodesWlshareH264,
   resetVideoCodecsForTests,
 } = await import("./videoCodecs.ts");
@@ -39,12 +41,20 @@ function decoder(takes: (codec: string) => boolean | "throws"): string[] {
   return asked;
 }
 
-test("wlshare's H.264 is asked in both of its profiles", async () => {
+test("wlshare's H.264 is asked in both of its profiles, and an RDP host's", async () => {
   const asked = decoder(() => true);
   await askVideoCodecs();
-  assert.deepEqual(asked.sort(), ["avc1.42C02A", "avc1.64002A"]);
+  assert.deepEqual(asked.sort(), ["avc1.42C02A", "avc1.4d4020", "avc1.64002A"]);
   assert.equal(decodesWlshareH264(), true);
   assert.equal(decodesAppleH264(), true);
+  assert.equal(decodesRdpVideo(), true);
+});
+
+test("a decoder that refuses an RDP host's H.264 is offered none as video", async () => {
+  decoder((codec) => codec !== "avc1.4d4020");
+  await askVideoCodecs();
+  assert.equal(decodesRdpVideo(), false);
+  assert.equal(decodesWlshareH264(), true);
 });
 
 test("a decoder that refuses either profile, or doubts it, is offered no wlshare H.264", async () => {
@@ -65,6 +75,7 @@ test("a browser with no VideoDecoder is offered no H.264", async () => {
   await askVideoCodecs();
   assert.equal(decodesAppleH264(), false);
   assert.equal(decodesWlshareH264(), false);
+  assert.equal(decodesRdpVideo(), false);
 });
 
 test("the answers are read once, and not before they are asked", async () => {

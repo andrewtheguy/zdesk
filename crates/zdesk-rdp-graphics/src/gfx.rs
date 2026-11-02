@@ -107,6 +107,35 @@ pub enum Update {
     /// frames after it, though the same message carry them. Reported once a
     /// confirmation, where that EndFrame is, among the [`Self::Drawn`] around it.
     Opened(Fidelity),
+    /// One access unit of a surface's H.264, for a pipeline whose picture is its
+    /// H.264 alone ([`Graphics::streaming`]): the luma view's, Annex B, as the
+    /// host coded it, the whole picture of the surface.
+    Unit { surface: u16, unit: Vec<u8> },
+    /// A surface's H.264 lost a unit there, one whose command did not read: the
+    /// units after it are coded against a picture nobody has, until the next
+    /// IDR. Only from [`Graphics::streaming`].
+    Lost { surface: u16 },
+    /// A surface was mapped to the output, at `rect` there. Only from
+    /// [`Graphics::streaming`].
+    Mapped { surface: u16, rect: Rect },
+    /// A surface was deleted, and its stream with it. Only from
+    /// [`Graphics::streaming`].
+    Deleted { surface: u16 },
+    /// The host ended frame `frame`, owed an acknowledgement once whoever shows
+    /// it has. Only from [`Graphics::streaming`].
+    Ended { frame: u32 },
+}
+
+/// What becomes of the commands a channel carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// Composed here, into the framebuffer.
+    Compose,
+    /// Handed on whole, still compressed ([`Graphics::passing`]).
+    Pass,
+    /// Read here for their H.264, which alone is handed on
+    /// ([`Graphics::streaming`]).
+    Stream,
 }
 
 /// A rectangle of a surface whose pixels are a picture the page shows from its
@@ -402,9 +431,14 @@ pub struct Graphics {
     clear: Option<Box<clear::Clear>>,
     /// Progressive's per-surface tiles, made on the first Progressive PDU.
     progressive: Option<Box<progressive::Progressive>>,
-    /// Whether the commands are passed on rather than composed here — see
-    /// [`Self::passing`].
-    pass: bool,
+    /// What becomes of the commands — see [`Self::passing`] and
+    /// [`Self::streaming`].
+    mode: Mode,
+    /// The size of each surface a streamed pipeline has created, for where it is
+    /// mapped.
+    sizes: BTreeMap<u16, (u16, u16)>,
+    /// What a streamed pipeline drew with that is not shown, each said once.
+    unshown: BTreeSet<u16>,
     /// The pictures supplied for the next run's H.264 access units, by the unit's
     /// number in the run ([`Self::supply`]).
     supplied: BTreeMap<u32, Picture>,
@@ -444,7 +478,9 @@ impl Graphics {
             pixels: Vec::new(),
             clear: None,
             progressive: None,
-            pass: false,
+            mode: Mode::Compose,
+            sizes: BTreeMap::new(),
+            unshown: BTreeSet::new(),
             supplied: BTreeMap::new(),
             on_gpu: BTreeSet::new(),
             gpu_paints: Vec::new(),
@@ -463,15 +499,29 @@ impl Graphics {
     /// has: a frame is not finished here, so none is counted here.
     pub fn passing() -> Self {
         let mut passing = Self::new();
-        passing.pass = true;
+        passing.mode = Mode::Pass;
         passing
+    }
+
+    /// A pipeline whose picture is its H.264 alone, as a host draws it when it is
+    /// asked for the whole desktop in H.264: each surface's access units handed
+    /// on one by one ([`Update::Unit`]), with where the surfaces are mapped and
+    /// where each frame ends, and nothing else. Every message is unwrapped here,
+    /// so whoever shows the units needs no pipeline of its own. What a host draws
+    /// with anything else is not shown, and said once a kind; a YUV444 command's
+    /// chroma view is dropped, so its picture is shown at half chroma, as AVC420
+    /// is.
+    pub fn streaming() -> Self {
+        let mut streaming = Self::new();
+        streaming.mode = Mode::Stream;
+        streaming
     }
 
     /// The pipeline a channel opened again starts with: nothing held, composed or
     /// passed as this one is.
     pub fn fresh(&self) -> Self {
         let mut fresh = Self::new();
-        fresh.pass = self.pass;
+        fresh.mode = self.mode;
         fresh
     }
 
@@ -496,10 +546,11 @@ impl Graphics {
         framebuffer: &Framebuffer,
     ) -> Result<Vec<Update>> {
         self.unwrap(data, buffer)?;
-        if self.pass {
-            return self.hand_on(data, buffer);
+        match self.mode {
+            Mode::Pass => self.hand_on(data, buffer),
+            Mode::Stream => self.stream_on(buffer),
+            Mode::Compose => self.compose(buffer, framebuffer),
         }
-        self.compose(buffer, framebuffer)
     }
 
     /// One message off the channel out of its bulk compression, into `commands`:
@@ -785,15 +836,7 @@ impl Graphics {
             let read = gfx::messages(&commands[command.start..command.end]).next();
             match read.transpose()? {
                 Some(Message::WireToSurface1 { codec, data, .. } | Message::WireToSurface2 { codec, data, .. }) => {
-                    if self.fidelity.saw(codec, data) {
-                        let names = self.fidelity.names();
-                        info!(
-                            "rdp: the host has drawn with {} so far, {}",
-                            names.join(", "),
-                            if self.fidelity.lossless() { "lossless" } else { "not lossless" }
-                        );
-                        updates.push(Update::Drawn(self.fidelity.clone()));
-                    }
+                    self.saw(codec, data, &mut updates);
                 }
                 Some(Message::CapsConfirm { version, flags }) => {
                     info!(
@@ -827,6 +870,146 @@ impl Graphics {
         }
         updates.push(Update::Passed { wrapped: wrapped.to_vec(), frames });
         Ok(updates)
+    }
+
+    /// What a streamed pipeline's commands say ([`Self::streaming`]): the
+    /// confirmation, the output's size, where each surface is, each surface's
+    /// access units and each frame's end, in order. Nothing is decoded or kept but
+    /// the surfaces' sizes.
+    fn stream_on(&mut self, commands: &[u8]) -> Result<Vec<Update>> {
+        let mut updates = Vec::new();
+        for message in gfx::messages(commands) {
+            match message? {
+                Message::CapsConfirm { version, flags } => {
+                    self.tally.command(gfx::CMD_CAPS_CONFIRM);
+                    info!(
+                        "rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}; \
+                         its H.264 is passed on"
+                    );
+                    self.fidelity = Fidelity::default();
+                    self.opened = false;
+                    updates.push(Update::Confirmed { version, flags });
+                }
+                Message::ResetGraphics { width, height, monitors } => {
+                    self.tally.command(gfx::CMD_RESET_GRAPHICS);
+                    affordable(width, height)?;
+                    let monitors = gfx::arrangement(width, height, &monitors);
+                    debug!("rdp: graphics reset to {width}x{height}, over {monitors:?}");
+                    self.output = Some((width, height));
+                    updates.push(Update::Reset { width, height, monitors });
+                }
+                Message::CreateSurface { surface, width, height, .. } => {
+                    self.tally.command(gfx::CMD_CREATE_SURFACE);
+                    debug!("rdp: graphics surface {surface} created, {width}x{height}");
+                    self.sizes.insert(surface, (width, height));
+                }
+                Message::DeleteSurface { surface } => {
+                    self.tally.command(gfx::CMD_DELETE_SURFACE);
+                    self.sizes.remove(&surface);
+                    updates.push(Update::Deleted { surface });
+                }
+                Message::MapSurfaceToOutput { surface, x, y } => {
+                    self.tally.command(gfx::CMD_MAP_SURFACE_TO_OUTPUT);
+                    match self.sizes.get(&surface) {
+                        Some(&(width, height)) => updates.push(Update::Mapped {
+                            surface,
+                            rect: Rect { x, y, width: u32::from(width), height: u32::from(height) },
+                        }),
+                        None => warn!("rdp: the host mapped graphics surface {surface}, which does not exist"),
+                    }
+                }
+                Message::StartFrame { .. } => self.tally.command(gfx::CMD_START_FRAME),
+                Message::EndFrame { frame } => {
+                    self.tally.command(gfx::CMD_END_FRAME);
+                    if !self.opened && !self.fidelity.is_empty() {
+                        self.opened = true;
+                        updates.push(Update::Opened(self.fidelity.clone()));
+                    }
+                    updates.push(Update::Ended { frame });
+                }
+                Message::WireToSurface1 { surface, codec, data, .. } => {
+                    self.tally.command(gfx::CMD_WIRE_TO_SURFACE_1);
+                    self.tally.codec(codec);
+                    self.saw(codec, data, &mut updates);
+                    if !avc::carries(codec) {
+                        self.not_shown(codec);
+                        continue;
+                    }
+                    match avc::Stream::read(codec, data) {
+                        // A chroma view is a picture of the same stream as the
+                        // luma views (MS-RDPEGFX 2.2.4.5), coded against them and
+                        // they against it, so the luma views alone are a stream
+                        // with pictures missing: it is lost here, and starts
+                        // again at a keyframe that carries none.
+                        Ok(stream) if stream.has_chroma() => {
+                            self.not_shown(codec);
+                            updates.push(Update::Lost { surface });
+                        }
+                        Ok(stream) => {
+                            if let Some(unit) = stream.luma_bitstream() {
+                                updates.push(Update::Unit { surface, unit: unit.to_vec() });
+                            }
+                        }
+                        Err(e) => {
+                            warn!("rdp: a {} command of surface {surface} does not read: {e}", gfx::codec_name(codec));
+                            updates.push(Update::Lost { surface });
+                        }
+                    }
+                }
+                Message::WireToSurface2 { codec, data, .. } => {
+                    self.tally.command(gfx::CMD_WIRE_TO_SURFACE_2);
+                    self.tally.codec(codec);
+                    self.saw(codec, data, &mut updates);
+                    self.not_shown(codec);
+                }
+                Message::SolidFill { .. } => self.not_drawn(gfx::CMD_SOLID_FILL),
+                Message::SurfaceToSurface { .. } => self.not_drawn(gfx::CMD_SURFACE_TO_SURFACE),
+                Message::SurfaceToCache { .. } => self.not_drawn(gfx::CMD_SURFACE_TO_CACHE),
+                Message::CacheToSurface { .. } => self.not_drawn(gfx::CMD_CACHE_TO_SURFACE),
+                Message::EvictCacheEntry { .. } => self.tally.command(gfx::CMD_EVICT_CACHE_ENTRY),
+                Message::DeleteEncodingContext { .. } => self.tally.command(gfx::CMD_DELETE_ENCODING_CONTEXT),
+                Message::Other { command, .. } => self.tally.command(command),
+            }
+        }
+        Ok(updates)
+    }
+
+    /// A draw of a streamed or passed pipeline, for what it has drawn with.
+    fn saw(&mut self, codec: u16, data: &[u8], updates: &mut Vec<Update>) {
+        if self.fidelity.saw(codec, data) {
+            let names = self.fidelity.names();
+            info!(
+                "rdp: the host has drawn with {} so far, {}",
+                names.join(", "),
+                if self.fidelity.lossless() { "lossless" } else { "not lossless" }
+            );
+            updates.push(Update::Drawn(self.fidelity.clone()));
+        }
+    }
+
+    /// A streamed pipeline drew with `codec`, or a YUV444 command's chroma view,
+    /// which loses its stream: said once a codec.
+    fn not_shown(&mut self, codec: u16) {
+        if self.unshown.insert(codec) {
+            if avc::carries(codec) {
+                warn!(
+                    "rdp: the host's {} carries chroma views, which full screen cannot pass: \
+                     each loses its stream until a keyframe",
+                    gfx::codec_name(codec)
+                );
+            } else {
+                warn!("rdp: the host drew with {} beside its H.264, which is not shown", gfx::codec_name(codec));
+            }
+        }
+    }
+
+    /// A streamed pipeline drew with `command`, which shows nothing: said once a
+    /// command, apart from the codecs.
+    fn not_drawn(&mut self, command: u16) {
+        self.tally.command(command);
+        if self.unshown.insert(0x8000 | command) {
+            warn!("rdp: the host drew with {} beside its H.264, which is not shown", gfx::command_name(command));
+        }
     }
 
     fn act(&mut self, message: Message<'_>, framebuffer: &Framebuffer, updates: &mut Vec<Update>) -> Result<()> {
@@ -1388,6 +1571,12 @@ mod tests {
         w.u16_le(height);
         w.u8(PIXEL_XRGB_8888);
         pdu(CMD_CREATE_SURFACE, &w.finish())
+    }
+
+    fn delete(surface: u16) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.u16_le(surface);
+        pdu(gfx::CMD_DELETE_SURFACE, &w.finish())
     }
 
     fn map(surface: u16, x: u32, y: u32) -> Vec<u8> {
@@ -1987,8 +2176,85 @@ mod tests {
     /// A channel the host closes and opens again starts a pipeline of the same kind.
     #[test]
     fn a_fresh_pipeline_keeps_whether_it_passes() {
-        assert!(Graphics::passing().fresh().pass);
-        assert!(!Graphics::new().fresh().pass);
+        assert_eq!(Graphics::passing().fresh().mode, Mode::Pass);
+        assert_eq!(Graphics::streaming().fresh().mode, Mode::Stream);
+        assert_eq!(Graphics::new().fresh().mode, Mode::Compose);
+    }
+
+    /// A streamed pipeline hands on each surface's luma views, Annex B as the
+    /// host coded them, with where the surface is and where each frame ends; a
+    /// chroma view is dropped, and nothing else draws or is composed.
+    #[test]
+    fn a_streamed_pipeline_hands_on_its_luma_views_and_frames() {
+        use crate::proto::avc::tests::wrap444;
+        use crate::proto::gfx::{CODEC_AVC420, CODEC_AVC444_V2};
+
+        let framebuffer = Framebuffer::new();
+        let mut graphics = Graphics::streaming();
+        let luma = masked((0, 0, 8, 8));
+        let chroma = [crate::proto::avc::tests::metablock(&[((0, 0, 8, 8), 20, 100)]), vec![0, 0, 1, 0x41]].concat();
+        let whole = (0, 0, 32, 32);
+        let updates = receive(&mut graphics, &framebuffer, &[
+            confirm(),
+            reset(64, 32),
+            create(1, 32, 32),
+            map(1, 32, 0),
+            start(1),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
+            solidfill(1, [1, 2, 3, 0xFF], &[(0, 0, 4, 4)]),
+            end(1),
+            start(2),
+            wire(1, CODEC_AVC420, whole, &luma),
+            end(2),
+            // A chroma view is a picture of the stream that cannot be passed,
+            // with its luma view or alone: the stream is lost.
+            start(3),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), Some(&chroma))),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(None, Some(&chroma))),
+            end(3),
+        ]);
+        let unit = vec![0, 0, 1, 0x65];
+        let units: Vec<&Update> = updates
+            .iter()
+            .filter(|u| matches!(u, Update::Unit { .. } | Update::Mapped { .. } | Update::Ended { .. } | Update::Lost { .. }))
+            .collect();
+        assert_eq!(
+            units,
+            [
+                &Update::Mapped { surface: 1, rect: Rect { x: 32, y: 0, width: 32, height: 32 } },
+                &Update::Unit { surface: 1, unit: unit.clone() },
+                &Update::Ended { frame: 1 },
+                &Update::Unit { surface: 1, unit },
+                &Update::Ended { frame: 2 },
+                &Update::Lost { surface: 1 },
+                &Update::Lost { surface: 1 },
+                &Update::Ended { frame: 3 },
+            ]
+        );
+        assert!(matches!(updates[0], Update::Confirmed { .. }));
+        assert!(!updates.iter().any(|u| matches!(u, Update::Paint(_) | Update::Frame { .. } | Update::Passed { .. })));
+        framebuffer.with(|frame| assert_eq!(frame.width, 0, "nothing is composed"));
+
+        let gone = receive(&mut graphics, &framebuffer, &[delete(1)]);
+        assert_eq!(gone, vec![Update::Deleted { surface: 1 }]);
+    }
+
+    /// A command whose H.264 does not read costs its surface's stream its place,
+    /// said as such, and not the session.
+    #[test]
+    fn a_streamed_unit_that_does_not_read_is_lost_and_not_the_session() {
+        use crate::proto::gfx::CODEC_AVC444_V2;
+        let framebuffer = Framebuffer::new();
+        let mut graphics = Graphics::streaming();
+        let updates = receive(&mut graphics, &framebuffer, &[
+            reset(32, 32),
+            create(1, 32, 32),
+            start(1),
+            wire(1, CODEC_AVC444_V2, (0, 0, 32, 32), &[0xff, 0xff, 0xff, 0xff]),
+            end(1),
+        ]);
+        assert!(updates.contains(&Update::Lost { surface: 1 }), "{updates:?}");
+        assert!(updates.contains(&Update::Ended { frame: 1 }));
     }
 
     /// H.264 is painted from the pictures supplied for a run's access units, each

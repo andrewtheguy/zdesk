@@ -20,6 +20,8 @@ pub(super) enum Command {
     Input(Event),
     /// Ask the server to repaint the whole desktop.
     Refresh,
+    /// Ask the server for a keyframe of its H.264.
+    Keyframe,
     /// Ask the server for a new desktop size, over Display Control.
     Resize { sizes: Vec<(u32, u32)>, scales: Vec<u32> },
     /// Something for the clipboard channel, in the three shapes a clipboard has.
@@ -117,6 +119,15 @@ impl Input {
     /// Ask the server to repaint the whole desktop.
     pub fn refresh(&self) {
         self.push(Command::Refresh);
+    }
+
+    /// Ask the server for a keyframe of every surface's H.264, on a session whose
+    /// picture is its H.264 alone ([`super::Event::Video`]): sent as the monitor
+    /// layout the desktop has, which the host answers with a graphics reset and
+    /// new surfaces, each stream starting at an IDR. Nothing is asked of a host
+    /// that has not opened Display Control.
+    pub fn keyframe(&self) {
+        self.push(Command::Keyframe);
     }
 
     /// Ask the server to change the desktop size.

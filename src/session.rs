@@ -140,7 +140,7 @@ impl ConnectError {
         target
             .beyond(choices, decoders)
             .map(Self::Beyond)
-            .or_else(|| (choices.pipeline.h264() && !decoders.rdp_h264).then_some(Self::NoH264))
+            .or_else(|| (!decoders.draws(choices.pipeline)).then_some(Self::NoH264))
     }
 }
 
@@ -2744,8 +2744,8 @@ mod tests {
     }
 
     /// A browser that takes the Mac's stream, and one that does not.
-    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false };
-    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false };
+    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false, rdp_video: false };
+    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false };
 
     /// Assert the next event is the connected status of a Mac's session that passes
     /// its stream, sound included.
@@ -2949,6 +2949,47 @@ mod tests {
         assert!(mgr.state.lock().unwrap().selected.is_none());
     }
 
+    /// A browser that cannot compose an RDP host's pipeline, and decodes its H.264
+    /// as video, is started the whole desktop in H.264, which nothing composes,
+    /// and refused High quality and the region, which it would have to compose.
+    #[tokio::test]
+    async fn a_browser_that_only_plays_video_is_started_full_screen_alone() {
+        let (hook_tx, hook_rx) = std_mpsc::channel();
+        let spawner: EngineSpawner = Box::new(
+            move |_target, _choices, plan, _display, _input_rx, _frame_tx, _audio, _camera, _feedback| {
+                hook_tx.send(plan).unwrap();
+            },
+        );
+        let win = TargetConfig { protocol: Protocol::Rdp, ..fake_target("win") };
+        let mgr = Arc::new(SessionManager::with_spawner(vec![win], spawner));
+        let token = mgr.claim(false, None, "login").unwrap();
+        let video = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: true };
+        let mut att = mgr.attach(&token, None, video).await.unwrap();
+        expect_picker(&mut att.events).await;
+        for pipeline in [Pipeline::HighQuality, Pipeline::AdaptiveRegion] {
+            let choices = Choices { pipeline, ..RESIZE };
+            assert!(
+                matches!(
+                    mgr.connect(att.id, "win", None, choices).await,
+                    Err(ConnectError::Beyond(Passthrough::RdpGraphics))
+                ),
+                "{pipeline:?}"
+            );
+            match recv(&mut att.events).await {
+                AttachEvent::Msg(ServerMsg::Error { .. }) => {}
+                other => panic!("expected an error, got {other:?}"),
+            }
+        }
+        assert!(hook_rx.try_recv().is_err(), "nothing was started");
+
+        let choices = Choices { pipeline: Pipeline::AdaptiveDesktop, ..RESIZE };
+        mgr.connect(att.id, "win", None, choices).await.unwrap();
+        assert!(matches!(
+            hook_rx.try_recv(),
+            Ok(RenderPlan { rdp_graphics: true, rdp_h264: true, rdp_video: true, .. })
+        ));
+    }
+
     /// A passed graphics pipeline is never resumed: the host draws against what its
     /// client holds, and a browser that comes back holds nothing, so the same browser
     /// with the same answers is still given a session that starts.
@@ -2985,7 +3026,7 @@ mod tests {
 
         // A page that cannot compose it is not given one, nor the desktop encoded
         // here instead: the session ends for it to choose again.
-        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false };
+        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, rdp_video: false };
         let mut ended = mgr.attach(&token, None, cannot).await.unwrap();
         assert!(hook_rx.try_recv().is_err());
         expect_beyond_then_picker(&mut ended.events, "graphics pipeline").await;

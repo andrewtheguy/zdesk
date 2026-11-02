@@ -25,9 +25,10 @@
 //
 // ALPHA: a session started with the picker's adaptive choice tells the host it may
 // draw with H.264, which the page decodes. That is a second opt-in, naming the
-// target to start so, and it starts it with H.264 over the full screen, which the
-// host draws everything in: by region it draws H.264 only for what moves like
-// video, which needs one playing.
+// target to start so, and it starts it with H.264 by region, which is passed in
+// the pipeline: the host draws H.264 there only for what moves like video, which
+// needs one playing. Full screen is passed as video instead, and
+// `rdp-h264-full-screen.spec.ts` covers it under the same opt-in.
 //
 //     ZDESK_PLAYWRIGHT_EGFX_H264_TARGET=win-h264 \
 //     bunx playwright test '/egfx-passthrough\.spec\.ts$'
@@ -596,7 +597,7 @@ test.describe("a target whose passed pipeline may carry H.264", () => {
   }) => {
     const seen = watchSession(page);
     await logInAndConnectTo(page, EGFX_H264_TARGET ?? "", "", {
-      pipeline: "adaptive-desktop",
+      pipeline: "adaptive-region",
     });
 
     // The host is told it may draw with H.264 only for a page that said it

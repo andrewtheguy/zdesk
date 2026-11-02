@@ -225,13 +225,15 @@ test.describe("the picker's options", () => {
     });
 
     // A second browser whose page is not cross-origin isolated, which is one that
-    // cannot compose a passed pipeline, takes the session over.
+    // cannot compose a passed pipeline, and that has no `VideoDecoder`, so cannot
+    // play the host's H.264 full screen either, takes the session over.
     const context = await browser.newContext();
     try {
       await context.addInitScript(() => {
         Object.defineProperty(globalThis, "crossOriginIsolated", {
           value: false,
         });
+        Reflect.deleteProperty(globalThis, "VideoDecoder");
       });
       const other = await context.newPage();
       const second = watchSession(other);
@@ -246,7 +248,7 @@ test.describe("the picker's options", () => {
       const item = await openTarget(other);
       await expect(item).toContainText(PASSED);
       await expect(item).toContainText(
-        "This browser cannot compose the host's graphics pipeline",
+        "This browser can neither compose the host's graphics pipeline",
       );
       await expect(
         item.getByRole("button", { name: "Start", exact: true }),

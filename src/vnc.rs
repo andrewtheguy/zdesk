@@ -9394,7 +9394,7 @@ mod tests {
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
         assert_eq!(wlshare_proto::ENCODING_HELD, i32::from_be_bytes(*b"WLSD"));
         use crate::config::WlshareTiles;
-        let tiles = RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: true, wlshare_tiles: Some(WlshareTiles::Motion) };
+        let tiles = RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, wlshare: true, wlshare_tiles: Some(WlshareTiles::Motion) };
         let lists = Listing::new(rest.clone(), tiles);
         assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "with motion: WLSD beside it");
         assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
@@ -10717,6 +10717,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
+            rdp_video: false,
             wlshare: true, wlshare_tiles: None,
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
@@ -10744,6 +10745,7 @@ mod tests {
             apple_standard: None, apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
+            rdp_video: false,
             wlshare: true, wlshare_tiles: Some(crate::config::WlshareTiles::Motion),
         };
         Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
@@ -13776,7 +13778,7 @@ mod tests {
         let (small, big) = ((64, 32), (5376, 2288));
         let (uplink, sent) = test_uplink();
         let (frame_tx, mut rx) = mpsc::channel(64);
-        let plan = crate::config::RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, wlshare: false, wlshare_tiles: None };
+        let plan = crate::config::RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, wlshare: false, wlshare_tiles: None };
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());
         let sink = VideoSink::new("vnc", frame_tx, feedback, Oversize::Hold);
         sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();

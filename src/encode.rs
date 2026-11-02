@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::feedback::LinkFeedback;
-use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit};
+use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoColour, VideoUnit};
 use crate::shadow::Rect;
 use crate::tiles::{Coded, Format, LEVELS, Round, Tiles};
 use crate::video;
@@ -386,6 +386,18 @@ impl PaintAhead {
     }
 }
 
+/// What became of a unit of an RDP host's H.264 ([`VideoSink::pass_rdp`]).
+#[derive(Debug)]
+pub enum RdpPassed {
+    /// Queued for the browser.
+    Queued,
+    /// Dropped while the browser waits for a keyframe.
+    Waiting,
+    /// Refused by the check every passed stream is held to, and dropped: the
+    /// browser waits for a keyframe from here.
+    Refused(anyhow::Error),
+}
+
 /// What a source's desktop past the picture ceiling ([`video::within_ceiling`])
 /// comes to.
 ///
@@ -489,6 +501,9 @@ struct Shared {
     /// parameter set named, which a frame without one is decoded by
     /// ([`crate::h264::Whole`]).
     whole: Mutex<crate::h264::Whole>,
+    /// The same for an RDP host's surface, whose picture is coded in whole
+    /// macroblocks ([`VideoSink::pass_rdp`]).
+    surface: Mutex<crate::h264::Whole>,
     /// Units of a remote's stream passed, and a Mac's own rectangles, and their bytes.
     units: AtomicU64,
     passed_bytes: AtomicU64,
@@ -572,6 +587,7 @@ impl Shared {
             restart_owed: AtomicBool::new(false),
             feedback: Arc::clone(&feedback),
             whole: Mutex::default(),
+            surface: Mutex::new(crate::h264::Whole::macroblocks()),
             units: AtomicU64::new(0),
             passed_bytes: AtomicU64::new(0),
             keyframes: AtomicU64::new(0),
@@ -819,6 +835,12 @@ impl VideoSink {
         self.shared.pass_restart.store(true, Ordering::Relaxed);
     }
 
+    /// Whether the passed stream waits for a keyframe to start over at
+    /// ([`Self::restart_pass`]).
+    pub fn awaits_keyframe(&self) -> bool {
+        self.shared.pass_restart.load(Ordering::Relaxed)
+    }
+
     /// Queue a `w`×`h` frame of wlshare's video stream, H.264, as the next access
     /// unit, untouched ([`crate::h264::Whole`]).
     ///
@@ -837,7 +859,7 @@ impl VideoSink {
     /// that falls behind gives up is frames.
     pub async fn pass(&self, w: u16, h: u16, frame: Vec<u8>) -> anyhow::Result<()> {
         let passed = self.shared.whole.lock().unwrap().pass(w, h, &frame)?;
-        self.forward(w, h, frame, passed).await.map(drop)
+        self.forward(w, h, frame, passed, None, Painted::default()).await.map(drop)
     }
 
     /// Queue one access unit of a High Performance Mac's HEVC, `w`×`h`, as the next
@@ -863,12 +885,52 @@ impl VideoSink {
         passed: video::Passed,
     ) -> anyhow::Result<bool> {
         video::check_picture((w, h))?;
-        self.forward(w, h, frame, passed).await
+        self.forward(w, h, frame, passed, None, Painted::default()).await
+    }
+
+    /// Queue one access unit of an RDP host's H.264, the luma view of a surface
+    /// `w`×`h` drawn whole in it ([`crate::rdp_client::Event::Video`]), as the next
+    /// unit, untouched, checked as wlshare's whole desktop is ([`crate::h264::Whole`]).
+    /// `painted` is what the browser painting it is owed: the acknowledgement of
+    /// the host's frame it ends, which paces the host.
+    ///
+    /// As [`Self::pass`] in what the queue does, and unlike it in what a unit that
+    /// cannot be passed costs: not the session. A browser that must start over,
+    /// or a stream that has just changed surfaces, waits for an IDR, which only a
+    /// keyframe asked of the host brings ([`crate::rdp_client::Input::keyframe`]),
+    /// and a unit the check refuses starts it waiting. Each unit not passed is
+    /// owed its acknowledgement at once, as `painted` is dropped. A keyframe the
+    /// check refuses is the error: another would be refused as it was.
+    pub async fn pass_rdp(&self, w: u16, h: u16, unit: Vec<u8>, painted: Painted) -> anyhow::Result<RdpPassed> {
+        // Read for its IDR only where that decides something: a stream waiting for
+        // one, and a unit the check refuses. The check reads every other.
+        if self.shared.pass_restart.load(Ordering::Relaxed) && !crate::h264::idr(&unit) {
+            debug!("{}: dropping a passed frame until the keyframe a restart needs", self.engine);
+            return Ok(RdpPassed::Waiting);
+        }
+        let checked = self.shared.surface.lock().unwrap().pass(w, h, &unit);
+        let passed = match checked {
+            Ok(passed) => passed,
+            Err(e) if crate::h264::idr(&unit) => return Err(e),
+            Err(e) => {
+                self.restart_pass();
+                return Ok(RdpPassed::Refused(e));
+            }
+        };
+        Ok(if self.forward(w, h, unit, passed, Some(VideoColour::RDP), painted).await? { RdpPassed::Queued } else { RdpPassed::Waiting })
     }
 
     /// Queue a checked, passed unit: see [`Self::pass`]. `false` when it was dropped
-    /// while the browser waits for a keyframe.
-    async fn forward(&self, w: u16, h: u16, frame: Vec<u8>, passed: video::Passed) -> anyhow::Result<bool> {
+    /// while the browser waits for a keyframe. `colour` is announced with its format ([`ServerMsg::VideoFormat`]).
+    async fn forward(
+        &self,
+        w: u16,
+        h: u16,
+        frame: Vec<u8>,
+        passed: video::Passed,
+        colour: Option<VideoColour>,
+        painted: Painted,
+    ) -> anyhow::Result<bool> {
         self.shared.passing.store(true, Ordering::Relaxed);
         let restart = if passed.keyframe {
             self.shared.pass_restart.swap(false, Ordering::Relaxed)
@@ -900,9 +962,9 @@ impl VideoSink {
             self.shared.keyframe_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
         }
         if let Some(decode) = announce {
-            self.push(Pending::Msg(ServerMsg::VideoFormat { decode, strips, engine: 0 })).await?;
+            self.push(Pending::Msg(ServerMsg::VideoFormat { decode, strips, colour, engine: 0 })).await?;
         }
-        let unit = VideoUnit { w, h, strip: passed.strip, keyframe: passed.keyframe, data: frame, held };
+        let unit = VideoUnit { w, h, strip: passed.strip, keyframe: passed.keyframe, data: frame, held, painted };
         self.push(Pending::Msg(ServerMsg::Video(unit))).await?;
         self.uncover_behind().await?;
         Ok(true)

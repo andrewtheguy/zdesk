@@ -144,6 +144,11 @@ impl<'a> Stream<'a> {
         }
     }
 
+    /// The luma view's access unit, Annex B, if the command carries one.
+    pub(crate) fn luma_bitstream(&self) -> Option<&'a [u8]> {
+        self.luma.as_ref().map(|luma| luma.bitstream)
+    }
+
     /// Whether it carries a chroma view.
     pub(crate) fn has_chroma(&self) -> bool {
         self.chroma.is_some()
