@@ -14,15 +14,17 @@ two minutes: sessions connected, a video played on the host, and the session
 was disconnected and connected again. The H.264 region run switched its video between
 a window and full screen.
 
-| Picker choice | Safari's page process | WebKit's GPU process | `videocodecd` | Together | Page CPU |
+| Picker choice | Safari's page process | WebKit's GPU process | `videocodecd` | Sum of the peaks | Page CPU |
 |---|---|---|---|---|---|
-| Adaptive, H.264 full screen | 190–283 MiB | 94–210 MiB | about 62 MiB | about 350–555 MiB | under 15% of a core |
-| High quality | 575–734 MiB | 80–113 MiB | none | about 660–840 MiB | 120–155% |
-| Adaptive, H.264 region | 640–869 MiB | 135–187 MiB | about 51 MiB | about 830–1,100 MiB | 25–145% |
+| Adaptive, H.264 full screen | 283 MiB | 210 MiB | 62 MiB | 555 MiB | under 15% of a core |
+| High quality | 734 MiB | 114 MiB | 5 MiB, unused | 853 MiB | 120–155% |
+| Adaptive, H.264 region | 869 MiB | 187 MiB | 52 MiB | 1,108 MiB | 25–145% |
 
-Each is the range while a session streamed, as the physical footprint Instruments
-calls Memory. With no session the page process held 45–115 MiB, the GPU process
-about 26 MiB and `videocodecd` 5 MiB.
+Each is the process's peak physical footprint, the column Instruments calls Memory,
+over the recording, as `tests/xctrace_memory.py` reports it; the page's CPU is its
+range while a session streamed. With no session the page process held 45–115 MiB,
+the GPU process about 26 MiB and `videocodecd` 5 MiB. Once its picture had come,
+full screen's page process stayed between about 190 and 283 MiB.
 
 - **Full screen costs least**, about 300 MiB less than High quality, because nothing is
   composed in the page: no compositor, no surface and no host cache. The phone's video
@@ -70,8 +72,16 @@ xcrun xctrace export --input run.trace --xpath \
 uv run --python 3.13 python tests/xctrace_memory.py live.xml
 ```
 
-`tests/xctrace_memory.py` prints the page process, the GPU process and `videocodecd`
-once a second and their ranges. Whether the phone was short of memory is in the
-`activity-monitor-system` table: its `memory-physical-used`, and `total-processes`,
-which falls when iOS kills processes. A process missing from the per-process table
-for a while is idle, not gone.
+`tests/xctrace_memory.py` prints every page process, GPU process and `videocodecd`
+once a second, each by its process ID, then each one's range: over the whole
+recording, or with `--between FROM TO` over those seconds alone, the ones a session
+ran. Whether the phone was short of memory is in the `activity-monitor-system`
+table: its `memory-physical-used`, and `total-processes`, which falls when iOS kills
+processes.
+
+A process missing from the per-process table for a while has not shown that it is
+idle: the table samples a process when it changes, so an idle one leaves a gap, and
+so does one that exited. Tell them apart by the process ID: an idle process comes
+back under the same one, and a page process iOS killed is followed by another
+under a new one, as Safari reloads the tab. A process that is never sampled again
+may have done either; `total-processes` is the only other sign.

@@ -8,13 +8,15 @@ The recording is `xcrun xctrace record --template "Activity Monitor"
       '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-live"]' \
       > live.xml
 
-It prints Safari's page process (the `com.apple.WebKit.WebContent` with the
-largest footprint, which is the tab), WebKit's GPU process and the system's
-video decoder (`videocodecd`): each one's physical footprint, the column
-Instruments calls Memory, and its CPU, once a second, then their ranges. See
+It prints every one of Safari's page processes (`com.apple.WebKit.WebContent`,
+the tab and any other), WebKit's GPU processes and the system's video decoder
+(`videocodecd`), each by its process ID, so a process that iOS replaced shows
+as another ID: each one's physical footprint, the column Instruments calls
+Memory, and its CPU, once a second, then each one's range. The ranges cover the
+whole recording, or with `--between` only the seconds the session ran. See
 docs/browser-memory.md.
 
-    uv run --python 3.13 python tests/xctrace_memory.py live.xml
+    uv run --python 3.13 python tests/xctrace_memory.py live.xml --between 6 60
 """
 
 import argparse
@@ -47,6 +49,13 @@ def rows(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("live", help="the exported activity-monitor-process-live table")
+    parser.add_argument(
+        "--between",
+        nargs=2,
+        type=int,
+        metavar=("FROM", "TO"),
+        help="the seconds into the recording the session ran between, which the ranges cover alone",
+    )
     args = parser.parse_args()
 
     # (process, second) -> (MiB, CPU), the second's last sample.
@@ -59,23 +68,33 @@ def main():
         second = round(int(row["start"][0]) / 1e9)
         samples[process][second] = (int(footprint) / 2**20, row["cpu-percent"][1])
 
-    def largest(prefix):
-        named = [p for p in samples if p.startswith(prefix)]
-        return max(named, key=lambda p: max(m for m, _ in samples[p].values()), default=None)
-
-    watched = {"page": largest(PAGE), "gpu": largest(GPU), "decoder": largest(DECODER)}
-    print("  ".join(f"{role}: {process}" for role, process in watched.items() if process))
-    seconds = sorted({s for p in watched.values() if p for s in samples[p]})
+    # Every process of each kind, by its process ID.
+    kinds = {"page": PAGE, "gpu": GPU, "decoder": DECODER}
+    watched = {kind: sorted(p for p in samples if p.startswith(prefix)) for kind, prefix in kinds.items()}
+    seconds = sorted({second for processes in watched.values() for p in processes for second in samples[p]})
     for second in seconds:
         cells = []
-        for role, process in watched.items():
-            sample = samples[process].get(second) if process else None
-            cells.append(f"{role} {sample[0]:6.1f} MiB {sample[1] or '':>6}" if sample else f"{role} {'':17}")
+        for kind, processes in watched.items():
+            here = [
+                f"{p.rsplit(' ', 1)[-1]} {samples[p][second][0]:6.1f} MiB {samples[p][second][1] or '':>6}"
+                for p in processes
+                if second in samples[p]
+            ]
+            if here:
+                cells.append(f"{kind} " + ", ".join(here))
         print(f"{second:4d}s  " + "  ".join(cells))
-    for role, process in watched.items():
-        if process:
-            footprints = [m for m, _ in samples[process].values()]
-            print(f"{role}: {min(footprints):.1f}–{max(footprints):.1f} MiB")
+
+    if args.between:
+        start, end = args.between
+        span = f"between {start} s and {end} s"
+    else:
+        start, end = min(seconds, default=0), max(seconds, default=0)
+        span = "over the whole recording"
+    for kind, processes in watched.items():
+        for p in processes:
+            footprints = [m for second, (m, _) in samples[p].items() if start <= second <= end]
+            if footprints:
+                print(f"{kind} {p}: {min(footprints):.1f}–{max(footprints):.1f} MiB {span}")
 
 
 if __name__ == "__main__":
