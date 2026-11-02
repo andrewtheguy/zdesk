@@ -21,6 +21,7 @@ import type { PicturePart } from "./egfxPicture.ts";
 import type { EgfxVideo } from "./egfxVideo.ts";
 import { createFramePainter, type FramePainter } from "./framePainter.ts";
 import { placedAfter } from "./planesPicture.ts";
+import { asksToReconnect } from "./reconnect.ts";
 
 const OP_VIDEO = 0x03;
 
@@ -1198,6 +1199,19 @@ test("a video format takes the display back from a tab's mirror", async () => {
   // A display passed again is mirrored afresh.
   p.mirrorGraphics(2, { x: 32, y: 0, w: 32, h: 48 });
   assert.equal(pictures.made, 2);
+});
+
+test("a tab's picture that cannot be blanked asks for the reload that reconnects", async () => {
+  const { load } = fakeCompositors();
+  const relay = fakeRelay();
+  const p = graphicsPainter(load, { relay: relay.port, blankFails: true });
+  p.mirrorGraphics(2, { x: 32, y: 0, w: 32, h: 48 });
+  p.blank(40, 48);
+  const said = videoErrors.filter((error) => error !== null);
+  assert.equal(said.length, 1);
+  assert.match(said[0] ?? "", /the GPU refused the picture/);
+  assert.ok(asksToReconnect(said[0] ?? ""));
+  assert.equal(relay.closed(), 1, "the mirror is let go");
 });
 
 test("a picture that cannot be blanked ends its pipeline", async () => {

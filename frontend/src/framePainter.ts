@@ -1373,7 +1373,7 @@ export function createFramePainter(options: {
                 releaseMirror();
                 videoComplained = false;
                 options.onVideoError(
-                  `This browser could not show display ${display}'s picture (${why}). Reload the page to start it over.`,
+                  `This browser could not show display ${display}'s picture (${why}). ${RECONNECT}`,
                 );
               }
             },
@@ -1398,7 +1398,7 @@ export function createFramePainter(options: {
           const why = describe(error);
           releaseMirror();
           options.onVideoError(
-            `This browser could not show the display's picture (${why}). Reload the page to start it over.`,
+            `This browser could not show the display's picture (${why}). ${RECONNECT}`,
           );
         }
         return;
