@@ -375,6 +375,12 @@ const MAX_RETRY_DELAY_MS = 15_000;
 // read DNS records yet.
 const ATTEMPTS_BEFORE_REPORTING = 4;
 
+// How long a claim waits for the gateway's answer before it is a failure worth
+// retrying. Claims go one at a time, so one that is never answered would hold up
+// every attempt after it, Reconnect's and Retry's included. A gateway answers
+// one at once: it decides the claim and returns.
+const CLAIM_TIMEOUT_MS = 10_000;
+
 // How long `requestClipboard` waits for the server's answer before giving up.
 // Generous rather than tight: the engines answer from an engine-side buffer, but
 // a slow link or a fetch made mid-reconnect can still leave a request unanswered.
@@ -548,6 +554,7 @@ async function postClaim(
         force,
         sessionId: sessionStorage.getItem(SESSION_KEY) ?? undefined,
       }),
+      signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS),
     });
     // Before a 409 or a 401 is read: a stale page is offered neither a takeover
     // nor the login, only the reload.
@@ -559,7 +566,11 @@ async function postClaim(
     return {
       failure: {
         reason:
-          cause instanceof Error ? cause.message : "the server did not answer",
+          cause instanceof DOMException && cause.name === "TimeoutError"
+            ? `the server did not answer within ${CLAIM_TIMEOUT_MS / 1000} s`
+            : cause instanceof Error
+              ? cause.message
+              : "the server did not answer",
         retryable: true,
       },
     };
