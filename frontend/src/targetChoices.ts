@@ -743,7 +743,7 @@ function pipelineOptions(
       value: "high-quality",
       label: "High quality",
       note: composes
-        ? "The pipeline's codecs without H.264, composed by this page, fitted to the link by frame rate: a slower link gets fewer frames, none of them coarser."
+        ? "The pipeline's codecs without H.264, composed by this page. Adaptive by frame rate: a slower link gets fewer frames, none of them coarser. Exact where the host's policy is Lossless, and otherwise sharpened once still."
         : NO_COMPOSING,
       disabled: !composes,
     },
