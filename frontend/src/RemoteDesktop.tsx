@@ -424,7 +424,9 @@ export default function RemoteDesktop({
 
       {/* The floating menu is desktop-only; its End session button returns to
           the picker (see FloatingMenu.tsx), and Log out ends the login. A second
-          display's tab has a menu of its own instead, for this tab's full screen. */}
+          display's tab has a menu of its own instead, for this tab's full screen.
+          Not while the picture is lost: the session's socket is closed, and
+          what the menu sends goes nowhere until Reconnect. */}
       {mode === "desktop" &&
         (tabDisplay !== null ? (
           <DisplayMenu
@@ -438,7 +440,7 @@ export default function RemoteDesktop({
             onViewOnlyChange={setViewOnly}
             onDisconnect={releaseTab}
           />
-        ) : (
+        ) : status === "pictureLost" ? null : (
           <FloatingMenu
             onLogout={onLogout}
             onUnauthorized={onUnauthorized}

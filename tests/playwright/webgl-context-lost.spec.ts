@@ -33,7 +33,16 @@ test.describe("a picture drawn on the GPU", () => {
     "set ZDESK_PLAYWRIGHT_EGFX_TARGET to a target whose pipeline is passed",
   );
 
+  // A run that failed before Reconnect leaves the page with no session socket
+  // and no menu: reconnected first, so the session is ended rather than left
+  // holding the gateway's slot.
   test.afterEach(async ({ page }) => {
+    const reconnect = page.getByRole("button", { name: "Reconnect" });
+    if (await reconnect.isVisible()) {
+      await reconnect.click();
+      const menu = page.getByRole("button", { name: "Open menu" });
+      await expect(menu).toBeVisible({ timeout: 40_000 });
+    }
     await leaveSession(page);
   });
 
@@ -61,6 +70,9 @@ test.describe("a picture drawn on the GPU", () => {
     });
     await expect(page.getByText("Reconnecting…")).toHaveCount(0);
     await expect(page.getByRole("alert")).toHaveCount(0);
+    // Nor a menu whose End session would go down the closed socket.
+    const menu = page.getByRole("button", { name: "Open menu" });
+    await expect(menu).toHaveCount(0);
 
     await page.getByRole("button", { name: "Reconnect" }).click();
     await expect(page.getByText("Picture lost")).toHaveCount(0, {
