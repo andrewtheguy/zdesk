@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   reconnecting: "Reconnecting…",
   busy: "Session in use",
   takenOver: "Session taken over",
+  pictureLost: "Picture lost",
   failed: "Cannot open the session",
   unavailable: "Display not available",
   idle: "Not connected",
@@ -235,6 +236,17 @@ function StatusOverlay({
         >
           Reload
         </button>
+      )}
+      {status === "pictureLost" && (
+        <>
+          <span className="status-hint">
+            The browser took away the graphics this page drew the remote desktop
+            with.
+          </span>
+          <button type="button" className="status-action" onClick={onRetry}>
+            Reconnect
+          </button>
+        </>
       )}
       {status === "takenOver" && (
         <>

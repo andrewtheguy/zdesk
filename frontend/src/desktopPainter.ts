@@ -63,6 +63,12 @@ export interface PainterHandlers {
   onResized: (seq: number) => void;
   /** Everything posted before the `mark` of this number has been drawn. */
   onReached: (seq: number) => void;
+  /**
+   * The browser took the GPU canvas's WebGL context away, and what was drawn in
+   * it with it. The worker then ends with the session (`endSession`), so the
+   * next one is drawn on new canvases, in a context of their own.
+   */
+  onContextLost: () => void;
 }
 
 export interface DesktopPainter {
@@ -186,30 +192,44 @@ export function desktopPainterFor(
   // where the worker answers it, and a `graphicsShown` the worker said before it
   // took that clear is for the attachment the clear ended.
   let clears = 0;
+  // Whether the browser has taken the GPU canvas's context away: a worker that
+  // holds it ends with the session even with no module of its own loaded.
+  let contextLost = false;
   const showGraphics = (shown: boolean) => {
     graphics.style.display = shown ? "block" : "";
   };
   worker.onmessage = (ev: MessageEvent<PainterEvent>) => {
     const event = ev.data;
-    if (event.type === "graphicsShown") {
-      if (event.epoch === clears) {
-        showGraphics(event.shown);
-      }
-    } else if (event.type === "videoError") {
-      handlers?.onVideoError(event.reason);
-    } else if (event.type === "videoNeedsKeyframe") {
-      handlers?.onVideoNeedsKeyframe(event.reason);
-    } else if (event.type === "resized") {
-      handlers?.onResized(event.seq);
-    } else if (event.type === "reached") {
-      handlers?.onReached(event.seq);
-    } else if (event.type === "painted") {
-      handlers?.onPainted(
-        event.sequence,
-        event.generation,
-        event.queuedMs,
-        event.drawMs,
-      );
+    switch (event.type) {
+      case "graphicsShown":
+        if (event.epoch === clears) {
+          showGraphics(event.shown);
+        }
+        break;
+      case "videoError":
+        handlers?.onVideoError(event.reason);
+        break;
+      case "videoNeedsKeyframe":
+        handlers?.onVideoNeedsKeyframe(event.reason);
+        break;
+      case "resized":
+        handlers?.onResized(event.seq);
+        break;
+      case "reached":
+        handlers?.onReached(event.seq);
+        break;
+      case "contextLost":
+        contextLost = true;
+        handlers?.onContextLost();
+        break;
+      case "painted":
+        handlers?.onPainted(
+          event.sequence,
+          event.generation,
+          event.queuedMs,
+          event.drawMs,
+        );
+        break;
     }
   };
   const post = (command: PainterCommand, transfer: Transferable[] = []) =>
@@ -286,7 +306,7 @@ export function desktopPainterFor(
       post({ type: "clear" });
     },
     endSession() {
-      if (!ownModule) {
+      if (!ownModule && !contextLost) {
         post({ type: "sessionEnded" });
         return false;
       }
