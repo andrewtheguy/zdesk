@@ -35,13 +35,15 @@ test.describe("a picture drawn on the GPU", () => {
 
   // A run that failed before Reconnect leaves the page with no session socket
   // and no menu: reconnected first, so the session is ended rather than left
-  // holding the gateway's slot.
+  // holding the gateway's slot. The menu is back before the socket is, so what
+  // is waited for is the picture.
   test.afterEach(async ({ page }) => {
     const reconnect = page.getByRole("button", { name: "Reconnect" });
     if (await reconnect.isVisible()) {
       await reconnect.click();
-      const menu = page.getByRole("button", { name: "Open menu" });
-      await expect(menu).toBeVisible({ timeout: 40_000 });
+      await expect(page.locator("canvas.graphics")).toBeVisible({
+        timeout: 40_000,
+      });
     }
     await leaveSession(page);
   });
