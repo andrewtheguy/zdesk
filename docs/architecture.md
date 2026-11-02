@@ -1802,17 +1802,24 @@ the pipeline.
   meanwhile. A unit whose command does not read, which a compositor would end
   the pipeline on, starts its stream waiting for an IDR the same way, as does a
   command that carries a chroma view, which the stream cannot be passed
-  without. A stream that keeps losing units asks the host no more often than
-  one waiting does, since each ask resets the host's graphics: an ask held back
-  is made once the limit is past, if a stream still waits, since a still desktop
-  sends no unit that would ask again. An ask the host has not answered yet
-  serves every display, since its answer is new surfaces, each starting at an
-  IDR: a page and its second display's tab reloading together ask once. And
-  nothing more is asked until it is answered, or 10 s have gone without: a
-  host slow to answer resets for every layout it was sent, and a Windows 11
-  host sent three, 2 s apart, ended the session with a display driver failure. A
-  surface no display shows asks for nothing. A pipeline that starts over, its channel
-  closed and opened again, starts with no surfaces.
+  without.
+
+  Each ask is a layout, and the host answers every layout it is sent, a
+  keyframe's or a resize's, with a graphics reset; a host that is behind works
+  through all of them, and one made to reset again and again can end the session
+  with a display driver failure. So the engine counts the layouts the host has
+  not answered (`KeyframeAsks`), and an ask unanswered serves every display,
+  since its answer is new surfaces, each starting at an IDR: a page and its
+  second display's tab reloading together ask once. While one is unanswered, a
+  stream that waits asks nothing more for 10 s, taking it as gone after that,
+  and an ask the person made, by a reload, a display switched or a tab opened,
+  waits 2 s. Once the host has answered, a stream that waits asks no sooner than
+  2 s after the answer, and an ask held back is made once its wait is past, if a
+  stream still waits, since a still desktop sends no unit that would ask again.
+  An ask made before Display Control opens would go nowhere, so it is made once
+  2 s are past instead. A surface no display shows asks for nothing. A
+  pipeline that starts over, its channel closed and opened again, starts with
+  no surfaces.
 
   Each frame is acknowledged to the host once the page has painted its last
   unit: the record that carries it owes the acknowledgement (`VideoUnit::painted`)

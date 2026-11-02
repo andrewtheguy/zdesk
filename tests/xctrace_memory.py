@@ -43,7 +43,14 @@ def rows(path):
         return (element.text, element.attrib.get("fmt"))
 
     for row in root.iter("row"):
-        yield {name: value(element) for name, element in zip(columns, list(row))}
+        # Every row holds every column, a sentinel where it has no value; one that
+        # does not is a table this does not read.
+        yield {name: value(element) for name, element in zip(columns, list(row), strict=True)}
+
+
+def pid(process):
+    """A process's ID, from the name Instruments gives it: `videocodecd (430)`."""
+    return int(process.rsplit("(", 1)[-1].rstrip(")"))
 
 
 def main():
@@ -70,7 +77,7 @@ def main():
 
     # Every process of each kind, by its process ID.
     kinds = {"page": PAGE, "gpu": GPU, "decoder": DECODER}
-    watched = {kind: sorted(p for p in samples if p.startswith(prefix)) for kind, prefix in kinds.items()}
+    watched = {kind: sorted((p for p in samples if p.startswith(prefix)), key=pid) for kind, prefix in kinds.items()}
     seconds = sorted({second for processes in watched.values() for p in processes for second in samples[p]})
     for second in seconds:
         cells = []
