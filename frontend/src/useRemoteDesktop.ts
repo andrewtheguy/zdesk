@@ -8,6 +8,7 @@ import {
   decodeAudioHead,
 } from "./audioPlayer.ts";
 import { type CameraSender, startCameraSender } from "./cameraSender.ts";
+import { claimsInTurn } from "./claimTurns.ts";
 import { connectionLabel } from "./connectionLabel.ts";
 import {
   applyCursorCss,
@@ -1455,6 +1456,11 @@ export function useRemoteDesktop(
       // What the worker said of the lost picture is said by the overlay instead.
       setVideoError(null);
       setConnectError(null);
+      // The camera and the microphone too: the gateway closes their sockets only
+      // with an engine it ends, and one it can resume runs on for its reattach
+      // grace. The reattach's `connected` plugs them again.
+      stopCamera();
+      stopMic();
       setPictureHeld(true);
       setStatus("pictureLost");
     };
@@ -1529,29 +1535,23 @@ export function useRemoteDesktop(
       await claimAndOpen(force);
     };
 
-    // A claim that succeeded replaced the one before, even with the picture lost
-    // or another attempt begun meanwhile: its token is the one the next claim
-    // reclaims the session with.
-    const keepToken = (claimed: Awaited<ReturnType<typeof claim>>) => {
-      if (
-        typeof claimed === "string" &&
-        claimed !== "busy" &&
-        claimed !== "unauthorized"
-      ) {
-        sessionStorage.setItem(SESSION_KEY, claimed);
-      }
-      return claimed;
-    };
-    // Claims go one at a time, each sent with the token the one before kept: two
-    // under the same token are the owner and, to the gateway, another browser,
-    // whose claim ends the session. Only the latest attempt opens its socket.
-    let claiming: Promise<unknown> = Promise.resolve();
+    // Claims go one at a time, each sent with the token the one before kept, even
+    // with the picture lost or another attempt begun meanwhile (claimTurns.ts).
+    // Only the latest attempt opens its socket.
+    const claimInTurn = claimsInTurn(
+      claim,
+      (claimed) => {
+        if (
+          typeof claimed === "string" &&
+          claimed !== "busy" &&
+          claimed !== "unauthorized"
+        ) {
+          sessionStorage.setItem(SESSION_KEY, claimed);
+        }
+      },
+      () => !disposed,
+    );
     let claimAttempt = 0;
-    const claimInTurn = (force: boolean) => {
-      const turn = claiming.then(() => claim(force)).then(keepToken);
-      claiming = turn.catch(() => {});
-      return turn;
-    };
 
     // Claim the session slot, then open the WebSocket with the token.
     const claimAndOpen = async (force: boolean) => {
