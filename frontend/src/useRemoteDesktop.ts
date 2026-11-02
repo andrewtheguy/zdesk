@@ -641,6 +641,9 @@ export function useRemoteDesktop(
   // (desktopPainter.ts).
   const [canvasGeneration, setCanvasGeneration] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Whether the session's socket was closed for a lost picture and none has
+  // opened since: the menu, whose actions go down that socket, is not offered.
+  const [pictureHeld, setPictureHeld] = useState(false);
   // The target a connect() is waiting on, so the picker can show progress
   // until the server answers with `connected` (or an error).
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
@@ -1441,6 +1444,7 @@ export function useRemoteDesktop(
       // What the worker said of the lost picture is said by the overlay instead.
       setVideoError(null);
       setConnectError(null);
+      setPictureHeld(true);
       setStatus("pictureLost");
     };
 
@@ -1515,8 +1519,8 @@ export function useRemoteDesktop(
     };
 
     // A claim that succeeded replaced the one before, even with the picture lost
-    // meanwhile: its token is the one the next claim, Reconnect's, reclaims the
-    // session with.
+    // or another attempt begun meanwhile: its token is the one the next claim
+    // reclaims the session with.
     const keepToken = (claimed: Awaited<ReturnType<typeof claim>>) => {
       if (
         typeof claimed === "string" &&
@@ -1525,16 +1529,25 @@ export function useRemoteDesktop(
       ) {
         sessionStorage.setItem(SESSION_KEY, claimed);
       }
+      return claimed;
+    };
+    // Claims go one at a time, each sent with the token the one before kept: two
+    // under the same token are the owner and, to the gateway, another browser,
+    // whose claim ends the session. Only the latest attempt opens its socket.
+    let claiming: Promise<unknown> = Promise.resolve();
+    let claimAttempt = 0;
+    const claimInTurn = (force: boolean) => {
+      const turn = claiming.then(() => claim(force)).then(keepToken);
+      claiming = turn.catch(() => {});
+      return turn;
     };
 
     // Claim the session slot, then open the WebSocket with the token.
     const claimAndOpen = async (force: boolean) => {
-      const claimed = await claim(force);
-      if (disposed) {
-        return;
-      }
-      keepToken(claimed);
-      if (pictureGone) {
+      claimAttempt += 1;
+      const attempt = claimAttempt;
+      const claimed = await claimInTurn(force);
+      if (disposed || pictureGone || attempt !== claimAttempt) {
         return;
       }
       if (claimed === "busy") {
@@ -1858,6 +1871,7 @@ export function useRemoteDesktop(
         if (disposed || ws !== socket) {
           return;
         }
+        setPictureHeld(false);
         setStatus("connected");
         // The viewport is (re)sent from the `connected` handler, once the
         // protocol is known — a running RDP engine must not be resized by an
@@ -3408,5 +3422,6 @@ export function useRemoteDesktop(
     sendClipboard,
     setBottomInset,
     canvasGeneration,
+    pictureHeld,
   };
 }
