@@ -48,7 +48,7 @@ whose memory the paint worker could not make says the page ran out of memory and
 offers a reload, which comes back to the session composing, and a page whose
 session another browser takes over ends its paint worker. A compositor that refused a command
 says so in the DOM, which is what stands in for the picture here. Started with
-the picker's Adaptive (ALPHA), H.264 over the full screen, it also asserts
+the picker's H.264 region (ALPHA), it also asserts
 that the page said it decodes H.264, that the session says it carries it, and that
 a batch whose commands draw with H.264 is acknowledged: the acknowledgment follows
 the decode of every access unit in the batch, and a decoder that gave no picture
@@ -168,9 +168,8 @@ browser remembers what was chosen, and that a second browser taking the session
 over is given none of it: it lands on a picker where a target whose pipeline it
 cannot compose has Start disabled, with the reason, and no tiles in its place. It
 also checks that the pipeline is said to be always passed, with no box to tick,
-and that the Graphics
-group opens on High quality and, under Adaptive, on H.264 full screen. Its sound
-checks are lossless sound played by the browser's own decoder, a browser whose
+and that the Graphics group offers its three ways and opens on High quality. Its
+sound checks are lossless sound played by the browser's own decoder, a browser whose
 decoder fails a FLAC frame, as Safari's does, which is offered Opus alone and
 FLAC greyed with the reason, and a browser with no audio decoder, which starts
 with no sound to tick. It needs an `rdp` target that configures a `size`, whose
@@ -283,8 +282,8 @@ bunx playwright test '/egfx-passthrough\.spec\.ts$'
 ```
 
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
-`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 by
-region, which the page composes. The host draws H.264 only where the desktop
+`ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's H.264 region, which the
+page composes. The host draws H.264 only where the desktop
 moves like video, so it needs a video playing on the host:
 
 ```sh

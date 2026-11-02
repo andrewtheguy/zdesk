@@ -758,7 +758,7 @@ body {
 }
 
 /* The two ways under a chosen option, side by side under its text: a ticked
-   sound's Opus and lossless, an adaptive pipeline's full screen and region. */
+   sound's Opus and lossless, the two pictures of a chosen kind of wlshare's. */
 .picker-suboptions {
   display: grid;
   grid-template-columns: 1fr 1fr;

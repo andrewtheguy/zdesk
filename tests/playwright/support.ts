@@ -262,20 +262,13 @@ async function choosePipeline(
   const graphics = item.getByRole("group", { name: "Graphics" });
   const pipeline = choices.pipeline ?? "high-quality";
   if (pipeline !== "high-quality" || (await graphics.count()) > 0) {
+    const names = {
+      "high-quality": /^High quality/,
+      "adaptive-desktop": /^H\.264 full screen/,
+      "adaptive-region": /^H\.264 region/,
+    };
     await graphics
-      .getByRole("radio", {
-        name: pipeline === "high-quality" ? /^High quality/ : /^Adaptive/,
-      })
-      .check({ timeout: LEAVE_TIMEOUT_MS });
-  }
-  if (pipeline !== "high-quality") {
-    await graphics
-      .getByRole("radio", {
-        name:
-          pipeline === "adaptive-desktop"
-            ? /^H\.264 full screen/
-            : /^H\.264 region/,
-      })
+      .getByRole("radio", { name: names[pipeline] })
       .check({ timeout: LEAVE_TIMEOUT_MS });
   }
 }

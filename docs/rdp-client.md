@@ -276,7 +276,7 @@ connect-time count includes each payload's header, malformed requests are
 refused, a continuous measurement counts inside the framing, `timeDelta` is at
 least a millisecond, and a zero frame timestamp gives no lag. The measurements
 above were repeated with the fixes. Every session with the pipeline takes the detector. One started with the
-picker's Adaptive claims UDP too, and answers at the page's pace; a High
+picker's H.264 full screen or H.264 region claims UDP too, and answers at the page's pace; a High
 quality session claims none and answers with what its own connection measures,
 so the host draws its Progressive first passes coarser and refines what stays
 still
@@ -397,7 +397,7 @@ that takes its network detection and claims UDP
 ([The connection sequence](#the-connection-sequence)). Lossless is the host's
 setting alone.
 
-A session started Adaptive advertises otherwise, with `Connect::h264`, for a
+A session started with either H.264 choice advertises otherwise, with `Connect::h264`, for a
 caller that decodes H.264 itself
 ([The pipeline, passed on](#the-pipeline-passed-on)).
 
@@ -515,7 +515,7 @@ separated. wlshare's lossless tiles model this picture
 
 Lossless takes no H.264 either. A session that offered it, with something
 moving on the host's screen, was drawn with planar and uncompressed rectangles
-alone, so an Adaptive session against such a host ends
+alone, so an H.264 session against such a host ends
 ([H.264 asked for and not drawn](#h264-asked-for-and-not-drawn)). High quality
 needs nothing changed for it: every codec the host chose is one the
 compositor decodes losslessly, and the pipeline keeps its resize, which bitmap
@@ -674,7 +674,7 @@ desktop goes through H.264 with them. Over a full-screen video it is the cheaper
 of the two by far: 2.4 Mbit/s at 32 frames a second, where by region the same
 video took 7.2 Mbit/s, 5.7 of it RemoteFX Progressive and 0.6 AVC420. On a slow
 link it gives up frames and keeps its quantizers, unless the client takes the
-network detection and offers UDP, as an Adaptive session does
+network detection and offers UDP, as an H.264 session does
 ([The connection sequence](#the-connection-sequence)).
 
 By region, the access units ride in the commands handed on, and the caller composes a run

@@ -57,6 +57,12 @@ import {
 // each caller: it belongs to exactly one attachment, and `clear` is the one
 // place that ends it.
 
+// What a pipeline this page could not compose points to: the target's other way
+// of drawing it, which no page composes. Every target with the pipeline offers it,
+// greyed with the reason in a browser whose decoder cannot take it.
+const FULL_SCREEN_INSTEAD =
+  "H.264 full screen, chosen under Graphics before Start, is played as video with nothing composed here, and needs less memory.";
+
 // The destination's 2D context. A union rather than the element's alone because
 // the painter runs inside the paint worker, drawing through an `OffscreenCanvas` —
 // the element context remains for the unit tests, which drive the painter directly.
@@ -519,7 +525,7 @@ export function createFramePainter(options: {
     stop(broken);
     videoComplained = false;
     options.onVideoError(
-      `This browser could not compose the host's graphics (${why}). ${RECONNECT}`,
+      `This browser could not compose the host's graphics (${why}). ${FULL_SCREEN_INSTEAD} ${RECONNECT}`,
     );
   };
 

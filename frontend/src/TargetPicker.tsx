@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { AppVersion } from "./AppVersion.tsx";
 import { decodesAppleMedia } from "./appleMedia.ts";
 import { connectionShortLabel } from "./connectionLabel.ts";
@@ -13,9 +13,10 @@ import ThroughputPanel, { useThroughputAvailable } from "./ThroughputPanel.tsx";
 import {
   type Choices,
   type DeviceRow,
+  type PictureKind,
   type PictureOption,
   type Pipeline,
-  type PipelineRow,
+  type PipelineOption,
   readRememberedChoices,
   rememberChoice,
   type Sound,
@@ -324,10 +325,10 @@ export default function TargetPicker({
                     )}
                     {/* How the host draws the pipeline, on an RDP target
                         with one. */}
-                    {options.pipelineRow && (
+                    {options.pipelines && (
                       <PipelineChoice
                         target={t.name}
-                        row={options.pipelineRow}
+                        options={options.pipelines}
                         chosen={options.choices.pipeline}
                         locked={pendingTarget !== null}
                         choose={(pipeline) =>
@@ -355,6 +356,7 @@ export default function TargetPicker({
                     <PictureChoice
                       target={t.name}
                       pictures={options.pictures}
+                      kinds={options.pictureKinds}
                       chosen={options.choices.passthrough}
                       locked={pendingTarget !== null}
                       choose={(passthrough) =>
@@ -452,16 +454,20 @@ function ViewChoice({
 
 // How a Mac's or a wlshare desktop's picture reaches this browser: which of its
 // own streams is passed through. One that cannot be had here is greyed, with the
-// reason. Nothing on a target with no such choice.
+// reason. Where the pictures come in kinds, wlshare's, the kind is chosen first and
+// its pictures shown under the chosen one; choosing a kind takes the first of its
+// pictures that can be had here. Nothing on a target with no such choice.
 function PictureChoice({
   target,
   pictures,
+  kinds,
   chosen,
   locked,
   choose,
 }: {
   target: string;
   pictures: PictureOption[] | null;
+  kinds: PictureKind[] | null;
   chosen: Choices["passthrough"];
   locked: boolean;
   choose: (passthrough: PictureOption["value"]) => void;
@@ -469,22 +475,67 @@ function PictureChoice({
   if (!pictures) {
     return null;
   }
+  const radio = (picture: PictureOption, name: string) => (
+    <PickerOption
+      key={picture.value ?? "tiles"}
+      type="radio"
+      name={name}
+      checked={chosen === picture.value}
+      unavailable={picture.disabled}
+      locked={locked}
+      onChange={() => choose(picture.value)}
+      label={picture.label}
+      note={picture.note}
+    />
+  );
+  if (!kinds) {
+    return (
+      <fieldset className="picker-choice">
+        <legend>Picture</legend>
+        {pictures.map((picture) => radio(picture, `picker-picture-${target}`))}
+      </fieldset>
+    );
+  }
   return (
     <fieldset className="picker-choice">
       <legend>Picture</legend>
-      {pictures.map((picture) => (
-        <PickerOption
-          key={picture.value ?? "tiles"}
-          type="radio"
-          name={`picker-picture-${target}`}
-          checked={chosen === picture.value}
-          unavailable={picture.disabled}
-          locked={locked}
-          onChange={() => choose(picture.value)}
-          label={picture.label}
-          note={picture.note}
-        />
-      ))}
+      {kinds.map((kind) => {
+        const current = kind.pictures.some(
+          (picture) => picture.value === chosen,
+        );
+        return (
+          <Fragment key={kind.label}>
+            <PickerOption
+              type="radio"
+              name={`picker-picture-kind-${target}`}
+              checked={current}
+              unavailable={kind.disabled}
+              locked={locked}
+              onChange={() => {
+                const first = kind.pictures.find(
+                  (picture) => !picture.disabled,
+                );
+                if (first) {
+                  choose(first.value);
+                }
+              }}
+              label={kind.label}
+              note={kind.note}
+            />
+            {current && (
+              <div
+                className="picker-suboptions"
+                role="radiogroup"
+                aria-label={kind.label}
+              >
+                {kind.pictures.map((picture) =>
+                  radio(picture, `picker-picture-${target}`),
+                )}
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
     </fieldset>
   );
 }
@@ -573,65 +624,37 @@ function DeviceChoices({
   );
 }
 
-/**
- * How the host draws the pipeline: high quality or adaptive, and under a chosen
- * adaptive one its H.264 over the full screen or by region. Choosing adaptive
- * takes the full screen.
- */
+// How the host draws the pipeline: high quality, H.264 full screen or H.264 by
+// region. One this browser cannot have is greyed, with the reason.
 function PipelineChoice({
   target,
-  row,
+  options,
   chosen,
   locked,
   choose,
 }: {
   target: string;
-  row: PipelineRow;
+  options: PipelineOption[];
   chosen: Pipeline;
   locked: boolean;
   choose: (pipeline: Pipeline) => void;
 }) {
-  const adaptive = chosen !== "high-quality";
   return (
     <fieldset className="picker-choice">
       <legend>Graphics</legend>
-      {row.modes.map((mode) => (
+      {options.map((option) => (
         <PickerOption
-          key={mode.value}
+          key={option.value}
           type="radio"
           name={`picker-pipeline-${target}`}
-          checked={(mode.value === "adaptive") === adaptive}
-          unavailable={mode.disabled}
+          checked={chosen === option.value}
+          unavailable={option.disabled}
           locked={locked}
-          onChange={() =>
-            choose(
-              mode.value === "adaptive"
-                ? (row.h264.find((option) => !option.disabled)?.value ??
-                    "adaptive-desktop")
-                : "high-quality",
-            )
-          }
-          label={mode.label}
-          note={mode.note}
+          onChange={() => choose(option.value)}
+          label={option.label}
+          note={option.note}
         />
       ))}
-      {adaptive && (
-        <div className="picker-suboptions" role="radiogroup" aria-label="H.264">
-          {row.h264.map((option) => (
-            <PickerOption
-              key={option.value}
-              type="radio"
-              name={`picker-h264-${target}`}
-              checked={chosen === option.value}
-              unavailable={option.disabled}
-              locked={locked}
-              onChange={() => choose(option.value)}
-              label={option.label}
-              note={option.note}
-            />
-          ))}
-        </div>
-      )}
     </fieldset>
   );
 }

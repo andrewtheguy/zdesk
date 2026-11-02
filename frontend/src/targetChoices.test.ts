@@ -572,6 +572,67 @@ test("a wlshare target's picture is its video or either of its tiles, passed", (
   );
 });
 
+test("a wlshare target's pictures are chosen kind first: adaptive, then lossless", () => {
+  const kinds = (options: ReturnType<typeof targetOptions>) =>
+    options.pictureKinds?.map((kind) => [
+      kind.label,
+      kind.disabled,
+      kind.pictures.map((picture) => picture.value),
+    ]);
+  const options = targetOptions(WLSHARE, undefined, ABLE);
+  assert.deepEqual(kinds(options), [
+    ["Adaptive", false, ["wlshare-video", "wlshare-tiles-progressive"]],
+    ["Lossless", false, ["wlshare-tiles-motion", "wlshare-tiles-lossless"]],
+  ]);
+  const [adaptive, lossless] = options.pictureKinds ?? [];
+  assert.deepEqual(
+    adaptive?.pictures.map((picture) => picture.label),
+    ["Video", "Tiles (alpha)"],
+  );
+  assert.deepEqual(
+    lossless?.pictures.map((picture) => picture.label),
+    ["Settles to lossless", "Fully lossless (experimental)"],
+  );
+  // Lossless is for a LAN, and not suggested for a phone, nor either of its
+  // pictures; the adaptive ones say nothing of it.
+  for (const note of [
+    lossless?.note,
+    ...(lossless?.pictures.map((picture) => picture.note) ?? []),
+  ]) {
+    assert.match(note ?? "", /not recommended on a phone or tablet/);
+  }
+  for (const note of [
+    adaptive?.note,
+    ...(adaptive?.pictures.map((picture) => picture.note) ?? []),
+  ]) {
+    assert.doesNotMatch(note ?? "", /phone/);
+  }
+  // A kind with no picture this browser takes is greyed, with their reasons.
+  const unable = targetOptions(WLSHARE, undefined, {
+    ...ABLE,
+    wlshareH264: false,
+    rdpGraphics: false,
+  });
+  assert.deepEqual(
+    unable.pictureKinds?.map((kind) => kind.disabled),
+    [true, true],
+  );
+  assert.match(unable.pictureKinds?.[0].note ?? "", /no video decoder/);
+  // One with a picture it takes is not.
+  const videoless = targetOptions(WLSHARE, undefined, {
+    ...ABLE,
+    wlshareH264: false,
+  });
+  assert.deepEqual(
+    videoless.pictureKinds?.map((kind) => kind.disabled),
+    [false, false],
+  );
+  // No other target's pictures come in kinds.
+  for (const other of [STANDARD, HIGH_PERFORMANCE, RDP, target({})]) {
+    assert.equal(targetOptions(other, undefined, ABLE).pictureKinds, null);
+  }
+});
+
 test("the camera and the microphone are offered where the remote can take them, off until ticked", () => {
   // An RDP host and wlshare have somewhere to put them; a plain server and a
   // Mac do not, and have no row.
@@ -683,21 +744,29 @@ test("an RDP host's pipeline is always passed, and needs a page that composes it
   assert.ok(unable.passed);
 });
 
-test("how the host draws the pipeline is high quality until somebody chooses adaptive", () => {
+/** A target's ways of drawing the pipeline, as `[value, disabled]`. */
+function pipelines(options: {
+  pipelines: { value: string; disabled: boolean }[] | null;
+}): [string, boolean][] | null {
+  return (
+    options.pipelines?.map((option) => [option.value, option.disabled]) ?? null
+  );
+}
+
+test("how the host draws the pipeline is one of three, high quality until another is chosen", () => {
   const options = targetOptions(RDP, undefined, ABLE);
   assert.equal(options.choices.pipeline, "high-quality");
-  assert.deepEqual(
-    options.pipelineRow?.modes.map((mode) => [mode.value, mode.disabled]),
-    [
-      ["high-quality", false],
-      ["adaptive", false],
-    ],
-  );
-  assert.match(options.pipelineRow?.modes[1].label ?? "", /alpha/);
-  assert.deepEqual(
-    options.pipelineRow?.h264.map((option) => option.value),
-    ["adaptive-desktop", "adaptive-region"],
-  );
+  assert.deepEqual(pipelines(options), [
+    ["high-quality", false],
+    ["adaptive-desktop", false],
+    ["adaptive-region", false],
+  ]);
+  const [, fullScreen, region] = options.pipelines ?? [];
+  assert.match(fullScreen?.label ?? "", /^H\.264 full screen \(alpha\)/);
+  assert.match(region?.label ?? "", /^H\.264 region \(alpha\)/);
+  // Full screen is the one suggested for a phone, and the region is not.
+  assert.match(fullScreen?.note ?? "", /Recommended on a phone or tablet/);
+  assert.match(region?.note ?? "", /not recommended on a phone or tablet/);
   for (const pipeline of ["adaptive-desktop", "adaptive-region"] as const) {
     assert.equal(
       targetOptions(RDP, { pipeline }, ABLE).choices.pipeline,
@@ -710,16 +779,19 @@ test("how the host draws the pipeline is high quality until somebody chooses ada
     { pipeline: "adaptive-desktop" },
     ABLE,
   );
-  assert.equal(mac.pipelineRow, null);
+  assert.equal(mac.pipelines, null);
   assert.equal(mac.choices.pipeline, "high-quality");
 });
 
 test("a browser that cannot decode the H.264 is offered high quality alone", () => {
   const NO_H264: Abilities = { ...ABLE, rdpH264: false, rdpVideo: false };
   const options = targetOptions(RDP, { pipeline: "adaptive-region" }, NO_H264);
-  const adaptive = options.pipelineRow?.modes[1];
-  assert.equal(adaptive?.disabled, true);
-  assert.match(adaptive?.note ?? "", /VideoDecoder/);
+  assert.deepEqual(pipelines(options), [
+    ["high-quality", false],
+    ["adaptive-desktop", true],
+    ["adaptive-region", true],
+  ]);
+  assert.match(options.pipelines?.[1].note ?? "", /VideoDecoder/);
   assert.equal(
     options.choices.pipeline,
     "high-quality",
@@ -748,21 +820,12 @@ test("a browser that cannot compose plays the host's H.264 full screen, and noth
     assert.equal(options.choices.pipeline, "adaptive-desktop");
   }
   const options = targetOptions(RDP, undefined, VIDEO_ONLY);
-  assert.deepEqual(
-    options.pipelineRow?.modes.map((mode) => [mode.value, mode.disabled]),
-    [
-      ["high-quality", true],
-      ["adaptive", false],
-    ],
-  );
-  assert.deepEqual(
-    options.pipelineRow?.h264.map((option) => [option.value, option.disabled]),
-    [
-      ["adaptive-desktop", false],
-      ["adaptive-region", true],
-    ],
-  );
-  assert.match(options.pipelineRow?.modes[0].note ?? "", /WebGL 2/);
+  assert.deepEqual(pipelines(options), [
+    ["high-quality", true],
+    ["adaptive-desktop", false],
+    ["adaptive-region", true],
+  ]);
+  assert.match(options.pipelines?.[0].note ?? "", /WebGL 2/);
   assert.match(options.passed?.note ?? "", /full screen/);
 
   // One that composes but takes no H.264 as video has full screen greyed.
@@ -772,10 +835,11 @@ test("a browser that cannot compose plays the host's H.264 full screen, and noth
     { ...ABLE, rdpVideo: false },
   );
   assert.equal(composeOnly.choices.pipeline, "high-quality");
-  assert.deepEqual(
-    composeOnly.pipelineRow?.h264.map((option) => option.disabled),
-    [true, false],
-  );
+  assert.deepEqual(pipelines(composeOnly), [
+    ["high-quality", false],
+    ["adaptive-desktop", true],
+    ["adaptive-region", false],
+  ]);
 });
 
 const storage = new Map<string, string>();
