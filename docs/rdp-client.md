@@ -531,6 +531,10 @@ codecs, which the session was not started for. Two things show it:
 - **The confirmed set.** A set that leaves no H.264 (version 8, 8.1 without
   `AVC420_ENABLED`, or a later one with `AVC_DISABLED`, MS-RDPEGFX 2.2.3.1 to
   2.2.3.10) ends the session at the confirmation (`proto/gfx.rs::confirms_h264`).
+  So does one that leaves H.264 but not the whole desktop, in a full screen
+  session: `AVC_THINCLIENT` starts in 10.3, below which full screen advertises
+  what region does, and a host that takes it confirms it with the flag on
+  (`confirms_whole_desktop`). That error says to start the session H.264 region.
 - **The opening frame.** A Windows host set to Lossless says nothing of it in
   the confirmation: against both advertises it confirmed 10.7, with
   `AVC_THINCLIENT` for the whole desktop (flags `0xc2`) and without it by region

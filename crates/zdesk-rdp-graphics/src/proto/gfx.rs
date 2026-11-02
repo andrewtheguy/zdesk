@@ -566,6 +566,15 @@ pub fn confirms_h264(version: u32, flags: u32) -> bool {
     }
 }
 
+/// Whether the capability set a host confirmed carries the whole-desktop H.264
+/// preference, `AVC_THINCLIENT`, which starts in version 10.3 ([MS-RDPEGFX]
+/// 2.2.3.6): below it [`H264::WholeDesktop`] advertises what [`H264::ByRegion`]
+/// does, so a host that settles there was never asked for the whole desktop. A
+/// Windows host that takes the preference confirms it with the flag on.
+pub fn confirms_whole_desktop(version: u32, flags: u32) -> bool {
+    version >= CAPVERSION_103 && flags & CAPS_AVC_THINCLIENT != 0
+}
+
 /// The acknowledgement every EndFrame is owed. `decoded` is how many frames this
 /// client has finished in all, which the server uses to notice a client that has
 /// fallen behind.
@@ -941,5 +950,17 @@ mod tests {
         // What a Lossless Windows host confirmed to each adaptive advertise.
         assert!(confirms_h264(CAPVERSION_107, 0xc2));
         assert!(confirms_h264(CAPVERSION_107, 0x82));
+    }
+
+    /// The whole desktop is confirmed only from 10.3, with `AVC_THINCLIENT` on:
+    /// a lower set is the same for both kinds of H.264 session.
+    #[test]
+    fn a_confirmed_set_says_whether_it_carries_the_whole_desktop() {
+        assert!(confirms_whole_desktop(CAPVERSION_107, 0xc2));
+        assert!(confirms_whole_desktop(CAPVERSION_103, CAPS_AVC_THINCLIENT));
+        assert!(!confirms_whole_desktop(CAPVERSION_107, 0x82));
+        assert!(!confirms_whole_desktop(CAPVERSION_102, CAPS_SMALL_CACHE));
+        assert!(!confirms_whole_desktop(CAPVERSION_101, 0));
+        assert!(!confirms_whole_desktop(CAPVERSION_81, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
     }
 }

@@ -286,8 +286,9 @@ const PIPELINE_WAIT: Duration = Duration::from_secs(20);
 ///
 /// No capability or PDU says so: a Windows host whose image quality policy is
 /// Lossless confirms the same set as one left at its default, and then draws
-/// planar and uncompressed rectangles alone, H.264 never. A host asked for the
-/// whole desktop in H.264 draws its opening frame in it, so one that does not
+/// planar and uncompressed rectangles alone, H.264 never. A host that confirmed
+/// the whole desktop in H.264 ([`gfx_proto::confirms_whole_desktop`], checked at
+/// the confirmation) draws its opening frame in it, so one that does not
 /// draws the session in something else. One asked for H.264 by region draws it
 /// only where something moves like video, so its opening frame says nothing of
 /// H.264; what tells a Lossless host there is that it opens with planar and
@@ -1724,13 +1725,21 @@ impl<'a> Active<'a> {
                 // The host confirmed the pipeline, so every paint from here on
                 // arrives inside a marked frame; said before the first of them.
                 // A pipeline asked for H.264 that the confirmed set refuses it ends
-                // here, and one it leaves H.264 is judged by its opening frame.
+                // here, as does one asked for the whole desktop in a set without
+                // that preference, and one it leaves H.264 is judged by its
+                // opening frame.
                 gfx::Update::Confirmed { version, flags } => {
                     let h264 = self.dynamics.h264;
                     if h264 != gfx_proto::H264::Refused && !gfx_proto::confirms_h264(version, flags) {
                         bail!(
                             "the host confirmed graphics pipeline version {version:#010x} with flags {flags:#x}, \
                              which leaves it no H.264 to draw with; start the session High quality"
+                        );
+                    }
+                    if h264 == gfx_proto::H264::WholeDesktop && !gfx_proto::confirms_whole_desktop(version, flags) {
+                        bail!(
+                            "the host confirmed graphics pipeline version {version:#010x} with flags {flags:#x}, \
+                             which does not take H.264 full screen; start the session H.264 region"
                         );
                     }
                     self.pipeline_due = None;
