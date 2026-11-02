@@ -711,11 +711,14 @@ stream needs (`Event::Video`): each frame's access units, each with its surface,
 the luma view's bitstream as the host coded it, at the frame's end; where each
 surface is mapped, and when one is deleted (`Event::Surface`). The picture is
 coded in whole macroblocks and not cropped: a 1280×900 surface is a 1280×912
-picture, whose last rows the page clips (`h264::Whole::macroblocks`). A chroma view is
-dropped, so a host that sent one would be shown at half chroma, as AVC420 is,
-and anything drawn with another codec or command is not shown; each is said once
-in the log. A command whose H.264 does not read is `Event::UnitLost`, the
-surface's stream having lost its place, and not the end of the session. Each
+picture, whose last rows the page clips (`h264::Whole::macroblocks`). Anything
+drawn with another codec or command is not shown, said once in the log. A
+command whose H.264 does not read is `Event::UnitLost`, the surface's stream
+having lost its place, and not the end of the session; so is a command that
+carries a chroma view, also said once. A chroma view is a picture of the same
+stream as the luma views, each coded against the others (MS-RDPEGFX 2.2.4.5),
+so the luma views without it are a stream with pictures missing. No host
+measured here has sent one under `AVC_THINCLIENT`. Each
 frame is acknowledged as one handed on is, when the caller says it has shown it
 (`Input::frame_composed`), with `PASSED_AHEAD` as above.
 

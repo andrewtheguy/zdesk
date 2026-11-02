@@ -83,10 +83,15 @@ function labelled(frame: VideoFrame, colour: VideoColorSpaceInit): boolean {
  * labels an RDP host's stream BT.601, and its hardware decoder on a Mac limited
  * range, telling either otherwise; a picture drawn by such a label is the wrong
  * colours, or clips its whites. A layout it cannot copy is left as labelled.
+ *
+ * The samples go through `room`, which gives memory of the size asked for and
+ * may give the same each time: a frame made of them copies them, and the copies
+ * are made one at a time.
  */
 async function inColour(
   frame: VideoFrame,
   colour: VideoColorSpaceInit,
+  room: (bytes: number) => Uint8Array,
 ): Promise<VideoFrame> {
   const format = frame.format;
   const visible = frame.visibleRect;
@@ -94,7 +99,7 @@ async function inColour(
     return frame;
   }
   try {
-    const samples = new Uint8Array(frame.allocationSize());
+    const samples = room(frame.allocationSize());
     const layout = await frame.copyTo(samples);
     return new VideoFrame(samples, {
       format,
@@ -524,14 +529,23 @@ export function createVideoStream(
 
   // A picture to be put into the stream's colour (`inColour`) is copied after the
   // one before it, so the copies come back in the order the pictures did.
+  // The memory they are copied through, kept from one to the next: a 4K
+  // picture's is 12 MB, and the decoder gives one a frame.
   let copied: Promise<unknown> = Promise.resolve();
+  let samples: Uint8Array | null = null;
+  const room = (bytes: number) => {
+    if (samples?.byteLength !== bytes) {
+      samples = new Uint8Array(bytes);
+    }
+    return samples;
+  };
   const output = (frame: DecodedPicture) => {
     const colour = format.colour;
     if (!colour || isSoftwarePlanes(frame) || labelled(frame, colour)) {
       settle(frame);
       return;
     }
-    const recoloured = copied.then(() => inColour(frame, colour));
+    const recoloured = copied.then(() => inColour(frame, colour, room));
     copied = recoloured.catch(() => undefined);
     settle(recoloured.catch(() => null));
   };

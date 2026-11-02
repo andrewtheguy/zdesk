@@ -393,18 +393,53 @@ const PASSED_RECEIVE_BUFFER: usize = 32 * 1024;
 const STREAMED_BYTES: usize = 64 << 20;
 const STREAMED_UNITS: usize = 256;
 
-/// Hold a streamed pipeline's access unit with the others of its frame, within
-/// [`STREAMED_BYTES`] and [`STREAMED_UNITS`].
-fn hold_streamed(streamed: &mut Vec<(u16, Vec<u8>)>, surface: u16, unit: Vec<u8>) -> Result<()> {
-    let held: usize = streamed.iter().map(|(_, unit)| unit.len()).sum();
-    if streamed.len() >= STREAMED_UNITS || held + unit.len() > STREAMED_BYTES {
-        bail!(
-            "the host drew more than {STREAMED_UNITS} H.264 units or {} MiB in a frame it has not ended",
-            STREAMED_BYTES >> 20
-        );
+/// The layout a desktop the host laid out at monitor `sizes` has, which a
+/// keyframe is asked for with ([`Session::keyframe`]): `sent`, the layout last
+/// sent or known, while its monitors are those sizes, in whatever order the host
+/// lists them, and otherwise the host's own at `sent`'s scales, or at
+/// `opening_scale`.
+fn laid_out(sent: Option<MonitorRow>, sizes: Vec<(u32, u32)>, opening_scale: u32) -> MonitorRow {
+    let sorted = |sizes: &[(u32, u32)]| {
+        let mut sizes = sizes.to_vec();
+        sizes.sort_unstable();
+        sizes
+    };
+    match sent {
+        Some(sent) if sorted(&sent.0) == sorted(&sizes) => sent,
+        Some((_, scales)) => (sizes, scales),
+        None => (sizes, vec![opening_scale]),
     }
-    streamed.push((surface, unit));
-    Ok(())
+}
+
+/// The access units of the frame a streamed pipeline is drawing, until its end
+/// ([`Event::Video`]), each with its surface, and their bytes together.
+#[derive(Default)]
+struct Streamed {
+    units: Vec<(u16, Vec<u8>)>,
+    bytes: usize,
+}
+
+impl Streamed {
+    /// Hold an access unit with the others of its frame, within
+    /// [`STREAMED_BYTES`] and [`STREAMED_UNITS`].
+    fn hold(&mut self, surface: u16, unit: Vec<u8>) -> Result<()> {
+        let bytes = self.bytes + unit.len();
+        if self.units.len() >= STREAMED_UNITS || bytes > STREAMED_BYTES {
+            bail!(
+                "the host drew more than {STREAMED_UNITS} H.264 units or {} MiB in a frame it has not ended",
+                STREAMED_BYTES >> 20
+            );
+        }
+        self.bytes = bytes;
+        self.units.push((surface, unit));
+        Ok(())
+    }
+
+    /// The frame's units, and their bytes together, leaving none held.
+    fn take(&mut self) -> (Vec<(u16, Vec<u8>)>, usize) {
+        let Self { units, bytes } = std::mem::take(self);
+        (units, bytes)
+    }
 }
 
 /// The host's socket, for a session that may pass a pipeline at the caller's pace
@@ -1079,9 +1114,8 @@ struct Active<'a> {
     /// The scale the session opened at ([`Connect::scale_percent`]), which the
     /// desktop has until a layout says otherwise.
     opening_scale: u32,
-    /// The access units of the frame a streamed pipeline is drawing, until its end
-    /// ([`Event::Video`]).
-    streamed: Vec<(u16, Vec<u8>)>,
+    /// The access units of the frame a streamed pipeline is drawing, until its end.
+    streamed: Streamed,
     /// Whether the server has sent Monitor Ready, which is what opens the clipboard:
     /// nothing may be said on that channel before this end's capabilities answer it.
     clip_ready: bool,
@@ -1389,7 +1423,7 @@ impl<'a> Active<'a> {
             pending_resize: None,
             layout: None,
             opening_scale: config.scale_percent,
-            streamed: Vec::new(),
+            streamed: Streamed::default(),
             clip_ready: false,
             pending_formats: None,
             deferred,
@@ -1698,7 +1732,7 @@ impl<'a> Active<'a> {
                     // for a channel that is no longer there to be told. The
                     // caller's distance is the caller's, and is not said again.
                     *passed = PassedFrames { distance: passed.distance, ..PassedFrames::default() };
-                    streamed.clear();
+                    streamed.take();
                     // And it was the only picture, so another is waited for as
                     // the first was.
                     *pipeline_due = Some(Instant::now() + PIPELINE_WAIT);
@@ -1845,10 +1879,9 @@ impl<'a> Active<'a> {
                 // A streamed pipeline's frame, handed on whole at its end, with
                 // the units it drew; a frame that drew none is owed its
                 // acknowledgement all the same, through the caller.
-                gfx::Update::Unit { surface, unit } => hold_streamed(&mut self.streamed, surface, unit)?,
+                gfx::Update::Unit { surface, unit } => self.streamed.hold(surface, unit)?,
                 gfx::Update::Ended { frame } => {
-                    let units = std::mem::take(&mut self.streamed);
-                    let bytes = units.iter().map(|(_, unit)| unit.len()).sum();
+                    let (units, bytes) = self.streamed.take();
                     self.passed.handed(bytes, Some(frame), Instant::now());
                     self.send(Event::Video { units, frame }).await;
                     self.send(Event::Frame).await;
@@ -2158,11 +2191,8 @@ impl<'a> Active<'a> {
         self.damage.clear();
         let monitors =
             if monitors.is_empty() { vec![Placed { x: 0, y: 0, w: width, h: height }] } else { monitors };
-        // The layout the desktop has, where none has been sent.
-        if self.layout.is_none() {
-            let sizes = monitors.iter().map(|monitor| (monitor.w, monitor.h)).collect();
-            self.layout = Some((sizes, vec![self.opening_scale]));
-        }
+        let sizes = monitors.iter().map(|monitor| (monitor.w, monitor.h)).collect();
+        self.layout = Some(laid_out(self.layout.take(), sizes, self.opening_scale));
         self.send(Event::Resize { width, height, monitors }).await;
     }
 
@@ -2571,21 +2601,36 @@ mod tests {
         Capture::new(proto, Box::new(NoSink))
     }
 
+    /// A keyframe is asked for with the layout the desktop has: the one sent, while
+    /// the host lays out those sizes, and the host's own where it laid out others.
+    #[test]
+    fn a_keyframe_is_asked_for_with_the_layout_the_desktop_has() {
+        let sent = (vec![(1280, 800), (1920, 1080)], vec![200, 100]);
+        assert_eq!(laid_out(Some(sent.clone()), vec![(1920, 1080), (1280, 800)], 100), sent, "listed in another order");
+        assert_eq!(
+            laid_out(Some(sent), vec![(2560, 1440)], 100),
+            (vec![(2560, 1440)], vec![200, 100]),
+            "laid out by the host, at the scales sent"
+        );
+        assert_eq!(laid_out(None, vec![(1280, 800)], 150), (vec![(1280, 800)], vec![150]));
+    }
+
     /// A frame a host never ends is held only so far, by its units and by their
     /// bytes, and is then the session's error rather than its memory.
     #[test]
     fn a_streamed_frame_is_held_only_so_far() {
-        let mut streamed = Vec::new();
+        let mut streamed = Streamed::default();
         for _ in 0..STREAMED_UNITS {
-            hold_streamed(&mut streamed, 0, vec![0; 4]).unwrap();
+            streamed.hold(0, vec![0; 4]).unwrap();
         }
-        assert!(hold_streamed(&mut streamed, 0, vec![0; 4]).is_err());
-        assert_eq!(streamed.len(), STREAMED_UNITS);
+        assert!(streamed.hold(0, vec![0; 4]).is_err());
+        assert_eq!(streamed.take(), (vec![(0, vec![0; 4]); STREAMED_UNITS], 4 * STREAMED_UNITS));
 
-        let mut streamed = Vec::new();
-        hold_streamed(&mut streamed, 0, vec![0; STREAMED_BYTES - 1]).unwrap();
-        hold_streamed(&mut streamed, 1, vec![0; 1]).unwrap();
-        assert!(hold_streamed(&mut streamed, 1, vec![0; 1]).is_err());
+        streamed.hold(0, vec![0; STREAMED_BYTES - 1]).unwrap();
+        streamed.hold(1, vec![0; 1]).unwrap();
+        assert!(streamed.hold(1, vec![0; 1]).is_err());
+        streamed.take();
+        streamed.hold(1, vec![0; 1]).unwrap();
     }
 
     /// The host is timed from its last request while it is owed nothing, and not at all

@@ -1684,8 +1684,11 @@ async fn active_loop(
                     // never the leading-edge flush of a frame still being drawn.
                     Event::FramesMarked => {
                         frame_marks = true;
-                        // A pipeline that starts over has drawn with nothing yet.
+                        // A pipeline that starts over has drawn with nothing yet,
+                        // and has no surfaces: the last one's went with its
+                        // channel, unsaid.
                         host_picture = None;
+                        surfaces.clear();
                         // This is where a pipeline begins, and the browser
                         // composes it from here.
                         if composes {
@@ -1749,17 +1752,25 @@ async fn active_loop(
                     },
                     // The units after a lost one are drawn against a picture
                     // nobody has: the display showing it starts again at a
-                    // keyframe.
+                    // keyframe. A surface no display shows costs nothing, and a
+                    // stream losing units again and again asks as one waiting
+                    // does, not at every unit: each ask resets the host's
+                    // graphics.
                     Event::UnitLost { surface } => {
+                        let mut shown = false;
                         if surface_at(&surfaces, view.column_origin(view.active)) == Some(surface) {
                             sink.restart_pass();
+                            shown = true;
                         }
                         if let Some(tab) = tab.as_mut()
                             && surface_at(&surfaces, view.column_origin(tab.column())) == Some(surface)
                         {
                             tab.sink.restart_pass();
+                            shown = true;
                         }
-                        ask_keyframe(input, &mut keyframe_asked, true);
+                        if shown {
+                            ask_keyframe(input, &mut keyframe_asked, false);
+                        }
                     }
                     Event::Drawn(fidelity) => {
                         let msg = ServerMsg::HostPicture { lossless: fidelity.lossless(), codecs: fidelity.names() };

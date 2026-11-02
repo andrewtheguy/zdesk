@@ -936,10 +936,16 @@ impl Graphics {
                         continue;
                     }
                     match avc::Stream::read(codec, data) {
+                        // A chroma view is a picture of the same stream as the
+                        // luma views (MS-RDPEGFX 2.2.4.5), coded against them and
+                        // they against it, so the luma views alone are a stream
+                        // with pictures missing: it is lost here, and starts
+                        // again at a keyframe that carries none.
+                        Ok(stream) if stream.has_chroma() => {
+                            self.not_shown(codec);
+                            updates.push(Update::Lost { surface });
+                        }
                         Ok(stream) => {
-                            if stream.has_chroma() {
-                                self.not_shown(codec);
-                            }
                             if let Some(unit) = stream.luma_bitstream() {
                                 updates.push(Update::Unit { surface, unit: unit.to_vec() });
                             }
@@ -982,11 +988,15 @@ impl Graphics {
     }
 
     /// A streamed pipeline drew with `codec`, or a YUV444 command's chroma view,
-    /// which is not shown: said once a codec.
+    /// which loses its stream: said once a codec.
     fn not_shown(&mut self, codec: u16) {
         if self.unshown.insert(codec) {
             if avc::carries(codec) {
-                info!("rdp: the host's {} carries chroma views, which are not shown", gfx::codec_name(codec));
+                warn!(
+                    "rdp: the host's {} carries chroma views, which full screen cannot pass: \
+                     each loses its stream until a keyframe",
+                    gfx::codec_name(codec)
+                );
             } else {
                 warn!("rdp: the host drew with {} beside its H.264, which is not shown", gfx::codec_name(codec));
             }
@@ -2190,16 +2200,24 @@ mod tests {
             create(1, 32, 32),
             map(1, 32, 0),
             start(1),
-            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), Some(&chroma))),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
             solidfill(1, [1, 2, 3, 0xFF], &[(0, 0, 4, 4)]),
             end(1),
             start(2),
             wire(1, CODEC_AVC420, whole, &luma),
             end(2),
+            // A chroma view is a picture of the stream that cannot be passed,
+            // with its luma view or alone: the stream is lost.
+            start(3),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), Some(&chroma))),
+            wire(1, CODEC_AVC444_V2, whole, &wrap444(None, Some(&chroma))),
+            end(3),
         ]);
         let unit = vec![0, 0, 1, 0x65];
-        let units: Vec<&Update> =
-            updates.iter().filter(|u| matches!(u, Update::Unit { .. } | Update::Mapped { .. } | Update::Ended { .. })).collect();
+        let units: Vec<&Update> = updates
+            .iter()
+            .filter(|u| matches!(u, Update::Unit { .. } | Update::Mapped { .. } | Update::Ended { .. } | Update::Lost { .. }))
+            .collect();
         assert_eq!(
             units,
             [
@@ -2208,6 +2226,9 @@ mod tests {
                 &Update::Ended { frame: 1 },
                 &Update::Unit { surface: 1, unit },
                 &Update::Ended { frame: 2 },
+                &Update::Lost { surface: 1 },
+                &Update::Lost { surface: 1 },
+                &Update::Ended { frame: 3 },
             ]
         );
         assert!(matches!(updates[0], Update::Confirmed { .. }));

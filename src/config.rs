@@ -803,6 +803,17 @@ impl Decoders {
         }
     }
 
+    /// Whether it takes `passthrough` drawn as `pipeline` says: as
+    /// [`Self::takes`], but for an RDP host's pipeline drawn whole in H.264,
+    /// which is passed as video and composed by nothing
+    /// ([`RenderPlan::rdp_video`]), and is taken by a browser that decodes it.
+    pub fn takes_drawn(self, passthrough: Passthrough, pipeline: Pipeline) -> bool {
+        match (passthrough, pipeline) {
+            (Passthrough::RdpGraphics, Pipeline::AdaptiveDesktop) => self.rdp_graphics || self.rdp_video,
+            _ => self.takes(passthrough),
+        }
+    }
+
     /// Whether this browser can be served `passthrough`.
     pub fn takes(self, passthrough: Passthrough) -> bool {
         match passthrough {
@@ -1335,14 +1346,10 @@ impl TargetConfig {
     }
 
     /// The passthrough a session started with `choices` runs on that `decoders`'
-    /// browser cannot take. Such a browser is not started one, and its own ends.
-    /// An RDP host's pipeline drawn whole in H.264 is taken by a browser that
-    /// decodes that, since it is passed as video and composed by nothing
-    /// ([`RenderPlan::rdp_video`]).
+    /// browser cannot take ([`Decoders::takes_drawn`]). Such a browser is not
+    /// started one, and its own ends.
     pub fn beyond(&self, choices: Choices, decoders: Decoders) -> Option<Passthrough> {
-        let video = choices.pipeline == Pipeline::AdaptiveDesktop && decoders.rdp_video;
-        self.passthrough(choices)
-            .filter(|&passthrough| !(decoders.takes(passthrough) || (passthrough == Passthrough::RdpGraphics && video)))
+        self.passthrough(choices).filter(|&passthrough| !decoders.takes_drawn(passthrough, choices.pipeline))
     }
 
     /// Whether a session started with `choices` carries the remote's sound: where

@@ -896,15 +896,16 @@ impl VideoSink {
     /// owed its acknowledgement at once, as `painted` is dropped. A keyframe the
     /// check refuses is the error: another would be refused as it was.
     pub async fn pass_rdp(&self, w: u16, h: u16, unit: Vec<u8>, painted: Painted) -> anyhow::Result<RdpPassed> {
-        let idr = crate::h264::idr(&unit);
-        if self.shared.pass_restart.load(Ordering::Relaxed) && !idr {
+        // Read for its IDR only where that decides something: a stream waiting for
+        // one, and a unit the check refuses. The check reads every other.
+        if self.shared.pass_restart.load(Ordering::Relaxed) && !crate::h264::idr(&unit) {
             debug!("{}: dropping a passed frame until the keyframe a restart needs", self.engine);
             return Ok(RdpPassed::Waiting);
         }
         let checked = self.shared.surface.lock().unwrap().pass(w, h, &unit);
         let passed = match checked {
             Ok(passed) => passed,
-            Err(e) if idr => return Err(e),
+            Err(e) if crate::h264::idr(&unit) => return Err(e),
             Err(e) => {
                 self.restart_pass();
                 return Ok(RdpPassed::Refused(e));

@@ -1797,7 +1797,12 @@ the pipeline.
   host for one; the same happens on a reattach, which resumes such a session,
   and when the picker switches displays. The page keeps its last picture
   meanwhile. A unit whose command does not read, which a compositor would end
-  the pipeline on, starts its stream waiting for an IDR the same way.
+  the pipeline on, starts its stream waiting for an IDR the same way, as does a
+  command that carries a chroma view, which the stream cannot be passed
+  without. A stream that keeps losing units asks the host no more often than
+  one waiting does, since each ask resets the host's graphics, and a surface no
+  display shows asks for nothing. A pipeline that starts over, its channel
+  closed and opened again, starts with no surfaces.
 
   Each frame is acknowledged to the host once the page has painted its last
   unit: the record that carries it owes the acknowledgement (`VideoUnit::painted`)
