@@ -237,7 +237,8 @@ body {
 }
 
 .status-busy,
-.status-takenOver {
+.status-takenOver,
+.status-pictureLost {
   color: #d29922;
 }
 

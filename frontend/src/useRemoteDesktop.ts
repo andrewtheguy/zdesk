@@ -99,7 +99,7 @@ import {
 //     takeOver()     takeOver()
 //
 // Reconnects are automatic with capped backoff; busy/takenOver wait for the
-// user (takeOver). A fatal engine error is no longer a connection state — the
+// user (takeOver), and pictureLost for a reconnect (retry). A fatal engine error is no longer a connection state — the
 // socket stays up and the session returns to the picker with the error shown
 // there (see `connectError`).
 export type ConnectionStatus =
@@ -112,6 +112,12 @@ export type ConnectionStatus =
   // This socket was evicted by a takeover (close code 4001), or, on a page showing
   // a display in a tab of its own, another tab took that display over (4004).
   | "takenOver"
+  // The browser took the picture's WebGL context away (iOS Safari does, for a
+  // tab in the background or short of memory), and what was drawn in it. The
+  // sockets close as a takeover's do, and the overlay offers Reconnect. Not
+  // reconnected by itself: what took this context may take the next one, and a
+  // page that went on reconnecting on its own would go round for as long.
+  | "pictureLost"
   // The session could not be opened for a reason waiting cannot change, so nothing
   // is in flight and nothing is scheduled. Its own state because the alternative was
   // leaving "Connecting…" up over a connection that had stopped being attempted,
@@ -1227,6 +1233,12 @@ export function useRemoteDesktop(
     // another, bound in its turn. `bound` is the one bound last, which a clear
     // goes to rather than building a worker to clear.
     let bound: DesktopPainter | null = null;
+    // Whether a desktop is up, rather than the picker: `mode`, as this run set it.
+    let onDesktop = false;
+    const showMode = (next: SessionMode) => {
+      onDesktop = next === "desktop";
+      setMode(next);
+    };
     const painter = (): DesktopPainter | null => {
       const next =
         canvasRef.current && graphicsRef.current
@@ -1324,6 +1336,7 @@ export function useRemoteDesktop(
           setScreenUnavailable(false);
         }
       },
+      onContextLost: () => pictureLost(),
     };
     painter();
     // The session's picture is over, its clear posted: what it alone loaded goes,
@@ -1407,6 +1420,39 @@ export function useRemoteDesktop(
       retryTimer = setTimeout(() => void connect(false), delay);
     };
 
+    // Whether the session's picture was lost with its context, until the person
+    // reconnects (`start`): an attempt already under way opens nothing.
+    let pictureGone = false;
+    // The browser took the GPU canvas's context away. A desktop's session leaves
+    // the page as for a takeover, and the overlay says why, beside Reconnect. On
+    // the picker there is no picture to lose: the worker holding the context goes,
+    // so the next session is drawn on new canvases.
+    const pictureLost = () => {
+      if (disposed || pictureGone) {
+        return;
+      }
+      if (!onDesktop) {
+        endPicture();
+        return;
+      }
+      pictureGone = true;
+      clearTimeout(retryTimer);
+      if (ws) {
+        const old = ws;
+        ws = null; // silence its onclose before closing
+        wsRef.current = null;
+        old.close();
+      }
+      closeDisplay();
+      settleClipboardWaiters(null);
+      clearDesktop();
+      endPicture();
+      // What the worker said of the lost picture is said by the overlay instead.
+      setVideoError(null);
+      setConnectError(null);
+      setStatus("pictureLost");
+    };
+
     // Claim the session slot. Returns the token, "busy" when another browser
     // holds the slot (409), "unauthorized" when the login is gone (401), or the
     // reason it failed — which the caller reports rather than swallowing.
@@ -1469,7 +1515,7 @@ export function useRemoteDesktop(
       }
       if (tabDisplay !== null) {
         const tab = await tabId();
-        if (!disposed) {
+        if (!disposed && !pictureGone) {
           openDisplay(tabDisplay, { id: tab, takeover: force });
         }
         return;
@@ -1480,7 +1526,7 @@ export function useRemoteDesktop(
     // Claim the session slot, then open the WebSocket with the token.
     const claimAndOpen = async (force: boolean) => {
       const claimed = await claim(force);
-      if (disposed) {
+      if (disposed || pictureGone) {
         return;
       }
       if (claimed === "busy") {
@@ -1724,7 +1770,7 @@ export function useRemoteDesktop(
         return;
       }
       setStatus("connected");
-      setMode("desktop");
+      showMode("desktop");
       lastHostDisplay = null;
       sendHostDisplay();
       lastTabViewport = null;
@@ -2212,7 +2258,7 @@ export function useRemoteDesktop(
       // desktop.
       setConnectError(null);
       setPendingTarget(null);
-      setMode("desktop");
+      showMode("desktop");
       setCanAudio(msg.audio);
       const block = settleAudioBlock(msg);
       seedAudioForAttachment(msg.audio && block === null);
@@ -2537,7 +2583,7 @@ export function useRemoteDesktop(
           // engine that ended): show the picker. Drop any retained framebuffer so a later
           // connect starts from a clean "waiting for the desktop" state.
           setPendingTarget(null);
-          setMode("picker");
+          showMode("picker");
           setConnection("");
           endDesktop();
           endedEngines = Math.max(endedEngines, msg.engines);
@@ -2550,6 +2596,7 @@ export function useRemoteDesktop(
     const start = (force: boolean) => {
       clearTimeout(retryTimer);
       attempts = 0;
+      pictureGone = false;
       clearDesktop();
       // The budget refills and last time's reason goes with it: it belonged to the
       // attempt the user just replaced, and leaving it up would blame this attempt

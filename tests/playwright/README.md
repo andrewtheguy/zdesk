@@ -282,6 +282,19 @@ ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \
 bunx playwright test '/egfx-passthrough\.spec\.ts$'
 ```
 
+The context-loss spec needs the same target: it ends Chromium's GPU process,
+which takes the page's WebGL context, and asserts that the page says the
+picture was lost and brings it back when Reconnect is pressed. It runs on
+Chromium itself rather than the headless shell, whose renderer dies with that
+process, and it needs a GPU: under WSL's software rendering the page itself dies
+with the GPU process more often than not, so run it on the Windows host, with a
+node on the path so Playwright's CLI runs under node rather than bun:
+
+```sh
+ZDESK_PLAYWRIGHT_EGFX_TARGET='win' \
+bunx playwright test '/webgl-context-lost\.spec\.ts$'
+```
+
 Its H.264 case, ALPHA, starts a target with the pipeline on, named by
 `ZDESK_PLAYWRIGHT_EGFX_H264_TARGET`, with the picker's Adaptive and H.264 over
 the full screen, which the host draws everything in; by region it would need a

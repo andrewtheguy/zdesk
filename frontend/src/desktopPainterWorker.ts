@@ -155,6 +155,11 @@ export type PainterEvent =
    * for an attachment that has since been cleared is not the page's to act on.
    */
   | { type: "graphicsShown"; shown: boolean; epoch: number }
+  /**
+   * The browser took the GPU canvas's WebGL context away: whatever was drawn in
+   * it is gone, and the page ends the session's picture.
+   */
+  | { type: "contextLost" }
   /** `retire` is done: the worker can be ended. */
   | { type: "retired" };
 
@@ -315,6 +320,9 @@ export function createPainterWorker(
           // along — it named the element context's present path, and a
           // transferred canvas presents through the browser's commit instead.
           ctx = canvas.getContext("2d", { alpha: false });
+          command.graphics.addEventListener("webglcontextlost", () =>
+            post({ type: "contextLost" }),
+          );
           painter = makePainter({
             context: () => (framebuffer ? framebufferCtx : ctx),
             onVideoError: (reason) => post({ type: "videoError", reason }),

@@ -96,6 +96,7 @@ function harness() {
     height: 0,
     getContext: () => ctx,
   };
+  const graphics = new EventTarget();
 
   const host = createPainterWorker(
     (event) => events.push(event),
@@ -108,7 +109,7 @@ function harness() {
   host.handle({
     type: "init",
     canvas: canvas as unknown as OffscreenCanvas,
-    graphics: {} as OffscreenCanvas,
+    graphics: graphics as unknown as OffscreenCanvas,
     decoding: {
       runs: { hevc: false },
       nativeHevc: true,
@@ -122,6 +123,7 @@ function harness() {
     drawn,
     ctx,
     canvas,
+    graphics,
     stall: () => {
       stallDraws = true;
     },
@@ -143,6 +145,12 @@ function harness() {
     },
   };
 }
+
+test("the GPU canvas's lost context is told to the page", () => {
+  const { graphics, events } = harness();
+  graphics.dispatchEvent(new Event("webglcontextlost"));
+  assert.deepEqual(events, [{ type: "contextLost" }]);
+});
 
 test("a batch frame reaches the painter; anything else is dropped", async () => {
   const h = harness();
