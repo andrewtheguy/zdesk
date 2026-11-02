@@ -736,9 +736,12 @@ struct Binding {
     /// The keys page's sentence.
     about: &'static str,
     group: Group,
-    /// Whether the key bar under the list shows it. Every binding is on the keys
-    /// page; the bar keeps to what fits one line of an 80-column terminal.
-    bar: bool,
+    /// Where the key bar under the list ranks it, if the bar shows it at all.
+    /// The bar names every ranked key a terminal has room for; one too narrow
+    /// for them all loses the highest rank first, the last listed of a rank
+    /// before the rest. Every binding is on the keys page; the arrows go without
+    /// saying, and the access panel names P and c.
+    bar: Option<u8>,
 }
 
 /// Every key the list takes. The key bar and the keys page are drawn from this
@@ -751,7 +754,7 @@ const BINDINGS: &[Binding] = &[
         label: "up",
         about: "select the instance above",
         group: Group::Instances,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Down,
@@ -759,7 +762,7 @@ const BINDINGS: &[Binding] = &[
         label: "down",
         about: "select the instance below",
         group: Group::Instances,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Specs,
@@ -767,7 +770,7 @@ const BINDINGS: &[Binding] = &[
         label: "specs",
         about: "show its settings and what each target will do",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Start,
@@ -775,7 +778,7 @@ const BINDINGS: &[Binding] = &[
         label: "start",
         about: "start it",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Stop,
@@ -783,7 +786,7 @@ const BINDINGS: &[Binding] = &[
         label: "stop",
         about: "stop it",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Restart,
@@ -791,7 +794,7 @@ const BINDINGS: &[Binding] = &[
         label: "restart",
         about: "restart it, which applies an edited config",
         group: Group::Selected,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::Open,
@@ -799,7 +802,7 @@ const BINDINGS: &[Binding] = &[
         label: "open",
         about: "open it in the browser, once it is running",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Edit,
@@ -807,7 +810,7 @@ const BINDINGS: &[Binding] = &[
         label: "edit",
         about: "edit its zdesk.toml in $VISUAL or $EDITOR",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Password,
@@ -815,7 +818,7 @@ const BINDINGS: &[Binding] = &[
         label: "password",
         about: "encrypt a password into its [passwords]",
         group: Group::Selected,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::New,
@@ -823,7 +826,7 @@ const BINDINGS: &[Binding] = &[
         label: "new",
         about: "create an instance",
         group: Group::Instances,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::StartAll,
@@ -831,7 +834,7 @@ const BINDINGS: &[Binding] = &[
         label: "start all",
         about: "start every stopped instance",
         group: Group::Instances,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::Rescan,
@@ -839,7 +842,7 @@ const BINDINGS: &[Binding] = &[
         label: "rescan",
         about: "rescan the instances directory",
         group: Group::Instances,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::NewPin,
@@ -847,7 +850,7 @@ const BINDINGS: &[Binding] = &[
         label: "new PIN",
         about: "generate a new PIN",
         group: Group::ControlPlane,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::CopyPin,
@@ -855,15 +858,15 @@ const BINDINGS: &[Binding] = &[
         label: "copy PIN",
         about: "send the PIN to the clipboard through the terminal (OSC 52, or a tmux buffer); Apple's Terminal.app drops it",
         group: Group::ControlPlane,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Keys,
         codes: &[KeyCode::Char('?')],
-        label: "keys",
+        label: "help",
         about: "show every key",
         group: Group::ControlPlane,
-        bar: true,
+        bar: Some(1),
     },
     Binding {
         action: Action::Quit,
@@ -871,7 +874,7 @@ const BINDINGS: &[Binding] = &[
         label: "quit",
         about: "stop every instance and quit, as Ctrl+C does",
         group: Group::ControlPlane,
-        bar: true,
+        bar: Some(0),
     },
 ];
 
@@ -910,16 +913,16 @@ fn key_lines() -> Vec<String> {
 }
 
 /// The key bar under the list, in the order the bindings are listed, as much of
-/// it as fits `width`. What does not fit goes from the end of the instance keys
-/// first, so the keys page and quitting stay named on a narrow terminal, and then
-/// from the front of the rest, so quitting is the last key named.
+/// it as fits `width`. What does not fit goes by [`Binding::bar`]: the keys
+/// only the keys page names otherwise, then the everyday instance keys, then
+/// the keys page, so quitting is the last key named.
 fn list_bar(width: u16) -> Vec<(String, &'static str)> {
-    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
-    while bar_width(&shown) > width as usize && !shown.is_empty() {
-        let drop = shown
-            .iter()
-            .rposition(|binding| binding.group != Group::ControlPlane)
-            .unwrap_or(0);
+    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+    while bar_width(&shown) > width as usize {
+        // `max_by_key` keeps the last of equal ranks, the last listed.
+        let Some((drop, _)) = shown.iter().enumerate().max_by_key(|(_, binding)| binding.bar) else {
+            break;
+        };
         shown.remove(drop);
     }
     shown
@@ -2559,17 +2562,30 @@ mod tests {
     }
 
     /// The list screen at the smallest common terminal: the access panel says who
-    /// can reach an instance, and the whole key bar fits on its one line.
+    /// can reach an instance, and the key bar keeps the everyday keys on its one
+    /// line.
     #[test]
     fn the_list_screen_fits_an_80_column_terminal() {
-        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
-        assert!(bar_width(&every) <= 80, "the key bar is {} columns", bar_width(&every));
-        assert_eq!(list_bar(80).len(), every.len());
+        // A wide terminal names every ranked key.
+        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+        assert_eq!(list_bar(u16::MAX).len(), every.len());
+        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan] {
+            assert!(every.iter().any(|binding| binding.action == action), "{action:?}");
+        }
+
+        // At 80 columns the rarer keys give way first, and every everyday key stays.
+        let everyday: Vec<_> = every.iter().copied().filter(|binding| binding.bar <= Some(2)).collect();
+        assert!(bar_width(&everyday) <= 80, "the everyday key bar is {} columns", bar_width(&everyday));
+        let at_80 = list_bar(80);
+        assert!(at_80.len() < every.len());
+        for binding in &everyday {
+            assert!(at_80.contains(&(key_name(binding.codes[0]), binding.label)), "{at_80:?}");
+        }
 
         // Narrower, the instance keys give way and the keys page stays named.
         let narrow = list_bar(40);
         assert!(narrow.len() < every.len());
-        assert!(narrow.contains(&("?".to_owned(), "keys")), "{narrow:?}");
+        assert!(narrow.contains(&("?".to_owned(), "help")), "{narrow:?}");
         assert!(narrow.contains(&("q".to_owned(), "quit")), "{narrow:?}");
 
         let options = TuiOptions {
@@ -2603,7 +2619,7 @@ mod tests {
         assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
+        assert!(frame.contains(" quit") && !frame.contains(" help"), "{frame}");
     }
 
     /// The PIN is shown in a colour of its own, apart from its label, and a PIN
