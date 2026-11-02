@@ -902,7 +902,8 @@ impl SessionManager {
     /// blocks the claim unless `force` (takeover) or `token` is the current
     /// claim (the same browser reclaiming after a drop), or the token the owner
     /// last reclaimed with ([`State::reclaimed_with`]: the same browser retrying
-    /// a reclaim whose answer it never received). Both evict the
+    /// a reclaim whose answer it never received, which is answered that
+    /// reclaim's token again rather than a new one). Both evict the
     /// previous WebSocket. The session survives only the owner's reclaim; a
     /// claim by a different browser ends it, and that browser's attach lands on
     /// the picker to start one with its own choices.
@@ -918,12 +919,20 @@ impl SessionManager {
     ) -> Result<String, SessionBusy> {
         let (id, evicted, expiry) = {
             let mut st = self.state.lock().unwrap();
-            let owns = token.is_some()
-                && (st.claim.as_deref() == token || st.reclaimed_with.as_deref() == token);
+            let retried = token.is_some() && st.reclaimed_with.as_deref() == token;
+            let owns = retried || (token.is_some() && st.claim.as_deref() == token);
             if st.client.is_some() && !force && !owns {
                 return Err(SessionBusy);
             }
-            let id = Uuid::new_v4().to_string();
+            // A retry of the owner's last reclaim gets the token that reclaim
+            // minted rather than a new one, so overlapping retries all answer the
+            // same token whatever order they are decided and answered in. None of
+            // them has a socket to evict: attaching that token forgets the
+            // fallback this retry presented.
+            let id = match (retried, &st.claim) {
+                (true, Some(current)) => current.clone(),
+                _ => Uuid::new_v4().to_string(),
+            };
             st.claim = Some(id.clone());
             // Remember the token this reclaim proved the page holds, in case this
             // answer is lost too: then the page still holds that one, not the one
@@ -3748,10 +3757,14 @@ mod tests {
         let (mgr, hooks) = manager_with_fake_engine();
         let (token, engine) = detached_session(&mgr, &hooks).await;
 
-        // Two answers lost: neither new token reaches the page.
-        let _lost = mgr.claim(false, Some(&token), "login").unwrap();
-        let _lost_again = mgr.claim(false, Some(&token), "login").unwrap();
+        // Two answers lost: neither reaches the page. Every retry, overlapping or
+        // not, answers the token the first reclaim minted.
+        let lost = mgr.claim(false, Some(&token), "login").unwrap();
+        let lost_again = mgr.claim(false, Some(&token), "login").unwrap();
         let resumed = mgr.claim(false, Some(&token), "login").unwrap();
+        assert_ne!(lost, token, "the first reclaim mints a new token");
+        assert_eq!(lost_again, lost, "a retry answers the same token");
+        assert_eq!(resumed, lost, "however many times it is retried");
 
         assert!(!engine.0.is_closed(), "the retries are the owner's and keep the session");
         let mut att = mgr.attach(&resumed, None, Decoders::ALL).await.unwrap();

@@ -2225,11 +2225,13 @@ decoders: a session started on one device never carries its size, density,
 colour or passthrough over to another. The remote keeps its own session, so
 picking the target again logs back on to the same desktop. Only the owner
 reclaiming its token resumes the running engine, with a full-repaint request
-instead of a reconnect. Every claim mints a new token, so a reclaim the gateway
-answered but whose answer never reached the page leaves the page holding the
-token that reclaim replaced; the gateway keeps counting the token of the
-owner's last reclaim as the owner's, so the page's retry resumes too. It forgets
-it once the new token attaches, at any other claim, and at a log out.
+instead of a reconnect. A reclaim mints a new token, so one the gateway answered
+but whose answer never reached the page leaves the page holding the token it
+replaced. The gateway keeps counting the token the owner last reclaimed with as
+the owner's, and answers a claim carrying it with the token that reclaim minted,
+so the page's retry resumes and overlapping retries all get the same token. It
+forgets that token once the new one attaches, at any other claim, and at a log
+out.
 
 ### What a session is started with
 
