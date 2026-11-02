@@ -1188,6 +1188,15 @@ impl Tab {
 /// sent before Display Control opened.
 const KEYFRAME_AGAIN: Duration = Duration::from_secs(2);
 
+/// How long a keyframe asked of the host and not answered is waited for before a
+/// stream still waiting asks again. Each ask is a monitor layout the host
+/// resets its graphics for, and a host slow to answer works through every one
+/// it was sent: a Windows 11 host that took 6 s to answer the first of three,
+/// sent 2 s apart, reset twice in a row and then ended the session with
+/// `ERRINFO_CLOSE_STACK_ON_DRIVER_FAILURE`. So nothing is asked while one is
+/// unanswered, but after this long, for a layout that went nowhere.
+const KEYFRAME_UNANSWERED: Duration = Duration::from_secs(10);
+
 /// The surface whose stream a column is, of a pipeline passed as video: the one
 /// mapped at the column's top left. A Windows host draws each monitor of a layout
 /// in a surface of its own, mapped where the monitor is.
@@ -1212,21 +1221,21 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
 }
 
 /// The keyframes asked of the host ([`client::Input::keyframe`]) for a pipeline
-/// passed as video, no more than one each [`KEYFRAME_AGAIN`] unless one is
-/// wanted `now` and the last has been answered: each resets the host's graphics,
-/// a stream that waits for one is not to ask again for every unit, and one
-/// asked for and not yet answered serves every stream, since the host answers
-/// with new surfaces, each starting at an IDR.
+/// passed as video. Each resets the host's graphics. One asked for and not yet
+/// answered serves every stream, since the host answers with new surfaces, each
+/// starting at an IDR, so nothing more is asked until it is answered, or has
+/// gone [`KEYFRAME_UNANSWERED`] without. Once answered, one is asked for at once
+/// where it is wanted `now`, and otherwise no sooner than [`KEYFRAME_AGAIN`]
+/// after the last: a stream that waits for one is not to ask for every unit.
 #[derive(Default)]
 struct KeyframeAsks {
     /// When one was last asked for.
     asked: Option<Instant>,
     /// Whether the host has answered it with a surface since.
     answered: bool,
-    /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for, if a
-    /// stream still waits then. A stream that lost its place after the last
-    /// one's keyframe needs another, and a still desktop sends no unit that would
-    /// ask again.
+    /// When one held back is asked for, if a stream still waits then. A stream
+    /// that lost its place after the last one's keyframe needs another, and a
+    /// still desktop sends no unit that would ask again.
     due: Option<Instant>,
 }
 
@@ -1237,14 +1246,23 @@ impl KeyframeAsks {
         }
     }
 
-    /// Whether one wanted `at` is asked for then: otherwise it is due once the
-    /// limit is past, should a stream still wait.
+    /// Whether one wanted `at` is asked for then: otherwise it is due once its
+    /// wait is past, should a stream still wait.
     fn asks(&mut self, at: Instant, now: bool) -> bool {
-        if let Some(asked) = self.asked.filter(|asked| at < *asked + KEYFRAME_AGAIN)
-            && (!now || !self.answered)
-        {
-            self.due = Some(asked + KEYFRAME_AGAIN);
-            return false;
+        if let Some(asked) = self.asked {
+            let wait = if !self.answered {
+                Some(KEYFRAME_UNANSWERED)
+            } else if now {
+                None
+            } else {
+                Some(KEYFRAME_AGAIN)
+            };
+            if let Some(wait) = wait
+                && at < asked + wait
+            {
+                self.due = Some(asked + wait);
+                return false;
+            }
         }
         self.asked = Some(at);
         self.answered = false;
@@ -2938,43 +2956,53 @@ fn pack_rgb(frame: &Frame, rect: Rect, buf: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
-    /// A keyframe wanted within the limit of the last is not asked for then, nor
-    /// forgotten: it is due when the limit is past, as a stream that lost its
-    /// place again after the last one's keyframe needs. One wanted now after the
-    /// host answered is asked for at once, and takes the place of one due.
+    /// Once the host has answered, a keyframe wanted within the limit of the
+    /// last is not asked for then, nor forgotten: it is due when the limit is
+    /// past, as a stream that lost its place again after the last one's keyframe
+    /// needs. One wanted now is asked for at once, and takes the place of one due.
     #[test]
     fn a_keyframe_held_back_by_the_limit_is_asked_for_after_it() {
         let start = Instant::now();
         let mut asks = KeyframeAsks::default();
         assert!(asks.asks(start, false));
         assert_eq!(asks.due, None);
+        asks.answered();
         let lost = start + Duration::from_millis(500);
         assert!(!asks.asks(lost, false));
         assert!(!asks.asks(lost + Duration::from_millis(100), false), "still one ask, however many want it");
         assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN));
         assert!(asks.asks(start + KEYFRAME_AGAIN, true), "asked for when due");
         assert_eq!(asks.due, None);
-        assert!(!asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(1), false));
         asks.answered();
-        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now, once answered, is now");
+        assert!(!asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(1), false));
+        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now is now");
         assert_eq!(asks.due, None);
     }
 
     /// One asked for and not yet answered serves a stream that wants one now as
-    /// well, as a page and its second display's tab reloading together do; once
-    /// the host has answered, one wanted now is asked for at once.
+    /// well, as a page and its second display's tab reloading together do, and
+    /// nothing is asked while it is unanswered, however long a stream waits,
+    /// until [`KEYFRAME_UNANSWERED`] is past: the host that took 6 s to answer
+    /// was sent three, and ended the session. Once the host has answered, one
+    /// wanted now is asked for at once.
     #[test]
-    fn a_keyframe_not_yet_answered_serves_every_stream() {
+    fn nothing_is_asked_while_a_keyframe_is_unanswered() {
         let start = Instant::now();
         let mut asks = KeyframeAsks::default();
         assert!(asks.asks(start, true), "the page");
-        let tab = start + Duration::from_millis(50);
-        assert!(!asks.asks(tab, true), "its tab, served by the same");
-        assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN), "and asked for again if nothing came");
+        assert!(!asks.asks(start + Duration::from_millis(50), true), "its tab, served by the same");
+        for waited in [2, 4, 6, 9] {
+            let at = start + Duration::from_secs(waited);
+            assert!(!asks.asks(at, false), "a waiting stream at {waited} s");
+            assert!(!asks.asks(at, true), "one wanted now at {waited} s");
+        }
+        assert_eq!(asks.due, Some(start + KEYFRAME_UNANSWERED), "asked for again if nothing came");
+        assert!(asks.asks(start + KEYFRAME_UNANSWERED, true));
+
         asks.answered();
-        let lost = start + Duration::from_millis(500);
+        let lost = start + KEYFRAME_UNANSWERED + Duration::from_millis(500);
         assert!(asks.asks(lost, true), "a page whose decoder failed after the answer");
-        assert!(!asks.asks(lost + Duration::from_millis(10), false));
+        assert!(!asks.asks(lost + Duration::from_millis(10), true), "and not again before this one is answered");
     }
 
     /// A column's stream is the surface mapped at its corner, as a Windows host

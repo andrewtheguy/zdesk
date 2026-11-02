@@ -1804,7 +1804,10 @@ the pipeline.
   is made once the limit is past, if a stream still waits, since a still desktop
   sends no unit that would ask again. An ask the host has not answered yet
   serves every display, since its answer is new surfaces, each starting at an
-  IDR: a page and its second display's tab reloading together ask once. A
+  IDR: a page and its second display's tab reloading together ask once. And
+  nothing more is asked until it is answered, or 10 s have gone without: a
+  host slow to answer resets for every layout it was sent, and a Windows 11
+  host sent three, 2 s apart, ended the session with a display driver failure. A
   surface no display shows asks for nothing. A pipeline that starts over, its channel
   closed and opened again, starts with no surfaces.
 
