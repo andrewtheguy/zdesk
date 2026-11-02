@@ -31,14 +31,15 @@
 //   no passthrough: see `pictureOptions`. The Adaptive one until the other is
 //   chosen, and neither greyed. Combined Display is the tiles of every screen, so
 //   the Adaptive picture is greyed under it.
-// - A `wlshare` target's picture is one of three, all wlshare's own and passed
-//   through, which their labels leave unsaid: its H.264 of the whole desktop,
-//   which it paces to the link, its progressive tiles, or its tiles with motion,
-//   lossless PNG where the desktop is still and video only where it moves, for a
-//   LAN: see `pictureOptions`. The video until another is chosen, each greyed
-//   in a browser that cannot decode it: the video and the tiles' H.264 where
-//   there is no `VideoDecoder`, the progressive tiles where the page cannot
-//   compose an RDP host's pipeline.
+// - A `wlshare` target's picture is one of four, all wlshare's own and passed
+//   through, which their labels leave unsaid, chosen in two kinds: adaptive, its
+//   H.264 of the whole desktop or its progressive tiles, both paced to the link;
+//   or lossless, its tiles with motion, which settle to lossless, or its lossless
+//   tiles, exact throughout, both for a LAN and not for a phone or tablet: see
+//   `pictureOptions` and `PICTURE_KINDS`. The video until another is chosen, each
+//   greyed in a browser that cannot decode it: the video and the tiles' H.264
+//   where there is no `VideoDecoder`, the progressive and lossless tiles where the
+//   page cannot compose an RDP host's pipeline.
 // - Sound is ticked or not where the target offers it, and a ticked one is Opus
 //   or lossless: see `soundRow`. Ticking takes Opus. A browser with no audio
 //   decoder has no sound to tick, and one whose decoder does not play FLAC is
@@ -50,10 +51,11 @@
 //   see `deviceRow`. Both experimental, and neither until somebody ticks it.
 //   Each tick is the whole of its device's choice: the session plugs it, and
 //   this browser's device opens while the remote uses it.
-// - How the host draws an RDP pipeline, high quality or adaptive H.264 (alpha), is a
-//   choice on a target with the pipeline on, and under adaptive the whole desktop
-//   or by region: see `pipelineRow`. A browser that cannot decode the H.264 is
-//   offered high quality alone.
+// - How the host draws an RDP pipeline is one of three on a target with the
+//   pipeline on: high quality, H.264 full screen (alpha), the one suggested for a
+//   phone or tablet, or H.264 by region (alpha), which is not: see
+//   `pipelineOptions`. A browser that cannot decode the H.264 is offered high
+//   quality alone.
 // - A target that can only be passed, in a browser that cannot take it, cannot
 //   start, and Start says so before the remote is dialled: an RDP host's
 //   pipeline in a page that cannot compose it, and a `wlshare` target's pictures,
@@ -262,22 +264,13 @@ export interface DeviceRow {
   checked: boolean;
 }
 
-/** One way the host can draw the pipeline, or one way of drawing it adaptive. */
-export interface PipelineOption<V> {
-  value: V;
+/** One way the host can draw the pipeline. */
+export interface PipelineOption {
+  value: Pipeline;
   label: string;
   /** What choosing it does, or why it cannot be chosen here. */
   note: string;
   disabled: boolean;
-}
-
-/**
- * How the host draws the pipeline: high quality or adaptive, and under an adaptive
- * one, the whole desktop or by region.
- */
-export interface PipelineRow {
-  modes: PipelineOption<"high-quality" | "adaptive">[];
-  h264: PipelineOption<Exclude<Pipeline, "high-quality">>[];
 }
 
 /** One way a Standard Mac's screens can be shown. */
@@ -310,6 +303,19 @@ export interface PictureOption {
   disabled: boolean;
 }
 
+/**
+ * A kind of picture, chosen first, under which one of its pictures is chosen:
+ * wlshare's adaptive pictures or its lossless ones.
+ */
+export interface PictureKind {
+  label: string;
+  /** What choosing it does, or why none of its pictures can be chosen here. */
+  note: string;
+  disabled: boolean;
+  /** Its pictures, in the picker's order. */
+  pictures: PictureOption[];
+}
+
 /** A target's options as the picker shows them. */
 export interface TargetOptions {
   /**
@@ -329,7 +335,7 @@ export interface TargetOptions {
    */
   placements: PlacementOption[] | null;
   /** How the host draws the pipeline, as a choice: null where it is none. */
-  pipelineRow: PipelineRow | null;
+  pipelines: PipelineOption[] | null;
   /** How a Standard Mac's screens are shown, as a choice: null elsewhere. */
   views: ViewOption[] | null;
   /** The target's stream where it is passed in every session: null otherwise. */
@@ -339,6 +345,11 @@ export interface TargetOptions {
    * choice: null otherwise.
    */
   pictures: PictureOption[] | null;
+  /**
+   * The same pictures in their kinds, where they are chosen kind first: null
+   * where they are one list.
+   */
+  pictureKinds: PictureKind[] | null;
   /** What Start sends. */
   choices: Choices;
   /** Whether a session started with them carries the remote's sound. */
@@ -439,7 +450,7 @@ function pictureOptions(
     },
     "wlshare-video": {
       value: "wlshare-video",
-      label: "Adaptive video",
+      label: "Video",
       note: abilities.wlshareH264
         ? "wlshare's H.264 of the whole desktop, paced to this browser's link: a slower link gets fewer frames, not coarser ones. Light on the host's processor, and coded by its hardware encoder where it has one, but text can be less crisp. For any link; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's video.",
@@ -447,7 +458,7 @@ function pictureOptions(
     },
     "wlshare-tiles-progressive": {
       value: "wlshare-tiles-progressive",
-      label: "Progressive tiles (alpha)",
+      label: "Tiles (alpha)",
       note: abilities.rdpGraphics
         ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting fewer frames. Crisper text than the video, for more of the host's processor, coded in software. For a link that is not always wide. Decoded by this page, with no video decoder; never lossless."
         : NO_PROGRESSIVE,
@@ -455,17 +466,17 @@ function pictureOptions(
     },
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",
-      label: "Tiles with motion (LAN)",
+      label: "Settles to lossless",
       note: abilities.wlshareH264
-        ? "wlshare's own tiles: lossless PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes."
+        ? "wlshare's own tiles: lossless PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes: for a LAN, and not recommended on a phone or tablet."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
     },
     "wlshare-tiles-lossless": {
       value: "wlshare-tiles-lossless",
-      label: "Lossless tiles (experimental)",
+      label: "Fully lossless (experimental)",
       note: abilities.rdpGraphics
-        ? "wlshare's tiles as a Windows host draws under its Lossless policy: every tile exact, still or moving, in RDP's planar codec, with no video, a slower link getting fewer frames. Many times the video's bytes: for a LAN. Decoded by this page, with no video decoder."
+        ? "wlshare's tiles as a Windows host draws under its Lossless policy: every tile exact, still or moving, in RDP's planar codec, with no video, a slower link getting fewer frames. Many times the video's bytes: for a LAN, and not recommended on a phone or tablet. Decoded by this page, with no video decoder."
         : NO_LOSSLESS,
       disabled: !abilities.rdpGraphics,
     },
@@ -477,6 +488,52 @@ function pictureOptions(
   return target.passthroughs.includes("apple-adaptive")
     ? [...offered, GATEWAY_ADAPTIVE]
     : offered;
+}
+
+// wlshare's pictures in their two kinds, the picker's order: adaptive, paced to
+// the link and never lossless, and lossless, for a LAN.
+const PICTURE_KINDS: {
+  label: string;
+  note: string;
+  pictures: readonly Passthrough[];
+}[] = [
+  {
+    label: "Adaptive",
+    note: "Paced to this browser's link, a slower link getting fewer frames: wlshare's video, or its tiles. Never lossless.",
+    pictures: ["wlshare-video", "wlshare-tiles-progressive"],
+  },
+  {
+    label: "Lossless",
+    note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. For a LAN; not recommended on a phone or tablet.",
+    pictures: ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
+  },
+];
+
+/**
+ * `pictures` in their kinds, where they are wlshare's: null for any other
+ * target's, which are one list. A kind none of whose pictures can be had here is
+ * greyed, with their reasons.
+ */
+function pictureKinds(pictures: PictureOption[] | null): PictureKind[] | null {
+  if (
+    !pictures?.some((option) => option.value?.startsWith("wlshare-") === true)
+  ) {
+    return null;
+  }
+  return PICTURE_KINDS.map((kind) => {
+    const members = pictures.filter(
+      (option) => option.value !== null && kind.pictures.includes(option.value),
+    );
+    const disabled = members.every((option) => option.disabled);
+    return {
+      label: kind.label,
+      note: disabled
+        ? [...new Set(members.map((option) => option.note))].join(" ")
+        : kind.note,
+      disabled,
+      pictures: members,
+    };
+  });
 }
 
 // The gateway's own picture of a Standard Mac: its lossless Full quality, zlib,
@@ -663,74 +720,61 @@ const PLACEMENTS: PlacementOption[] = [
 
 /**
  * `target`'s pipeline as the picker shows it: nothing where it is no choice, and
- * otherwise high quality or adaptive, adaptive's H.264 over the whole desktop by
- * default or by region. Each is greyed where this browser cannot have it: high
- * quality and the region are composed here, and full screen is played as video,
- * which needs a decoder alone. One remembered from before that is greyed is not
- * sent, and stays remembered for a browser that can; what is sent instead is
- * high quality, or full screen in a browser that cannot compose.
+ * otherwise high quality, H.264 full screen or H.264 by region. Each is greyed
+ * where this browser cannot have it: high quality and the region are composed
+ * here, and full screen is played as video, which needs a decoder alone. One
+ * remembered from before that is greyed is not sent, and stays remembered for a
+ * browser that can; what is sent instead is high quality, or full screen in a
+ * browser that cannot compose.
  */
-function pipelineRow(
+function pipelineOptions(
   target: TargetInfo,
   remembered: Pipeline | undefined,
   abilities: Pick<Abilities, "rdpGraphics" | "rdpH264" | "rdpVideo">,
-): { row: PipelineRow | null; pipeline: Pipeline } {
+): { options: PipelineOption[] | null; pipeline: Pipeline } {
   if (!target.pipeline) {
-    return { row: null, pipeline: "high-quality" };
+    return { options: null, pipeline: "high-quality" };
   }
   const composes = abilities.rdpGraphics;
   const noDecoder =
     "This browser has no VideoDecoder that takes the host's H.264.";
-  const h264: PipelineRow["h264"] = [
+  const options: PipelineOption[] = [
+    {
+      value: "high-quality",
+      label: "High quality",
+      note: composes
+        ? "The pipeline's codecs without H.264, composed by this page, fitted to the link by frame rate: a slower link gets fewer frames, none of them coarser."
+        : NO_COMPOSING,
+      disabled: !composes,
+    },
     {
       value: "adaptive-desktop",
-      label: "H.264 full screen",
+      label: "H.264 full screen (alpha)",
       note: abilities.rdpVideo
-        ? "The whole desktop in H.264, which the host fits to the link."
+        ? "The whole desktop in H.264, which the host fits to the link, played by this browser's own video decoder with nothing composed in the page: the least memory and processor of the three. Recommended on a phone or tablet."
         : noDecoder,
       disabled: !abilities.rdpVideo,
     },
     {
       value: "adaptive-region",
-      label: "H.264 region",
+      label: "H.264 region (alpha)",
       note: !composes
         ? NO_COMPOSING
         : abilities.rdpH264
-          ? "H.264 only where the desktop moves like video, the rest as High quality draws it, which the host does not fit to the link."
+          ? "H.264 where the desktop moves like video and the pipeline's other codecs elsewhere, both fitted to the link: the H.264 by its rate, the rest coarser first while the link is behind. Composed by this page beside a video decoder, the most memory of the three: not recommended on a phone or tablet."
           : noDecoder,
       disabled: !composes || !abilities.rdpH264,
     },
   ];
-  const adaptive = h264.some((option) => !option.disabled);
-  const modes: PipelineRow["modes"] = [
-    {
-      value: "high-quality",
-      label: "High quality",
-      note: composes
-        ? "The pipeline's codecs without H.264. For a LAN."
-        : NO_COMPOSING,
-      disabled: !composes,
-    },
-    {
-      value: "adaptive",
-      label: "Adaptive (alpha)",
-      note: adaptive
-        ? "H.264, which the host fits to the link this browser is on."
-        : noDecoder,
-      disabled: !adaptive,
-    },
-  ];
   const able = (pipeline: Pipeline) =>
-    pipeline === "high-quality"
-      ? composes
-      : h264.some((option) => option.value === pipeline && !option.disabled);
+    options.some((option) => option.value === pipeline && !option.disabled);
   const pipeline =
     remembered !== undefined && able(remembered)
       ? remembered
       : !composes && abilities.rdpVideo
         ? "adaptive-desktop"
         : "high-quality";
-  return { row: { modes, h264 }, pipeline };
+  return { options, pipeline };
 }
 
 /**
@@ -787,7 +831,7 @@ export function targetOptions(
     abilities.audio,
     abilities.lossless,
   );
-  const drawn = pipelineRow(target, remembered?.pipeline, abilities);
+  const drawn = pipelineOptions(target, remembered?.pipeline, abilities);
   const camera = deviceRow(target, "camera", remembered?.camera);
   const microphone = deviceRow(target, "microphone", remembered?.microphone);
   // An RDP host's pipeline is passed whatever is chosen.
@@ -833,10 +877,11 @@ export function targetOptions(
     cameraRow: camera.row,
     microphoneRow: microphone.row,
     placements,
-    pipelineRow: drawn.row,
+    pipelines: drawn.options,
     views,
     passed,
     pictures,
+    pictureKinds: pictureKinds(pictures),
     choices,
     // High Performance's sound comes with its picture, so it has no row and is
     // always there, for a browser that can play it.

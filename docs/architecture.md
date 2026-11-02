@@ -140,8 +140,8 @@ The host's own stream, passed through to the browser:
   nearly all of the picture's work off the gateway. It is tested against a
   physical Windows 11 computer, from a desktop browser and from a mobile browser
   on iOS, with sound and the clipboard beside it, and not yet with the camera or
-  the microphone. A session started with the picker's Adaptive (alpha) lets the
-  host draw with H.264 on that pipeline, which the browser decodes,
+  the microphone. A session started with the picker's H.264 full screen or H.264
+  region (alpha) lets the host draw with H.264 on that pipeline, which the browser decodes,
   rate-controlled to the browser's link; with the default High quality the host
   draws with the pipeline's other codecs alone. See
   [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
@@ -542,7 +542,7 @@ whichever the session was started with, chosen at the picker's Picture group
 (`Passthrough::WlshareVideo`, `Passthrough::WlshareTilesProgressive`,
 `Passthrough::WlshareTilesMotion`, `Passthrough::WlshareTilesLossless`), and
 passes its frames untouched. Its video,
-*Adaptive video*, an H.264 stream of the whole desktop at 4:2:0, by the host's
+*Video* under the picker's Adaptive, an H.264 stream of the whole desktop at 4:2:0, by the host's
 hardware encoder where it has one and libx264 otherwise, is the picture of a
 session that names none, listed alone. Its progressive tiles are its tiles'
 encoding, `WLST`, listed alone, so that wlshare walks it on the browser's link,
@@ -2407,12 +2407,14 @@ and `GET /api/targets` carries it:
   Mac's Picture group is Apple's Adaptive (beta) passed through, which `connect`
   names as `apple-adaptive`, taken first, and the gateway's tiles of the Mac's
   Full quality, which settle to lossless and which `connect` names as no
-  passthrough at all. A `wlshare` target's Picture group is Adaptive video,
-  wlshare's H.264 of the whole desktop, which `connect` names as `wlshare-video`
-  and which a session that names none is sent, taken first, Progressive tiles
-  (alpha), `wlshare-tiles-progressive`, Tiles with motion (LAN),
-  `wlshare-tiles-motion`, and Lossless tiles (experimental),
-  `wlshare-tiles-lossless`: all four passed, so no label says so.
+  passthrough at all. A `wlshare` target's Picture group is chosen kind
+  first, its pictures shown under the chosen kind. Adaptive, paced to the link,
+  is Video, wlshare's H.264 of the whole desktop, which `connect` names as
+  `wlshare-video` and which a session that names none is sent, taken first, and
+  Tiles (alpha), `wlshare-tiles-progressive`. Lossless, for a LAN and not
+  recommended on a phone or tablet, is Settles to lossless,
+  `wlshare-tiles-motion`, and Fully lossless (experimental),
+  `wlshare-tiles-lossless`. All four are passed, so no label says so.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that
@@ -2422,7 +2424,7 @@ and `GET /api/targets` carries it:
   browser's sake: its Adaptive picture is decoded by every page in WebAssembly,
   and the gateway's tiles are images every page decodes; Adaptive is greyed only
   under Combined Display, which is the gateway's tiles. A `wlshare` target's
-  Adaptive video and its tiles with motion, whose moving regions are H.264, are
+  video and its tiles with motion, whose moving regions are H.264, are
   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its
   progressive and lossless tiles in a page that cannot compose an RDP host's
   pipeline, whose module decodes them; a browser that takes none of them cannot start the
@@ -2434,18 +2436,25 @@ and `GET /api/targets` carries it:
   Start is disabled and says why, before the host is dialled: "This browser
   cannot compose the host's graphics pipeline, which this target always passes".
   A `connect` whose session would pass a stream the browser said it cannot take
-  is refused (`ConnectError::Beyond`). Adaptive is greyed for a browser whose
-  `VideoDecoder` cannot decode the host's H.264, with "This browser has no
-  VideoDecoder that takes the host's H.264."; a `connect` that names it all the
-  same is refused (`ConnectError::NoH264`).
+  is refused (`ConnectError::Beyond`). H.264 full screen and H.264 region are
+  greyed for a browser whose `VideoDecoder` cannot decode the host's H.264, with
+  "This browser has no VideoDecoder that takes the host's H.264."; a `connect`
+  that names one all the same is refused (`ConnectError::NoH264`).
 - **The host draws the pipeline high quality or adaptive.** `choices.pipeline` says
   `high-quality`, `adaptive-desktop` or `adaptive-region` (`Pipeline` in
   `src/config.rs`), offered by an `rdp` target with the pipeline on and refused
-  elsewhere. The picker's Graphics group shows High quality, the pipeline's
-  codecs without H.264, for a LAN, which is the default, and Adaptive (alpha), H.264 the
-  host fits to the browser's link; under Adaptive, *H.264 full screen*, the
-  default, asks for the whole desktop in H.264 (`AVC_THINCLIENT`), and *H.264
-  region* for H.264 only where the desktop moves like video. Both take the
+  elsewhere. The picker's Graphics group shows three: High quality, the
+  pipeline's codecs without H.264, which is the default and which the host fits
+  to the link by frame rate alone; *H.264 full screen* (alpha), the whole desktop
+  in H.264 (`AVC_THINCLIENT`) the host rate-controls to the browser's link; and
+  *H.264 region* (alpha), H.264 where the desktop moves like video, rate-controlled
+  the same, and the pipeline's other codecs elsewhere, sent coarser while the
+  page is behind. Full screen's note recommends it on a phone or
+  tablet and the region's says it is not recommended there, since nothing is
+  composed under full screen and the region composes everything High quality
+  does beside a video decoder
+  ([Memory in the browser](browser-memory.md)). A page that could not compose
+  a pipeline says to start under full screen instead. Both H.264 ways take the
   host's network detection. An adaptive session also claims UDP and answers at
   the page's pace; a high quality one claims none and answers with what the
   gateway's connection measures ([A passed stream and the browser's link](#a-passed-stream-and-the-browsers-link)).
@@ -3468,7 +3477,7 @@ browser as the host sent them in every session, where the page unwraps and
 composes them; malformed PDU framing still ends the session. The
 compositor the page runs implements ClearCodec and its NSCodec subcodec, RemoteFX
 Progressive, planar and uncompressed rectangles, with the copies and caches
-between updates, and decodes the H.264 a session started with Adaptive (alpha)
+between updates, and decodes the H.264 a session started with H.264 region (alpha)
 lets the host draw with; a High quality session refuses H.264 in the capability
 advertise
 ([RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through)).

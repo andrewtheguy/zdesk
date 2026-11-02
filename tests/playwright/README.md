@@ -168,9 +168,8 @@ browser remembers what was chosen, and that a second browser taking the session
 over is given none of it: it lands on a picker where a target whose pipeline it
 cannot compose has Start disabled, with the reason, and no tiles in its place. It
 also checks that the pipeline is said to be always passed, with no box to tick,
-and that the Graphics
-group opens on High quality and, under Adaptive, on H.264 full screen. Its sound
-checks are lossless sound played by the browser's own decoder, a browser whose
+and that the Graphics group offers its three ways and opens on High quality. Its
+sound checks are lossless sound played by the browser's own decoder, a browser whose
 decoder fails a FLAC frame, as Safari's does, which is offered Opus alone and
 FLAC greyed with the reason, and a browser with no audio decoder, which starts
 with no sound to tick. It needs an `rdp` target that configures a `size`, whose
