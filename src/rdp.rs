@@ -1213,12 +1213,16 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
 
 /// The keyframes asked of the host ([`client::Input::keyframe`]) for a pipeline
 /// passed as video, no more than one each [`KEYFRAME_AGAIN`] unless one is
-/// wanted `now`: each resets the host's graphics, and a stream that waits for one
-/// is not to ask again for every unit.
+/// wanted `now` and the last has been answered: each resets the host's graphics,
+/// a stream that waits for one is not to ask again for every unit, and one
+/// asked for and not yet answered serves every stream, since the host answers
+/// with new surfaces, each starting at an IDR.
 #[derive(Default)]
 struct KeyframeAsks {
     /// When one was last asked for.
     asked: Option<Instant>,
+    /// Whether the host has answered it with a surface since.
+    answered: bool,
     /// When one wanted within [`KEYFRAME_AGAIN`] of the last is asked for, if a
     /// stream still waits then. A stream that lost its place after the last
     /// one's keyframe needs another, and a still desktop sends no unit that would
@@ -1234,15 +1238,24 @@ impl KeyframeAsks {
     }
 
     /// Whether one wanted `at` is asked for then: otherwise it is due once the
-    /// limit is past.
+    /// limit is past, should a stream still wait.
     fn asks(&mut self, at: Instant, now: bool) -> bool {
-        if !now && let Some(asked) = self.asked.filter(|asked| at < *asked + KEYFRAME_AGAIN) {
+        if let Some(asked) = self.asked.filter(|asked| at < *asked + KEYFRAME_AGAIN)
+            && (!now || !self.answered)
+        {
             self.due = Some(asked + KEYFRAME_AGAIN);
             return false;
         }
         self.asked = Some(at);
+        self.answered = false;
         self.due = None;
         true
+    }
+
+    /// The host mapped a surface, which is how it answers an ask: a stream that
+    /// loses its place from here on needs another.
+    fn answered(&mut self) {
+        self.answered = true;
     }
 }
 
@@ -1776,6 +1789,7 @@ async fn active_loop(
                     Event::Surface { surface, rect } => match rect {
                         Some(rect) => {
                             surfaces.insert(surface, rect);
+                            keyframes.answered();
                         }
                         None => {
                             surfaces.remove(&surface);
@@ -2926,8 +2940,8 @@ mod tests {
 
     /// A keyframe wanted within the limit of the last is not asked for then, nor
     /// forgotten: it is due when the limit is past, as a stream that lost its
-    /// place again after the last one's keyframe needs. One wanted now is asked
-    /// for at once, and takes the place of one due.
+    /// place again after the last one's keyframe needs. One wanted now after the
+    /// host answered is asked for at once, and takes the place of one due.
     #[test]
     fn a_keyframe_held_back_by_the_limit_is_asked_for_after_it() {
         let start = Instant::now();
@@ -2941,8 +2955,26 @@ mod tests {
         assert!(asks.asks(start + KEYFRAME_AGAIN, true), "asked for when due");
         assert_eq!(asks.due, None);
         assert!(!asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(1), false));
-        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now is now");
+        asks.answered();
+        assert!(asks.asks(start + KEYFRAME_AGAIN + Duration::from_millis(2), true), "now, once answered, is now");
         assert_eq!(asks.due, None);
+    }
+
+    /// One asked for and not yet answered serves a stream that wants one now as
+    /// well, as a page and its second display's tab reloading together do; once
+    /// the host has answered, one wanted now is asked for at once.
+    #[test]
+    fn a_keyframe_not_yet_answered_serves_every_stream() {
+        let start = Instant::now();
+        let mut asks = KeyframeAsks::default();
+        assert!(asks.asks(start, true), "the page");
+        let tab = start + Duration::from_millis(50);
+        assert!(!asks.asks(tab, true), "its tab, served by the same");
+        assert_eq!(asks.due, Some(start + KEYFRAME_AGAIN), "and asked for again if nothing came");
+        asks.answered();
+        let lost = start + Duration::from_millis(500);
+        assert!(asks.asks(lost, true), "a page whose decoder failed after the answer");
+        assert!(!asks.asks(lost + Duration::from_millis(10), false));
     }
 
     /// A column's stream is the surface mapped at its corner, as a Windows host
