@@ -1150,6 +1150,8 @@ fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
             vec![
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 (dashed(digits), Some(Color::Magenta), true),
+                // The PIN form takes it either way, as its own hint says.
+                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
             ],
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
@@ -2807,6 +2809,7 @@ mod tests {
             vec![
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 ("123-456".to_owned(), Some(Color::Magenta), true),
+                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
             ]
         );
         let used = PinState::Used { at: "14:25".to_owned() };
