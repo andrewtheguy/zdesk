@@ -1770,7 +1770,10 @@ the pipeline.
   page says on its session socket whether its `VideoDecoder` takes the host's
   H.264, `rdp_video=true|false` (`frontend/src/videoCodecs.ts`), and a page
   that cannot compose the pipeline still starts such a target under H.264 full
-  screen, with the other ways of drawing it greyed.
+  screen, with the other ways of drawing it greyed. It also costs an iPhone the
+  least memory of the three ways of drawing the pipeline, and a fraction of the
+  CPU, which the phone's video decoder takes on: see
+  [Memory in the browser](browser-memory.md).
 
   Its colour is said with it. The host's stream says it is full range and names
   no colour space, which MS-RDPEGFX makes full-range BT.709, and browsers read
