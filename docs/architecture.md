@@ -3778,8 +3778,9 @@ never an instance: its `order` lists the instances it names first, the rest by
 name after them, in the TUI and on the landing page alike. A file that does not
 parse keeps the order the TUI already had and says why. K and J move the selected
 instance and write the whole list's order back, changing only `order`'s value
-and leaving the file's comments and other lines; they leave a file that does not
-parse alone.
+and leaving the file's comments and other lines; they leave alone a file that
+does not parse, and one saved elsewhere since the TUI last read it, which R
+reads first.
 
 ```text
 browser: <instance>.zdesk.localhost:<port>
