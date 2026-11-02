@@ -573,6 +573,14 @@ struct State {
     /// The current claim token. Persists across WebSocket closes so the same
     /// browser can reattach without a takeover prompt.
     claim: Option<String>,
+    /// The token the owner last reclaimed with, which [`SessionManager::claim`]
+    /// still counts as the owner's: a reclaim the gateway answered but whose
+    /// answer never reached the page (a reset connection, a phone changing
+    /// networks, the page giving up waiting) leaves the page holding it, and its
+    /// retry must resume rather than end the session. Set only by an owner's
+    /// reclaim; the current token's attach, which proves the answer arrived, any
+    /// other claim, and a log out clear it. Never an attach token.
+    reclaimed_with: Option<String>,
     /// The selected session: `None` is the picker state, `Some` is a live (or
     /// just-ended) desktop. It has no engine beside it only while the owner's
     /// reattach is starting it over ([`SessionManager::attach`]). Every other
@@ -892,7 +900,10 @@ impl SessionManager {
 
     /// Claim the session slot, returning the new token: a live attachment
     /// blocks the claim unless `force` (takeover) or `token` is the current
-    /// claim (the same browser reclaiming after a drop). Both evict the
+    /// claim (the same browser reclaiming after a drop), or the token the owner
+    /// last reclaimed with ([`State::reclaimed_with`]: the same browser retrying
+    /// a reclaim whose answer it never received, which is answered that
+    /// reclaim's token again rather than a new one). Both evict the
     /// previous WebSocket. The session survives only the owner's reclaim; a
     /// claim by a different browser ends it, and that browser's attach lands on
     /// the picker to start one with its own choices.
@@ -908,12 +919,25 @@ impl SessionManager {
     ) -> Result<String, SessionBusy> {
         let (id, evicted, expiry) = {
             let mut st = self.state.lock().unwrap();
-            let owns = token.is_some() && st.claim.as_deref() == token;
+            let retried = token.is_some() && st.reclaimed_with.as_deref() == token;
+            let owns = retried || (token.is_some() && st.claim.as_deref() == token);
             if st.client.is_some() && !force && !owns {
                 return Err(SessionBusy);
             }
-            let id = Uuid::new_v4().to_string();
+            // A retry of the owner's last reclaim gets the token that reclaim
+            // minted rather than a new one, so overlapping retries all answer the
+            // same token whatever order they are decided and answered in. None of
+            // them has a socket to evict: attaching that token forgets the
+            // fallback this retry presented.
+            let id = match (retried, &st.claim) {
+                (true, Some(current)) => current.clone(),
+                _ => Uuid::new_v4().to_string(),
+            };
             st.claim = Some(id.clone());
+            // Remember the token this reclaim proved the page holds, in case this
+            // answer is lost too: then the page still holds that one, not the one
+            // it replaced, so a retry after several lost answers still resumes.
+            st.reclaimed_with = if owns { token.map(str::to_owned) } else { None };
             if !owns || st.login.as_deref() != Some(login) {
                 st.evict_displays();
             }
@@ -1002,6 +1026,9 @@ impl SessionManager {
         if st.claim.as_deref() != Some(token) {
             return Err(InvalidToken);
         }
+        // Attaching proves the page received this token, so the one its reclaim
+        // presented is no longer a lost answer's fallback.
+        st.reclaimed_with = None;
         // A second attach on the same token supersedes the first (e.g. the
         // browser reconnected before its stale socket timed out).
         if let Some(old) = st.client.take() {
@@ -1935,6 +1962,7 @@ impl SessionManager {
         let evicted = {
             let mut st = self.state.lock().unwrap();
             st.claim = None;
+            st.reclaimed_with = None;
             st.login = None;
             // The claim is gone, so the socket bound to it goes with it — the same
             // reasoning as the main socket's eviction below.
@@ -3706,6 +3734,97 @@ mod tests {
         let mut att_b = mgr.attach(&token_b, None, Decoders::ALL).await.unwrap();
         expect_picker(&mut att_b.events).await;
         assert!(hooks.try_recv().is_err());
+    }
+
+    /// Start a session on "fake" and detach from it, returning the token the
+    /// owner holds and the engine's channels, kept alive so it stays up.
+    async fn detached_session(mgr: &Arc<SessionManager>, hooks: &std_mpsc::Receiver<EngineEnds>) -> (String, EngineEnds) {
+        let token = mgr.claim(false, None, "login").unwrap();
+        let mut att = mgr.attach(&token, None, Decoders::ALL).await.unwrap();
+        expect_picker(&mut att.events).await;
+        mgr.connect(att.id, "fake", None, Choices::default()).await.unwrap();
+        expect_connected(&mut att.events, "fake").await;
+        let engine = hooks.try_recv().unwrap();
+        mgr.detach(att.id);
+        (token, engine)
+    }
+
+    /// A reclaim the gateway answered but whose answer the page never received
+    /// leaves the page holding the token that reclaim replaced. Its retry is still
+    /// the owner's, however many answers were lost, and resumes the session.
+    #[tokio::test]
+    async fn a_reclaim_whose_answer_was_lost_still_resumes() {
+        let (mgr, hooks) = manager_with_fake_engine();
+        let (token, engine) = detached_session(&mgr, &hooks).await;
+
+        // Two answers lost: neither reaches the page. Every retry, overlapping or
+        // not, answers the token the first reclaim minted.
+        let lost = mgr.claim(false, Some(&token), "login").unwrap();
+        let lost_again = mgr.claim(false, Some(&token), "login").unwrap();
+        let resumed = mgr.claim(false, Some(&token), "login").unwrap();
+        assert_ne!(lost, token, "the first reclaim mints a new token");
+        assert_eq!(lost_again, lost, "a retry answers the same token");
+        assert_eq!(resumed, lost, "however many times it is retried");
+
+        assert!(!engine.0.is_closed(), "the retries are the owner's and keep the session");
+        let mut att = mgr.attach(&resumed, None, Decoders::ALL).await.unwrap();
+        expect_connected(&mut att.events, "fake").await;
+        assert!(hooks.try_recv().is_err(), "the session resumed rather than started over");
+        // Only the current token attaches.
+        assert!(mgr.attach(&token, None, Decoders::ALL).await.is_err());
+
+        // Attaching proved the new token arrived, so the old one is spent: a delayed
+        // or replayed claim with it is refused while the owner is attached…
+        assert!(mgr.claim(false, Some(&token), "login").is_err());
+        assert!(!engine.0.is_closed(), "the attached owner keeps its session");
+        // …and is a different browser's claim once it is not.
+        mgr.detach(att.id);
+        mgr.claim(false, Some(&token), "login").unwrap();
+        assert!(engine.0.is_closed(), "the spent token is a different browser's claim");
+    }
+
+    /// The remembered token belongs to the owner's reclaim only: a takeover clears
+    /// it, so the evicted browser's old token cannot win the session back.
+    #[tokio::test]
+    async fn a_taken_over_browser_cannot_reclaim_with_its_old_token() {
+        let (mgr, hooks) = manager_with_fake_engine();
+        let (token_a, engine_a) = detached_session(&mgr, &hooks).await;
+        // A reclaims once, so its old token is the remembered one…
+        let reclaimed_a = mgr.claim(false, Some(&token_a), "login").unwrap();
+        let _att_a = mgr.attach(&reclaimed_a, None, Decoders::ALL).await.unwrap();
+        assert!(!engine_a.0.is_closed());
+
+        // …until B takes over.
+        let token_b = mgr.claim(true, None, "login").unwrap();
+        let mut att_b = mgr.attach(&token_b, None, Decoders::ALL).await.unwrap();
+        expect_picker(&mut att_b.events).await;
+
+        // Neither of A's tokens is the owner's: B is attached, so both are refused.
+        assert!(mgr.claim(false, Some(&token_a), "login").is_err());
+        assert!(mgr.claim(false, Some(&reclaimed_a), "login").is_err());
+    }
+
+    /// A claim by a different browser still ends the session, and it clears the
+    /// remembered token too.
+    #[tokio::test]
+    async fn a_different_browser_still_ends_the_session_after_a_reclaim() {
+        let (mgr, hooks) = manager_with_fake_engine();
+        let (token_a, engine_a) = detached_session(&mgr, &hooks).await;
+        let _lost = mgr.claim(false, Some(&token_a), "login").unwrap();
+        assert!(!engine_a.0.is_closed());
+
+        let token_b = mgr.claim(false, None, "login").unwrap();
+        assert!(engine_a.0.is_closed(), "a different browser's claim ends the session");
+        let mut att_b = mgr.attach(&token_b, None, Decoders::ALL).await.unwrap();
+        expect_picker(&mut att_b.events).await;
+        mgr.detach(att_b.id);
+
+        // A's token is no longer remembered: its claim is a different browser's
+        // again, and B's slot ends with it.
+        let token_a2 = mgr.claim(false, Some(&token_a), "login").unwrap();
+        assert!(mgr.attach(&token_b, None, Decoders::ALL).await.is_err());
+        let mut att_a = mgr.attach(&token_a2, None, Decoders::ALL).await.unwrap();
+        expect_picker(&mut att_a.events).await;
     }
 
     #[tokio::test]
