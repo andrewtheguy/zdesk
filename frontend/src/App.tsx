@@ -6,7 +6,7 @@ import Instances from "./Instances.tsx";
 import Login from "./Login.tsx";
 import PinLogin from "./PinLogin.tsx";
 import RemoteDesktop from "./RemoteDesktop.tsx";
-import { MUTED_KEY, SESSION_KEY } from "./useRemoteDesktop.ts";
+import { MUTED_KEY, SESSION_KEY, sessionTurns } from "./useRemoteDesktop.ts";
 
 // The display a page at `/display/2` shows in a tab of its own, beside the session
 // another tab of this browser holds; null for every other path, which is the page
@@ -106,9 +106,10 @@ export default function App() {
   useEffect(check, [check]);
 
   // Log out: end this browser's login. The slot token goes too, so
-  // the next login claims fresh instead of silently reattaching.
+  // the next login claims fresh instead of silently reattaching: in its turn,
+  // after any claim still out has kept its token.
   const logout = useCallback(() => {
-    sessionStorage.removeItem(SESSION_KEY);
+    void sessionTurns(() => sessionStorage.removeItem(SESSION_KEY));
     void gatewayFetch("/api/auth/logout", { method: "POST" }).finally(check);
   }, [check]);
 
