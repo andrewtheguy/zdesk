@@ -140,7 +140,7 @@ impl ConnectError {
         target
             .beyond(choices, decoders)
             .map(Self::Beyond)
-            .or_else(|| (choices.pipeline.h264() && !decoders.rdp_h264).then_some(Self::NoH264))
+            .or_else(|| (!decoders.draws(choices.pipeline)).then_some(Self::NoH264))
     }
 }
 
@@ -2744,8 +2744,8 @@ mod tests {
     }
 
     /// A browser that takes the Mac's stream, and one that does not.
-    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false };
-    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false };
+    const TAKES: Decoders = Decoders { apple_media: true, rdp_graphics: true, rdp_h264: false, rdp_video: false };
+    const DECLINES: Decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false };
 
     /// Assert the next event is the connected status of a Mac's session that passes
     /// its stream, sound included.
@@ -2985,7 +2985,7 @@ mod tests {
 
         // A page that cannot compose it is not given one, nor the desktop encoded
         // here instead: the session ends for it to choose again.
-        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false };
+        let cannot = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, rdp_video: false };
         let mut ended = mgr.attach(&token, None, cannot).await.unwrap();
         assert!(hook_rx.try_recv().is_err());
         expect_beyond_then_picker(&mut ended.events, "graphics pipeline").await;

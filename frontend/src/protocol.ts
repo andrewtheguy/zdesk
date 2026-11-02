@@ -292,6 +292,9 @@ export type ControlMsg =
       // How many strips each picture comes in, a unit each (`VideoStrip`): 4 for
       // a High Performance Mac's passed in strips, 1 for whole pictures.
       strips: number;
+      // The stream's colour where its own is not to be read from it: an RDP
+      // host's H.264, full-range BT.709 (`VideoFormat` in videoDecoder.ts).
+      colour?: VideoColorSpaceInit;
       // The engine that sent it, as `picker` numbers them.
       engine: number;
     }

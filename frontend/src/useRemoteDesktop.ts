@@ -88,6 +88,7 @@ import {
   MIN_ZOOM,
   type Point,
 } from "./touchGestures.ts";
+import { decodesRdpVideo } from "./videoCodecs.ts";
 
 // The WebSocket/claim connection-flow state machine (independent of the
 // picker-vs-desktop `mode` the attached socket carries):
@@ -1793,6 +1794,7 @@ export function useRemoteDesktop(
           pageHevc: runnableDecoders().hevc,
           rdpGraphics: composesRdpGraphics(),
           rdpH264: decodesRdpH264(),
+          rdpVideo: decodesRdpVideo(),
         }),
       );
       ws = socket;
@@ -2445,7 +2447,7 @@ export function useRemoteDesktop(
           // string drops a live decoder that queued units still need. A browser
           // that cannot decode what it names finds out from the decoder's own
           // error, which arrives at `onVideoError` naming the configuration.
-          painter()?.setVideoFormat({ decode: msg.decode });
+          painter()?.setVideoFormat({ decode: msg.decode, colour: msg.colour });
           // And the same string for the card, which is the only place the exact
           // configuration is written down while the picture is working, with whose
           // stream it is: only the gateway knows whether it encoded it.

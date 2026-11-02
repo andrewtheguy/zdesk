@@ -454,7 +454,7 @@ async def main() -> int:
     rdp_graphics = "true" if args.rdp_graphics else "false"
     url = (
         f"ws://127.0.0.1:{args.port}/ws?session={token}"
-        f"&apple_media={apple_media}&page_hevc={page_hevc}&rdp_graphics={rdp_graphics}&rdp_h264=false"
+        f"&apple_media={apple_media}&page_hevc={page_hevc}&rdp_graphics={rdp_graphics}&rdp_h264=false&rdp_video=false"
     )
     choices = {
         "size": "window" if args.resize else "target",

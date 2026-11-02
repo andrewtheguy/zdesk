@@ -384,6 +384,29 @@ const PASSED_HELD_BYTES: usize = 32 * 1024;
 /// here. At 2 MiB the same host never found the caller slow.
 const PASSED_RECEIVE_BUFFER: usize = 32 * 1024;
 
+/// How much of one frame a streamed pipeline holds before its end
+/// ([`Event::Video`]): its access units' bytes together, and how many of them.
+/// A Windows host draws a unit for each display in a frame, a few megabytes at
+/// most even for a keyframe of the largest desktop. A host that draws past
+/// these, or never ends its frame, has lost the thread, and is not held in
+/// memory until it does.
+const STREAMED_BYTES: usize = 64 << 20;
+const STREAMED_UNITS: usize = 256;
+
+/// Hold a streamed pipeline's access unit with the others of its frame, within
+/// [`STREAMED_BYTES`] and [`STREAMED_UNITS`].
+fn hold_streamed(streamed: &mut Vec<(u16, Vec<u8>)>, surface: u16, unit: Vec<u8>) -> Result<()> {
+    let held: usize = streamed.iter().map(|(_, unit)| unit.len()).sum();
+    if streamed.len() >= STREAMED_UNITS || held + unit.len() > STREAMED_BYTES {
+        bail!(
+            "the host drew more than {STREAMED_UNITS} H.264 units or {} MiB in a frame it has not ended",
+            STREAMED_BYTES >> 20
+        );
+    }
+    streamed.push((surface, unit));
+    Ok(())
+}
+
 /// The host's socket, for a session that may pass a pipeline at the caller's pace
 /// ([`Connect::paced`]): a second handle on it, for its receive buffer alone.
 ///
@@ -1822,7 +1845,7 @@ impl<'a> Active<'a> {
                 // A streamed pipeline's frame, handed on whole at its end, with
                 // the units it drew; a frame that drew none is owed its
                 // acknowledgement all the same, through the caller.
-                gfx::Update::Unit { surface, unit } => self.streamed.push((surface, unit)),
+                gfx::Update::Unit { surface, unit } => hold_streamed(&mut self.streamed, surface, unit)?,
                 gfx::Update::Ended { frame } => {
                     let units = std::mem::take(&mut self.streamed);
                     let bytes = units.iter().map(|(_, unit)| unit.len()).sum();
@@ -2546,6 +2569,23 @@ mod tests {
         ];
         assert_eq!(proto.push(DEVICE, &start).replies, vec![(DEVICE, vec![2, 0x01])]);
         Capture::new(proto, Box::new(NoSink))
+    }
+
+    /// A frame a host never ends is held only so far, by its units and by their
+    /// bytes, and is then the session's error rather than its memory.
+    #[test]
+    fn a_streamed_frame_is_held_only_so_far() {
+        let mut streamed = Vec::new();
+        for _ in 0..STREAMED_UNITS {
+            hold_streamed(&mut streamed, 0, vec![0; 4]).unwrap();
+        }
+        assert!(hold_streamed(&mut streamed, 0, vec![0; 4]).is_err());
+        assert_eq!(streamed.len(), STREAMED_UNITS);
+
+        let mut streamed = Vec::new();
+        hold_streamed(&mut streamed, 0, vec![0; STREAMED_BYTES - 1]).unwrap();
+        hold_streamed(&mut streamed, 1, vec![0; 1]).unwrap();
+        assert!(hold_streamed(&mut streamed, 1, vec![0; 1]).is_err());
     }
 
     /// The host is timed from its last request while it is owed nothing, and not at all

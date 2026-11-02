@@ -40,6 +40,7 @@ import type { VideoStrip } from "./protocol.ts";
 import {
   createSoftwareDecoder,
   type DecodedPicture,
+  isSoftwarePlanes,
   type PictureStrip,
   pageModuleFor,
   type SoftwareModule,
@@ -56,6 +57,58 @@ import type { PageDecoding } from "./softwareSupport.ts";
  */
 export interface VideoFormat {
   decode: string;
+  /**
+   * The stream's colour where the gateway says it rather than the stream: an RDP
+   * host's, full-range BT.709, which its stream does not name and browsers read
+   * variously. The decoder is told it, and a picture it labels otherwise is put
+   * into it here (`inColour`).
+   */
+  colour?: VideoColorSpaceInit;
+}
+
+/** Whether `frame` is labelled `colour`, so the browser draws it in that colour. */
+function labelled(frame: VideoFrame, colour: VideoColorSpaceInit): boolean {
+  const own = frame.colorSpace;
+  return (
+    own.primaries === colour.primaries &&
+    own.transfer === colour.transfer &&
+    own.matrix === colour.matrix &&
+    own.fullRange === colour.fullRange
+  );
+}
+
+/**
+ * `frame` as a picture labelled `colour`: its samples copied into a frame of
+ * their own, which states it, and `frame` closed. Chrome's software decoder
+ * labels an RDP host's stream BT.601, and its hardware decoder on a Mac limited
+ * range, telling either otherwise; a picture drawn by such a label is the wrong
+ * colours, or clips its whites. A layout it cannot copy is left as labelled.
+ */
+async function inColour(
+  frame: VideoFrame,
+  colour: VideoColorSpaceInit,
+): Promise<VideoFrame> {
+  const format = frame.format;
+  const visible = frame.visibleRect;
+  if ((format !== "I420" && format !== "NV12") || visible === null) {
+    return frame;
+  }
+  try {
+    const samples = new Uint8Array(frame.allocationSize());
+    const layout = await frame.copyTo(samples);
+    return new VideoFrame(samples, {
+      format,
+      codedWidth: visible.width,
+      codedHeight: visible.height,
+      displayWidth: frame.displayWidth,
+      displayHeight: frame.displayHeight,
+      timestamp: frame.timestamp,
+      layout,
+      colorSpace: colour,
+    });
+  } finally {
+    frame.close();
+  }
 }
 
 /** What the browser's own decoder refused, which each module stands in for. */
@@ -352,7 +405,9 @@ export interface VideoStream {
 
 /** One access unit in flight, and the promise the paint path is holding. */
 interface Pending {
-  resolve: (frame: DecodedPicture | null) => void;
+  resolve: (
+    frame: DecodedPicture | null | Promise<DecodedPicture | null>,
+  ) => void;
 }
 
 /**
@@ -402,14 +457,16 @@ export function createVideoStream(
     }
   };
 
-  const settle = (frame: DecodedPicture | null) => {
+  const settle = (
+    frame: DecodedPicture | null | Promise<DecodedPicture | null>,
+  ) => {
     const next = pending.shift();
     if (next) {
       next.resolve(frame);
     } else {
       // A frame nobody is waiting for is one that would leak: a picture holds
       // decoder memory until it is closed.
-      frame?.close();
+      void Promise.resolve(frame).then((picture) => picture?.close());
     }
     rearm();
   };
@@ -465,8 +522,22 @@ export function createVideoStream(
     );
   };
 
+  // A picture to be put into the stream's colour (`inColour`) is copied after the
+  // one before it, so the copies come back in the order the pictures did.
+  let copied: Promise<unknown> = Promise.resolve();
+  const output = (frame: DecodedPicture) => {
+    const colour = format.colour;
+    if (!colour || isSoftwarePlanes(frame) || labelled(frame, colour)) {
+      settle(frame);
+      return;
+    }
+    const recoloured = copied.then(() => inColour(frame, colour));
+    copied = recoloured.catch(() => undefined);
+    settle(recoloured.catch(() => null));
+  };
+
   const decoder = makeDecoder({
-    output: (frame) => settle(frame),
+    output,
     // A decoder that says a unit completed no picture (softwareDecoder.ts): that
     // unit is settled, so the next picture resolves its own unit and not this one.
     noPicture: () => settle(null),
@@ -497,6 +568,9 @@ export function createVideoStream(
     // the coded size, and the record header carries the *desktop* size, which is
     // smaller by up to a pixel in each axis and is not what a decoder should be told.
     codec: format.decode,
+    // Told, where the gateway knows it: a hardware decoder in Chrome on Windows
+    // labels its pictures so, and one that does not is put into it (`output`).
+    ...(format.colour ? { colorSpace: format.colour } : {}),
     optimizeForLatency: true,
     // `hardwareAcceleration` is deliberately left out, so a browser decodes this
     // however it decodes the codec. Asking for software here is a hint by

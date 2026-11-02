@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::feedback::LinkFeedback;
-use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit};
+use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoColour, VideoUnit};
 use crate::shadow::Rect;
 use crate::tiles::{Coded, Format, LEVELS, Round, Tiles};
 use crate::video;
@@ -853,7 +853,7 @@ impl VideoSink {
     /// that falls behind gives up is frames.
     pub async fn pass(&self, w: u16, h: u16, frame: Vec<u8>) -> anyhow::Result<()> {
         let passed = self.shared.whole.lock().unwrap().pass(w, h, &frame)?;
-        self.forward(w, h, frame, passed, Painted::default()).await.map(drop)
+        self.forward(w, h, frame, passed, None, Painted::default()).await.map(drop)
     }
 
     /// Queue one access unit of a High Performance Mac's HEVC, `w`×`h`, as the next
@@ -879,7 +879,7 @@ impl VideoSink {
         passed: video::Passed,
     ) -> anyhow::Result<bool> {
         video::check_picture((w, h))?;
-        self.forward(w, h, frame, passed, Painted::default()).await
+        self.forward(w, h, frame, passed, None, Painted::default()).await
     }
 
     /// Queue one access unit of an RDP host's H.264, the luma view of a surface
@@ -910,17 +910,18 @@ impl VideoSink {
                 return Ok(RdpPassed::Refused(e));
             }
         };
-        Ok(if self.forward(w, h, unit, passed, painted).await? { RdpPassed::Queued } else { RdpPassed::Waiting })
+        Ok(if self.forward(w, h, unit, passed, Some(VideoColour::RDP), painted).await? { RdpPassed::Queued } else { RdpPassed::Waiting })
     }
 
     /// Queue a checked, passed unit: see [`Self::pass`]. `false` when it was dropped
-    /// while the browser waits for a keyframe.
+    /// while the browser waits for a keyframe. `colour` is announced with its format ([`ServerMsg::VideoFormat`]).
     async fn forward(
         &self,
         w: u16,
         h: u16,
         frame: Vec<u8>,
         passed: video::Passed,
+        colour: Option<VideoColour>,
         painted: Painted,
     ) -> anyhow::Result<bool> {
         self.shared.passing.store(true, Ordering::Relaxed);
@@ -954,7 +955,7 @@ impl VideoSink {
             self.shared.keyframe_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
         }
         if let Some(decode) = announce {
-            self.push(Pending::Msg(ServerMsg::VideoFormat { decode, strips, engine: 0 })).await?;
+            self.push(Pending::Msg(ServerMsg::VideoFormat { decode, strips, colour, engine: 0 })).await?;
         }
         let unit = VideoUnit { w, h, strip: passed.strip, keyframe: passed.keyframe, data: frame, held, painted };
         self.push(Pending::Msg(ServerMsg::Video(unit))).await?;

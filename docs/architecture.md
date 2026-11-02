@@ -932,7 +932,7 @@ remote's own. Which passed streams follow the browser's link, and how, is in
 The engines never see the config. The target and the session's choices collapse
 to one `RenderPlan` (`wlshare`, `wlshare_tiles`, `progressive`,
 `apple_media`, `apple_h264`, `hevc_instead`, `apple_standard`, `apple_combined`,
-`rdp_graphics`, `rdp_h264`) at the config boundary in
+`rdp_graphics`, `rdp_h264`, `rdp_video`) at the config boundary in
 `TargetConfig::render_plan`, which reaches the coder through the engine-agnostic
 `VideoSink` in `src/encode.rs`:
 
@@ -1766,7 +1766,19 @@ the pipeline.
   `videoFormat`, and the page decodes them with the desktop's own decoder
   (`frontend/src/videoDecoder.ts`). On *All Displays* the tab's socket carries
   its display's stream; nothing is handed across the browser. Nothing of the
-  page's compositor is loaded.
+  page's compositor is loaded, so nothing it needs is asked of the browser: the
+  page says on its session socket whether its `VideoDecoder` takes the host's
+  H.264, `rdp_video=true|false` (`frontend/src/videoCodecs.ts`), and a page
+  that cannot compose the pipeline still starts such a target under H.264 full
+  screen, with the other ways of drawing it greyed.
+
+  Its colour is said with it. The host's stream says it is full range and names
+  no colour space, which MS-RDPEGFX makes full-range BT.709, and browsers read
+  it variously: Chrome's software decoder as BT.601, its hardware decoder as
+  limited range. So the `videoFormat` names the colour (`VideoColour::RDP`), the
+  page configures its decoder with it, and a picture the decoder still labels
+  otherwise is copied into a frame that states it before it is drawn, as the
+  compositor's copy converts it.
 
   The whole picture is what the masks show. A unit's metablock names the
   rectangles of its picture to show, and the page paints the whole picture: over
@@ -2225,13 +2237,14 @@ Authentication and desktop ownership are separate:
    and `GET /api/targets`' state the gateway's version in `X-Zdesk-Version`,
    and a page whose own differs, a tab left open across an upgrade, opens no
    session and lists no target: it says both versions and offers a reload.
-3. `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false`
+3. `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false`
    attaches to the slot and reports the target picker or the current connected
-   target. `apple_media`, `page_hevc`, `rdp_graphics` and `rdp_h264`
-   are required: whether this browser's own decoder takes a High Performance
-   Mac's HEVC, whether its page runs the software HEVC decoder, whether it
-   composes an RDP host's graphics pipeline, and whether it decodes the H.264 such a
-   pipeline may carry; see
+   target. `apple_media`, `page_hevc`, `rdp_graphics`, `rdp_h264` and
+   `rdp_video` are required: whether this browser's own decoder takes a High
+   Performance Mac's HEVC, whether its page runs the software HEVC decoder,
+   whether it composes an RDP host's graphics pipeline, whether it decodes the
+   H.264 such a pipeline may carry in regions, and whether it decodes the host's
+   H.264 of the whole desktop as video; see
    [the codec](#the-codec),
    [Decoded in the page](#decoded-in-the-page),
    [Apple's media stream, passed through](#apples-media-stream-passed-through) and

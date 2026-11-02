@@ -787,6 +787,27 @@ impl Strip {
     pub const COUNT: u8 = 4;
 }
 
+/// The colour a stream's pictures are in, where the gateway knows it better than
+/// the stream says ([`ServerMsg::VideoFormat`]), in WebCodecs' `VideoColorSpaceInit`
+/// terms: a page tells its decoder, and puts a picture the decoder labels otherwise
+/// into this colour itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoColour {
+    pub primaries: &'static str,
+    pub transfer: &'static str,
+    pub matrix: &'static str,
+    pub full_range: bool,
+}
+
+impl VideoColour {
+    /// An RDP host's H.264: full-range BT.709, as MS-RDPEGFX gives it, with the
+    /// desktop's own sRGB transfer. The host's stream says it is full range and
+    /// names no colour space, which browsers read variously: Chrome's software
+    /// decoder as BT.601, and its hardware decoder as limited range.
+    pub const RDP: Self = Self { primaries: "bt709", transfer: "iec61966-2-1", matrix: "bt709", full_range: true };
+}
+
 /// One video access unit, carried as a `VIDEO` record inside a [`batch`] frame.
 ///
 /// The contract every client implements:
@@ -1594,9 +1615,11 @@ pub enum ServerMsg {
     ///
     /// `strips` says how many strips each picture of the stream comes in, a unit
     /// each ([`Strip`]): [`Strip::COUNT`] for a High Performance Mac's passed in
-    /// strips, and 1 for every stream whose units are whole pictures. `engine` is the
-    /// engine that sent it ([`ServerMsg::stamped`]).
-    VideoFormat { decode: String, strips: u8, engine: u64 },
+    /// strips, and 1 for every stream whose units are whole pictures. `colour` is
+    /// the stream's colour where its own is not to be read from it, an RDP host's
+    /// ([`VideoColour::RDP`]). `engine` is the engine that sent it
+    /// ([`ServerMsg::stamped`]).
+    VideoFormat { decode: String, strips: u8, colour: Option<VideoColour>, engine: u64 },
     /// The remote started consuming the camera — an application on it opened
     /// the device — and the browser should encode and send from now on,
     /// starting at a keyframe. Camera-socket traffic only, like the two below:
@@ -1723,6 +1746,8 @@ enum ControlMsg<'a> {
     VideoFormat {
         decode: &'a str,
         strips: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        colour: Option<VideoColour>,
         engine: u64,
     },
     CameraStart {
@@ -1898,8 +1923,8 @@ impl ServerMsg {
             ServerMsg::CameraKeyframe => control(&ControlMsg::CameraKeyframe),
             ServerMsg::MicOpen => control(&ControlMsg::MicOpen),
             ServerMsg::MicClose => control(&ControlMsg::MicClose),
-            ServerMsg::VideoFormat { decode, strips, engine } => {
-                control(&ControlMsg::VideoFormat { decode, strips: *strips, engine: *engine })
+            ServerMsg::VideoFormat { decode, strips, colour, engine } => {
+                control(&ControlMsg::VideoFormat { decode, strips: *strips, colour: *colour, engine: *engine })
             }
             ServerMsg::RemoteOs { macos } => control(&ControlMsg::RemoteOs { macos: *macos }),
             ServerMsg::HostPicture { lossless, codecs } => {
@@ -2344,7 +2369,7 @@ mod tests {
         // is a decoder that never gets configured.
         // The engine is what the session layer stamped in, which the page fences a
         // late start of an ended session on.
-        match (ServerMsg::VideoFormat { decode: "avc1.640033".to_owned(), strips: 1, engine: 0 })
+        match (ServerMsg::VideoFormat { decode: "avc1.640033".to_owned(), strips: 1, colour: None, engine: 0 })
             .stamped(7)
             .text_frame()
         {
@@ -2354,6 +2379,21 @@ mod tests {
             ),
             None => panic!("videoFormat must be a text frame"),
         }
+        // An RDP host's, with the colour its stream does not say.
+        assert_eq!(
+            ServerMsg::VideoFormat {
+                decode: "avc1.4d4020".to_owned(),
+                strips: 1,
+                colour: Some(VideoColour::RDP),
+                engine: 0
+            }
+            .stamped(7)
+            .text_frame()
+            .as_deref(),
+            Some(
+                r#"{"type":"videoFormat","decode":"avc1.4d4020","strips":1,"colour":{"primaries":"bt709","transfer":"iec61966-2-1","matrix":"bt709","fullRange":true},"engine":7}"#
+            )
+        );
         assert_eq!(
             ServerMsg::GraphicsStart { engine: 0 }.stamped(7).text_frame().as_deref(),
             Some(r#"{"type":"graphicsStart","engine":7}"#)

@@ -44,7 +44,10 @@ class FakeDecoder {
     built.push(this);
   }
 
-  configure() {
+  config: { colorSpace?: VideoColorSpaceInit } | undefined;
+
+  configure(config: { colorSpace?: VideoColorSpaceInit }) {
+    this.config = config;
     this.configures += 1;
     this.state = "configured";
   }
@@ -332,4 +335,74 @@ test("a format that names another stream replaces the decoder", async () => {
   table.setFormat({ decode: "hev1.4.10.L153.BE.8" });
   assert.equal(first.closes, 1);
   table.close();
+});
+
+test("a stream whose colour the gateway says is told it, and a picture labelled otherwise is put into it, in order", async () => {
+  const RDP: VideoColorSpaceInit = {
+    primaries: "bt709",
+    transfer: "iec61966-2-1",
+    matrix: "bt709",
+    fullRange: true,
+  };
+  const BT601 = { ...RDP, matrix: "smpte170m" as const };
+  const made: { tag: number; colorSpace: VideoColorSpaceInit }[] = [];
+  const before = (globalThis as { VideoFrame?: unknown }).VideoFrame;
+  (globalThis as { VideoFrame?: unknown }).VideoFrame = class {
+    constructor(
+      samples: Uint8Array,
+      init: { colorSpace: VideoColorSpaceInit },
+    ) {
+      made.push({ tag: samples[0], colorSpace: init.colorSpace });
+      Object.assign(this, { tag: samples[0], close() {} });
+    }
+  };
+  try {
+    const table = createDesktopVideo(
+      { onError: () => {}, onNeedsKeyframe: () => {} },
+      STALL_MS,
+    );
+    table.setFormat({ decode: "avc1.4d4020", colour: RDP });
+    const pictures = [1, 2, 3].map((byte) =>
+      table.decode(size, unit(byte), byte === 1),
+    );
+    const decoder = built[built.length - 1];
+    assert.deepEqual(decoder.config?.colorSpace, RDP);
+    const closed: number[] = [];
+    // Mislabelled, labelled, mislabelled: the copies are slower than the
+    // picture handed straight on, which still comes back in its place.
+    for (const [tag, colorSpace] of [
+      [0xa1, BT601],
+      [0xa2, RDP],
+      [0xa3, BT601],
+    ] as const) {
+      decoder.output({
+        tag,
+        format: "I420",
+        colorSpace,
+        visibleRect: { x: 0, y: 0, width: 320, height: 240 },
+        displayWidth: 320,
+        displayHeight: 240,
+        timestamp: 0,
+        allocationSize: () => 1,
+        copyTo: async (into: Uint8Array) => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          into[0] = tag;
+          return [];
+        },
+        close: () => closed.push(tag),
+      });
+    }
+    assert.deepEqual(
+      (await Promise.all(pictures)).map(tagOf),
+      [0xa1, 0xa2, 0xa3],
+    );
+    assert.deepEqual(made, [
+      { tag: 0xa1, colorSpace: RDP },
+      { tag: 0xa3, colorSpace: RDP },
+    ]);
+    assert.deepEqual(closed, [0xa1, 0xa3], "each mislabelled one is let go");
+    table.close();
+  } finally {
+    (globalThis as { VideoFrame?: unknown }).VideoFrame = before;
+  }
 });

@@ -103,7 +103,8 @@ interface Seen {
   render?: string;
   /** Every `videoFormat`'s `decode`. */
   formats: string[];
-  decodesH264?: string | null;
+  /** What the page said of the host's H.264 as video (`rdp_video`). */
+  decodesVideo?: string | null;
   /** The display socket's batches, since it last attached. */
   batches: Batch[];
   acknowledged: number[];
@@ -144,7 +145,7 @@ function watch(page: Page): Seen {
   page.on("websocket", (ws) => {
     const url = new URL(ws.url());
     if (url.pathname === "/ws") {
-      seen.decodesH264 = url.searchParams.get("rdp_h264");
+      seen.decodesVideo = url.searchParams.get("rdp_video");
       ws.on("framereceived", ({ payload }) => {
         if (typeof payload === "string") {
           control(payload);
@@ -233,7 +234,7 @@ test.describe("a target started with H.264 full screen", () => {
     await expect
       .poll(() => seen.render, { timeout: 20_000 })
       .toBe("the host's H.264 of the whole desktop, passed through");
-    expect(seen.decodesH264).toBe("true");
+    expect(seen.decodesVideo).toBe("true");
     await expect
       .poll(() => seen.acknowledged.length, { timeout: 20_000 })
       .toBeGreaterThan(2);
@@ -285,39 +286,38 @@ test.describe("a target started with H.264 full screen", () => {
   test("starts again at a keyframe after its decoder fails, as iOS's does", async ({
     page,
   }) => {
-    // The paint worker's first decoder fails on its thirtieth unit, as a
-    // hardware decoder on an iPhone does now and then mid-session: its error
-    // callback says "Decoder failure", and it decodes nothing more.
+    // The paint worker's first decoder fails when the test says, as a hardware
+    // decoder on an iPhone does now and then mid-session: its error callback
+    // says "Decoder failure", and it decodes nothing more. Said once a frame
+    // has painted, so a still desktop fails it as surely as a moving one.
     await page.context().route(PAINT_WORKER, async (route) => {
       const response = await route.fetch();
       const failing = `{
         const Real = globalThis.VideoDecoder;
         let made = 0;
+        let fail = null;
         globalThis.VideoDecoder = class extends Real {
           constructor(init) {
             made += 1;
             const first = made === 1;
             let failed = false;
             super({ ...init, output: (frame) => (failed ? frame.close() : init.output(frame)) });
-            this.units = 0;
-            this.fail = first ? () => {
-              failed = true;
-              super.close();
-              init.error(new DOMException("Decoder failure", "EncodingError"));
-            } : null;
-          }
-          decode(chunk) {
-            this.units += 1;
-            if (this.fail && this.units === 30) {
-              const fail = this.fail;
-              this.fail = null;
-              queueMicrotask(fail);
-              return;
+            if (first) {
+              fail = () => {
+                failed = true;
+                super.close();
+                init.error(new DOMException("Decoder failure", "EncodingError"));
+              };
             }
-            return super.decode(chunk);
           }
         };
         globalThis.decodersMade = () => made;
+        globalThis.failDecoder = () => {
+          const failing = fail;
+          fail = null;
+          failing?.();
+          return failing !== null;
+        };
       }\n`;
       await route.fulfill({
         response,
@@ -332,6 +332,13 @@ test.describe("a target started with H.264 full screen", () => {
     });
     const seen = watch(page);
     await logInAndConnectTo(page, TARGET ?? "", "", FULL_SCREEN);
+    await expect
+      .poll(() => seen.acknowledged.length, { timeout: 20_000 })
+      .toBeGreaterThan(0);
+    const failed = await worker?.evaluate(() =>
+      (globalThis as { failDecoder?: () => boolean }).failDecoder?.(),
+    );
+    expect(failed, "the paint worker's first decoder was failed").toBe(true);
 
     // The page asks for a keyframe, the gateway asks the host, and the picture
     // comes back on a second decoder, with the session still the same one.
