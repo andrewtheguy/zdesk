@@ -3,6 +3,7 @@ import DisplayMenu from "./DisplayMenu.tsx";
 import FloatingMenu from "./FloatingMenu.tsx";
 import { keepsEndedWorkers, saysOutOfMemory } from "./memoryBudget.ts";
 import type { DisplayInfo, HoldCause } from "./protocol.ts";
+import { asksToReconnect } from "./reconnect.ts";
 import TargetPicker from "./TargetPicker.tsx";
 import {
   CAN_PINCH_ZOOM,
@@ -494,7 +495,9 @@ export default function RemoteDesktop({
           out of memory says so, and how to get the memory back: a reload, which
           the page reattaches to the session as it was after, or on an iPhone or
           an iPad, where a reload does not give it back, a new tab
-          (`keepsEndedWorkers`). */}
+          (`keepsEndedWorkers`). A picture that ended until a reload, such as
+          one whose WebGL context the browser took away, offers that reload as
+          a button (`asksToReconnect`). */}
       {videoError && mode === "desktop" && (
         <div className="video-banner" role="alert">
           {saysOutOfMemory(videoError) &&
@@ -511,7 +514,9 @@ export default function RemoteDesktop({
               </p>
             ))}
           {videoError}
-          {saysOutOfMemory(videoError) && !keepsEndedWorkers() && (
+          {(saysOutOfMemory(videoError)
+            ? !keepsEndedWorkers()
+            : asksToReconnect(videoError)) && (
             <button
               type="button"
               className="status-action video-banner-action"
