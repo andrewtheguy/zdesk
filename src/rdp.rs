@@ -3044,6 +3044,27 @@ mod tests {
         assert!(asks.asks(at(1_500), true, true));
     }
 
+    /// A layout sent while a keyframe is held back moves its wait out: the one
+    /// due by the earlier wait asks nothing then, and is due again at the new
+    /// deadline, once.
+    #[test]
+    fn a_layout_sent_meanwhile_moves_a_held_keyframe_out() {
+        let start = Instant::now();
+        let at = |s| start + Duration::from_secs(s);
+        let mut asks = KeyframeAsks::default();
+        assert!(asks.asks(start, true, true));
+        assert!(!asks.asks(at(1), false, true));
+        assert_eq!(asks.due, Some(at(10)));
+        asks.sent(at(5));
+        // The timer at the earlier deadline clears it and asks again.
+        asks.due = None;
+        assert!(!asks.asks(at(10), false, true), "nothing before the resize's own wait is past");
+        assert_eq!(asks.due, Some(at(15)));
+        assert!(!asks.asks(at(12), false, true));
+        assert_eq!(asks.due, Some(at(15)), "due once, at the new deadline");
+        assert!(asks.asks(at(15), false, true));
+    }
+
     /// A keyframe wanted before Display Control opens would go nowhere: it is
     /// not counted as asked, and is due once the limit is past.
     #[test]
