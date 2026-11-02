@@ -58,9 +58,13 @@ async fn main() -> anyhow::Result<()> {
             anyhow::ensure!(port != 0, "--port must be between 1 and 65535");
             zdesk::worker::run_tui(zdesk::worker::TuiOptions {
                 port,
-                instances_dir: instances_dir
-                    .map(Ok)
-                    .unwrap_or_else(zdesk::worker::default_instances_dir)?,
+                // Absolute, so the header names it in full and a file manager
+                // handed it does not read it against its own directory.
+                instances_dir: match instances_dir {
+                    Some(dir) => std::path::absolute(&dir)
+                        .with_context(|| format!("cannot resolve --instances-dir {}", dir.display()))?,
+                    None => zdesk::worker::default_instances_dir()?,
+                },
             })
             .await?;
         }

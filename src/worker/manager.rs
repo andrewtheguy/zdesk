@@ -74,6 +74,55 @@ pub const INSTANCE_TEMPLATE: &str = r#"# A zdesk local instance.
 # vnc_password_ref = "pi"
 "#;
 
+/// The TUI's own settings, kept in the instances directory beside the instances
+/// they arrange. A file there is never taken for an instance, which is a
+/// directory.
+const SETTINGS_FILE: &str = "tui.toml";
+
+/// What E creates a missing [`SETTINGS_FILE`] with; until then the defaults
+/// stand.
+const SETTINGS_TEMPLATE: &str = r#"# zDesk TUI settings. Edit them with E in the TUI, which applies them on
+# saving; after editing this file elsewhere, press R.
+
+# The order the TUI and its landing page list instances in, by name. Instances
+# not named here follow in alphabetical order, and a name with no instance is
+# passed over.
+#
+# order = ["work", "home"]
+"#;
+
+/// The TUI's settings, read from [`SETTINGS_FILE`].
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Settings {
+    /// The instances listed first, in this order.
+    #[serde(default)]
+    order: Vec<String>,
+}
+
+impl Settings {
+    /// The settings in `root`, or the defaults when it holds no settings file.
+    fn load(root: &Path) -> anyhow::Result<Self> {
+        let path = root.join(SETTINGS_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
+        };
+        Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))
+    }
+
+    fn parse(text: &str) -> anyhow::Result<Self> {
+        let settings: Self = toml::from_str(text)?;
+        let mut seen = BTreeSet::new();
+        for name in &settings.order {
+            valid_instance_name(name).with_context(|| format!("order names {name:?}"))?;
+            anyhow::ensure!(seen.insert(name), "order names {name:?} twice");
+        }
+        Ok(settings)
+    }
+}
+
 /// Inputs resolved by the CLI before terminal state is changed.
 #[derive(Clone, Debug)]
 pub struct TuiOptions {
@@ -114,6 +163,7 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let keychain = master.get().map(|_| ());
     let binary = std::env::current_exe().context("cannot locate the zdesk executable")?;
     let mut supervisor = Supervisor::open(options.instances_dir.clone(), binary).await?;
+    let settings = supervisor.reload_settings().await;
     let access = Access::open(options.port);
     let router = SharedPort::bind(options.port, supervisor.routes(), access.clone()).await?;
 
@@ -125,13 +175,19 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
     let mut view = View::List;
-    let mut message = match keychain {
-        Err(error) => format!("{error:#}; an instance whose config names passwords cannot start until it answers"),
-        Ok(()) if mocked => format!(
-            "{}=mock: passwords set now open only until the TUI quits",
-            crate::keychain::MOCK_ENV
-        ),
-        Ok(()) => format!("control plane listening on http://{MASTER_HOST}:{}", router.port()),
+    let mut problems = Vec::new();
+    if let Err(error) = keychain {
+        problems.push(format!("{error:#}; an instance whose config names passwords cannot start until it answers"));
+    }
+    if let Err(error) = settings {
+        problems.push(format!("{error:#}; instances are listed by name until it is fixed (E edits it)"));
+    }
+    let mut message = if !problems.is_empty() {
+        problems.join(" · ")
+    } else if mocked {
+        format!("{}=mock: passwords set now open only until the TUI quits", crate::keychain::MOCK_ENV)
+    } else {
+        format!("control plane listening on http://{MASTER_HOST}:{}", router.port())
     };
 
     loop {
@@ -242,8 +298,42 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     }
                     Action::New => view = View::Naming(String::new()),
                     Action::Rescan => {
+                        let kept = instances.get(selected).map(|instance| instance.name.clone());
                         supervisor.rescan().await?;
-                        message = "rescanned the instances directory".to_owned();
+                        message = match supervisor.reload_settings().await {
+                            Ok(()) => "rescanned the instances directory".to_owned(),
+                            Err(error) => format!("{error:#}"),
+                        };
+                        selected = kept.and_then(|name| supervisor.position(&name)).unwrap_or(selected);
+                    }
+                    Action::OpenDirectory => {
+                        let dir = &options.instances_dir;
+                        message = match open_directory(dir) {
+                            Ok(()) => format!("opening {}", dir.display()),
+                            Err(error) => format!("cannot open {}: {error:#}", dir.display()),
+                        };
+                    }
+                    Action::EditSettings => {
+                        let kept = instances.get(selected).map(|instance| instance.name.clone());
+                        let path = options.instances_dir.join(SETTINGS_FILE);
+                        message = match bootstrap_file(&path, SETTINGS_TEMPLATE) {
+                            Err(error) => format!("{error:#}"),
+                            Ok(()) => {
+                                terminal.suspend()?;
+                                let edited = edit_config(&path).await;
+                                terminal.resume()?;
+                                screen.invalidate();
+                                events = EventStream::new();
+                                match edited {
+                                    Ok(()) => match supervisor.reload_settings().await {
+                                        Ok(()) => "TUI settings applied".to_owned(),
+                                        Err(error) => format!("{error:#}"),
+                                    },
+                                    Err(error) => format!("{error:#}"),
+                                }
+                            }
+                        };
+                        selected = kept.and_then(|name| supervisor.position(&name)).unwrap_or(selected);
                     }
                     Action::StartAll => {
                         let stopped: Vec<_> = supervisor
@@ -557,13 +647,45 @@ fn instance_url(name: &str, port: u16) -> String {
 /// launchers stay until the browser exits. None of them gets the terminal, which
 /// the TUI is drawing on.
 fn open_browser(url: &str) -> anyhow::Result<()> {
-    browser_command(url)
+    detach(browser_command(url)).context("cannot start the browser launcher")
+}
+
+/// Shows `dir` in the desktop's file manager, without waiting for it, as
+/// [`open_browser`] hands over a URL.
+fn open_directory(dir: &Path) -> anyhow::Result<()> {
+    detach(directory_command(dir)).context("cannot start the file manager")
+}
+
+fn detach(mut command: Command) -> std::io::Result<()> {
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .context("cannot start the browser launcher")?;
+        .spawn()?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn directory_command(dir: &Path) -> Command {
+    let mut command = Command::new("open");
+    command.arg(dir);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn directory_command(dir: &Path) -> Command {
+    let mut command = Command::new("xdg-open");
+    command.arg(dir);
+    command
+}
+
+/// Explorer itself rather than `start`, so the path is an argument and never
+/// passes through `cmd.exe`'s parsing.
+#[cfg(windows)]
+fn directory_command(dir: &Path) -> Command {
+    let mut command = Command::new("explorer.exe");
+    command.arg(dir);
+    command
 }
 
 #[cfg(target_os = "macos")]
@@ -701,6 +823,8 @@ enum Action {
     New,
     StartAll,
     Rescan,
+    OpenDirectory,
+    EditSettings,
     NewPin,
     CopyPin,
     Keys,
@@ -736,9 +860,12 @@ struct Binding {
     /// The keys page's sentence.
     about: &'static str,
     group: Group,
-    /// Whether the key bar under the list shows it. Every binding is on the keys
-    /// page; the bar keeps to what fits one line of an 80-column terminal.
-    bar: bool,
+    /// Where the key bar under the list ranks it, if the bar shows it at all.
+    /// The bar names every ranked key a terminal has room for; one too narrow
+    /// for them all loses the highest rank first, the last listed of a rank
+    /// before the rest. Every binding is on the keys page; the arrows go without
+    /// saying, and the access panel names P and c.
+    bar: Option<u8>,
 }
 
 /// Every key the list takes. The key bar and the keys page are drawn from this
@@ -751,7 +878,7 @@ const BINDINGS: &[Binding] = &[
         label: "up",
         about: "select the instance above",
         group: Group::Instances,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Down,
@@ -759,7 +886,7 @@ const BINDINGS: &[Binding] = &[
         label: "down",
         about: "select the instance below",
         group: Group::Instances,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Specs,
@@ -767,7 +894,7 @@ const BINDINGS: &[Binding] = &[
         label: "specs",
         about: "show its settings and what each target will do",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Start,
@@ -775,7 +902,7 @@ const BINDINGS: &[Binding] = &[
         label: "start",
         about: "start it",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Stop,
@@ -783,7 +910,7 @@ const BINDINGS: &[Binding] = &[
         label: "stop",
         about: "stop it",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Restart,
@@ -791,7 +918,7 @@ const BINDINGS: &[Binding] = &[
         label: "restart",
         about: "restart it, which applies an edited config",
         group: Group::Selected,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::Open,
@@ -799,7 +926,7 @@ const BINDINGS: &[Binding] = &[
         label: "open",
         about: "open it in the browser, once it is running",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Edit,
@@ -807,7 +934,7 @@ const BINDINGS: &[Binding] = &[
         label: "edit",
         about: "edit its zdesk.toml in $VISUAL or $EDITOR",
         group: Group::Selected,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::Password,
@@ -815,7 +942,7 @@ const BINDINGS: &[Binding] = &[
         label: "password",
         about: "encrypt a password into its [passwords]",
         group: Group::Selected,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::New,
@@ -823,7 +950,7 @@ const BINDINGS: &[Binding] = &[
         label: "new",
         about: "create an instance",
         group: Group::Instances,
-        bar: true,
+        bar: Some(2),
     },
     Binding {
         action: Action::StartAll,
@@ -831,15 +958,31 @@ const BINDINGS: &[Binding] = &[
         label: "start all",
         about: "start every stopped instance",
         group: Group::Instances,
-        bar: false,
+        bar: Some(3),
     },
     Binding {
         action: Action::Rescan,
         codes: &[KeyCode::Char('R')],
         label: "rescan",
-        about: "rescan the instances directory",
+        about: "rescan the instances directory and reload the TUI settings",
         group: Group::Instances,
-        bar: false,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::OpenDirectory,
+        codes: &[KeyCode::Char('d')],
+        label: "directory",
+        about: "open the instances directory in the file manager",
+        group: Group::Instances,
+        bar: Some(3),
+    },
+    Binding {
+        action: Action::EditSettings,
+        codes: &[KeyCode::Char('E')],
+        label: "settings",
+        about: "edit the TUI settings (tui.toml), such as the order instances are listed in",
+        group: Group::Instances,
+        bar: Some(3),
     },
     Binding {
         action: Action::NewPin,
@@ -847,7 +990,7 @@ const BINDINGS: &[Binding] = &[
         label: "new PIN",
         about: "generate a new PIN",
         group: Group::ControlPlane,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::CopyPin,
@@ -855,15 +998,15 @@ const BINDINGS: &[Binding] = &[
         label: "copy PIN",
         about: "send the PIN to the clipboard through the terminal (OSC 52, or a tmux buffer); Apple's Terminal.app drops it",
         group: Group::ControlPlane,
-        bar: false,
+        bar: None,
     },
     Binding {
         action: Action::Keys,
         codes: &[KeyCode::Char('?')],
-        label: "keys",
+        label: "help",
         about: "show every key",
         group: Group::ControlPlane,
-        bar: true,
+        bar: Some(1),
     },
     Binding {
         action: Action::Quit,
@@ -871,7 +1014,7 @@ const BINDINGS: &[Binding] = &[
         label: "quit",
         about: "stop every instance and quit, as Ctrl+C does",
         group: Group::ControlPlane,
-        bar: true,
+        bar: Some(0),
     },
 ];
 
@@ -910,16 +1053,16 @@ fn key_lines() -> Vec<String> {
 }
 
 /// The key bar under the list, in the order the bindings are listed, as much of
-/// it as fits `width`. What does not fit goes from the end of the instance keys
-/// first, so the keys page and quitting stay named on a narrow terminal, and then
-/// from the front of the rest, so quitting is the last key named.
+/// it as fits `width`. What does not fit goes by [`Binding::bar`]: the keys
+/// only the keys page names otherwise, then the everyday instance keys, then
+/// the keys page, so quitting is the last key named.
 fn list_bar(width: u16) -> Vec<(String, &'static str)> {
-    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
-    while bar_width(&shown) > width as usize && !shown.is_empty() {
-        let drop = shown
-            .iter()
-            .rposition(|binding| binding.group != Group::ControlPlane)
-            .unwrap_or(0);
+    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+    while bar_width(&shown) > width as usize {
+        // `max_by_key` keeps the last of equal ranks, the last listed.
+        let Some((drop, _)) = shown.iter().enumerate().max_by_key(|(_, binding)| binding.bar) else {
+            break;
+        };
         shown.remove(drop);
     }
     shown
@@ -1061,7 +1204,7 @@ fn render(
         &mut frame,
         1,
         width,
-        &format!("instances {}", options.instances_dir.display()),
+        &format!("instances directory {}", options.instances_dir.display()),
         Some(Color::DarkGrey),
         false,
     )?;
@@ -1503,6 +1646,8 @@ pub struct Supervisor {
     binary: PathBuf,
     instances: Vec<ManagedInstance>,
     routes: RouteTable,
+    /// The instances listed first, from [`Settings::order`].
+    order: Vec<String>,
 }
 
 impl Supervisor {
@@ -1513,6 +1658,7 @@ impl Supervisor {
             binary,
             instances: Vec::new(),
             routes: RouteTable::default(),
+            order: Vec::new(),
         };
         manager.rescan().await?;
         Ok(manager)
@@ -1585,9 +1731,32 @@ impl Supervisor {
         self.instances.extend(previous.into_values().filter(|instance| {
             matches!(instance.state, InstanceState::Running(_) | InstanceState::Starting)
         }));
-        self.instances.sort_by(|a, b| a.name.cmp(&b.name));
-        self.publish().await;
+        self.arrange().await;
         Ok(())
+    }
+
+    /// Read the settings file again and list the instances by its order. Settings
+    /// that cannot be read leave the order as it was, and are the error.
+    pub async fn reload_settings(&mut self) -> anyhow::Result<()> {
+        self.order = Settings::load(&self.root)?.order;
+        self.arrange().await;
+        Ok(())
+    }
+
+    /// Where an instance is listed, if it is.
+    pub fn position(&self, name: &str) -> Option<usize> {
+        self.instances.iter().position(|instance| instance.name == name)
+    }
+
+    /// Sort the instances: those [`Self::order`] names first, in its order, then
+    /// the rest by name.
+    async fn arrange(&mut self) {
+        let order = &self.order;
+        self.instances.sort_by_cached_key(|instance| {
+            let rank = order.iter().position(|name| *name == instance.name).unwrap_or(usize::MAX);
+            (rank, instance.name.clone())
+        });
+        self.publish().await;
     }
 
     pub async fn create(&mut self, name: &str) -> anyhow::Result<usize> {
@@ -1601,10 +1770,7 @@ impl Supervisor {
             return Err(error);
         }
         self.rescan().await?;
-        self.instances
-            .iter()
-            .position(|instance| instance.name == name)
-            .context("the new instance did not appear after rescan")
+        self.position(name).context("the new instance did not appear after rescan")
     }
 
     /// Start an instance, handing its worker `key` — the one that opens its
@@ -1697,15 +1863,12 @@ impl Supervisor {
     }
 
     fn index(&self, name: &str) -> anyhow::Result<usize> {
-        self.instances
-            .iter()
-            .position(|instance| instance.name == name)
-            .with_context(|| format!("unknown instance {name:?}"))
+        self.position(name).with_context(|| format!("unknown instance {name:?}"))
     }
 
     async fn publish(&self) {
         let mut published = BTreeMap::new();
-        for instance in &self.instances {
+        for (rank, instance) in self.instances.iter().enumerate() {
             let (status, target) = match &instance.state {
                 InstanceState::Stopped => (InstanceStatus::Stopped, None),
                 InstanceState::Starting => (InstanceStatus::Starting, None),
@@ -1719,7 +1882,7 @@ impl Supervisor {
                     }),
                 ),
             };
-            published.insert(instance.name.clone(), PublishedInstance { status, target });
+            published.insert(instance.name.clone(), PublishedInstance { rank, status, target });
         }
         *self.routes.inner.write().await = published;
     }
@@ -1950,11 +2113,17 @@ fn create_private_dir(path: &Path) -> anyhow::Result<()> {
 }
 
 fn bootstrap_config(dir: &Path) -> anyhow::Result<()> {
-    let path = dir.join("zdesk.toml");
+    bootstrap_file(&dir.join("zdesk.toml"), INSTANCE_TEMPLATE)
+}
+
+/// Create `path` holding `contents`, all at once, unless it exists.
+fn bootstrap_file(path: &Path, contents: &str) -> anyhow::Result<()> {
     if path.exists() {
         return Ok(());
     }
-    let temporary = dir.join(format!("zdesk.toml.{}.new", std::process::id()));
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(format!(".{}.new", std::process::id()));
+    let temporary = PathBuf::from(temporary);
     let result = (|| {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -1967,9 +2136,9 @@ fn bootstrap_config(dir: &Path) -> anyhow::Result<()> {
         let mut file = options
             .open(&temporary)
             .with_context(|| format!("cannot create {}", temporary.display()))?;
-        file.write_all(INSTANCE_TEMPLATE.as_bytes())?;
+        file.write_all(contents.as_bytes())?;
         file.sync_all()?;
-        std::fs::rename(&temporary, &path)
+        std::fs::rename(&temporary, path)
             .with_context(|| format!("cannot install {}", path.display()))
     })();
     let _ = std::fs::remove_file(&temporary);
@@ -1983,6 +2152,8 @@ pub struct RouteTable {
 
 #[derive(Clone)]
 struct PublishedInstance {
+    /// Where the TUI lists it, which the landing page lists it by too.
+    rank: usize,
     status: InstanceStatus,
     target: Option<RouteTarget>,
 }
@@ -2150,7 +2321,8 @@ async fn route_connection(
 
     let Some(name) = instance else {
         if parsed.method == "GET" && path == "/api/instances" {
-            let snapshot = routes.inner.read().await.clone();
+            let mut snapshot: Vec<_> = routes.inner.read().await.clone().into_iter().collect();
+            snapshot.sort_by_key(|(_, instance)| instance.rank);
             let instances: Vec<_> = snapshot
                 .iter()
                 .map(|(name, instance)| {
@@ -2559,17 +2731,30 @@ mod tests {
     }
 
     /// The list screen at the smallest common terminal: the access panel says who
-    /// can reach an instance, and the whole key bar fits on its one line.
+    /// can reach an instance, and the key bar keeps the everyday keys on its one
+    /// line.
     #[test]
     fn the_list_screen_fits_an_80_column_terminal() {
-        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar).collect();
-        assert!(bar_width(&every) <= 80, "the key bar is {} columns", bar_width(&every));
-        assert_eq!(list_bar(80).len(), every.len());
+        // A wide terminal names every ranked key.
+        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+        assert_eq!(list_bar(u16::MAX).len(), every.len());
+        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::OpenDirectory, Action::EditSettings] {
+            assert!(every.iter().any(|binding| binding.action == action), "{action:?}");
+        }
+
+        // At 80 columns the rarer keys give way first, and every everyday key stays.
+        let everyday: Vec<_> = every.iter().copied().filter(|binding| binding.bar <= Some(2)).collect();
+        assert!(bar_width(&everyday) <= 80, "the everyday key bar is {} columns", bar_width(&everyday));
+        let at_80 = list_bar(80);
+        assert!(at_80.len() < every.len());
+        for binding in &everyday {
+            assert!(at_80.contains(&(key_name(binding.codes[0]), binding.label)), "{at_80:?}");
+        }
 
         // Narrower, the instance keys give way and the keys page stays named.
         let narrow = list_bar(40);
         assert!(narrow.len() < every.len());
-        assert!(narrow.contains(&("?".to_owned(), "keys")), "{narrow:?}");
+        assert!(narrow.contains(&("?".to_owned(), "help")), "{narrow:?}");
         assert!(narrow.contains(&("q".to_owned(), "quit")), "{narrow:?}");
 
         let options = TuiOptions {
@@ -2594,6 +2779,7 @@ mod tests {
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access PIN "), "{frame}");
         assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
+        assert!(frame.contains("instances directory /instances"), "{frame}");
         for (key, label) in list_bar(80) {
             assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
         }
@@ -2603,7 +2789,7 @@ mod tests {
         assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains(" quit") && !frame.contains(" keys"), "{frame}");
+        assert!(frame.contains(" quit") && !frame.contains(" help"), "{frame}");
     }
 
     /// The PIN is shown in a colour of its own, apart from its label, and a PIN
@@ -2820,6 +3006,45 @@ mod tests {
         super::super::check(&text).unwrap();
     }
 
+    /// The settings file lists the instances it names first, in its order, the
+    /// rest by name after them, and the landing page in the same order; a file
+    /// that does not parse leaves the order as it was.
+    #[tokio::test]
+    async fn the_settings_order_arranges_the_list_and_the_landing_page() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["alpha", "beta", "delta", "gamma"] {
+            std::fs::create_dir(temp.path().join(name)).unwrap();
+        }
+        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
+        let settings = temp.path().join(SETTINGS_FILE);
+        Settings::parse(SETTINGS_TEMPLATE).unwrap();
+        // No settings file is the defaults: every instance by name.
+        supervisor.reload_settings().await.unwrap();
+        let names = |supervisor: &Supervisor| -> Vec<String> {
+            supervisor.instances().into_iter().map(|instance| instance.name).collect()
+        };
+        assert_eq!(names(&supervisor), ["alpha", "beta", "delta", "gamma"]);
+
+        std::fs::write(&settings, "order = [\"gamma\", \"gone\", \"beta\"]\n").unwrap();
+        supervisor.reload_settings().await.unwrap();
+        let arranged = ["gamma", "beta", "alpha", "delta"];
+        assert_eq!(names(&supervisor), arranged);
+        let published = supervisor.routes().inner.read().await.clone();
+        let mut landing: Vec<_> = published.iter().collect();
+        landing.sort_by_key(|(_, instance)| instance.rank);
+        assert_eq!(landing.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), arranged);
+
+        // A new instance the order does not name joins the rest by name.
+        supervisor.create("beta2").await.unwrap();
+        assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"]);
+
+        for broken in ["order = [\"beta\", \"beta\"]\n", "order = [\"Beta\"]\n", "sort = \"name\"\n"] {
+            std::fs::write(&settings, broken).unwrap();
+            supervisor.reload_settings().await.unwrap_err();
+            assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"], "{broken}");
+        }
+    }
+
     /// A path cmd would read as variables — `%TEMP%`, `!x!` — or as operators
     /// reaches the editor exactly as it is.
     #[cfg(windows)]
@@ -2864,6 +3089,7 @@ mod tests {
             (
                 "one".to_owned(),
                 PublishedInstance {
+                    rank: 0,
                     status: InstanceStatus::Running,
                     target: Some(RouteTarget {
                         endpoint: first.0.clone(),
@@ -2874,6 +3100,7 @@ mod tests {
             (
                 "two".to_owned(),
                 PublishedInstance {
+                    rank: 1,
                     status: InstanceStatus::Running,
                     target: Some(RouteTarget {
                         endpoint: second.0.clone(),
@@ -2906,6 +3133,7 @@ mod tests {
         routes.inner.write().await.insert(
             "one".to_owned(),
             PublishedInstance {
+                rank: 0,
                 status: InstanceStatus::Running,
                 target: Some(RouteTarget {
                     endpoint: transport::endpoint(Path::new("/no/such/instance")),
@@ -3061,6 +3289,7 @@ mod tests {
         routes.inner.write().await.insert(
             "one".to_owned(),
             PublishedInstance {
+                rank: 0,
                 status: InstanceStatus::Running,
                 target: Some(RouteTarget {
                     endpoint: worker.0.clone(),
