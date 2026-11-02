@@ -8,7 +8,7 @@ import {
   decodeAudioHead,
 } from "./audioPlayer.ts";
 import { type CameraSender, startCameraSender } from "./cameraSender.ts";
-import { claimsInTurn } from "./claimTurns.ts";
+import { createTurns } from "./claimTurns.ts";
 import { connectionLabel } from "./connectionLabel.ts";
 import {
   applyCursorCss,
@@ -153,6 +153,10 @@ export interface RemoteSize {
 // same browser still contend like two browsers — as intended). Exported so
 // logout (App.tsx) can drop it.
 export const SESSION_KEY = "zdesk.sessionId";
+// The page's claims, one at a time across every run of the connection effect,
+// each keeping its token before the next is sent (claimTurns.ts). Logout drops
+// the token in turn too, after whatever claim was out. Exported for that.
+export const sessionTurns = createTurns();
 // This tab's name for itself on the sockets of a display it shows in a tab of
 // its own, per tab like the claim: a reload keeps it, so the gateway lets the
 // tab back in, and another tab has another.
@@ -1535,12 +1539,12 @@ export function useRemoteDesktop(
       await claimAndOpen(force);
     };
 
-    // Claims go one at a time, each sent with the token the one before kept, even
-    // with the picture lost or another attempt begun meanwhile (claimTurns.ts).
-    // Only the latest attempt opens its socket.
-    const claimInTurn = claimsInTurn(
-      claim,
-      (claimed) => {
+    // A claim in its turn (`sessionTurns`), its token kept even with the picture
+    // lost, another attempt begun or this run ended meanwhile: it is the one the
+    // gateway minted last. Only the latest attempt opens its socket.
+    const claimInTurn = (force: boolean) =>
+      sessionTurns(async () => {
+        const claimed = await claim(force);
         if (
           typeof claimed === "string" &&
           claimed !== "busy" &&
@@ -1548,9 +1552,8 @@ export function useRemoteDesktop(
         ) {
           sessionStorage.setItem(SESSION_KEY, claimed);
         }
-      },
-      () => !disposed,
-    );
+        return claimed;
+      });
     let claimAttempt = 0;
 
     // Claim the session slot, then open the WebSocket with the token.
