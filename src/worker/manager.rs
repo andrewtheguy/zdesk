@@ -79,7 +79,8 @@ pub const INSTANCE_TEMPLATE: &str = r#"# A zdesk local instance.
 /// directory.
 const SETTINGS_FILE: &str = "tui.toml";
 
-/// What a missing [`SETTINGS_FILE`] is created with.
+/// What E creates a missing [`SETTINGS_FILE`] with; until then the defaults
+/// stand.
 const SETTINGS_TEMPLATE: &str = r#"# zDesk TUI settings. Edit them with E in the TUI, which applies them on
 # saving; after editing this file elsewhere, press R.
 
@@ -174,14 +175,19 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let mut interrupt = Box::pin(tokio::signal::ctrl_c());
     let mut selected = 0usize;
     let mut view = View::List;
-    let mut message = match (keychain, settings) {
-        (Err(error), _) => format!("{error:#}; an instance whose config names passwords cannot start until it answers"),
-        (Ok(()), Err(error)) => format!("{error:#}; instances are listed by name until it is fixed (E edits it)"),
-        (Ok(()), Ok(())) if mocked => format!(
-            "{}=mock: passwords set now open only until the TUI quits",
-            crate::keychain::MOCK_ENV
-        ),
-        (Ok(()), Ok(())) => format!("control plane listening on http://{MASTER_HOST}:{}", router.port()),
+    let mut problems = Vec::new();
+    if let Err(error) = keychain {
+        problems.push(format!("{error:#}; an instance whose config names passwords cannot start until it answers"));
+    }
+    if let Err(error) = settings {
+        problems.push(format!("{error:#}; instances are listed by name until it is fixed (E edits it)"));
+    }
+    let mut message = if !problems.is_empty() {
+        problems.join(" · ")
+    } else if mocked {
+        format!("{}=mock: passwords set now open only until the TUI quits", crate::keychain::MOCK_ENV)
+    } else {
+        format!("control plane listening on http://{MASTER_HOST}:{}", router.port())
     };
 
     loop {
@@ -310,18 +316,22 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                     Action::EditSettings => {
                         let kept = instances.get(selected).map(|instance| instance.name.clone());
                         let path = options.instances_dir.join(SETTINGS_FILE);
-                        bootstrap_file(&path, SETTINGS_TEMPLATE)?;
-                        terminal.suspend()?;
-                        let edited = edit_config(&path).await;
-                        terminal.resume()?;
-                        screen.invalidate();
-                        events = EventStream::new();
-                        message = match edited {
-                            Ok(()) => match supervisor.reload_settings().await {
-                                Ok(()) => "TUI settings applied".to_owned(),
-                                Err(error) => format!("{error:#}"),
-                            },
+                        message = match bootstrap_file(&path, SETTINGS_TEMPLATE) {
                             Err(error) => format!("{error:#}"),
+                            Ok(()) => {
+                                terminal.suspend()?;
+                                let edited = edit_config(&path).await;
+                                terminal.resume()?;
+                                screen.invalidate();
+                                events = EventStream::new();
+                                match edited {
+                                    Ok(()) => match supervisor.reload_settings().await {
+                                        Ok(()) => "TUI settings applied".to_owned(),
+                                        Err(error) => format!("{error:#}"),
+                                    },
+                                    Err(error) => format!("{error:#}"),
+                                }
+                            }
                         };
                         selected = kept.and_then(|name| supervisor.position(&name)).unwrap_or(selected);
                     }
@@ -1643,7 +1653,6 @@ pub struct Supervisor {
 impl Supervisor {
     pub async fn open(root: PathBuf, binary: PathBuf) -> anyhow::Result<Self> {
         create_private_dir(&root)?;
-        bootstrap_file(&root.join(SETTINGS_FILE), SETTINGS_TEMPLATE)?;
         let mut manager = Self {
             root,
             binary,
@@ -1854,10 +1863,7 @@ impl Supervisor {
     }
 
     fn index(&self, name: &str) -> anyhow::Result<usize> {
-        self.instances
-            .iter()
-            .position(|instance| instance.name == name)
-            .with_context(|| format!("unknown instance {name:?}"))
+        self.position(name).with_context(|| format!("unknown instance {name:?}"))
     }
 
     async fn publish(&self) {
@@ -3011,7 +3017,8 @@ mod tests {
         }
         let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
         let settings = temp.path().join(SETTINGS_FILE);
-        Settings::parse(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        Settings::parse(SETTINGS_TEMPLATE).unwrap();
+        // No settings file is the defaults: every instance by name.
         supervisor.reload_settings().await.unwrap();
         let names = |supervisor: &Supervisor| -> Vec<String> {
             supervisor.instances().into_iter().map(|instance| instance.name).collect()
