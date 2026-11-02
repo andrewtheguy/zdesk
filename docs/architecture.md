@@ -1810,12 +1810,13 @@ the pipeline.
   with a display driver failure. So the engine counts the layouts the host has
   not answered (`KeyframeAsks`), and an ask unanswered serves every display,
   since its answer is new surfaces, each starting at an IDR: a page and its
-  second display's tab reloading together ask once. While one is unanswered, a
-  stream that waits asks nothing more for 10 s, taking it as gone after that,
-  and an ask the person made, by a reload, a display switched or a tab opened,
-  waits 2 s. Once the host has answered, a stream that waits asks no sooner than
-  2 s after the answer, and an ask held back is made once its wait is past, if a
-  stream still waits, since a still desktop sends no unit that would ask again.
+  second display's tab reloading together ask once. While one is unanswered,
+  nothing more is asked for 10 s, by a waiting stream or by the person's reload,
+  display switched or tab opened, and it is taken as gone after that. Once the
+  host has answered, one the person asked for goes at once, and a stream that
+  waits asks no sooner than 2 s after the answer. An ask held back is made once
+  its wait is past, if a stream still waits, since a still desktop sends no
+  unit that would ask again.
   An ask made before Display Control opens would go nowhere, so it is made once
   2 s are past instead. A surface no display shows asks for nothing. A
   pipeline that starts over, its channel closed and opened again, starts with
