@@ -493,7 +493,7 @@ pub enum H264 {
     WholeDesktop,
 }
 
-/// The bitmap cache this client keeps ([MS-RDPEGFX] 3.3.1.1): what
+/// The bitmap cache this client keeps ([MS-RDPEGFX] 3.3.1.4): what
 /// [`caps_advertise`] promises, and what a host confirms ([`cache_bytes`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BitmapCache {
@@ -509,7 +509,7 @@ pub enum BitmapCache {
 }
 
 /// The bytes of bitmap cache the capability set a host confirmed holds it to
-/// ([MS-RDPEGFX] 3.3.1.1): 16 MiB with `SMALL_CACHE` or `THINCLIENT`, and under
+/// ([MS-RDPEGFX] 3.3.1.4): 16 MiB with `SMALL_CACHE` or `THINCLIENT`, and under
 /// version 10.3, which implies it; 100 MiB otherwise, 10.1's sixteen reserved
 /// bytes included.
 pub fn cache_bytes(version: u32, flags: u32) -> usize {
@@ -525,10 +525,16 @@ pub fn cache_bytes(version: u32, flags: u32) -> usize {
 /// not, with the bitmap cache it keeps: `SMALL_CACHE` on every set that has the
 /// flag with [`BitmapCache::Small`], and on none with [`BitmapCache::Large`].
 /// Version 10.3 has no such flag and implies the small cache, so a host that
-/// settles there keeps the small one whatever was asked. Version 10.1 has no flag
-/// either and implies the large one, so it is left out with the small cache: a
-/// host that knows 10.1 but not 10.2 settles on 10, which takes the same H.264
-/// but for a YUV444 layout no session asks for, and full screen needs 10.3.
+/// settles there keeps the small one whatever was asked: with the large cache it
+/// is left out by region, where a host that knows 10.3 but not 10.4 settles on
+/// 10.2 and draws the same, and kept for the whole desktop, which starts there.
+/// Version 10.1 has no flag either and implies the large one, so it is left out
+/// with the small cache: a host that knows 10.1 but not 10.2 settles on 10, which
+/// takes the same H.264 but for a YUV444 layout no session asks for, and full
+/// screen needs 10.3. Version 8.1 carries `SMALL_CACHE` with either cache, since
+/// `AVC420_ENABLED` without it is not a combination the set allows ([MS-RDPEGFX]
+/// 2.2.3.2): a host that knows nothing newer keeps the small cache and still draws
+/// H.264.
 ///
 /// Without H.264 — a high quality session: version 8 and version 10, and no
 /// H.264. Version 8 alone would have a Windows host draw with RemoteFX
@@ -564,7 +570,7 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
         H264::Refused => &[(CAPVERSION_8, Some(small)), (CAPVERSION_10, Some(small | CAPS_AVC_DISABLED))],
         H264::ByRegion | H264::WholeDesktop => &[
             (CAPVERSION_8, Some(small)),
-            (CAPVERSION_81, Some(small | CAPS_AVC420_ENABLED)),
+            (CAPVERSION_81, Some(CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)),
             (CAPVERSION_10, Some(small)),
             // 10.1 carries sixteen reserved bytes in place of flags.
             (CAPVERSION_101, None),
@@ -574,8 +580,14 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
             (CAPVERSION_107, Some(small | CAPS_SCALEDMAP_DISABLE | whole)),
         ],
     };
-    let sets: Vec<_> =
-        all.iter().filter(|(version, _)| !(cache == BitmapCache::Small && *version == CAPVERSION_101)).collect();
+    let sets: Vec<_> = all
+        .iter()
+        .filter(|(version, _)| match (*version, cache) {
+            (CAPVERSION_101, BitmapCache::Small) => false,
+            (CAPVERSION_103, BitmapCache::Large) => h264 == H264::WholeDesktop,
+            _ => true,
+        })
+        .collect();
     let mut w = Writer::with_capacity(2 + sets.len() * 12 + 12);
     w.u16_le(u16::try_from(sets.len()).expect("a handful"));
     for (version, flags) in sets {
@@ -1000,7 +1012,8 @@ mod tests {
         assert_eq!(r.u16_le().unwrap(), 8);
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
-        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_AVC420_ENABLED));
+        // 8.1 allows AVC420 only beside the small cache.
+        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
         assert_eq!(set(), (CAPVERSION_10, 4, 0));
         assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
         r.skip(16).unwrap();
@@ -1009,6 +1022,23 @@ mod tests {
         assert_eq!(set(), (CAPVERSION_103, 4, CAPS_AVC_THINCLIENT));
         assert_eq!(set(), (CAPVERSION_104, 4, CAPS_AVC_THINCLIENT));
         assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT));
+        assert!(r.is_empty());
+        // By region, not 10.3 either, which would keep a host that knows nothing
+        // newer to the small cache.
+        let caps = caps_advertise(H264::ByRegion, BitmapCache::Large);
+        let mut r = Reader::new("a test", &caps);
+        r.skip(8).unwrap();
+        assert_eq!(r.u16_le().unwrap(), 7);
+        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        assert_eq!(set(), (CAPVERSION_8, 4, 0));
+        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert_eq!(set(), (CAPVERSION_10, 4, 0));
+        assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
+        r.skip(16).unwrap();
+        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        assert_eq!(set(), (CAPVERSION_102, 4, 0));
+        assert_eq!(set(), (CAPVERSION_104, 4, 0));
+        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SCALEDMAP_DISABLE));
         assert!(r.is_empty());
 
         assert_eq!(frame_acknowledge(7, 3), vec![

@@ -417,6 +417,9 @@ pub struct Graphics {
     surfaces: BTreeMap<u16, Surface>,
     /// Rectangles lifted off surfaces, by slot, for the copies below.
     caches: BTreeMap<u16, Cache>,
+    /// The bytes they hold together, kept as entries come and go rather than
+    /// summed: the large cache has 25600 slots.
+    cached: usize,
     /// Most bytes they hold together, by the cache the host confirmed
     /// ([`cache_budget`]): the small one's until it has.
     cache_budget: usize,
@@ -475,6 +478,7 @@ impl Graphics {
             buffer: Vec::new(),
             surfaces: BTreeMap::new(),
             caches: BTreeMap::new(),
+            cached: 0,
             cache_budget: cache_budget(gfx::CAPVERSION_8, gfx::CAPS_SMALL_CACHE),
             scratch: Vec::new(),
             output: None,
@@ -1162,7 +1166,7 @@ impl Graphics {
             }
             Message::EvictCacheEntry { slot } => {
                 self.tally.command(gfx::CMD_EVICT_CACHE_ENTRY);
-                self.caches.remove(&slot);
+                self.uncache(slot);
             }
             Message::DeleteEncodingContext { .. } => {
                 // Nothing to delete: the one codec with a context, Progressive,
@@ -1386,20 +1390,25 @@ impl Graphics {
     /// the budget: a confirmation of a smaller cache than the last one's does not
     /// leave the larger one's entries held past it.
     fn fit_caches(&mut self) {
-        let mut held: usize = self.caches.values().map(|cache| cache.pixels.len()).sum();
-        while held > self.cache_budget {
+        while self.cached > self.cache_budget {
             let Some(slot) = self.caches.iter().max_by_key(|(_, cache)| cache.pixels.len()).map(|(slot, _)| *slot)
             else {
                 break;
             };
-            let evicted = self.caches.remove(&slot).expect("the slot just found");
-            held -= evicted.pixels.len();
             warn!(
                 "rdp: evicting cache slot {slot}: the {} MiB of entries held are more than the {} MiB the \
                  confirmed cache allows",
-                (held + evicted.pixels.len()) >> 20,
+                self.cached >> 20,
                 self.cache_budget >> 20
             );
+            self.uncache(slot);
+        }
+    }
+
+    /// Empty a cache slot, giving its bytes back to the budget.
+    fn uncache(&mut self, slot: u16) {
+        if let Some(evicted) = self.caches.remove(&slot) {
+            self.cached -= evicted.pixels.len();
         }
     }
 
@@ -1418,7 +1427,7 @@ impl Graphics {
         // One budget for every slot together; the slot being replaced gives its
         // bytes back first.
         let bytes = width as usize * height as usize * 4;
-        let held: usize = self.caches.iter().filter(|(s, _)| **s != slot).map(|(_, held)| held.pixels.len()).sum();
+        let held = self.cached - self.caches.get(&slot).map_or(0, |cache| cache.pixels.len());
         if held + bytes > self.cache_budget {
             warn!(
                 "rdp: dropping a {width}x{height} cache entry for slot {slot}: with the {} MiB of \
@@ -1428,11 +1437,12 @@ impl Graphics {
             );
             // The host thinks the slot holds the new rectangle now; the old one must
             // not stand in for it.
-            self.caches.remove(&slot);
+            self.uncache(slot);
             return;
         }
         let mut pixels = Vec::new();
         source.copy_out(to_rect(rect), &mut pixels);
+        self.cached = held + pixels.len();
         self.caches.insert(slot, Cache { width, height, pixels });
     }
 
@@ -2008,6 +2018,11 @@ mod tests {
         // Now the slot holds a small one; the next big one has room.
         receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 1, 1)), s2c(1, 2, (0, 0, 4096, 2047))]);
         assert_eq!(graphics.caches.len(), 2);
+        assert_eq!(graphics.cached, 4 + 4096 * 2047 * 4, "the bytes held are counted as entries come and go");
+        let mut w = Writer::new();
+        w.u16_le(2);
+        receive(&mut graphics, &framebuffer, &[pdu(gfx::CMD_EVICT_CACHE_ENTRY, &w.finish())]);
+        assert_eq!(graphics.cached, 4, "an evicted entry gives its bytes back");
     }
 
     /// A host that confirms the large cache is given its budget: what the small
@@ -2031,6 +2046,7 @@ mod tests {
         // they fit its budget, and a new one is taken within it.
         receive(&mut graphics, &framebuffer, &[confirm()]);
         let held: usize = graphics.caches.values().map(|cache| cache.pixels.len()).sum();
+        assert_eq!(graphics.cached, held, "the count kept is what the entries hold");
         assert!(held <= graphics.cache_budget, "{held} bytes held past the {} budget", graphics.cache_budget);
         assert_eq!(graphics.cache_budget, 32 << 20);
         receive(&mut graphics, &framebuffer, &[s2c(1, 5, (0, 0, 1, 1))]);
