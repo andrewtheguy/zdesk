@@ -370,9 +370,21 @@ Windows host answers by opening `Microsoft::Windows::RDS::Graphics` over `drdynv
 — the same dynamic channel transport Display Control rides, so `drdynvc` is asked
 for whenever `egfx` is on. The client accepts the channel and at once advertises
 its capability sets (`proto/gfx.rs::caps_advertise`). A session started
-High quality advertises two: version 8 with the small cache, and version 10 with the
-small cache and `AVC_DISABLED`, so the host never sends H.264 and draws with the
-pipeline's other codecs alone. The host confirms one set and then draws.
+High quality advertises two: version 8, and version 10 with `AVC_DISABLED`, so the
+host never sends H.264 and draws with the pipeline's other codecs alone. The host
+confirms one set and then draws.
+
+Every set that has the flag carries `SMALL_CACHE`, a 16 MiB bitmap cache rather
+than the 100 MiB a host otherwise assumes ([MS-RDPEGFX section
+2.2.3.1](https://github.com/andrewtheguy/ms-rdp-specs/blob/main/MS-RDPEGFX.pdf)),
+only for a page whose memory is tight (`Connect::cache`, from the session
+socket's `tight_memory`). The cache is the page's: the compositor holds what the
+host lifts into it, so a phone is not asked for 100 MiB of it. A desktop's page
+is not held to the small one, since a host draws a desktop's repeated content
+from its cache rather than again, which a Lossless session, all planar, needs
+most. The compositor sizes its own budget from the set the host confirmed (3.3.1.4:
+version 10.3 implies the small cache), at twice that cache, and refuses an entry
+past it.
 
 High quality is not lossless unless the host is told to be
 ([Lossless, by the host's policy](#lossless-by-the-hosts-policy)). Of the codecs
@@ -652,7 +664,13 @@ with.
 With `Connect::h264` set to `H264::ByRegion` or `H264::WholeDesktop`, a session
 started with the picker's *H.264 region* or *H.264 full screen*, the session
 tells the host it takes H.264, which nothing here decodes: the advertise is
-every set from version 8 to 10.4, and 10.7, none with `AVC_DISABLED`. 10.5 and 10.6 are left out and 10.7 carries
+every set from version 8 to 10.4, and 10.7, none with `AVC_DISABLED`; 10.1 only
+with the large cache, since it has no flag to ask for the small one, and a host
+that settles on 10 in its place draws the same. With the large cache, 10.3, which
+implies the small one (2.2.3.6), is left out by region, where a host settles on
+10.2 in its place and draws the same, and kept for the whole desktop, which
+starts there. 8.1 carries `SMALL_CACHE` with either cache, since `AVC420_ENABLED`
+without it is not a combination the set allows (2.2.3.2). 10.5 and 10.6 are left out and 10.7 carries
 `SCALEDMAP_DISABLE`, since from 10.5 a host may map a surface through the scaled
 mappings, which this client ignores, and only 10.7 has a flag to say so. Version
 10.1's capability data is sixteen reserved bytes where every other set's is four

@@ -39,3 +39,24 @@ export function keepsEndedWorkers(device: Device = navigator): boolean {
     (device.platform === "MacIntel" && device.maxTouchPoints > 1)
   );
 }
+
+/** What `tightMemory` reads of the browser: `deviceMemory` is Chromium's alone. */
+type MemoryDevice = Device & { deviceMemory?: number };
+
+/**
+ * Whether this page has less memory than a desktop's (docs/architecture.md, The
+ * client and its bundle). No browser says how much a page may have, so this goes
+ * by what they do say: an iPhone or an iPad, whatever the browser, since iOS caps
+ * each app's memory whatever engine runs in it, and a browser that reports 4 GB
+ * or less of `navigator.deviceMemory`. Never by touch, which says nothing of
+ * memory. Stated on the session socket (`tight_memory`): an RDP host is then told
+ * the page keeps the small bitmap cache, 16 MiB rather than 100.
+ */
+export function tightMemory(
+  device: MemoryDevice = navigator as MemoryDevice,
+): boolean {
+  return (
+    keepsEndedWorkers(device) ||
+    (device.deviceMemory !== undefined && device.deviceMemory <= 4)
+  );
+}

@@ -29,6 +29,7 @@ import {
 } from "./gateway.ts";
 import { versionMismatch } from "./gatewayVersion.ts";
 import { HeldModifiers, modifierFlags } from "./heldModifiers.ts";
+import { tightMemory } from "./memoryBudget.ts";
 import { type MicSender, startMicSender } from "./micSender.ts";
 import "./keyboardLock.ts";
 import {
@@ -1795,6 +1796,7 @@ export function useRemoteDesktop(
           rdpGraphics: composesRdpGraphics(),
           rdpH264: decodesRdpH264(),
           rdpVideo: decodesRdpVideo(),
+          tightMemory: tightMemory(),
         }),
       );
       ws = socket;

@@ -289,6 +289,10 @@ pub struct RenderPlan {
     /// decodes the stream as it does wlshare's, starting again at a keyframe the
     /// host is asked for. Never set without [`Self::rdp_h264`].
     pub rdp_video: bool,
+    /// The host is told the page keeps the small bitmap cache, 16 MiB rather than
+    /// 100 ([`Decoders::tight_memory`]): a page with less memory than a desktop's
+    /// holds what it caches in its own. Never set without [`Self::rdp_graphics`].
+    pub rdp_small_cache: bool,
 }
 
 /// A remote's own stream, passed to the browser as it came instead of decoded
@@ -749,8 +753,9 @@ pub struct NotOffered {
 /// its own decoder refuses it, and the gateway is not told), which is what the picker
 /// greys a choice by, what keeps it from starting a target that passes in every
 /// session, and what ends a session whose owner comes back unable to take its own
-/// ([`TargetConfig::beyond`]). The last turns no session away: it decides only how
-/// a stream the browser is sent is coded.
+/// ([`TargetConfig::beyond`]). The rest turn no session away: they decide only how
+/// a stream the browser is sent is coded, and what the remote is told of this
+/// browser's memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Decoders {
     /// Whether it decodes a High Performance Mac's picture, the HEVC, Range
@@ -774,6 +779,11 @@ pub struct Decoders {
     /// takes it, and none of what composing needs. Refused as
     /// [`Self::rdp_h264`] is.
     pub rdp_video: bool,
+    /// Whether its page has less memory than a desktop's: an iPhone or an iPad,
+    /// or a browser that reports 4 GB or less (`tightMemory` in
+    /// `frontend/src/memoryBudget.ts`). Turns no session away; an RDP host is
+    /// told the small bitmap cache ([`RenderPlan::rdp_small_cache`]).
+    pub tight_memory: bool,
 }
 
 impl Decoders {
@@ -790,8 +800,9 @@ impl Decoders {
         rdp_graphics: bool,
         rdp_h264: bool,
         rdp_video: bool,
+        tight_memory: bool,
     ) -> Self {
-        Self { apple_media: native_hevc || (page_hevc && serves_hevc), rdp_graphics, rdp_h264, rdp_video }
+        Self { apple_media: native_hevc || (page_hevc && serves_hevc), rdp_graphics, rdp_h264, rdp_video, tight_memory }
     }
 
     /// Whether it decodes the H.264, if any, an RDP host draws `pipeline` with.
@@ -833,7 +844,7 @@ impl Decoders {
 #[cfg(test)]
 impl Decoders {
     /// A browser that takes every passthrough, for tests about everything else.
-    pub const ALL: Self = Self { apple_media: true, rdp_graphics: true, rdp_h264: true, rdp_video: true };
+    pub const ALL: Self = Self { apple_media: true, rdp_graphics: true, rdp_h264: true, rdp_video: true, tight_memory: false };
 }
 
 impl RenderPlan {
@@ -1185,6 +1196,7 @@ impl TargetConfig {
         let apple_combined = self.offers().standard_view && choices.standard_view == StandardView::Combined;
         let rdp_h264 = rdp_graphics && choices.pipeline.h264() && decoders.draws(choices.pipeline);
         let rdp_video = rdp_h264 && choices.pipeline == Pipeline::AdaptiveDesktop;
+        let rdp_small_cache = rdp_graphics && decoders.tight_memory;
         RenderPlan {
             wlshare,
             wlshare_tiles,
@@ -1196,6 +1208,7 @@ impl TargetConfig {
             rdp_graphics,
             rdp_h264,
             rdp_video,
+            rdp_small_cache,
         }
     }
 
@@ -1370,7 +1383,7 @@ impl TargetConfig {
     /// picture, and a `wlshare` target's its tiles beside its video.
     pub fn render_summary(&self) -> String {
         let offered = self.offers().passthrough;
-        let decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false };
+        let decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false, tight_memory: false };
         let plan = self.render_plan(Choices::default(), decoders).describe();
         if self.wlshare() {
             let tiles = |passthrough| self.render_plan(Choices { passthrough: Some(passthrough), ..Choices::default() }, decoders).describe();
@@ -3295,7 +3308,7 @@ mod tests {
         assert!(mac.software(true));
         assert!(!mac.software(false), "not on a gateway without the decoder");
 
-        let stated = |native_hevc, page_hevc, serves_hevc| Decoders::stated(native_hevc, page_hevc, serves_hevc, false, false, false);
+        let stated = |native_hevc, page_hevc, serves_hevc| Decoders::stated(native_hevc, page_hevc, serves_hevc, false, false, false, false);
         let passed = Choices { passthrough: Some(Passthrough::AppleMedia), ..Choices::default() };
         assert_eq!(mac.beyond(passed, stated(true, false, false)), None, "the browser's own decoder");
         assert_eq!(mac.beyond(passed, stated(false, true, true)), None, "the page's decoder");
@@ -3629,6 +3642,7 @@ mod tests {
                 rdp_graphics: false,
                 rdp_h264: false,
                 rdp_video: false,
+                rdp_small_cache: false,
                 wlshare: false, wlshare_tiles: None,
             }
         );
@@ -4025,7 +4039,7 @@ mod tests {
             .targets
             .remove(0);
         let adaptive = Choices { passthrough: Some(Passthrough::AppleAdaptive), ..Choices::default() };
-        let none = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false };
+        let none = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
 
         assert!(standard.standard_mode());
         assert_eq!(standard.accepts(Choices::default()), Ok(()));
@@ -4087,8 +4101,8 @@ mod tests {
             .remove(0)
         };
         let hp = mac("ard-high-performance");
-        let takes = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, rdp_video: false };
-        let declines = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false };
+        let takes = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
+        let declines = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
         let passed = Choices { passthrough: Some(Passthrough::AppleMedia), ..Choices::default() };
         let h264 = Choices { passthrough: Some(Passthrough::AppleH264), ..Choices::default() };
 
@@ -4660,7 +4674,7 @@ vnc_password_ref = \"x\"")).unwrap();
             win.offers(),
             Offers { resize: true, audio: true, passthrough: &[Passthrough::RdpGraphics], placement: false, pipeline: true, standard_view: false, camera: true, microphone: true }
         );
-        let composes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false };
+        let composes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false, tight_memory: false };
         let plan = win.render_plan(passed, composes);
         assert!(plan.rdp_graphics);
         assert_eq!(plan.describe(), "the host's graphics pipeline, passed through");
@@ -4675,7 +4689,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
         // H.264 on the pipeline is the session's choice and the browser's answer
         // together, and neither alone.
-        let decodes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: true, rdp_video: true };
+        let decodes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: true, rdp_video: true, tight_memory: false };
         for pipeline in [Pipeline::AdaptiveDesktop, Pipeline::AdaptiveRegion] {
             let adaptive = Choices { pipeline, ..Choices::default() };
             assert_eq!(win.accepts(adaptive), Ok(()));
@@ -4703,7 +4717,7 @@ vnc_password_ref = \"x\"")).unwrap();
 
         // The whole desktop's H.264 is composed by nothing, so a browser that
         // decodes it and cannot compose is served it, and nothing else.
-        let video_only = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: true };
+        let video_only = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: true, tight_memory: false };
         let whole = Choices { pipeline: Pipeline::AdaptiveDesktop, ..Choices::default() };
         assert_eq!(win.beyond(whole, video_only), None);
         assert!(video_only.draws(Pipeline::AdaptiveDesktop));
@@ -4895,14 +4909,14 @@ vnc_password_ref = \"x\"")).unwrap();
             let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
             target.accepts(tiles).expect("the tiles are offered");
             let plan = target.render_plan(tiles, Decoders::ALL);
-            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
+            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, rdp_small_cache: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
             assert_eq!(plan.describe(), describe);
             assert_eq!(plan.passthrough(), Some(passthrough));
         }
         // The progressive and the lossless tiles are decoded by the module that
         // composes an RDP host's pipeline: a browser without it is beyond them, and
         // no other.
-        let moduleless = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false };
+        let moduleless = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
         for passthrough in [Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesLossless] {
             let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
             assert_eq!(target.beyond(tiles, moduleless), Some(passthrough));

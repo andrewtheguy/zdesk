@@ -128,7 +128,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use zdesk::rdp_client::proto::gfx::H264;
+use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
 use zdesk::rdp_client::proto::{rdpeai, rdpecam, rdpsnd};
 use zdesk::rdp_client::{
     AudioSink, Camera, CameraSink, Compositor, Connect, Event, Fed, Fidelity, Framebuffer, Input, MicrophoneSink,
@@ -145,6 +145,10 @@ const TARGET_ENV: &str = "ZDESK_UAT_TARGET";
 /// Whether to offer the graphics pipeline: anything but `0` or `false` does, and so
 /// does leaving it unset.
 const EGFX_ENV: &str = "ZDESK_UAT_EGFX";
+
+/// Whether to ask the host for the small bitmap cache, as a page whose memory is
+/// tight does: `1` does; unset, the large one, as a desktop's page does.
+const SMALL_CACHE_ENV: &str = "ZDESK_UAT_SMALL_CACHE";
 
 /// Whether a sound is playing on the remote for this run — set it to `1` when one is.
 /// A Windows host sends its format list only once something plays, so the
@@ -218,6 +222,14 @@ const F4: u8 = 0x3E;
 /// Whether this run offers the graphics pipeline — see [`EGFX_ENV`].
 fn egfx() -> bool {
     !matches!(std::env::var(EGFX_ENV).as_deref(), Ok("0") | Ok("false"))
+}
+
+/// The bitmap cache this run asks the host for — see [`SMALL_CACHE_ENV`].
+fn cache() -> BitmapCache {
+    match std::env::var(SMALL_CACHE_ENV).as_deref() {
+        Ok(v) if !matches!(v, "" | "0" | "false") => BitmapCache::Small,
+        _ => BitmapCache::Large,
+    }
 }
 
 /// Whether this run was told a sound is playing on the remote — see [`AUDIO_ENV`].
@@ -363,6 +375,7 @@ fn connect_with_voice() -> (Session, Receiver<Event>, Arc<Ear>, Arc<Eye>, Arc<Vo
         resize: egfx(),
         egfx: egfx(),
         h264: H264::Refused,
+        cache: cache(),
         autodetect: false,
         multitransport: false,
         paced: false,
@@ -1136,6 +1149,7 @@ async fn pass_h264() {
         resize: false,
         egfx: true,
         h264: H264::ByRegion,
+        cache: cache(),
         autodetect: false,
         multitransport: false,
         paced: false,
@@ -1232,6 +1246,7 @@ async fn stream_whole_desktop() {
         resize: true,
         egfx: true,
         h264: H264::WholeDesktop,
+        cache: cache(),
         autodetect: false,
         multitransport: false,
         paced: false,

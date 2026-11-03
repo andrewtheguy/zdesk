@@ -263,7 +263,11 @@ whose bitmap updates are sent as tiles by the gateway.
   not go by touch: a touchscreen says nothing of memory. Each module is loaded
   by the session that needs it, never at start-up, and a choice that is an edge
   case on such a device and would load a module for itself alone is greyed there
-  with the reason rather than offered. No choice is one today.
+  with the reason rather than offered. No choice is one today. Such a page says
+  so on its session socket (`tight_memory`, `tightMemory` in
+  `frontend/src/memoryBudget.ts`), and an RDP host is told it keeps the small
+  bitmap cache, 16 MiB rather than 100; any other page keeps the large one
+  ([The graphics pipeline](rdp-client.md#the-graphics-pipeline-ms-rdpegfx)).
 - On every page, what a session's picture alone loaded goes when the session
   leaves the page: at the gateway's `picker`, a takeover, or a logout. A
   WebAssembly memory grows and never
@@ -1770,7 +1774,7 @@ the pipeline.
   its display's stream; nothing is handed across the browser. Nothing of the
   page's compositor is loaded, so nothing it needs is asked of the browser: the
   page says on its session socket whether its `VideoDecoder` takes the host's
-  H.264, `rdp_video=true|false` (`frontend/src/videoCodecs.ts`), and a page
+  H.264, `rdp_video=true|false&tight_memory=true|false` (`frontend/src/videoCodecs.ts`), and a page
   that cannot compose the pipeline still starts such a target under H.264 full
   screen, with the other ways of drawing it greyed. It also costs an iPhone the
   least memory of the three ways of drawing the pipeline, and a fraction of the
@@ -2263,14 +2267,15 @@ Authentication and desktop ownership are separate:
    and `GET /api/targets`' state the gateway's version in `X-Zdesk-Version`,
    and a page whose own differs, a tab left open across an upgrade, opens no
    session and lists no target: it says both versions and offers a reload.
-3. `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false`
+3. `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false&tight_memory=true|false`
    attaches to the slot and reports the target picker or the current connected
-   target. `apple_media`, `page_hevc`, `rdp_graphics`, `rdp_h264` and
-   `rdp_video` are required: whether this browser's own decoder takes a High
+   target. `apple_media`, `page_hevc`, `rdp_graphics`, `rdp_h264`,
+   `rdp_video` and `tight_memory` are required: whether this browser's own decoder takes a High
    Performance Mac's HEVC, whether its page runs the software HEVC decoder,
    whether it composes an RDP host's graphics pipeline, whether it decodes the
-   H.264 such a pipeline may carry in regions, and whether it decodes the host's
-   H.264 of the whole desktop as video; see
+   H.264 such a pipeline may carry in regions, whether it decodes the host's
+   H.264 of the whole desktop as video, and whether its page has less memory
+   than a desktop's, for which an RDP host is told the small bitmap cache; see
    [the codec](#the-codec),
    [Decoded in the page](#decoded-in-the-page),
    [Apple's media stream, passed through](#apples-media-stream-passed-through) and

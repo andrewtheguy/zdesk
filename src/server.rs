@@ -860,7 +860,7 @@ struct ClaimResponse {
 
 /// Claim the single session slot. Returns the token the WebSocket
 /// must present as
-/// `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false`;
+/// `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false&tight_memory=true|false`;
 /// 409 while another browser is attached (retry with `force` to take over). The media sockets
 /// present the token alone — what this browser can take is the session socket's
 /// to say, and is required there ([`crate::ws`]).

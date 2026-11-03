@@ -68,7 +68,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use zdesk::rdp_client::proto::gfx::{self, H264, Message};
+use zdesk::rdp_client::proto::gfx::{self, BitmapCache, H264, Message};
 use zdesk::rdp_client::proto::wire::{Malformed, Reader};
 use zdesk::rdp_client::{Compositor, Connect, Event, Session};
 
@@ -470,6 +470,7 @@ async fn a_real_host_draws_for_a_slow_client() {
         resize: false,
         egfx: true,
         h264,
+        cache: BitmapCache::Large,
         autodetect,
         multitransport,
         paced,
