@@ -40,7 +40,8 @@ export function gatewayFetch(
 /// `screen` (the same numbers `connect` carries), whether its own decoder takes a High Performance
 /// Mac's picture, whether its page runs the software HEVC decoder that decodes that picture
 /// where the browser's own does not, whether it composes an RDP host's graphics pipeline,
-/// and whether it decodes the H.264 such a pipeline may carry.
+/// whether it decodes the H.264 such a pipeline may carry, and whether its memory
+/// is tight (`tightMemory`).
 /// All are here for one reason — a
 /// gateway holding a target whose engine a claim change ended reconnects it at
 /// attach time, before any message this client could send, and it must build that
@@ -57,6 +58,7 @@ export function gatewaySocketUrl(
     rdpGraphics: boolean;
     rdpH264: boolean;
     rdpVideo: boolean;
+    tightMemory: boolean;
   },
 ): string {
   const url = new URL(gatewayUrl(path));
@@ -72,6 +74,7 @@ export function gatewaySocketUrl(
     url.searchParams.set("rdp_graphics", String(client.rdpGraphics));
     url.searchParams.set("rdp_h264", String(client.rdpH264));
     url.searchParams.set("rdp_video", String(client.rdpVideo));
+    url.searchParams.set("tight_memory", String(client.tightMemory));
   }
   return url.toString();
 }

@@ -97,6 +97,10 @@ pub struct Connect {
     /// units ride in the commands handed on, for whoever composes them to decode.
     /// Means nothing without [`Connect::egfx`].
     pub h264: gfx_proto::H264,
+    /// The bitmap cache the host is told this client keeps
+    /// ([`gfx_proto::caps_advertise`]), which whoever composes the pipeline
+    /// keeps. Means nothing without [`Connect::egfx`].
+    pub cache: gfx_proto::BitmapCache,
     /// Whether to take part in the host's network detection (MS-RDPBCGR 2.2.14):
     /// claimed in the core data, with the connection type left for the host to
     /// detect, and answered on the message channel: at the caller's pace with
@@ -1154,6 +1158,8 @@ struct Dynamics {
     /// What the host is told of H.264 — [`Connect::h264`], on a pipeline that is
     /// passed.
     h264: gfx_proto::H264,
+    /// The bitmap cache the host is told of — [`Connect::cache`].
+    cache: gfx_proto::BitmapCache,
     /// Display Control, once the server has opened it.
     control: Option<u32>,
     /// What Display Control said it would lay out, which arrives after the channel
@@ -1406,6 +1412,7 @@ impl<'a> Active<'a> {
                 placement: config.placement,
                 egfx: config.egfx,
                 h264: config.h264,
+                cache: config.cache,
                 audio: wants_audio,
                 ..Dynamics::default()
             },
@@ -2511,7 +2518,7 @@ fn answer(message: dvc::Message<'_>, dynamics: &mut Dynamics) -> Result<Vec<Vec<
                 // Client-to-server graphics PDUs go raw: the host reads the RDPGFX
                 // header off the channel directly, and only the server-to-client
                 // direction is bulk-compressed.
-                let caps = gfx_proto::caps_advertise(dynamics.h264);
+                let caps = gfx_proto::caps_advertise(dynamics.h264, dynamics.cache);
                 vec![dvc::create_response(channel, dvc::ACCEPTED), dvc::data(channel, &caps)?]
             } else if name == rdpsnd::DVC_NAME && dynamics.audio {
                 debug!("rdp: the host opened sound redirection on dynamic channel {channel}");
@@ -2889,15 +2896,23 @@ mod tests {
         let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut dynamics).unwrap();
         assert_eq!(reply.len(), 2);
         assert_eq!(reply[0], dvc::create_response(12, dvc::ACCEPTED));
-        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::Refused)).unwrap());
+        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Large)).unwrap());
         assert_eq!(dynamics.graphics, Some(12));
 
         // Only a session that passes its pipeline to a page that decodes H.264
         // tells the host it may draw with it.
         let mut takes = Dynamics { egfx: true, h264: gfx_proto::H264::ByRegion, ..Dynamics::default() };
         let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut takes).unwrap();
-        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::ByRegion)).unwrap());
-        assert_ne!(gfx_proto::caps_advertise(gfx_proto::H264::ByRegion), gfx_proto::caps_advertise(gfx_proto::H264::Refused));
+        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::ByRegion, gfx_proto::BitmapCache::Large)).unwrap());
+        assert_ne!(
+            gfx_proto::caps_advertise(gfx_proto::H264::ByRegion, gfx_proto::BitmapCache::Large),
+            gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Large)
+        );
+
+        // A page with less memory than a desktop's is kept to the small cache.
+        let mut small = Dynamics { egfx: true, cache: gfx_proto::BitmapCache::Small, ..Dynamics::default() };
+        let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut small).unwrap();
+        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Small)).unwrap());
 
         // A session that asked for neither refuses both by name.
         let mut none = Dynamics::default();

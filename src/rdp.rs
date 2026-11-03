@@ -42,7 +42,7 @@ use crate::protocol::{
 use crate::rdp_camera;
 use crate::rdp_mic;
 use crate::session::Uplinks;
-use crate::rdp_client::proto::gfx::H264;
+use crate::rdp_client::proto::gfx::{BitmapCache, H264};
 use crate::rdp_client::proto::rdpsnd;
 use crate::rdp_client::{
     self as client, AudioSink, Connect, Event, Frame, Framebuffer, Input, MouseButton as RdpButton,
@@ -426,6 +426,7 @@ fn connect_config(
             (true, _) => H264::WholeDesktop,
             (false, _) => H264::Refused,
         },
+        cache: if plan.rdp_small_cache { BitmapCache::Small } else { BitmapCache::Large },
         // Every session that offers the pipeline takes the host's network
         // detection: MS-RDPBCGR 2.2.1.3.2 has the pipeline's flag require it, and
         // the detection alone changes nothing a Windows host draws.

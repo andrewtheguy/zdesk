@@ -2,7 +2,11 @@
 // with `bun test src/memoryBudget.test.ts` from frontend/.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { keepsEndedWorkers, saysOutOfMemory } from "./memoryBudget.ts";
+import {
+  keepsEndedWorkers,
+  saysOutOfMemory,
+  tightMemory,
+} from "./memoryBudget.ts";
 
 test("each engine's words for running out of memory are read as that", () => {
   for (const reason of [
@@ -72,4 +76,22 @@ test("an iPhone or an iPad keeps ended workers, and nothing else does", () => {
     }),
     false,
   );
+});
+
+test("an iPhone, an iPad, or 4 GB or less is tight memory, and nothing else is", () => {
+  const chrome =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+  const iphone =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Mobile/15E148 Safari/604.1";
+  const desktop = { userAgent: chrome, platform: "Win32", maxTouchPoints: 0 };
+  assert.equal(
+    tightMemory({ userAgent: iphone, platform: "iPhone", maxTouchPoints: 5 }),
+    true,
+  );
+  assert.equal(tightMemory({ ...desktop, deviceMemory: 4 }), true);
+  assert.equal(tightMemory({ ...desktop, deviceMemory: 8 }), false);
+  // A browser that does not say, Safari and Firefox on a desktop.
+  assert.equal(tightMemory(desktop), false);
+  // A touchscreen says nothing of memory.
+  assert.equal(tightMemory({ ...desktop, maxTouchPoints: 10 }), false);
 });

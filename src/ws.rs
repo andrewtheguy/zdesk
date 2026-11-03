@@ -4,7 +4,7 @@
 //! Five endpoints. Four present the claim token from `POST /api/session`; the
 //! display socket presents none.
 //!
-//! `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false`
+//! `/ws?session=<token>&apple_media=true|false&page_hevc=true|false&rdp_graphics=true|false&rdp_h264=true|false&rdp_video=true|false&tight_memory=true|false`
 //! is the session: it attaches to the single slot
 //! ([`crate::session::SessionManager`]). The URL also names what only this browser
 //! knows about itself — its screen (`w`/`h`/`scale`/`fit`, the same values `connect`
@@ -839,6 +839,9 @@ pub struct SessionParams {
     /// passed as video and composed by nothing ([`Decoders::rdp_video`]). Asked
     /// and required as the others are.
     rdp_video: bool,
+    /// Whether its page has less memory than a desktop's
+    /// ([`Decoders::tight_memory`]). Asked and required as the others are.
+    tight_memory: bool,
 }
 
 pub async fn handler(
@@ -865,6 +868,7 @@ pub async fn handler(
                 params.rdp_graphics,
                 params.rdp_h264,
                 params.rdp_video,
+                params.tight_memory,
             ),
             HEARTBEAT_TIMINGS,
             Arc::clone(&state.throughput.meters),
@@ -1846,46 +1850,52 @@ mod tests {
             Query::<SessionParams>::try_from_uri(&format!("/ws?{query}").parse::<Uri>().unwrap())
                 .map(|Query(p)| p)
         };
-        let full = parse("session=t&apple_media=true&page_hevc=false&rdp_graphics=false&rdp_h264=false&rdp_video=true")
+        let full = parse("session=t&apple_media=true&page_hevc=false&rdp_graphics=false&rdp_h264=false&rdp_video=true&tight_memory=false")
             .expect("a browser that takes the Mac's stream");
         assert!(full.apple_media);
         assert!(!full.page_hevc);
         assert!(!full.rdp_graphics);
         assert!(!full.rdp_h264);
         assert!(full.rdp_video);
+        assert!(!full.tight_memory);
         assert_eq!(full.session.as_deref(), Some("t"));
         let declines =
-            parse("session=t&w=430&h=932&scale=300&fit=true&apple_media=false&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=false")
+            parse("session=t&w=430&h=932&scale=300&fit=true&apple_media=false&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=false&tight_memory=true")
                 .expect("a browser that does not, naming its screen too");
         assert!(!declines.apple_media);
         assert!(declines.page_hevc);
         assert!(declines.rdp_graphics);
         assert!(declines.rdp_h264);
         assert!(!declines.rdp_video);
+        assert!(declines.tight_memory);
         assert_eq!(
             (declines.w, declines.h, declines.scale, declines.fit),
             (Some(430), Some(932), Some(300), Some(true))
         );
         assert!(parse("session=t").is_err(), "a socket that does not say is not a client");
         assert!(
-            parse("session=t&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=true").is_err(),
+            parse("session=t&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=true&tight_memory=false").is_err(),
             "nor one that does not say whether it takes the Mac's stream"
         );
         assert!(
-            parse("session=t&apple_media=true&rdp_graphics=true&rdp_h264=true&rdp_video=true").is_err(),
+            parse("session=t&apple_media=true&rdp_graphics=true&rdp_h264=true&rdp_video=true&tight_memory=false").is_err(),
             "nor one that does not say whether its page decodes the Mac's stream"
         );
         assert!(
-            parse("session=t&apple_media=true&page_hevc=true&rdp_h264=true&rdp_video=true").is_err(),
+            parse("session=t&apple_media=true&page_hevc=true&rdp_h264=true&rdp_video=true&tight_memory=false").is_err(),
             "nor one that does not say whether it composes a pipeline"
         );
         assert!(
-            parse("session=t&apple_media=true&page_hevc=true&rdp_graphics=true&rdp_video=true").is_err(),
+            parse("session=t&apple_media=true&page_hevc=true&rdp_graphics=true&rdp_video=true&tight_memory=false").is_err(),
             "nor one that does not say whether it decodes a pipeline's H.264"
         );
         assert!(
-            parse("session=t&apple_media=true&page_hevc=true&rdp_graphics=true&rdp_h264=true").is_err(),
+            parse("session=t&apple_media=true&page_hevc=true&rdp_graphics=true&rdp_h264=true&tight_memory=false").is_err(),
             "nor one that does not say whether it decodes a host's H.264 as video"
+        );
+        assert!(
+            parse("session=t&apple_media=true&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=true").is_err(),
+            "nor one that does not say whether its memory is tight"
         );
 
         let media = Query::<WsParams>::try_from_uri(&"/ws/audio?session=t".parse::<Uri>().unwrap())

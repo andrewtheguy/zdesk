@@ -67,10 +67,13 @@ const DAMAGE_CAP: usize = 64;
 /// in H.264 holds a few, and this is for a pattern that never lines up.
 const GPU_CAP: usize = 512;
 
-/// Most bytes the cache slots hold together. The caps this client advertises promise
-/// the host a 16 MiB cache (`SMALL_CACHE`), so a host that keeps its word never comes
-/// near this; one that does not is refused the entry rather than the process's memory.
-const CACHE_BUDGET: usize = 64 << 20;
+/// Most bytes the cache slots hold together: twice the cache the host confirmed
+/// ([`gfx::cache_bytes`]), 32 MiB for the small one and 200 MiB for the large, so a
+/// host that keeps its word never comes near it; one that does not is refused the
+/// entry rather than the process's memory. Before a confirmation, nothing is drawn.
+fn cache_budget(version: u32, flags: u32) -> usize {
+    2 * gfx::cache_bytes(version, flags)
+}
 
 /// Something the pipeline did that the session has to act on, in the order it
 /// happened.
@@ -414,6 +417,9 @@ pub struct Graphics {
     surfaces: BTreeMap<u16, Surface>,
     /// Rectangles lifted off surfaces, by slot, for the copies below.
     caches: BTreeMap<u16, Cache>,
+    /// Most bytes they hold together, by the cache the host confirmed
+    /// ([`cache_budget`]): the small one's until it has.
+    cache_budget: usize,
     /// A rectangle copied out of one surface on its way into another; reused.
     scratch: Vec<u8>,
     /// The output's size, from the last ResetGraphics. Nothing is mapped before one.
@@ -469,6 +475,7 @@ impl Graphics {
             buffer: Vec::new(),
             surfaces: BTreeMap::new(),
             caches: BTreeMap::new(),
+            cache_budget: cache_budget(gfx::CAPVERSION_8, gfx::CAPS_SMALL_CACHE),
             scratch: Vec::new(),
             output: None,
             frame: None,
@@ -1017,6 +1024,7 @@ impl Graphics {
             Message::CapsConfirm { version, flags } => {
                 self.tally.command(gfx::CMD_CAPS_CONFIRM);
                 info!("rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}");
+                self.cache_budget = cache_budget(version, flags);
                 updates.push(Update::Confirmed { version, flags });
             }
             Message::ResetGraphics { width, height, monitors } => {
@@ -1389,12 +1397,12 @@ impl Graphics {
         // bytes back first.
         let bytes = width as usize * height as usize * 4;
         let held: usize = self.caches.iter().filter(|(s, _)| **s != slot).map(|(_, held)| held.pixels.len()).sum();
-        if held + bytes > CACHE_BUDGET {
+        if held + bytes > self.cache_budget {
             warn!(
                 "rdp: dropping a {width}x{height} cache entry for slot {slot}: with the {} MiB of \
                  entries already held it is more than the {} MiB this client will cache",
                 held >> 20,
-                CACHE_BUDGET >> 20
+                self.cache_budget >> 20
             );
             // The host thinks the slot holds the new rectangle now; the old one must
             // not stand in for it.
@@ -1967,17 +1975,39 @@ mod tests {
     fn cache_slots_share_one_budget() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        // A 4096x4096 surface is exactly the cache budget when lifted whole.
+        // A 4096x2048 rectangle is exactly the small cache's budget when lifted whole.
         receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)]);
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 4096))]);
+        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 2048))]);
         assert_eq!(graphics.caches.len(), 1);
         receive(&mut graphics, &framebuffer, &[s2c(1, 2, (0, 0, 1, 1))]);
         assert!(!graphics.caches.contains_key(&2), "the second entry was dropped");
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 4096))]);
+        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 2048))]);
         assert_eq!(graphics.caches.len(), 1, "the slot's own entry is replaced, not added to");
         // Now the slot holds a small one; the next big one has room.
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 1, 1)), s2c(1, 2, (0, 0, 4096, 4095))]);
+        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 1, 1)), s2c(1, 2, (0, 0, 4096, 2047))]);
         assert_eq!(graphics.caches.len(), 2);
+    }
+
+    /// A host that confirms the large cache is given its budget: what the small
+    /// one's refuses fits, and past twice its 100 MiB is refused again.
+    #[test]
+    fn a_confirmed_large_cache_has_the_large_budget() {
+        let framebuffer = Framebuffer::new();
+        let mut graphics = Graphics::new();
+        let mut w = Writer::new();
+        w.u32_le(gfx::CAPVERSION_10);
+        w.u32_le(4);
+        w.u32_le(gfx::CAPS_AVC_DISABLED);
+        let large = pdu(CMD_CAPS_CONFIRM, &w.finish());
+        receive(&mut graphics, &framebuffer, &[large, reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)]);
+        // Three 64 MiB entries are 192 MiB, under the 200 MiB budget; a fourth is not.
+        for slot in 1..=4 {
+            receive(&mut graphics, &framebuffer, &[s2c(1, slot, (0, 0, 4096, 4096))]);
+        }
+        assert_eq!(graphics.caches.keys().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
+        // Confirmed again with the small cache, the budget is the small one's.
+        receive(&mut graphics, &framebuffer, &[confirm(), s2c(1, 5, (0, 0, 1, 1))]);
+        assert!(!graphics.caches.contains_key(&5));
     }
 
     /// A surface drawn into before it is mapped shows what was drawn at the EndFrame

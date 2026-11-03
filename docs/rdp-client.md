@@ -370,9 +370,21 @@ Windows host answers by opening `Microsoft::Windows::RDS::Graphics` over `drdynv
 — the same dynamic channel transport Display Control rides, so `drdynvc` is asked
 for whenever `egfx` is on. The client accepts the channel and at once advertises
 its capability sets (`proto/gfx.rs::caps_advertise`). A session started
-High quality advertises two: version 8 with the small cache, and version 10 with the
-small cache and `AVC_DISABLED`, so the host never sends H.264 and draws with the
-pipeline's other codecs alone. The host confirms one set and then draws.
+High quality advertises two: version 8, and version 10 with `AVC_DISABLED`, so the
+host never sends H.264 and draws with the pipeline's other codecs alone. The host
+confirms one set and then draws.
+
+Every set that has the flag carries `SMALL_CACHE`, a 16 MiB bitmap cache rather
+than the 100 MiB a host otherwise assumes ([MS-RDPEGFX section
+2.2.3.1](https://github.com/andrewtheguy/ms-rdp-specs/blob/main/MS-RDPEGFX.pdf)),
+only for a page whose memory is tight (`Connect::cache`, from the session
+socket's `tight_memory`). The cache is the page's: the compositor holds what the
+host lifts into it, so a phone is not asked for 100 MiB of it. A desktop's page
+is not held to the small one, since a host draws a desktop's repeated content
+from its cache rather than again, which a Lossless session, all planar, needs
+most. The compositor sizes its own budget from the set the host confirmed (3.3.1.1:
+version 10.3 implies the small cache), at twice that cache, and refuses an entry
+past it.
 
 High quality is not lossless unless the host is told to be
 ([Lossless, by the host's policy](#lossless-by-the-hosts-policy)). Of the codecs

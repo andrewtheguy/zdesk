@@ -128,7 +128,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use zdesk::rdp_client::proto::gfx::H264;
+use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
 use zdesk::rdp_client::proto::{rdpeai, rdpecam, rdpsnd};
 use zdesk::rdp_client::{
     AudioSink, Camera, CameraSink, Compositor, Connect, Event, Fed, Fidelity, Framebuffer, Input, MicrophoneSink,
@@ -363,6 +363,7 @@ fn connect_with_voice() -> (Session, Receiver<Event>, Arc<Ear>, Arc<Eye>, Arc<Vo
         resize: egfx(),
         egfx: egfx(),
         h264: H264::Refused,
+        cache: BitmapCache::Large,
         autodetect: false,
         multitransport: false,
         paced: false,
@@ -1136,6 +1137,7 @@ async fn pass_h264() {
         resize: false,
         egfx: true,
         h264: H264::ByRegion,
+        cache: BitmapCache::Large,
         autodetect: false,
         multitransport: false,
         paced: false,
@@ -1232,6 +1234,7 @@ async fn stream_whole_desktop() {
         resize: true,
         egfx: true,
         h264: H264::WholeDesktop,
+        cache: BitmapCache::Large,
         autodetect: false,
         multitransport: false,
         paced: false,

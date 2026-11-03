@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use std::collections::VecDeque;
 
-use zdesk::rdp_client::proto::gfx::H264;
+use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
 use zdesk::rdp_client::{AudioSink, Compositor, Connect, Event, Framebuffer, Input, MouseButton, Session};
 use tokio::sync::mpsc::Receiver;
 
@@ -91,6 +91,7 @@ fn connect() -> (Session, Page) {
         resize: offers.resize,
         egfx: target.egfx(),
         h264: H264::Refused,
+        cache: BitmapCache::Large,
         autodetect: false,
         multitransport: false,
         paced: false,
