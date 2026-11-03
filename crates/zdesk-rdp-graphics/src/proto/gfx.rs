@@ -536,13 +536,16 @@ pub fn cache_bytes(version: u32, flags: u32) -> usize {
 /// 2.2.3.2): a host that knows nothing newer keeps the small cache and still draws
 /// H.264.
 ///
-/// Without H.264 — a high quality session: version 8 and version 10, and no
+/// Without H.264 — a high quality session: versions 8, 10 and 10.7, and no
 /// H.264. Version 8 alone would have a Windows host draw with RemoteFX
-/// Progressive and planar; version 10 adds nothing the page has to decode — its
-/// point is `AVC_DISABLED`, which is a version-10 flag, so that a host which would
+/// Progressive and planar; the later sets add nothing the page has to decode — the
+/// point of 10 is `AVC_DISABLED`, which starts there, so that a host which would
 /// otherwise hand the parts of the desktop that move like video to H.264 is told
 /// not to: a lossy video codec would lose the detail the session was started to
-/// keep.
+/// keep. 10.7 carries it too, with `SCALEDMAP_DISABLE`, so that a current host
+/// confirms the newest set, as it does for Microsoft's own clients. 10.1 to 10.4
+/// are left out: what they add is H.264, so a host that knows one of them but not
+/// 10.7 settles on 10 and draws the same.
 ///
 /// With it — an adaptive session, whose page decodes the H.264 itself — every
 /// capability set from version 8 to 10.4, and 10.7. The host confirms the newest
@@ -567,7 +570,11 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
         BitmapCache::Large => 0,
     };
     let all: &[(u32, Option<u32>)] = match h264 {
-        H264::Refused => &[(CAPVERSION_8, Some(small)), (CAPVERSION_10, Some(small | CAPS_AVC_DISABLED))],
+        H264::Refused => &[
+            (CAPVERSION_8, Some(small)),
+            (CAPVERSION_10, Some(small | CAPS_AVC_DISABLED)),
+            (CAPVERSION_107, Some(small | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE)),
+        ],
         H264::ByRegion | H264::WholeDesktop => &[
             (CAPVERSION_8, Some(small)),
             (CAPVERSION_81, Some(CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)),
@@ -956,10 +963,11 @@ mod tests {
         assert_eq!(r.u16_le().unwrap(), CMD_CAPS_ADVERTISE);
         assert_eq!(r.u16_le().unwrap(), 0);
         assert_eq!(r.u32_le().unwrap() as usize, caps.len());
-        assert_eq!(r.u16_le().unwrap(), 2);
+        assert_eq!(r.u16_le().unwrap(), 3);
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED));
+        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE));
         assert!(r.is_empty());
 
         // With H.264: every set a host may settle on, none of them refusing it, but
@@ -1001,10 +1009,11 @@ mod tests {
         let caps = caps_advertise(H264::Refused, BitmapCache::Large);
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
-        assert_eq!(r.u16_le().unwrap(), 2);
+        assert_eq!(r.u16_le().unwrap(), 3);
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_AVC_DISABLED));
+        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE));
         assert!(r.is_empty());
         let caps = caps_advertise(H264::WholeDesktop, BitmapCache::Large);
         let mut r = Reader::new("a test", &caps);

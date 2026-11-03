@@ -64,14 +64,11 @@ const SET_HEADER: u16 = 4;
 /// `TS_CAPS_PROTOCOLVERSION`, which has one value.
 const PROTOCOL_VERSION: u16 = 0x0200;
 
-/// The platform this gateway runs on, as the General capability spells it. A server
-/// records it and acts on none of it.
-#[cfg(windows)]
-const PLATFORM: u16 = 1;
-#[cfg(target_os = "macos")]
-const PLATFORM: u16 = 3;
-#[cfg(not(any(windows, target_os = "macos")))]
-const PLATFORM: u16 = 4;
+/// The platform the General capability names ([MS-RDPBCGR] 2.2.7.1.1):
+/// `OSMAJORTYPE_OSX`, whatever the gateway runs on. The person is at a browser on
+/// any platform, not at the gateway, and a server records the value and acts on
+/// none of it, so one is said everywhere.
+const PLATFORM: u16 = 6;
 
 /// `extraFlags`:
 ///
