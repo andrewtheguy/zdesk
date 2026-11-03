@@ -370,9 +370,11 @@ Windows host answers by opening `Microsoft::Windows::RDS::Graphics` over `drdynv
 — the same dynamic channel transport Display Control rides, so `drdynvc` is asked
 for whenever `egfx` is on. The client accepts the channel and at once advertises
 its capability sets (`proto/gfx.rs::caps_advertise`). A session started
-High quality advertises two: version 8, and version 10 with `AVC_DISABLED`, so the
-host never sends H.264 and draws with the pipeline's other codecs alone. The host
-confirms one set and then draws.
+High quality advertises three: version 8, and versions 10 and 10.7 with
+`AVC_DISABLED`, so the host never sends H.264 and draws with the pipeline's other
+codecs alone. A current Windows host confirms 10.7, as it does for Microsoft's own
+clients, and draws with the same codecs it does under 10; 10.1 to 10.4 add only
+H.264, so they are left out. The host confirms one set and then draws.
 
 Every set that has the flag carries `SMALL_CACHE`, a 16 MiB bitmap cache rather
 than the 100 MiB a host otherwise assumes ([MS-RDPEGFX section
