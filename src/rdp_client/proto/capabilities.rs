@@ -65,10 +65,10 @@ const SET_HEADER: u16 = 4;
 const PROTOCOL_VERSION: u16 = 0x0200;
 
 /// The platform the General capability names ([MS-RDPBCGR] 2.2.7.1.1):
-/// `OSMAJORTYPE_OSX`, whatever the gateway runs on. The person is at a browser on
-/// any platform, not at the gateway, and a server records the value and acts on
-/// none of it, so one is said everywhere.
-const PLATFORM: u16 = 6;
+/// `OSMAJORTYPE_UNSPECIFIED`, whatever the gateway runs on. The person is at a
+/// browser on any platform, not at the gateway, and a server records the value and
+/// acts on none of it, so no platform is claimed.
+const PLATFORM: u16 = 0;
 
 /// `extraFlags`:
 ///
