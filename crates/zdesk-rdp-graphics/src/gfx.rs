@@ -1025,6 +1025,7 @@ impl Graphics {
                 self.tally.command(gfx::CMD_CAPS_CONFIRM);
                 info!("rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}");
                 self.cache_budget = cache_budget(version, flags);
+                self.fit_caches();
                 updates.push(Update::Confirmed { version, flags });
             }
             Message::ResetGraphics { width, height, monitors } => {
@@ -1379,6 +1380,27 @@ impl Graphics {
             }
         }
         self.scratch = scratch;
+    }
+
+    /// Evict cache entries, the largest first, until what they hold together fits
+    /// the budget: a confirmation of a smaller cache than the last one's does not
+    /// leave the larger one's entries held past it.
+    fn fit_caches(&mut self) {
+        let mut held: usize = self.caches.values().map(|cache| cache.pixels.len()).sum();
+        while held > self.cache_budget {
+            let Some(slot) = self.caches.iter().max_by_key(|(_, cache)| cache.pixels.len()).map(|(slot, _)| *slot)
+            else {
+                break;
+            };
+            let evicted = self.caches.remove(&slot).expect("the slot just found");
+            held -= evicted.pixels.len();
+            warn!(
+                "rdp: evicting cache slot {slot}: the {} MiB of entries held are more than the {} MiB the \
+                 confirmed cache allows",
+                (held + evicted.pixels.len()) >> 20,
+                self.cache_budget >> 20
+            );
+        }
     }
 
     /// Lift one rectangle of a surface into a cache slot, replacing whatever the slot
@@ -2005,9 +2027,14 @@ mod tests {
             receive(&mut graphics, &framebuffer, &[s2c(1, slot, (0, 0, 4096, 4096))]);
         }
         assert_eq!(graphics.caches.keys().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
-        // Confirmed again with the small cache, the budget is the small one's.
-        receive(&mut graphics, &framebuffer, &[confirm(), s2c(1, 5, (0, 0, 1, 1))]);
-        assert!(!graphics.caches.contains_key(&5));
+        // Confirmed again with the small cache, the entries held are evicted until
+        // they fit its budget, and a new one is taken within it.
+        receive(&mut graphics, &framebuffer, &[confirm()]);
+        let held: usize = graphics.caches.values().map(|cache| cache.pixels.len()).sum();
+        assert!(held <= graphics.cache_budget, "{held} bytes held past the {} budget", graphics.cache_budget);
+        assert_eq!(graphics.cache_budget, 32 << 20);
+        receive(&mut graphics, &framebuffer, &[s2c(1, 5, (0, 0, 1, 1))]);
+        assert!(graphics.caches.contains_key(&5));
     }
 
     /// A surface drawn into before it is mapped shows what was drawn at the EndFrame

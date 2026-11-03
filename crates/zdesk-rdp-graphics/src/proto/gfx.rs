@@ -525,7 +525,10 @@ pub fn cache_bytes(version: u32, flags: u32) -> usize {
 /// not, with the bitmap cache it keeps: `SMALL_CACHE` on every set that has the
 /// flag with [`BitmapCache::Small`], and on none with [`BitmapCache::Large`].
 /// Version 10.3 has no such flag and implies the small cache, so a host that
-/// settles there keeps the small one whatever was asked.
+/// settles there keeps the small one whatever was asked. Version 10.1 has no flag
+/// either and implies the large one, so it is left out with the small cache: a
+/// host that knows 10.1 but not 10.2 settles on 10, which takes the same H.264
+/// but for a YUV444 layout no session asks for, and full screen needs 10.3.
 ///
 /// Without H.264 — a high quality session: version 8 and version 10, and no
 /// H.264. Version 8 alone would have a Windows host draw with RemoteFX
@@ -557,7 +560,7 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
         BitmapCache::Small => CAPS_SMALL_CACHE,
         BitmapCache::Large => 0,
     };
-    let sets: &[(u32, Option<u32>)] = match h264 {
+    let all: &[(u32, Option<u32>)] = match h264 {
         H264::Refused => &[(CAPVERSION_8, Some(small)), (CAPVERSION_10, Some(small | CAPS_AVC_DISABLED))],
         H264::ByRegion | H264::WholeDesktop => &[
             (CAPVERSION_8, Some(small)),
@@ -571,6 +574,8 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
             (CAPVERSION_107, Some(small | CAPS_SCALEDMAP_DISABLE | whole)),
         ],
     };
+    let sets: Vec<_> =
+        all.iter().filter(|(version, _)| !(cache == BitmapCache::Small && *version == CAPVERSION_101)).collect();
     let mut w = Writer::with_capacity(2 + sets.len() * 12 + 12);
     w.u16_le(u16::try_from(sets.len()).expect("a handful"));
     for (version, flags) in sets {
@@ -945,20 +950,18 @@ mod tests {
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED));
         assert!(r.is_empty());
 
-        // With H.264: every set a host may settle on, none of them refusing it.
+        // With H.264: every set a host may settle on, none of them refusing it, but
+        // 10.1, which cannot ask for the small cache.
         let caps = caps_advertise(H264::ByRegion, BitmapCache::Small);
         let mut r = Reader::new("a test", &caps);
         assert_eq!(r.u16_le().unwrap(), CMD_CAPS_ADVERTISE);
         assert_eq!(r.u16_le().unwrap(), 0);
         assert_eq!(r.u32_le().unwrap() as usize, caps.len());
-        assert_eq!(r.u16_le().unwrap(), 8);
+        assert_eq!(r.u16_le().unwrap(), 7);
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE));
-        assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
-        assert_eq!(r.bytes(16).unwrap(), &[0; 16]);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_102, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_103, 4, 0));
         assert_eq!(set(), (CAPVERSION_104, 4, CAPS_SMALL_CACHE));
@@ -970,20 +973,19 @@ mod tests {
         let caps = caps_advertise(H264::WholeDesktop, BitmapCache::Small);
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
-        assert_eq!(r.u16_le().unwrap(), 8);
+        assert_eq!(r.u16_le().unwrap(), 7);
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE));
-        r.skip(24).unwrap();
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_102, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_103, 4, CAPS_AVC_THINCLIENT));
         assert_eq!(set(), (CAPVERSION_104, 4, CAPS_SMALL_CACHE | CAPS_AVC_THINCLIENT));
         assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT));
         assert!(r.is_empty());
 
-        // The large cache: the same sets, none of them asking for the small one.
+        // The large cache: the same sets, 10.1 among them, none of them asking for
+        // the small one.
         let caps = caps_advertise(H264::Refused, BitmapCache::Large);
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
@@ -1000,7 +1002,8 @@ mod tests {
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
         assert_eq!(set(), (CAPVERSION_81, 4, CAPS_AVC420_ENABLED));
         assert_eq!(set(), (CAPVERSION_10, 4, 0));
-        r.skip(24).unwrap();
+        assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
+        r.skip(16).unwrap();
         let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
         assert_eq!(set(), (CAPVERSION_102, 4, 0));
         assert_eq!(set(), (CAPVERSION_103, 4, CAPS_AVC_THINCLIENT));

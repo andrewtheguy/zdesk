@@ -664,7 +664,9 @@ with.
 With `Connect::h264` set to `H264::ByRegion` or `H264::WholeDesktop`, a session
 started with the picker's *H.264 region* or *H.264 full screen*, the session
 tells the host it takes H.264, which nothing here decodes: the advertise is
-every set from version 8 to 10.4, and 10.7, none with `AVC_DISABLED`. 10.5 and 10.6 are left out and 10.7 carries
+every set from version 8 to 10.4, and 10.7, none with `AVC_DISABLED`; 10.1 only
+with the large cache, since it has no flag to ask for the small one, and a host
+that settles on 10 in its place draws the same. 10.5 and 10.6 are left out and 10.7 carries
 `SCALEDMAP_DISABLE`, since from 10.5 a host may map a surface through the scaled
 mappings, which this client ignores, and only 10.7 has a flag to say so. Version
 10.1's capability data is sixteen reserved bytes where every other set's is four
