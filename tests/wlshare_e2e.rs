@@ -802,22 +802,14 @@ async fn picture_of(
                             let frame = still.as_mut().expect(
                                 "a still that starts the stream before any that continues it",
                             );
-                            // What the bodies before left held back is theirs; the
-                            // body's flushed blocks decode whole, and its bitmap is
-                            // what the frame holds back past them.
-                            frame.collect_to_writer(std::io::sink()).unwrap();
-                            let before = {
-                                let (a, b) = frame.peek();
-                                a.len() + b.len()
-                            };
+                            // The body's flushed blocks decode whole, and its bitmap
+                            // is what they decode to, which the frame hands out as
+                            // soon as they are decoded.
                             let (read, _) = frame
                                 .decode_from_to(source, &mut [])
                                 .expect("the page's decoder reads wlshare's still stream");
                             assert_eq!(read, source.len(), "a still body of whole blocks");
-                            let bitmap = {
-                                let (a, b) = frame.peek();
-                                [a, b].concat().split_off(before)
-                            };
+                            let bitmap = frame.collect().expect("the still stream's frame");
                             let (mut planes, mut bgrx) = (Vec::new(), Vec::new());
                             zdesk_rdp_graphics::proto::planar::decompress(
                                 &bitmap,
