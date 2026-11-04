@@ -27,7 +27,7 @@ belong in the linked documentation.
 ## Workflow
 
 - Strict no backward-compatibility or legacy paths.
-- Do not run `cargo fmt`.
+- For codex only no `cargo fmt` because when it does git diff, it gets stuck after cargo fmt.
 - No squash merges.
 - After Rust changes, run `cargo clippy --all-targets -- -D warnings` and
   `cargo test --lib`, once each. Run `cargo test --tests` only when the change
