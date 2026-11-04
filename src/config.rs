@@ -654,7 +654,7 @@ pub enum Pipeline {
     /// With the pipeline's codecs other than H.264.
     #[default]
     HighQuality,
-    /// ALPHA. The whole desktop in H.264 (`AVC_THINCLIENT`, MS-RDPEGFX
+    /// BETA. The whole desktop in H.264 (`AVC_THINCLIENT`, MS-RDPEGFX
     /// 2.2.3.6), which a Windows host answers in AVC444v2, rate-controlled by the
     /// host to the page's link.
     ///
