@@ -9,7 +9,7 @@
 // H.264 is too unlikely to grey for, so having one is the answer, and a decoder
 // that refuses the stream says so in the session. wlshare's is asked, since its
 // video is the target's default picture and a browser whose decoder refuses it
-// would show nothing where the progressive tiles would draw: both profiles
+// would show nothing where the progressive tiles would draw: the profile
 // wlshare codes, as a doubt reads as no, a missing `VideoDecoder` among them.
 //
 // An RDP host's is asked too, and the gateway is told (`rdp_video`): it is what
@@ -27,11 +27,10 @@
 
 /**
  * wlshare's H.264 of a 1080p desktop at the 60 fps its level is figured at
- * (level 4.2), in the shape the gateway announces it: Constrained Baseline,
- * libx264's, and High, a VA-API encoder's. Which one a session gets is the
- * host's, so both are asked.
+ * (level 4.2), in the shape the gateway announces it: High, which libx264 and
+ * a VA-API encoder both code.
  */
-const WLSHARE_PROBES = ["avc1.42C02A", "avc1.64002A"];
+const WLSHARE_PROBE = "avc1.64002A";
 
 /**
  * An RDP host's H.264, as a Windows 11 host's sequence parameter set names it:
@@ -63,12 +62,12 @@ export async function askVideoCodecs(): Promise<void> {
     return;
   }
   const [wlshare, rdp] = await Promise.all([
-    Promise.all(WLSHARE_PROBES.map(decodes)),
+    decodes(WLSHARE_PROBE),
     decodes(RDP_PROBE),
   ]);
   answers = {
     appleH264: typeof VideoDecoder !== "undefined",
-    wlshareH264: wlshare.every(Boolean),
+    wlshareH264: wlshare,
     rdpVideo: rdp,
   };
 }
@@ -89,7 +88,7 @@ export function decodesAppleH264(): boolean {
   return answered().appleH264;
 }
 
-/** Whether its decoder said it takes both of wlshare's H.264 profiles. */
+/** Whether its decoder said it takes wlshare's H.264. */
 export function decodesWlshareH264(): boolean {
   return answered().wlshareH264;
 }

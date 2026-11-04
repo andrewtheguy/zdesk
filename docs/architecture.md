@@ -474,10 +474,10 @@ cannot start the target. The pipeline's, which is no choice, disables Start for
 an RDP target with the pipeline on. No question is asked about a Mac's
 H.264: it is offered to every browser with a `VideoDecoder`, and one whose
 decoder does not take it finds out from that decoder, in the session.
-wlshare's is asked, in both profiles wlshare codes (Constrained Baseline and
-High), since its video is that target's default picture: a browser whose
-decoder doubts either has the video and the tiles with motion greyed, leaving
-the progressive tiles. Nor is a question asked about a Standard Mac's Adaptive
+wlshare's is asked, at High profile, which wlshare codes in hardware and in
+software alike, since its video is that target's default picture: a browser
+whose decoder doubts it has the video and the tiles with motion greyed,
+leaving the progressive tiles. Nor is a question asked about a Standard Mac's Adaptive
 picture, which every page decodes in WebAssembly. Both refuse a `connect` whose
 session would pass what the browser cannot take, and end the session of an
 owner that comes back answering no, which lands on the picker

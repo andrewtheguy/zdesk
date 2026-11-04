@@ -41,10 +41,10 @@ function decoder(takes: (codec: string) => boolean | "throws"): string[] {
   return asked;
 }
 
-test("wlshare's H.264 is asked in both of its profiles, and an RDP host's", async () => {
+test("wlshare's H.264 is asked in its profile, and an RDP host's", async () => {
   const asked = decoder(() => true);
   await askVideoCodecs();
-  assert.deepEqual(asked.sort(), ["avc1.42C02A", "avc1.4d4020", "avc1.64002A"]);
+  assert.deepEqual(asked.sort(), ["avc1.4d4020", "avc1.64002A"]);
   assert.equal(decodesWlshareH264(), true);
   assert.equal(decodesAppleH264(), true);
   assert.equal(decodesRdpVideo(), true);
@@ -57,13 +57,11 @@ test("a decoder that refuses an RDP host's H.264 is offered none as video", asyn
   assert.equal(decodesWlshareH264(), true);
 });
 
-test("a decoder that refuses either profile, or doubts it, is offered no wlshare H.264", async () => {
-  for (const refuses of ["avc1.42C02A", "avc1.64002A"]) {
-    decoder((codec) => codec !== refuses);
-    await askVideoCodecs();
-    assert.equal(decodesWlshareH264(), false, refuses);
-    assert.equal(decodesAppleH264(), true, "the Mac's is not asked");
-  }
+test("a decoder that refuses wlshare's profile, or doubts it, is offered no wlshare H.264", async () => {
+  decoder((codec) => codec !== "avc1.64002A");
+  await askVideoCodecs();
+  assert.equal(decodesWlshareH264(), false);
+  assert.equal(decodesAppleH264(), true, "the Mac's is not asked");
   decoder(() => "throws");
   await askVideoCodecs();
   assert.equal(decodesWlshareH264(), false);
