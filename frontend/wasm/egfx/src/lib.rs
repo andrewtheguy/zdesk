@@ -451,9 +451,14 @@ pub struct WlshareTiles {
     bitmap: Vec<u8>,
     planes: Vec<u8>,
     pixels: Vec<u8>,
-    /// The still stream's frame, from the body that began it; none before one,
-    /// or after a body that did not decode.
-    still: Option<ruzstd::decoding::FrameDecoder>,
+    /// The zstd decoders, kept so that their buffers and tables are made once,
+    /// not for every frame: a lossless tile's, reset for each tile, and the
+    /// still stream's, reset by a body that begins a stream.
+    planar: ruzstd::decoding::FrameDecoder,
+    still: ruzstd::decoding::FrameDecoder,
+    /// Whether `still` holds a stream: not before a body begins one, nor after
+    /// a body that did not decode.
+    in_still: bool,
 }
 
 #[wasm_bindgen]
@@ -467,7 +472,13 @@ impl WlshareTiles {
             bitmap: Vec::new(),
             planes: Vec::new(),
             pixels: Vec::new(),
-            still: None,
+            planar: ruzstd::decoding::FrameDecoder::new(),
+            still: {
+                let mut frame = ruzstd::decoding::FrameDecoder::new();
+                frame.set_max_window_size(STILL_WINDOW_MOST);
+                frame
+            },
+            in_still: false,
         }
     }
 
@@ -532,24 +543,7 @@ impl WlshareTiles {
     /// rectangle can be ([`planar_most`]), which is not read past.
     pub fn planar(&mut self, w: u16, h: u16, body: &[u8]) -> Result<Vec<u8>, JsError> {
         let fail = |e: String| JsError::new(&format!("a {w}x{h} lossless tile: {e}"));
-        self.bitmap.clear();
-        let most = planar_most(w, h);
-        let mut source = body;
-        let frame = ruzstd::decoding::StreamingDecoder::new(&mut source)
-            .map_err(|e| fail(e.to_string()))?;
-        let mut capped = std::io::Read::take(frame, most as u64 + 1);
-        std::io::Read::read_to_end(&mut capped, &mut self.bitmap)
-            .map_err(|e| fail(e.to_string()))?;
-        if self.bitmap.len() > most {
-            self.bitmap = Vec::new();
-            return Err(fail(format!(
-                "a zstd frame of more than the {most} bytes a planar bitmap of it can be"
-            )));
-        }
-        drop(capped);
-        if !source.is_empty() {
-            return Err(fail(format!("{} bytes past its zstd frame", source.len())));
-        }
+        self.read_planar(w, h, body).map_err(fail)?;
         zdesk_rdp_graphics::proto::planar::decompress(
             &self.bitmap,
             &mut self.planes,
@@ -567,6 +561,30 @@ impl WlshareTiles {
             .collect())
     }
 
+    /// `body`'s zstd frame read into [`Self::bitmap`], by the lossless tiles'
+    /// decoder, and no further than what a planar bitmap of a `w`×`h` rectangle
+    /// can be.
+    fn read_planar(&mut self, w: u16, h: u16, body: &[u8]) -> Result<(), String> {
+        self.bitmap.clear();
+        let most = planar_most(w, h);
+        let mut source = body;
+        let frame =
+            ruzstd::decoding::StreamingDecoder::new_with_decoder(&mut source, &mut self.planar)
+                .map_err(|e| e.to_string())?;
+        let mut capped = std::io::Read::take(frame, most as u64 + 1);
+        std::io::Read::read_to_end(&mut capped, &mut self.bitmap).map_err(|e| e.to_string())?;
+        if self.bitmap.len() > most {
+            self.bitmap = Vec::new();
+            return Err(format!(
+                "a zstd frame of more than the {most} bytes a planar bitmap of it can be"
+            ));
+        }
+        if !source.is_empty() {
+            return Err(format!("{} bytes past its zstd frame", source.len()));
+        }
+        Ok(())
+    }
+
     /// The pixels of `body`, one of wlshare's lossless tiles where the desktop
     /// is still: its still stream's bytes of a planar bitmap of exactly a `w`×`h`
     /// rectangle, read after the bodies before it, as `R, G, B, A` rows for the
@@ -575,9 +593,7 @@ impl WlshareTiles {
     /// holds more than any planar bitmap of the rectangle can be, which is not
     /// read past; the stream is lost then, until a body starts it over.
     pub fn still(&mut self, w: u16, h: u16, body: &[u8]) -> Result<Vec<u8>, JsError> {
-        let read = self.read_still(w, h, body);
-        if let Err(e) = read {
-            self.still = None;
+        if let Err(e) = self.read_still(w, h, body) {
             return Err(JsError::new(&format!("a {w}x{h} still lossless tile: {e}")));
         }
         zdesk_rdp_graphics::proto::planar::decompress(
@@ -588,7 +604,7 @@ impl WlshareTiles {
             h,
         )
         .map_err(|e| {
-            self.still = None;
+            self.in_still = false;
             JsError::new(&format!("a {w}x{h} still lossless tile: {e}"))
         })?;
         Ok(self
@@ -604,18 +620,26 @@ impl WlshareTiles {
     /// time, the frame held to [`STILL_WINDOW_MOST`] and the body to what a planar
     /// bitmap of the rectangle can be, the bitmap what the frame holds back past
     /// what the bodies before left ([`ruzstd::decoding::FrameDecoder::peek`]).
+    /// One that does not read loses the stream.
     fn read_still(&mut self, w: u16, h: u16, body: &[u8]) -> Result<(), String> {
+        let read = self.read_still_blocks(w, h, body);
+        if read.is_err() {
+            self.in_still = false;
+        }
+        read
+    }
+
+    fn read_still_blocks(&mut self, w: u16, h: u16, body: &[u8]) -> Result<(), String> {
         let mut source = body;
         if body.starts_with(&ZSTD_MAGIC) {
-            let mut frame = ruzstd::decoding::FrameDecoder::new();
-            frame.set_max_window_size(STILL_WINDOW_MOST);
-            frame.init(&mut source).map_err(|e| e.to_string())?;
-            self.still = Some(frame);
+            self.in_still = false;
+            self.still.init(&mut source).map_err(|e| e.to_string())?;
+            self.in_still = true;
         }
-        let frame = self
-            .still
-            .as_mut()
-            .ok_or("a body that continues no stream")?;
+        if !self.in_still {
+            return Err("a body that continues no stream".into());
+        }
+        let frame = &mut self.still;
         // What the bodies before left held back is theirs.
         frame
             .collect_to_writer(io::sink())
@@ -679,5 +703,87 @@ fn planar_most(w: u16, h: u16) -> usize {
 impl Default for WlshareTiles {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A raw block of `content`, its frame's last or not.
+    fn raw_block(content: &[u8], last: bool) -> Vec<u8> {
+        let header = ((content.len() as u32) << 3) | u32::from(last);
+        let mut block = header.to_le_bytes()[..3].to_vec();
+        block.extend_from_slice(content);
+        block
+    }
+
+    /// A lossless tile's body: a frame of `content` alone, its size given in a byte.
+    fn tile(content: &[u8]) -> Vec<u8> {
+        let mut body = ZSTD_MAGIC.to_vec();
+        body.extend([0x20, u8::try_from(content.len()).unwrap()]);
+        body.extend(raw_block(content, true));
+        body
+    }
+
+    /// The body that begins a still stream, of a window of `1 << window_log`
+    /// bytes, with `content`'s block.
+    fn still_start(window_log: u8, content: &[u8]) -> Vec<u8> {
+        let mut body = ZSTD_MAGIC.to_vec();
+        body.extend([0x00, (window_log - 10) << 3]);
+        body.extend(raw_block(content, false));
+        body
+    }
+
+    fn bytes(seed: u8, len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
+            .collect()
+    }
+
+    /// The tiles' one decoder reads each tile as a decoder of its own would,
+    /// after a tile that did not decode too.
+    #[test]
+    fn one_decoder_reads_every_tile() {
+        let mut tiles = WlshareTiles::new();
+        for (seed, len) in [(1, 200), (2, 17), (3, 255)] {
+            let content = bytes(seed, len);
+            tiles.read_planar(8, 8, &tile(&content)).unwrap();
+            assert_eq!(tiles.bitmap, content);
+        }
+        let cut = tile(&bytes(4, 100));
+        assert!(tiles.read_planar(8, 8, &cut[..cut.len() - 10]).is_err());
+        let mut past = tile(&bytes(5, 100));
+        past.push(0);
+        assert!(tiles.read_planar(8, 8, &past).is_err());
+        let content = bytes(6, 90);
+        tiles.read_planar(8, 8, &tile(&content)).unwrap();
+        assert_eq!(tiles.bitmap, content);
+    }
+
+    /// A body that begins a still stream starts it over in the same decoder,
+    /// which a body that does not decode leaves holding no stream.
+    #[test]
+    fn a_still_stream_starts_over_in_its_decoder() {
+        let mut tiles = WlshareTiles::new();
+        for seed in [10, 20] {
+            let (first, next) = (bytes(seed, 120), bytes(seed + 1, 60));
+            tiles.read_still(8, 8, &still_start(20, &first)).unwrap();
+            assert_eq!(tiles.bitmap, first);
+            tiles.read_still(8, 8, &raw_block(&next, false)).unwrap();
+            assert_eq!(tiles.bitmap, next);
+            // A last block, which would end the stream's frame.
+            assert!(tiles.read_still(8, 8, &raw_block(&next, true)).is_err());
+            assert!(tiles.read_still(8, 8, &raw_block(&next, false)).is_err());
+        }
+        // The window is still held to wlshare's promise.
+        assert!(
+            tiles
+                .read_still(8, 8, &still_start(24, &bytes(30, 10)))
+                .is_err()
+        );
+        let content = bytes(40, 50);
+        tiles.read_still(8, 8, &still_start(23, &content)).unwrap();
+        assert_eq!(tiles.bitmap, content);
     }
 }
