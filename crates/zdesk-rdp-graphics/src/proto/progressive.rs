@@ -69,7 +69,11 @@ const BANDS: [(usize, usize); 10] = [
 const LL3: usize = 9;
 
 fn refuse(field: &'static str, value: impl Into<u64>) -> Malformed {
-    Malformed::Refused { what: WHAT, field, value: value.into() }
+    Malformed::Refused {
+        what: WHAT,
+        field,
+        value: value.into(),
+    }
 }
 
 /// One quantization value per sub-band, in [`BANDS`] order.
@@ -83,16 +87,16 @@ impl Quant {
     fn read(r: &mut Reader<'_>) -> Result<Self, Malformed> {
         let b = [r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?];
         Ok(Self([
-            b[3] >> 4,   // HL1
-            b[4] & 0xF,  // LH1
-            b[4] >> 4,   // HH1
-            b[2] & 0xF,  // HL2
-            b[2] >> 4,   // LH2
-            b[3] & 0xF,  // HH2
-            b[0] >> 4,   // HL3
-            b[1] & 0xF,  // LH3
-            b[1] >> 4,   // HH3
-            b[0] & 0xF,  // LL3
+            b[3] >> 4,  // HL1
+            b[4] & 0xF, // LH1
+            b[4] >> 4,  // HH1
+            b[2] & 0xF, // HL2
+            b[2] >> 4,  // LH2
+            b[3] & 0xF, // HH2
+            b[0] >> 4,  // HL3
+            b[1] & 0xF, // LH3
+            b[1] >> 4,  // HH3
+            b[0] & 0xF, // LL3
         ]))
     }
 
@@ -130,7 +134,11 @@ struct ProgQuant {
 impl ProgQuant {
     fn read(r: &mut Reader<'_>) -> Result<Self, Malformed> {
         r.u8()?; // quality
-        Ok(Self { y: Quant::read(r)?, cb: Quant::read(r)?, cr: Quant::read(r)? })
+        Ok(Self {
+            y: Quant::read(r)?,
+            cb: Quant::read(r)?,
+            cr: Quant::read(r)?,
+        })
     }
 }
 
@@ -244,7 +252,9 @@ impl Default for Progressive {
 
 impl Progressive {
     pub fn new() -> Self {
-        Self { surfaces: BTreeMap::new() }
+        Self {
+            surfaces: BTreeMap::new(),
+        }
     }
 
     /// A graphics frame begins: no tile has been decoded in it yet.
@@ -266,7 +276,11 @@ impl Progressive {
 
     /// The bytes every surface's tiles hold but `surface`'s.
     pub fn held_except(&self, surface: u16) -> usize {
-        self.surfaces.iter().filter(|(id, _)| **id != surface).map(|(_, grid)| grid.made * TILE_BYTES).sum()
+        self.surfaces
+            .iter()
+            .filter(|(id, _)| **id != surface)
+            .map(|(_, grid)| grid.made * TILE_BYTES)
+            .sum()
     }
 
     /// Decode one PDU's worth of blocks for a surface of `width`×`height`, and hand
@@ -284,7 +298,10 @@ impl Progressive {
         mut paint: impl FnMut(Rect16, &[u8], usize),
     ) -> Result<(), Malformed> {
         let others = self.held_except(surface);
-        let grid = self.surfaces.entry(surface).or_insert_with(|| Grid::new(width, height));
+        let grid = self
+            .surfaces
+            .entry(surface)
+            .or_insert_with(|| Grid::new(width, height));
         if grid.width != width || grid.height != height {
             *grid = Grid::new(width, height);
         }
@@ -365,9 +382,18 @@ fn read_region(
     let mut rects = Vec::with_capacity(usize::from(num_rects));
     for _ in 0..num_rects {
         let (x, y, w, h) = (r.u16_le()?, r.u16_le()?, r.u16_le()?, r.u16_le()?);
-        let right = x.checked_add(w).ok_or_else(|| refuse("a region rectangle past 65535", w))?;
-        let bottom = y.checked_add(h).ok_or_else(|| refuse("a region rectangle past 65535", h))?;
-        rects.push(Rect16 { left: x, top: y, right, bottom });
+        let right = x
+            .checked_add(w)
+            .ok_or_else(|| refuse("a region rectangle past 65535", w))?;
+        let bottom = y
+            .checked_add(h)
+            .ok_or_else(|| refuse("a region rectangle past 65535", h))?;
+        rects.push(Rect16 {
+            left: x,
+            top: y,
+            right,
+            bottom,
+        });
     }
     let mut quants = Vec::with_capacity(usize::from(num_quant));
     for _ in 0..num_quant {
@@ -383,13 +409,27 @@ fn read_region(
     }
     if flags & DWT_REDUCE_EXTRAPOLATE == 0 {
         // The classic RemoteFX wavelet; not what a modern host sends.
-        return Err(refuse("a region without the reduce-extrapolate flag", flags));
+        return Err(refuse(
+            "a region without the reduce-extrapolate flag",
+            flags,
+        ));
     }
-    let region = Region { rects, quants, prog };
+    let region = Region {
+        rects,
+        quants,
+        prog,
+    };
 
     let tiles = r.bytes(usize::try_from(tile_bytes).unwrap_or(usize::MAX))?;
     let mut passes = Vec::with_capacity(usize::from(num_tiles));
-    let read = read_tiles(&mut Reader::new(WHAT, tiles), grid, &region, num_tiles, touched, &mut passes);
+    let read = read_tiles(
+        &mut Reader::new(WHAT, tiles),
+        grid,
+        &region,
+        num_tiles,
+        touched,
+        &mut passes,
+    );
     // Whatever was read before a fault is decoded, fault or none.
     decode(grid, passes);
     read?;
@@ -406,10 +446,16 @@ struct Pass<'a> {
 }
 
 enum PassKind<'a> {
-    First { diff: bool, data: [&'a [u8]; 3] },
+    First {
+        diff: bool,
+        data: [&'a [u8]; 3],
+    },
     /// `bits` is how many bits the pass adds to each band; `data` is each
     /// component's SRL stream, then its raw one.
-    Upgrade { bits: [Quant; 3], data: [&'a [u8]; 6] },
+    Upgrade {
+        bits: [Quant; 3],
+        data: [&'a [u8]; 6],
+    },
 }
 
 /// Read a region's tile blocks into `passes`, in their order, adding each tile
@@ -431,7 +477,9 @@ fn read_tiles<'a>(
         };
         let mut b = Reader::new(WHAT, t.bytes(body)?);
         let pass = match kind {
-            WBT_TILE_SIMPLE | WBT_TILE_FIRST => read_first(&mut b, kind == WBT_TILE_SIMPLE, grid, region)?,
+            WBT_TILE_SIMPLE | WBT_TILE_FIRST => {
+                read_first(&mut b, kind == WBT_TILE_SIMPLE, grid, region)?
+            }
             WBT_TILE_UPGRADE => read_upgrade(&mut b, grid, region)?,
             other => return Err(refuse("a tile block type", other)),
         };
@@ -462,15 +510,24 @@ fn decode(grid: &mut Grid, mut passes: Vec<Pass<'_>>) {
     let mut work = Vec::new();
     for passes in passes.chunk_by(|a, b| a.index == b.index) {
         let index = passes[0].index;
-        let tile = tiles.by_ref().find(|(at, _)| *at == index).and_then(|(_, tile)| tile.as_deref_mut());
-        work.push((tile.expect("a tile is made where its block is read"), passes));
+        let tile = tiles
+            .by_ref()
+            .find(|(at, _)| *at == index)
+            .and_then(|(_, tile)| tile.as_deref_mut());
+        work.push((
+            tile.expect("a tile is made where its block is read"),
+            passes,
+        ));
     }
     if work.len() < PARALLEL_FROM {
         for (tile, passes) in work {
             decode_tile(tile, passes);
         }
     } else {
-        crate::pool::install(|| work.into_par_iter().for_each(|(tile, passes)| decode_tile(tile, passes)));
+        crate::pool::install(|| {
+            work.into_par_iter()
+                .for_each(|(tile, passes)| decode_tile(tile, passes))
+        });
     }
 }
 
@@ -486,7 +543,14 @@ fn decode_tile(tile: &mut Tile, passes: &[Pass<'_>]) {
                         decode_component(data[c], pass.shift[c], out, current, sign, diff, temp);
                     }
                     PassKind::Upgrade { bits, data } => {
-                        upgrade_component(data[c * 2], data[c * 2 + 1], pass.shift[c], bits[c], current, sign);
+                        upgrade_component(
+                            data[c * 2],
+                            data[c * 2 + 1],
+                            pass.shift[c],
+                            bits[c],
+                            current,
+                            sign,
+                        );
                         out.copy_from_slice(current);
                         idwt(out, temp);
                     }
@@ -499,16 +563,25 @@ fn decode_tile(tile: &mut Tile, passes: &[Pass<'_>]) {
 
 /// The fields every tile kind opens with, then the tile they name — made if this is
 /// its first sighting.
-fn tile_header<'g>(r: &mut Reader<'_>, grid: &'g mut Grid) -> Result<(TileHeader, usize, &'g mut Tile), Malformed> {
+fn tile_header<'g>(
+    r: &mut Reader<'_>,
+    grid: &'g mut Grid,
+) -> Result<(TileHeader, usize, &'g mut Tile), Malformed> {
     let quant = [r.u8()?, r.u8()?, r.u8()?];
     let x = r.u16_le()?;
     let y = r.u16_le()?;
     let Some(index) = grid.index(x, y) else {
-        return Err(refuse("a tile outside its surface", (u64::from(x) << 16) | u64::from(y)));
+        return Err(refuse(
+            "a tile outside its surface",
+            (u64::from(x) << 16) | u64::from(y),
+        ));
     };
     if grid.tiles[index].is_none() {
         if grid.made >= grid.limit {
-            return Err(refuse("a tile past the memory this client will hold", grid.made as u64));
+            return Err(refuse(
+                "a tile past the memory this client will hold",
+                grid.made as u64,
+            ));
         }
         grid.made += 1;
     }
@@ -518,21 +591,36 @@ fn tile_header<'g>(r: &mut Reader<'_>, grid: &'g mut Grid) -> Result<(TileHeader
 
 /// The three components' quantization, and the progressive quantization the tile's
 /// quality byte selects.
-fn tile_quants(region: &Region, header: &TileHeader, quality: u8) -> Result<([Quant; 3], ProgQuant), Malformed> {
+fn tile_quants(
+    region: &Region,
+    header: &TileHeader,
+    quality: u8,
+) -> Result<([Quant; 3], ProgQuant), Malformed> {
     let mut quants = [Quant::default(); 3];
     for (out, idx) in quants.iter_mut().zip(header.quant) {
-        *out = *region.quants.get(usize::from(idx)).ok_or_else(|| refuse("a tile's quantization index", idx))?;
+        *out = *region
+            .quants
+            .get(usize::from(idx))
+            .ok_or_else(|| refuse("a tile's quantization index", idx))?;
     }
     let prog = if quality == 0xFF {
         ProgQuant::default()
     } else {
-        *region.prog.get(usize::from(quality)).ok_or_else(|| refuse("a tile's quality index", quality))?
+        *region
+            .prog
+            .get(usize::from(quality))
+            .ok_or_else(|| refuse("a tile's quality index", quality))?
     };
     Ok((quants, prog))
 }
 
 /// A `TILE_SIMPLE` or `TILE_FIRST`: the tile decoded from scratch.
-fn read_first<'a>(r: &mut Reader<'a>, simple: bool, grid: &mut Grid, region: &Region) -> Result<Pass<'a>, Malformed> {
+fn read_first<'a>(
+    r: &mut Reader<'a>,
+    simple: bool,
+    grid: &mut Grid,
+    region: &Region,
+) -> Result<Pass<'a>, Malformed> {
     let (header, index, tile) = tile_header(r, grid)?;
     let flags = r.u8()?;
     let quality = if simple { 0xFF } else { r.u8()? };
@@ -551,14 +639,23 @@ fn read_first<'a>(r: &mut Reader<'a>, simple: bool, grid: &mut Grid, region: &Re
     let mut shift = [Quant::default(); 3];
     for c in 0..3 {
         bitpos[c] = quants[c].add(progs[c]);
-        shift[c] = bitpos[c].sub(Quant([1; 10])).ok_or_else(|| refuse("a zero quantization", 0u8))?;
+        shift[c] = bitpos[c]
+            .sub(Quant([1; 10]))
+            .ok_or_else(|| refuse("a zero quantization", 0u8))?;
         if data[c].is_empty() {
             return Err(refuse("an empty RLGR stream", 0u8));
         }
     }
     tile.bitpos = bitpos;
     tile.started = true;
-    Ok(Pass { index, shift, kind: PassKind::First { diff: flags & TILE_DIFFERENCE != 0, data } })
+    Ok(Pass {
+        index,
+        shift,
+        kind: PassKind::First {
+            diff: flags & TILE_DIFFERENCE != 0,
+            data,
+        },
+    })
 }
 
 /// One component of a first pass: entropy decode, dequantize, difference against
@@ -593,7 +690,11 @@ fn decode_component(
 }
 
 /// A `TILE_UPGRADE`: more bits for the coefficients a first pass left.
-fn read_upgrade<'a>(r: &mut Reader<'a>, grid: &mut Grid, region: &Region) -> Result<Pass<'a>, Malformed> {
+fn read_upgrade<'a>(
+    r: &mut Reader<'a>,
+    grid: &mut Grid,
+    region: &Region,
+) -> Result<Pass<'a>, Malformed> {
     let (header, index, tile) = tile_header(r, grid)?;
     let quality = r.u8()?;
     let mut lens = [0u16; 6];
@@ -605,7 +706,10 @@ fn read_upgrade<'a>(r: &mut Reader<'a>, grid: &mut Grid, region: &Region) -> Res
         *slot = r.bytes(usize::from(len))?;
     }
     if !tile.started {
-        return Err(refuse("an upgrade of a tile with no first pass", (u64::from(header.x) << 16) | u64::from(header.y)));
+        return Err(refuse(
+            "an upgrade of a tile with no first pass",
+            (u64::from(header.x) << 16) | u64::from(header.y),
+        ));
     }
     let (quants, prog) = tile_quants(region, &header, quality)?;
     let progs = [prog.y, prog.cb, prog.cr];
@@ -614,18 +718,38 @@ fn read_upgrade<'a>(r: &mut Reader<'a>, grid: &mut Grid, region: &Region) -> Res
     let mut shift = [Quant::default(); 3];
     for c in 0..3 {
         bitpos[c] = quants[c].add(progs[c]);
-        bits[c] = tile.bitpos[c].sub(bitpos[c]).ok_or_else(|| refuse("an upgrade below the pass before it", quality))?;
-        shift[c] = bitpos[c].sub(Quant([1; 10])).ok_or_else(|| refuse("a zero quantization", 0u8))?;
+        bits[c] = tile.bitpos[c]
+            .sub(bitpos[c])
+            .ok_or_else(|| refuse("an upgrade below the pass before it", quality))?;
+        shift[c] = bitpos[c]
+            .sub(Quant([1; 10]))
+            .ok_or_else(|| refuse("a zero quantization", 0u8))?;
     }
     tile.bitpos = bitpos;
-    Ok(Pass { index, shift, kind: PassKind::Upgrade { bits, data } })
+    Ok(Pass {
+        index,
+        shift,
+        kind: PassKind::Upgrade { bits, data },
+    })
 }
 
 /// One component of an upgrade: each sub-band's coefficients gain `bits` more bits,
 /// read from the raw stream where the sign is already known and from the SRL stream
 /// where it is not. [MS-RDPEGFX] 3.3.8.3.
-fn upgrade_component(srl: &[u8], raw: &[u8], shift: Quant, bits: Quant, current: &mut [i16], sign: &mut [i16]) {
-    let mut srl = Srl { bits: Bits::new(srl), kp: 8, mode: false, nz: 0 };
+fn upgrade_component(
+    srl: &[u8],
+    raw: &[u8],
+    shift: Quant,
+    bits: Quant,
+    current: &mut [i16],
+    sign: &mut [i16],
+) {
+    let mut srl = Srl {
+        bits: Bits::new(srl),
+        kp: 8,
+        mode: false,
+        nz: 0,
+    };
     let mut raw = Bits::new(raw);
     for (band, &(at, len)) in BANDS.iter().enumerate() {
         let (num_bits, shift) = (u32::from(bits.0[band]), u32::from(shift.0[band]));
@@ -647,7 +771,11 @@ fn upgrade_component(srl: &[u8], raw: &[u8], shift: Quant, bits: Quant, current:
                 if srl.nz > 0 {
                     // Zeros still owed cover this coefficient and every one after
                     // it whose sign is unknown, as far as they go: nothing to add.
-                    let run = sign[i..].iter().take(srl.nz as usize).take_while(|&&s| s == 0).count();
+                    let run = sign[i..]
+                        .iter()
+                        .take(srl.nz as usize)
+                        .take_while(|&&s| s == 0)
+                        .count();
                     srl.nz -= run as u32;
                     i += run;
                     continue;
@@ -749,7 +877,12 @@ struct Bits<'a> {
 
 impl<'a> Bits<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, next: 0, window: 0, have: 0 }
+        Self {
+            data,
+            next: 0,
+            window: 0,
+            have: 0,
+        }
     }
 
     fn remaining(&self) -> usize {
@@ -760,7 +893,9 @@ impl<'a> Bits<'a> {
     /// the stream.
     fn fill(&mut self) {
         while self.have <= 56 {
-            let Some(&byte) = self.data.get(self.next) else { return };
+            let Some(&byte) = self.data.get(self.next) else {
+                return;
+            };
             self.window |= u64::from(byte) << (56 - self.have);
             self.have += 8;
             self.next += 1;
@@ -899,7 +1034,11 @@ fn rlgr1(src: &[u8], out: &mut [i16]) {
             } else {
                 kp = kp.saturating_sub(3);
                 k = kp >> 3;
-                if code & 1 == 1 { -(((i32::from(code) + 1) >> 1) as i16) } else { (code >> 1) as i16 }
+                if code & 1 == 1 {
+                    -(((i32::from(code) + 1) >> 1) as i16)
+                } else {
+                    (code >> 1) as i16
+                }
             };
             out[n] = mag;
             n += 1;
@@ -910,7 +1049,9 @@ fn rlgr1(src: &[u8], out: &mut [i16]) {
 
 /// Undo differential coding: each value is a delta on the one before.
 fn differential(v: &mut [i16]) {
-    let Some((first, rest)) = v.split_first_mut() else { return };
+    let Some((first, rest)) = v.split_first_mut() else {
+        return;
+    };
     let mut acc = *first;
     for x in rest {
         acc = acc.wrapping_add(*x);
@@ -953,7 +1094,11 @@ fn band_l(level: u32) -> usize {
 }
 
 fn band_h(level: u32) -> usize {
-    if level == 1 { 31 } else { (64 + (1 << (level - 1))) >> level }
+    if level == 1 {
+        31
+    } else {
+        (64 + (1 << (level - 1))) >> level
+    }
 }
 
 /// One level: HL, LH, HH and LL sub-bands at the front of `buf` become the LL of
@@ -978,13 +1123,32 @@ fn idwt_level<const N: usize>(buf: &mut [i16], temp: &mut [i16], level: u32) {
     // Horizontal: rows of (LL, HL) become L; rows of (LH, HH) become H.
     let mut line = Line::new();
     for row in 0..l {
-        idwt_row::<N>(&buf[ll + row * l..], l, &buf[hl + row * h..], h, &mut low[row * step..][..step], &mut line);
+        idwt_row::<N>(
+            &buf[ll + row * l..],
+            l,
+            &buf[hl + row * h..],
+            h,
+            &mut low[row * step..][..step],
+            &mut line,
+        );
     }
     for row in 0..h {
-        idwt_row::<N>(&buf[lh + row * l..], l, &buf[hh + row * h..], h, &mut high[row * step..][..step], &mut line);
+        idwt_row::<N>(
+            &buf[lh + row * l..],
+            l,
+            &buf[hh + row * h..],
+            h,
+            &mut high[row * step..][..step],
+            &mut line,
+        );
     }
     // Vertical: columns of (L, H) become the level above.
-    idwt_columns(&low[..l * step], &high[..h * step], &mut buf[..step * step], step);
+    idwt_columns(
+        &low[..l * step],
+        &high[..h * step],
+        &mut buf[..step * step],
+        step,
+    );
 }
 
 /// `low - high`, the first even sample of a line.
@@ -1043,7 +1207,10 @@ struct Line {
 
 impl Line {
     fn new() -> Self {
-        Self { even: [0; LINE], odd: [0; LINE] }
+        Self {
+            even: [0; LINE],
+            odd: [0; LINE],
+        }
     }
 }
 
@@ -1055,10 +1222,22 @@ impl Line {
 /// eight, and the lanes past the line are thrown away. The ends themselves are one
 /// sample each. `high` is read one sample past `N`, which is within the band's
 /// coefficients, or the ones after them.
-fn idwt_row<const N: usize>(low: &[i16], nl: usize, high: &[i16], nh: usize, dst: &mut [i16], line: &mut Line) {
+fn idwt_row<const N: usize>(
+    low: &[i16],
+    nl: usize,
+    high: &[i16],
+    nh: usize,
+    dst: &mut [i16],
+    line: &mut Line,
+) {
     let Line { even, odd } = line;
     let evens = if nl > nh { nh + 1 } else { nh };
-    even_lanes::<N>(lanes(&low[1..]), lanes(high), lanes(&high[1..]), lanes_mut(&mut even[1..]));
+    even_lanes::<N>(
+        lanes(&low[1..]),
+        lanes(high),
+        lanes(&high[1..]),
+        lanes_mut(&mut even[1..]),
+    );
     even[0] = clamp16(i32::from(low[0]) - i32::from(high[0]));
     if nl == nh + 1 {
         even[nh] = clamp16(i32::from(low[nh]) - i32::from(high[nh - 1]));
@@ -1078,7 +1257,13 @@ fn idwt_row<const N: usize>(low: &[i16], nl: usize, high: &[i16], nh: usize, dst
     // with no odd one after it.
     let blocks = odds / 8;
     let pairs = even.as_chunks::<8>().0.iter().zip(odd.as_chunks::<8>().0);
-    for (out, (even, odd)) in dst.as_chunks_mut::<16>().0.iter_mut().zip(pairs).take(blocks) {
+    for (out, (even, odd)) in dst
+        .as_chunks_mut::<16>()
+        .0
+        .iter_mut()
+        .zip(pairs)
+        .take(blocks)
+    {
         for k in 0..8 {
             out[2 * k] = even[k];
             out[2 * k + 1] = odd[k];
@@ -1103,14 +1288,24 @@ fn lanes_mut<const N: usize>(samples: &mut [i16]) -> &mut [i16; N] {
 }
 
 /// [`even_between`] over the lanes: a constant width, whatever the line's.
-fn even_lanes<const N: usize>(low: &[i16; N], before: &[i16; N], after: &[i16; N], out: &mut [i16; N]) {
+fn even_lanes<const N: usize>(
+    low: &[i16; N],
+    before: &[i16; N],
+    after: &[i16; N],
+    out: &mut [i16; N],
+) {
     for i in 0..N {
         out[i] = clamp16(i32::from(low[i]) - half(i32::from(before[i]) + i32::from(after[i])));
     }
 }
 
 /// [`odd_between`] over the lanes.
-fn odd_lanes<const N: usize>(before: &[i16; N], after: &[i16; N], high: &[i16; N], out: &mut [i16; N]) {
+fn odd_lanes<const N: usize>(
+    before: &[i16; N],
+    after: &[i16; N],
+    high: &[i16; N],
+    out: &mut [i16; N],
+) {
     for i in 0..N {
         out[i] = clamp16(half(i32::from(before[i]) + i32::from(after[i])) + 2 * i32::from(high[i]));
     }
@@ -1127,7 +1322,12 @@ fn idwt_columns(low: &[i16], high: &[i16], dst: &mut [i16], step: usize) {
     let evens = if nl > nh { nh + 1 } else { nh };
     even_first(l(0), h(0), &mut dst[..step]);
     for row in 1..nh {
-        even_between(l(row), h(row - 1), h(row), &mut dst[2 * row * step..][..step]);
+        even_between(
+            l(row),
+            h(row - 1),
+            h(row),
+            &mut dst[2 * row * step..][..step],
+        );
     }
     if nl == nh + 1 {
         even_first(l(nh), h(nh - 1), &mut dst[2 * nh * step..][..step]);
@@ -1160,7 +1360,12 @@ fn idwt_columns(low: &[i16], high: &[i16], dst: &mut [i16], step: usize) {
 fn to_rgbx(work: &[i16], pixels: &mut [u8]) {
     let (y, rest) = work.split_at(COEFFS);
     let (cb, cr) = rest.split_at(COEFFS);
-    for (px, ((&y, &cb), &cr)) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(y.iter().zip(cb).zip(cr)) {
+    for (px, ((&y, &cb), &cr)) in pixels
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(y.iter().zip(cb).zip(cr))
+    {
         let y = i32::from(y) + 4096;
         let (cb, cr) = (i32::from(cb), i32::from(cr));
         // (cr * 91916 + (y << 16)) >> 21, with the four taken out.
@@ -1184,11 +1389,23 @@ fn clip(v: i32) -> u32 {
 
 /// Write every tile decoded so far in the frame to the surface, clipped to the
 /// region's rectangles and to the surface — see [`Grid::updated`].
-fn present(grid: &Grid, region: &Region, updated: &[usize], paint: &mut impl FnMut(Rect16, &[u8], usize)) {
+fn present(
+    grid: &Grid,
+    region: &Region,
+    updated: &[usize],
+    paint: &mut impl FnMut(Rect16, &[u8], usize),
+) {
     for &index in updated {
-        let Some(tile) = grid.tiles[index].as_deref() else { continue };
+        let Some(tile) = grid.tiles[index].as_deref() else {
+            continue;
+        };
         let (tx, ty) = ((index % grid.cols) * TILE, (index / grid.cols) * TILE);
-        let tile_rect = (tx, ty, (tx + TILE).min(grid.width as usize), (ty + TILE).min(grid.height as usize));
+        let tile_rect = (
+            tx,
+            ty,
+            (tx + TILE).min(grid.width as usize),
+            (ty + TILE).min(grid.height as usize),
+        );
         for rect in &region.rects {
             let left = tile_rect.0.max(usize::from(rect.left));
             let top = tile_rect.1.max(usize::from(rect.top));
@@ -1223,7 +1440,10 @@ pub(crate) mod testing {
 
     impl BitWriter {
         fn new() -> Self {
-            Self { bytes: Vec::new(), used: 0 }
+            Self {
+                bytes: Vec::new(),
+                used: 0,
+            }
         }
 
         fn put(&mut self, value: u32, n: u32) {
@@ -1292,9 +1512,17 @@ pub(crate) mod testing {
             } else {
                 let v = i32::from(coeffs[i]);
                 i += 1;
-                let code = if v < 0 { 2 * v.unsigned_abs() - 1 } else { 2 * v as u32 };
+                let code = if v < 0 {
+                    2 * v.unsigned_abs() - 1
+                } else {
+                    2 * v as u32
+                };
                 golomb(&mut w, code, &mut kr, &mut krp);
-                kp = if code == 0 { (kp + 3).min(KPMAX) } else { kp.saturating_sub(3) };
+                kp = if code == 0 {
+                    (kp + 3).min(KPMAX)
+                } else {
+                    kp.saturating_sub(3)
+                };
                 k = kp >> 3;
             }
         }
@@ -1374,7 +1602,10 @@ pub(crate) mod testing {
     /// A whole PDU: sync, frame begin, context, the regions, frame end.
     pub(crate) fn pdu(regions: &[Vec<u8>]) -> Vec<u8> {
         let mut v = block(WBT_SYNC, &[0xCA, 0xAC, 0xCC, 0xCA, 0x00, 0x01]);
-        v.extend(block(WBT_FRAME_BEGIN, &[1, 0, 0, 0, regions.len() as u8, 0]));
+        v.extend(block(
+            WBT_FRAME_BEGIN,
+            &[1, 0, 0, 0, regions.len() as u8, 0],
+        ));
         v.extend(block(WBT_CONTEXT, &[0, 64, 0, 1]));
         for r in regions {
             v.extend_from_slice(r);
@@ -1397,7 +1628,16 @@ mod tests {
     /// The wavelet's line as it was first written, one sample after another from
     /// FreeRDP's own: what the runs above must agree with, sample for sample.
     #[allow(clippy::too_many_arguments)]
-    fn reference_line(low: &[i16], sl: usize, high: &[i16], sh: usize, dst: &mut [i16], sx: usize, nl: usize, nh: usize) {
+    fn reference_line(
+        low: &[i16],
+        sl: usize,
+        high: &[i16],
+        sh: usize,
+        dst: &mut [i16],
+        sx: usize,
+        nl: usize,
+        nh: usize,
+    ) {
         let mut li = 0;
         let mut hi = 0;
         let mut xi = 0;
@@ -1459,7 +1699,20 @@ mod tests {
     /// would not fit had they been summed whole.
     #[test]
     fn the_colour_conversion_is_the_reference_for_every_sample() {
-        let mut edges: Vec<i16> = vec![i16::MIN, i16::MIN + 1, -4097, -4096, -4095, -1, 0, 1, 4095, 4096, i16::MAX - 1, i16::MAX];
+        let mut edges: Vec<i16> = vec![
+            i16::MIN,
+            i16::MIN + 1,
+            -4097,
+            -4096,
+            -4095,
+            -1,
+            0,
+            1,
+            4095,
+            4096,
+            i16::MAX - 1,
+            i16::MAX,
+        ];
         edges.extend(samples(40, 5));
         let mut work = vec![0i16; COEFFS * 3];
         let mut pixels = vec![0u8; COEFFS * 4];
@@ -1467,10 +1720,18 @@ mod tests {
         for &y in &edges {
             // A tile's worth of chroma pairs for each luma: the edges against each
             // other, then samples.
-            let mut pairs: Vec<(i16, i16)> = edges.iter().flat_map(|&cb| edges.iter().map(move |&cr| (cb, cr))).collect();
+            let mut pairs: Vec<(i16, i16)> = edges
+                .iter()
+                .flat_map(|&cb| edges.iter().map(move |&cr| (cb, cr)))
+                .collect();
             pairs.truncate(COEFFS);
             let fill = samples(2 * (COEFFS - pairs.len()), u32::from(y as u16));
-            pairs.extend(fill.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])));
+            pairs.extend(
+                fill.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| (pair[0], pair[1])),
+            );
             for (i, (cb, cr)) in pairs.iter().enumerate() {
                 work[i] = y;
                 work[COEFFS + i] = *cb;
@@ -1508,12 +1769,25 @@ mod tests {
     #[test]
     fn a_row_of_the_wavelet_is_the_reference_sample_for_sample() {
         let mut line = Line::new();
-        let mut row = |lanes: usize, low: &[i16], nl: usize, high: &[i16], nh: usize, dst: &mut [i16]| match lanes {
-            32 => idwt_row::<32>(low, nl, high, nh, dst, &mut line),
-            16 => idwt_row::<16>(low, nl, high, nh, dst, &mut line),
-            _ => idwt_row::<8>(low, nl, high, nh, dst, &mut line),
-        };
-        for (seed, (nl, nh, lanes)) in [(33, 31, 32), (17, 16, 16), (9, 8, 8), (8, 8, 8), (2, 1, 8), (3, 1, 8)].into_iter().enumerate() {
+        let mut row =
+            |lanes: usize, low: &[i16], nl: usize, high: &[i16], nh: usize, dst: &mut [i16]| {
+                match lanes {
+                    32 => idwt_row::<32>(low, nl, high, nh, dst, &mut line),
+                    16 => idwt_row::<16>(low, nl, high, nh, dst, &mut line),
+                    _ => idwt_row::<8>(low, nl, high, nh, dst, &mut line),
+                }
+            };
+        for (seed, (nl, nh, lanes)) in [
+            (33, 31, 32),
+            (17, 16, 16),
+            (9, 8, 8),
+            (8, 8, 8),
+            (2, 1, 8),
+            (3, 1, 8),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             for round in 0..50 {
                 // Each band with what lies past it, which the lanes read and must not show.
                 let low = samples(nl + lanes, (seed * 100 + round) as u32);
@@ -1532,14 +1806,26 @@ mod tests {
     /// its own.
     #[test]
     fn the_columns_of_the_wavelet_are_the_reference_sample_for_sample() {
-        for (seed, (nl, nh)) in [(33usize, 31usize), (17, 16), (9, 8)].into_iter().enumerate() {
+        for (seed, (nl, nh)) in [(33usize, 31usize), (17, 16), (9, 8)]
+            .into_iter()
+            .enumerate()
+        {
             let step = nl + nh;
             for round in 0..20 {
                 let low = samples(nl * step, (seed * 1_000 + round) as u32);
                 let high = samples(nh * step, (seed * 1_000 + round + 90_000) as u32);
                 let mut expected = vec![0i16; step * step];
                 for col in 0..step {
-                    reference_line(&low[col..], step, &high[col..], step, &mut expected[col..], step, nl, nh);
+                    reference_line(
+                        &low[col..],
+                        step,
+                        &high[col..],
+                        step,
+                        &mut expected[col..],
+                        step,
+                        nl,
+                        nh,
+                    );
                 }
                 let mut got = vec![0i16; step * step];
                 idwt_columns(&low, &high, &mut got, step);
@@ -1550,18 +1836,32 @@ mod tests {
 
     /// Every paint call, as (rect, the pixels inside it, packed).
     /// Decode `src` as a graphics frame of its own, and gather what it paints.
-    fn collect(p: &mut Progressive, surface: u16, w: u32, h: u32, src: &[u8]) -> Result<Vec<(Rect16, Vec<u8>)>, Malformed> {
+    fn collect(
+        p: &mut Progressive,
+        surface: u16,
+        w: u32,
+        h: u32,
+        src: &[u8],
+    ) -> Result<Vec<(Rect16, Vec<u8>)>, Malformed> {
         p.start_frame();
         in_frame(p, surface, w, h, src)
     }
 
     /// Decode `src` into the graphics frame already under way, and gather what it paints.
-    fn in_frame(p: &mut Progressive, surface: u16, w: u32, h: u32, src: &[u8]) -> Result<Vec<(Rect16, Vec<u8>)>, Malformed> {
+    fn in_frame(
+        p: &mut Progressive,
+        surface: u16,
+        w: u32,
+        h: u32,
+        src: &[u8],
+    ) -> Result<Vec<(Rect16, Vec<u8>)>, Malformed> {
         let mut paints = Vec::new();
         p.decompress(surface, w, h, src, usize::MAX, |rect, rows, stride| {
             let mut packed = Vec::new();
             for row in 0..usize::from(rect.height()) {
-                packed.extend_from_slice(&rows[row * stride..row * stride + usize::from(rect.width()) * 4]);
+                packed.extend_from_slice(
+                    &rows[row * stride..row * stride + usize::from(rect.width()) * 4],
+                );
             }
             paints.push((rect, packed));
         })?;
@@ -1574,26 +1874,49 @@ mod tests {
     /// host that bumped either is decoded rather than dropped.
     #[test]
     fn a_sync_block_of_another_version_is_read_past() {
-        let mut src = pdu(&[region(&[(0, 0, 64, 64)], 1, &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)])]);
+        let mut src = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            1,
+            &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)],
+        )]);
         // The sync block's six bytes of body follow its six-byte header.
         src[6..12].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x02]);
         let mut painted = 0;
-        Progressive::new().decompress(1, 64, 64, &src, TILE_BYTES, |_, _, _| painted += 1).unwrap();
+        Progressive::new()
+            .decompress(1, 64, 64, &src, TILE_BYTES, |_, _, _| painted += 1)
+            .unwrap();
         assert!(painted > 0);
     }
 
     #[test]
     fn tiles_past_the_budget_are_refused() {
         let mut p = Progressive::new();
-        let one = pdu(&[region(&[(0, 0, 128, 64)], 1, &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 9)])]);
-        let two = pdu(&[region(&[(0, 0, 128, 64)], 1, &[flat_tile(WBT_TILE_SIMPLE, 1, 0, 9)])]);
-        p.decompress(1, 128, 64, &one, TILE_BYTES, |_, _, _| {}).unwrap();
-        p.decompress(1, 128, 64, &one, TILE_BYTES, |_, _, _| {}).unwrap();
-        assert!(p.decompress(1, 128, 64, &two, TILE_BYTES, |_, _, _| {}).is_err());
-        assert!(p.decompress(2, 128, 64, &one, TILE_BYTES, |_, _, _| {}).is_err());
+        let one = pdu(&[region(
+            &[(0, 0, 128, 64)],
+            1,
+            &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 9)],
+        )]);
+        let two = pdu(&[region(
+            &[(0, 0, 128, 64)],
+            1,
+            &[flat_tile(WBT_TILE_SIMPLE, 1, 0, 9)],
+        )]);
+        p.decompress(1, 128, 64, &one, TILE_BYTES, |_, _, _| {})
+            .unwrap();
+        p.decompress(1, 128, 64, &one, TILE_BYTES, |_, _, _| {})
+            .unwrap();
+        assert!(
+            p.decompress(1, 128, 64, &two, TILE_BYTES, |_, _, _| {})
+                .is_err()
+        );
+        assert!(
+            p.decompress(2, 128, 64, &one, TILE_BYTES, |_, _, _| {})
+                .is_err()
+        );
         assert_eq!(p.held_except(2), TILE_BYTES);
         p.forget(1);
-        p.decompress(2, 128, 64, &one, TILE_BYTES, |_, _, _| {}).unwrap();
+        p.decompress(2, 128, 64, &one, TILE_BYTES, |_, _, _| {})
+            .unwrap();
     }
 
     /// RLGR1 comes back as it went in: long zero runs, small and large magnitudes of
@@ -1635,10 +1958,22 @@ mod tests {
     #[test]
     fn a_flat_tile_decodes_to_one_grey() {
         let mut p = Progressive::new();
-        let src = pdu(&[region(&[(0, 0, 64, 64)], 1, &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)])]);
+        let src = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            1,
+            &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)],
+        )]);
         let paints = collect(&mut p, 1, 64, 64, &src).unwrap();
         assert_eq!(paints.len(), 1);
-        assert_eq!(paints[0].0, Rect16 { left: 0, top: 0, right: 64, bottom: 64 });
+        assert_eq!(
+            paints[0].0,
+            Rect16 {
+                left: 0,
+                top: 0,
+                right: 64,
+                bottom: 64
+            }
+        );
         assert_eq!(paints[0].1, grey(5).repeat(COEFFS));
     }
 
@@ -1647,11 +1982,26 @@ mod tests {
     #[test]
     fn a_tile_is_clipped_to_the_surface_and_the_region() {
         let mut p = Progressive::new();
-        let tiles = [flat_tile(WBT_TILE_FIRST, 1, 1, 9), flat_tile(WBT_TILE_FIRST, 0, 0, 1)];
+        let tiles = [
+            flat_tile(WBT_TILE_FIRST, 1, 1, 9),
+            flat_tile(WBT_TILE_FIRST, 0, 0, 1),
+        ];
         let src = pdu(&[region(&[(60, 66, 100, 100)], 1, &tiles)]);
         let paints = collect(&mut p, 1, 100, 70, &src).unwrap();
-        assert_eq!(paints.len(), 1, "the (0,0) tile lies outside the region's rectangle");
-        assert_eq!(paints[0].0, Rect16 { left: 64, top: 66, right: 100, bottom: 70 });
+        assert_eq!(
+            paints.len(),
+            1,
+            "the (0,0) tile lies outside the region's rectangle"
+        );
+        assert_eq!(
+            paints[0].0,
+            Rect16 {
+                left: 64,
+                top: 66,
+                right: 100,
+                bottom: 70
+            }
+        );
         assert_eq!(paints[0].1, grey(9).repeat(36 * 4));
     }
 
@@ -1662,9 +2012,22 @@ mod tests {
         let mut p = Progressive::new();
         let src = pdu(&[region(&[(0, 0, 64, 64)], 1, &[empty_upgrade(0, 0)])]);
         let err = collect(&mut p, 1, 64, 64, &src).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an upgrade of a tile with no first pass", .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "an upgrade of a tile with no first pass",
+                    ..
+                }
+            ),
+            "{err}"
+        );
 
-        let first = pdu(&[region(&[(0, 0, 64, 64)], 1, &[flat_tile(WBT_TILE_FIRST, 0, 0, 5)])]);
+        let first = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            1,
+            &[flat_tile(WBT_TILE_FIRST, 0, 0, 5)],
+        )]);
         collect(&mut p, 1, 64, 64, &first).unwrap();
         let paints = collect(&mut p, 1, 64, 64, &src).unwrap();
         assert_eq!(paints.len(), 1);
@@ -1675,9 +2038,22 @@ mod tests {
     #[test]
     fn a_region_without_reduce_extrapolate_is_refused() {
         let mut p = Progressive::new();
-        let src = pdu(&[region(&[(0, 0, 64, 64)], 0, &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)])]);
+        let src = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            0,
+            &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 5)],
+        )]);
         let err = collect(&mut p, 1, 64, 64, &src).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a region without the reduce-extrapolate flag", .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "a region without the reduce-extrapolate flag",
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     /// A region refused after some of its tiles decoded leaves those tiles free to be
@@ -1685,12 +2061,28 @@ mod tests {
     #[test]
     fn tiles_of_a_refused_region_are_painted_by_the_next() {
         let mut p = Progressive::new();
-        let tiles = [flat_tile(WBT_TILE_FIRST, 0, 0, 5), vec![0xC9, 0xCC, 6, 0, 0, 0]]; // then a block of no known kind
+        let tiles = [
+            flat_tile(WBT_TILE_FIRST, 0, 0, 5),
+            vec![0xC9, 0xCC, 6, 0, 0, 0],
+        ]; // then a block of no known kind
         let src = pdu(&[region(&[(0, 0, 64, 64)], 1, &tiles)]);
         let err = collect(&mut p, 1, 64, 64, &src).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a tile block type", .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "a tile block type",
+                    ..
+                }
+            ),
+            "{err}"
+        );
 
-        let again = pdu(&[region(&[(0, 0, 64, 64)], 1, &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 7)])]);
+        let again = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            1,
+            &[flat_tile(WBT_TILE_SIMPLE, 0, 0, 7)],
+        )]);
         let paints = collect(&mut p, 1, 64, 64, &again).unwrap();
         assert_eq!(paints.len(), 1);
         assert_eq!(paints[0].1, grey(7).repeat(COEFFS));
@@ -1702,18 +2094,40 @@ mod tests {
     #[test]
     fn a_region_paints_the_tiles_its_frame_already_carried() {
         let mut p = Progressive::new();
-        let tiles = [flat_tile(WBT_TILE_FIRST, 0, 0, 5), flat_tile(WBT_TILE_FIRST, 1, 0, 9)];
-        let both = pdu(&[region(&[(0, 0, 64, 64)], 1, &tiles), region(&[(64, 0, 64, 64)], 1, &[])]);
+        let tiles = [
+            flat_tile(WBT_TILE_FIRST, 0, 0, 5),
+            flat_tile(WBT_TILE_FIRST, 1, 0, 9),
+        ];
+        let both = pdu(&[
+            region(&[(0, 0, 64, 64)], 1, &tiles),
+            region(&[(64, 0, 64, 64)], 1, &[]),
+        ]);
         let paints = collect(&mut p, 1, 128, 64, &both).unwrap();
-        assert_eq!(paints.len(), 2, "each region paints the tile under its rectangle");
-        assert_eq!(paints[1].0, Rect16 { left: 64, top: 0, right: 128, bottom: 64 });
+        assert_eq!(
+            paints.len(),
+            2,
+            "each region paints the tile under its rectangle"
+        );
+        assert_eq!(
+            paints[1].0,
+            Rect16 {
+                left: 64,
+                top: 0,
+                right: 128,
+                bottom: 64
+            }
+        );
         assert_eq!(paints[1].1, grey(9).repeat(COEFFS));
 
         let first = pdu(&[region(&[(0, 0, 64, 64)], 1, &tiles)]);
         let second = pdu(&[region(&[(64, 0, 64, 64)], 1, &[])]);
         collect(&mut p, 1, 128, 64, &first).unwrap();
         let paints = in_frame(&mut p, 1, 128, 64, &second).unwrap();
-        assert_eq!(paints.len(), 1, "a later PDU of the same frame still has the tile");
+        assert_eq!(
+            paints.len(),
+            1,
+            "a later PDU of the same frame still has the tile"
+        );
         assert_eq!(paints[0].1, grey(9).repeat(COEFFS));
 
         let paints = collect(&mut p, 1, 128, 64, &second).unwrap();
@@ -1724,7 +2138,11 @@ mod tests {
     #[test]
     fn a_difference_tile_adds_to_the_last_pass() {
         let mut p = Progressive::new();
-        let first = pdu(&[region(&[(0, 0, 64, 64)], 1, &[flat_tile(WBT_TILE_FIRST, 0, 0, 5)])]);
+        let first = pdu(&[region(
+            &[(0, 0, 64, 64)],
+            1,
+            &[flat_tile(WBT_TILE_FIRST, 0, 0, 5)],
+        )]);
         collect(&mut p, 1, 64, 64, &first).unwrap();
         let mut diff = flat_tile(WBT_TILE_FIRST, 0, 0, 3);
         diff[6 + 7] |= TILE_DIFFERENCE; // flags, after the 6-byte block header and 7 header bytes
@@ -1738,14 +2156,27 @@ mod tests {
     #[test]
     fn tiles_decoded_side_by_side_are_each_their_own() {
         let mut p = Progressive::new();
-        let tiles: Vec<Vec<u8>> = (0..8u8).map(|i| flat_tile(WBT_TILE_FIRST, u16::from(i % 4), u16::from(i / 4), i16::from(i) + 1)).collect();
+        let tiles: Vec<Vec<u8>> = (0..8u8)
+            .map(|i| {
+                flat_tile(
+                    WBT_TILE_FIRST,
+                    u16::from(i % 4),
+                    u16::from(i / 4),
+                    i16::from(i) + 1,
+                )
+            })
+            .collect();
         assert!(tiles.len() >= PARALLEL_FROM);
         let src = pdu(&[region(&[(0, 0, 256, 128)], 1, &tiles)]);
         let paints = collect(&mut p, 1, 256, 128, &src).unwrap();
         assert_eq!(paints.len(), 8);
         for (rect, pixels) in paints {
             let tile = (rect.top / 64) * 4 + rect.left / 64;
-            assert_eq!(pixels, grey(tile as u8 + 1).repeat(COEFFS), "the tile at {rect:?}");
+            assert_eq!(
+                pixels,
+                grey(tile as u8 + 1).repeat(COEFFS),
+                "the tile at {rect:?}"
+            );
         }
     }
 
@@ -1758,7 +2189,11 @@ mod tests {
         tiles.push(flat_tile(WBT_TILE_FIRST, 2, 0, 40));
         let src = pdu(&[region(&[(0, 0, 256, 64)], 1, &tiles)]);
         let paints = collect(&mut p, 1, 256, 64, &src).unwrap();
-        assert_eq!(paints.len(), 4, "a tile is painted once however often it was sent");
+        assert_eq!(
+            paints.len(),
+            4,
+            "a tile is painted once however often it was sent"
+        );
         for (rect, pixels) in paints {
             let dc = if rect.left == 128 { 40 } else { 3 };
             assert_eq!(pixels, grey(dc).repeat(COEFFS), "the tile at {rect:?}");
@@ -1777,9 +2212,22 @@ mod tests {
         let len = [empty[lens], empty[lens + 1]];
         empty[lens..lens + 2].copy_from_slice(&[0, 0]);
         empty[lens + 6..lens + 8].copy_from_slice(&len);
-        let src = pdu(&[region(&[(0, 0, 128, 64)], 1, &[flat_tile(WBT_TILE_FIRST, 0, 0, 9), empty])]);
+        let src = pdu(&[region(
+            &[(0, 0, 128, 64)],
+            1,
+            &[flat_tile(WBT_TILE_FIRST, 0, 0, 9), empty],
+        )]);
         let err = collect(&mut p, 1, 128, 64, &src).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an empty RLGR stream", .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "an empty RLGR stream",
+                    ..
+                }
+            ),
+            "{err}"
+        );
 
         let next = pdu(&[region(&[(0, 0, 128, 64)], 1, &[])]);
         let paints = in_frame(&mut p, 1, 128, 64, &next).unwrap();

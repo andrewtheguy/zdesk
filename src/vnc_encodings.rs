@@ -173,7 +173,10 @@ impl Decoders {
         let mut chunk = vec![0u8; len as usize];
         reader.read_exact(&mut chunk).await?;
         let pixels = usize::from(w) * usize::from(h) * BPP;
-        let inflated = self.zlib.get_or_insert_with(|| Inflater::new("zlib")).exact(&chunk, pixels)?;
+        let inflated = self
+            .zlib
+            .get_or_insert_with(|| Inflater::new("zlib"))
+            .exact(&chunk, pixels)?;
         Ok(bgrx_to_rgb(&inflated))
     }
 
@@ -349,7 +352,9 @@ fn zrle_tiles(data: &[u8], w: u16, h: u16) -> anyhow::Result<Vec<u8>> {
                         done += run;
                     }
                 }
-                other => anyhow::bail!("a zrle tile has subencoding {other}, which RFB does not define"),
+                other => {
+                    anyhow::bail!("a zrle tile has subencoding {other}, which RFB does not define")
+                }
             }
             blit(&mut out, w, (tx, ty), (tw, th), &tile);
         }
@@ -478,7 +483,12 @@ fn fill(out: &mut [u8], stride: u16, at: (u16, u16), size: (u16, u16), rgb: [u8;
 /// fixed 4-in/3-out stride is what lets the compiler vectorize the shuffle.
 pub fn bgrx_to_rgb(bgrx: &[u8]) -> Vec<u8> {
     let mut rgb = vec![0u8; bgrx.len() / BPP * 3];
-    for (out, px) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(bgrx.as_chunks::<BPP>().0) {
+    for (out, px) in rgb
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(bgrx.as_chunks::<BPP>().0)
+    {
         out[0] = px[2];
         out[1] = px[1];
         out[2] = px[0];
@@ -692,7 +702,8 @@ mod tests {
     #[tokio::test]
     async fn zlib_rectangles_inflate_on_one_stream_to_rgb() {
         use std::io::Write as _;
-        let mut deflate = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut deflate =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         let mut wire = Vec::new();
         for pixels in [bgrx(2), [0x01, 0x02, 0x03, 0x00].repeat(3)] {
             deflate.write_all(&pixels).unwrap();
@@ -703,10 +714,20 @@ mod tests {
         }
         let mut decoders = Decoders::default();
         let mut reader = wire.as_slice();
-        let first = decoders.decode(&mut reader, Payload::Zlib, 2, 1).await.unwrap();
+        let first = decoders
+            .decode(&mut reader, Payload::Zlib, 2, 1)
+            .await
+            .unwrap();
         assert_eq!(first, vec![0x10, 0x20, 0x30, 0x10, 0x20, 0x30]);
-        let second = decoders.decode(&mut reader, Payload::Zlib, 3, 1).await.unwrap();
-        assert_eq!(second, [0x03, 0x02, 0x01].repeat(3), "the second chunk continues the first's stream");
+        let second = decoders
+            .decode(&mut reader, Payload::Zlib, 3, 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            second,
+            [0x03, 0x02, 0x01].repeat(3),
+            "the second chunk continues the first's stream"
+        );
     }
 
     #[tokio::test]
@@ -830,7 +851,10 @@ mod tests {
     fn undefined_zrle_subencodings_are_refused() {
         for sub in [17u8, 127, 129] {
             let err = zrle_tiles(&[sub], 1, 1).unwrap_err();
-            assert!(format!("{err:#}").contains("RFB does not define"), "{sub}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("RFB does not define"),
+                "{sub}: {err:#}"
+            );
         }
     }
 
@@ -840,7 +864,10 @@ mod tests {
         data.extend(cp(RED_RGB));
         data.push(9); // a run of ten, over a tile of four
         let err = zrle_tiles(&data, 2, 2).unwrap_err();
-        assert!(format!("{err:#}").contains("overruns the 4 pixels"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("overruns the 4 pixels"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -861,7 +888,10 @@ mod tests {
         data.extend(cp(RED_RGB));
         data.push(0xff);
         let err = zrle_tiles(&data, 1, 1).unwrap_err();
-        assert!(format!("{err:#}").contains("left 1 inflated byte"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("left 1 inflated byte"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -884,18 +914,29 @@ mod tests {
 
         let mut decoders = Decoders::default();
         assert_eq!(
-            decoders.decode(&mut a.as_slice(), Payload::Zrle, 8, 8).await.unwrap(),
+            decoders
+                .decode(&mut a.as_slice(), Payload::Zrle, 8, 8)
+                .await
+                .unwrap(),
             solid_rgb(RED_RGB, 64)
         );
         assert_eq!(
-            decoders.decode(&mut b.as_slice(), Payload::Zrle, 8, 8).await.unwrap(),
+            decoders
+                .decode(&mut b.as_slice(), Payload::Zrle, 8, 8)
+                .await
+                .unwrap(),
             solid_rgb(BLUE_RGB, 64)
         );
 
         // The second chunk alone, through a stream that never saw the first: no
         // zlib header, no window, nothing.
         let mut fresh = Decoders::default();
-        assert!(fresh.decode(&mut b.as_slice(), Payload::Zrle, 8, 8).await.is_err());
+        assert!(
+            fresh
+                .decode(&mut b.as_slice(), Payload::Zrle, 8, 8)
+                .await
+                .is_err()
+        );
     }
 
     /// A rectangle of no pixels is all sync flush: no output, but input the
@@ -914,11 +955,17 @@ mod tests {
 
         let mut decoders = Decoders::default();
         assert_eq!(
-            decoders.decode(&mut empty.as_slice(), Payload::Zrle, 0, 0).await.unwrap(),
+            decoders
+                .decode(&mut empty.as_slice(), Payload::Zrle, 0, 0)
+                .await
+                .unwrap(),
             Vec::<u8>::new()
         );
         assert_eq!(
-            decoders.decode(&mut real.as_slice(), Payload::Zrle, 8, 8).await.unwrap(),
+            decoders
+                .decode(&mut real.as_slice(), Payload::Zrle, 8, 8)
+                .await
+                .unwrap(),
             solid_rgb(RED_RGB, 64),
             "the rectangle behind the empty one"
         );
@@ -936,8 +983,14 @@ mod tests {
         let mut reader = wire.as_slice();
 
         let mut decoders = Decoders::default();
-        decoders.step_over(&mut reader, Payload::Zrle, 2, 2).await.unwrap();
-        decoders.step_over(&mut reader, Payload::Raw, 2, 2).await.unwrap();
+        decoders
+            .step_over(&mut reader, Payload::Zrle, 2, 2)
+            .await
+            .unwrap();
+        decoders
+            .step_over(&mut reader, Payload::Raw, 2, 2)
+            .await
+            .unwrap();
         assert_eq!(reader, [0xaa], "each stepped over by exactly its length");
         assert!(decoders.zrle.is_none(), "no inflater was ever made");
 

@@ -143,6 +143,8 @@ impl ServerCertVerifier for AcceptAnyCertificate {
     /// What the provider can actually check, which is what the two above are given.
     /// Offering a scheme wider than that would be offering to skip the check.
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.provider.signature_verification_algorithms.supported_schemes()
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }

@@ -74,18 +74,31 @@ pub fn avc420(data: &[u8]) -> Result<Avc420<'_>, Malformed> {
     // Each region is ten bytes of metablock, so a count the block has no bytes for
     // is refused before anything is allocated for it.
     if u64::from(count) * REGION_BYTES > r.rest().len() as u64 {
-        return Err(r.refuse("more region rectangles than the block has bytes for,", count));
+        return Err(r.refuse(
+            "more region rectangles than the block has bytes for,",
+            count,
+        ));
     }
-    let rects: Vec<Rect16> = (0..count).map(|_| rect16(&mut r)).collect::<Result<_, _>>()?;
+    let rects: Vec<Rect16> = (0..count)
+        .map(|_| rect16(&mut r))
+        .collect::<Result<_, _>>()?;
     let regions = rects
         .into_iter()
         .map(|rect| {
             let qp = r.u8()?;
             let quality = r.u8()?;
-            Ok(Region { rect, qp: qp & 0x3F, progressive: qp & 0x80 != 0, quality })
+            Ok(Region {
+                rect,
+                qp: qp & 0x3F,
+                progressive: qp & 0x80 != 0,
+                quality,
+            })
         })
         .collect::<Result<_, Malformed>>()?;
-    Ok(Avc420 { regions, bitstream: r.rest() })
+    Ok(Avc420 {
+        regions,
+        bitstream: r.rest(),
+    })
 }
 
 /// Read an `RFX_AVC444_BITMAP_STREAM` or `RFX_AVC444V2_BITMAP_STREAM`.
@@ -102,10 +115,19 @@ pub fn avc444(data: &[u8]) -> Result<Avc444<'_>, Malformed> {
         0 => {
             let luma = avc420(r.bytes(first)?)?;
             let chroma = avc420(r.rest())?;
-            Ok(Avc444 { luma: Some(luma), chroma: Some(chroma) })
+            Ok(Avc444 {
+                luma: Some(luma),
+                chroma: Some(chroma),
+            })
         }
-        1 => Ok(Avc444 { luma: Some(avc420(r.rest())?), chroma: None }),
-        2 => Ok(Avc444 { luma: None, chroma: Some(avc420(r.rest())?) }),
+        1 => Ok(Avc444 {
+            luma: Some(avc420(r.rest())?),
+            chroma: None,
+        }),
+        2 => Ok(Avc444 {
+            luma: None,
+            chroma: Some(avc420(r.rest())?),
+        }),
         lc => Err(r.refuse("LC", lc)),
     }
 }
@@ -131,7 +153,9 @@ pub fn access_unit(bitstream: &[u8]) -> AccessUnit {
     // Every NAL unit follows a start code that ends `00 00 01`.
     while let Some(found) = bitstream[at..].windows(3).position(|w| w == [0, 0, 1]) {
         at += found + 3;
-        let Some(header) = bitstream.get(at) else { break };
+        let Some(header) = bitstream.get(at) else {
+            break;
+        };
         match header & 0x1F {
             NAL_IDR_SLICE => unit.key = true,
             NAL_SEQUENCE_PARAMETER_SET => {
@@ -194,10 +218,33 @@ pub(crate) mod tests {
         let mut data = metablock(&[((0, 0, 64, 48), 0x80 | 22, 90), ((64, 0, 128, 16), 30, 100)]);
         data.extend_from_slice(&[0, 0, 0, 1, 0x65, 0xAA]);
         let stream = avc420(&data).unwrap();
-        assert_eq!(stream.regions, vec![
-            Region { rect: Rect16 { left: 0, top: 0, right: 64, bottom: 48 }, qp: 22, progressive: true, quality: 90 },
-            Region { rect: Rect16 { left: 64, top: 0, right: 128, bottom: 16 }, qp: 30, progressive: false, quality: 100 },
-        ]);
+        assert_eq!(
+            stream.regions,
+            vec![
+                Region {
+                    rect: Rect16 {
+                        left: 0,
+                        top: 0,
+                        right: 64,
+                        bottom: 48
+                    },
+                    qp: 22,
+                    progressive: true,
+                    quality: 90
+                },
+                Region {
+                    rect: Rect16 {
+                        left: 64,
+                        top: 0,
+                        right: 128,
+                        bottom: 16
+                    },
+                    qp: 30,
+                    progressive: false,
+                    quality: 100
+                },
+            ]
+        );
         assert_eq!(stream.bitstream, &[0, 0, 0, 1, 0x65, 0xAA]);
         // No regions is a legal, empty mask.
         let stream = avc420(&[0, 0, 0, 0, 7]).unwrap();
@@ -208,7 +255,10 @@ pub(crate) mod tests {
     #[test]
     fn a_metablock_that_lies_about_its_length_is_refused() {
         // Three regions announced, bytes for none.
-        assert!(matches!(avc420(&[3, 0, 0, 0, 1, 2]), Err(Malformed::Refused { .. })));
+        assert!(matches!(
+            avc420(&[3, 0, 0, 0, 1, 2]),
+            Err(Malformed::Refused { .. })
+        ));
         // A rectangle with no width.
         let data = metablock(&[((4, 4, 4, 8), 0, 0)]);
         assert!(matches!(avc420(&data), Err(Malformed::Refused { .. })));
@@ -248,7 +298,17 @@ pub(crate) mod tests {
     #[test]
     fn a_444_stream_with_a_bad_lc_or_a_first_view_past_the_end_is_refused() {
         let err = avc444(&[0, 0, 0, 0xC0, 0, 0, 0, 0]).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "LC", value: 3, .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "LC",
+                    value: 3,
+                    ..
+                }
+            ),
+            "{err}"
+        );
         // LC 0 with a first-stream length past the PDU.
         let err = avc444(&[9, 0, 0, 0, 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Malformed::Short { .. }), "{err}");
@@ -267,9 +327,23 @@ pub(crate) mod tests {
             0, 0, 0, 1, 0x68, 0xEE, // PPS
             0, 0, 1, 0x65, 0x88, // IDR slice, behind a three-byte start code
         ];
-        assert_eq!(access_unit(&key), AccessUnit { key: true, profile: Some([0x4D, 0x40, 0x20]) });
-        let delta = [0, 0, 0, 1, 0x09, 0x30, 0, 0, 0, 1, 0x41, 0x9A, 0, 0, 1, 0x41, 0x9B];
-        assert_eq!(access_unit(&delta), AccessUnit { key: false, profile: None });
+        assert_eq!(
+            access_unit(&key),
+            AccessUnit {
+                key: true,
+                profile: Some([0x4D, 0x40, 0x20])
+            }
+        );
+        let delta = [
+            0, 0, 0, 1, 0x09, 0x30, 0, 0, 0, 1, 0x41, 0x9A, 0, 0, 1, 0x41, 0x9B,
+        ];
+        assert_eq!(
+            access_unit(&delta),
+            AccessUnit {
+                key: false,
+                profile: None
+            }
+        );
         // Nothing, a start code at the very end, and a parameter set cut short.
         assert_eq!(access_unit(&[]), AccessUnit::default());
         assert_eq!(access_unit(&[0, 0, 1]), AccessUnit::default());

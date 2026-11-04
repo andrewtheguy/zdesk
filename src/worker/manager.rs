@@ -19,9 +19,7 @@ use base64::Engine as _;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
-use crossterm::terminal::{
-    self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
 use futures_util::StreamExt as _;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
@@ -30,9 +28,7 @@ use tokio::sync::RwLock;
 
 use super::access::{Access, LOGIN_COOKIE_PREFIX, MAX_WRONG, PinState, pin_problem};
 use super::{Handshake, transport};
-use crate::config::{
-    Audience, ConfigFile, DEFAULT_BRANDING, DEFAULT_SIZE, Protocol, TargetConfig,
-};
+use crate::config::{Audience, ConfigFile, DEFAULT_BRANDING, DEFAULT_SIZE, Protocol, TargetConfig};
 use crate::vault::{Key, MasterPassword};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -109,7 +105,8 @@ impl Settings {
         let Some(text) = read_settings(&path)? else {
             return Ok((Self::default(), None));
         };
-        let settings = Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))?;
+        let settings =
+            Self::parse(&text).with_context(|| format!("{} is not valid", path.display()))?;
         Ok((settings, Some(text)))
     }
 
@@ -124,17 +121,22 @@ impl Settings {
         let path = root.join(SETTINGS_FILE);
         let current = read_settings(&path)?;
         let text = current.as_deref().unwrap_or(SETTINGS_TEMPLATE);
-        Self::parse(text).with_context(|| format!("{} is not valid; E edits it", path.display()))?;
+        Self::parse(text)
+            .with_context(|| format!("{} is not valid; E edits it", path.display()))?;
         anyhow::ensure!(
             current.as_deref() == seen,
             "{} changed since the TUI read it; R reloads it",
             path.display()
         );
-        let mut document: toml_edit::DocumentMut =
-            text.parse().with_context(|| format!("{} is not valid", path.display()))?;
+        let mut document: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("{} is not valid", path.display()))?;
         let mut array: toml_edit::Array = order.iter().collect();
         array.fmt();
-        let updated = match document.get_mut("order").and_then(toml_edit::Item::as_value_mut) {
+        let updated = match document
+            .get_mut("order")
+            .and_then(toml_edit::Item::as_value_mut)
+        {
             // In place, keeping the comment after it.
             Some(value) => {
                 let decor = value.decor().clone();
@@ -197,7 +199,8 @@ pub fn default_instances_dir() -> anyhow::Result<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        let home = std::env::home_dir().context("cannot find the home directory; pass --instances-dir")?;
+        let home =
+            std::env::home_dir().context("cannot find the home directory; pass --instances-dir")?;
         Ok(home.join("Library/Application Support/zdesk/instances"))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -205,7 +208,8 @@ pub fn default_instances_dir() -> anyhow::Result<PathBuf> {
         if let Some(data) = std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
             return Ok(PathBuf::from(data).join("zdesk/instances"));
         }
-        let home = std::env::home_dir().context("cannot find the home directory; pass --instances-dir")?;
+        let home =
+            std::env::home_dir().context("cannot find the home directory; pass --instances-dir")?;
         Ok(home.join(".local/share/zdesk/instances"))
     }
 }
@@ -235,17 +239,27 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
     let mut view = View::List;
     let mut problems = Vec::new();
     if let Err(error) = keychain {
-        problems.push(format!("{error:#}; an instance whose config names passwords cannot start until it answers"));
+        problems.push(format!(
+            "{error:#}; an instance whose config names passwords cannot start until it answers"
+        ));
     }
     if let Err(error) = settings {
-        problems.push(format!("{error:#}; instances are listed by name until it is fixed (E edits it)"));
+        problems.push(format!(
+            "{error:#}; instances are listed by name until it is fixed (E edits it)"
+        ));
     }
     let mut message = if !problems.is_empty() {
         problems.join(" · ")
     } else if mocked {
-        format!("{}=mock: passwords set now open only until the TUI quits", crate::keychain::MOCK_ENV)
+        format!(
+            "{}=mock: passwords set now open only until the TUI quits",
+            crate::keychain::MOCK_ENV
+        )
     } else {
-        format!("control plane listening on http://{MASTER_HOST}:{}", router.port())
+        format!(
+            "control plane listening on http://{MASTER_HOST}:{}",
+            router.port()
+        )
     };
 
     loop {
@@ -587,8 +601,11 @@ impl Master {
             return Ok(None);
         }
         let instances = default_instances_dir()?;
-        let root = instances.parent().context("the instances directory has no parent")?;
-        std::fs::create_dir_all(root).with_context(|| format!("cannot create {}", root.display()))?;
+        let root = instances
+            .parent()
+            .context("the instances directory has no parent")?;
+        std::fs::create_dir_all(root)
+            .with_context(|| format!("cannot create {}", root.display()))?;
         let path = root.join("master.lock");
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -596,7 +613,8 @@ impl Master {
             .write(true)
             .open(&path)
             .with_context(|| format!("cannot open {}", path.display()))?;
-        file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("cannot lock {}", path.display()))?;
         Ok(Some(file))
     }
 
@@ -612,17 +630,23 @@ impl Master {
             return Ok(None);
         }
         let master = self.get()?;
-        file.key(master).map(Some).with_context(|| foreign_master(path))
+        file.key(master)
+            .map(Some)
+            .with_context(|| foreign_master(path))
     }
 
     /// Ask for a password's name and the password, on a terminal already
     /// suspended, and encrypt it into the config at `path` — giving the config its
     /// `[master]` block first when it has none. Returns the name.
     fn set_password(&mut self, instance: &str, path: &Path) -> anyhow::Result<String> {
-        print!("Password name in {instance} (what a target's password_ref or vnc_password_ref says): ");
+        print!(
+            "Password name in {instance} (what a target's password_ref or vnc_password_ref says): "
+        );
         std::io::stdout().flush()?;
         let mut name = String::new();
-        std::io::stdin().read_line(&mut name).context("cannot read the name")?;
+        std::io::stdin()
+            .read_line(&mut name)
+            .context("cannot read the name")?;
         let name = name.trim().to_owned();
         crate::vault::valid_name(&name)?;
 
@@ -634,7 +658,8 @@ impl Master {
             .with_context(|| format!("{} is not valid TOML", path.display()))?
             .contains_key("master");
         if has_master {
-            Key::derive(&master, &crate::vault::master_of(path)?).with_context(|| foreign_master(path))?;
+            Key::derive(&master, &crate::vault::master_of(path)?)
+                .with_context(|| foreign_master(path))?;
         } else {
             crate::vault::init_file(path, &master)?;
         }
@@ -692,7 +717,11 @@ const DEFAULT_EDITOR: &str = "notepad";
 #[cfg(unix)]
 fn editor_command(editor: &str, path: &Path) -> Command {
     let mut command = Command::new("sh");
-    command.arg("-c").arg(format!("{editor} \"$@\"")).arg("sh").arg(path);
+    command
+        .arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg("sh")
+        .arg(path);
     command
 }
 
@@ -710,9 +739,9 @@ fn editor_command(editor: &str, path: &Path) -> Command {
 #[cfg(windows)]
 fn editor_command(editor: &str, path: &Path) -> Command {
     let mut command = Command::new("cmd.exe");
-    command
-        .env("ZDESK_EDIT_PATH", path)
-        .raw_arg(format!("/d /v:off /s /c \"{editor} \"%ZDESK_EDIT_PATH%\"\""));
+    command.env("ZDESK_EDIT_PATH", path).raw_arg(format!(
+        "/d /v:off /s /c \"{editor} \"%ZDESK_EDIT_PATH%\"\""
+    ));
     command
 }
 
@@ -791,8 +820,8 @@ fn browser_command(url: &str) -> Command {
 }
 
 fn validate_config(path: &Path) -> anyhow::Result<()> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     super::check(&text)
 }
 
@@ -802,8 +831,14 @@ struct TerminalSession {
 
 impl TerminalSession {
     fn enter() -> anyhow::Result<Self> {
-        anyhow::ensure!(std::io::IsTerminal::is_terminal(&std::io::stdin()), "the TUI needs a terminal");
-        anyhow::ensure!(std::io::IsTerminal::is_terminal(&std::io::stdout()), "the TUI needs a terminal");
+        anyhow::ensure!(
+            std::io::IsTerminal::is_terminal(&std::io::stdin()),
+            "the TUI needs a terminal"
+        );
+        anyhow::ensure!(
+            std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            "the TUI needs a terminal"
+        );
         terminal::enable_raw_mode().context("cannot enable terminal raw mode")?;
         if let Err(error) = execute!(std::io::stdout(), EnterAlternateScreen, Hide) {
             let _ = terminal::disable_raw_mode();
@@ -860,7 +895,8 @@ impl Screen {
         if frame == self.shown {
             return Ok(());
         }
-        out.write_all(&frame).context("cannot write to the terminal")?;
+        out.write_all(&frame)
+            .context("cannot write to the terminal")?;
         out.flush().context("cannot write to the terminal")?;
         self.shown = frame;
         Ok(())
@@ -1154,10 +1190,17 @@ fn key_lines() -> Vec<String> {
 /// only the keys page names otherwise, then the everyday instance keys, then
 /// the keys page, so quitting is the last key named.
 fn list_bar(width: u16) -> Vec<(String, &'static str)> {
-    let mut shown: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+    let mut shown: Vec<_> = BINDINGS
+        .iter()
+        .filter(|binding| binding.bar.is_some())
+        .collect();
     while bar_width(&shown) > width as usize {
         // `max_by_key` keeps the last of equal ranks, the last listed.
-        let Some((drop, _)) = shown.iter().enumerate().max_by_key(|(_, binding)| binding.bar) else {
+        let Some((drop, _)) = shown
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, binding)| binding.bar)
+        else {
             break;
         };
         shown.remove(drop);
@@ -1173,7 +1216,9 @@ fn list_bar(width: u16) -> Vec<(String, &'static str)> {
 fn bar_width(bindings: &[&Binding]) -> usize {
     let pairs: usize = bindings
         .iter()
-        .map(|binding| key_name(binding.codes[0]).chars().count() + 1 + binding.label.chars().count())
+        .map(|binding| {
+            key_name(binding.codes[0]).chars().count() + 1 + binding.label.chars().count()
+        })
         .sum();
     pairs + 2 * bindings.len().saturating_sub(1)
 }
@@ -1219,7 +1264,8 @@ async fn copy_pin(text: &str) -> anyhow::Result<()> {
 /// What the status line says once the clipboard write has gone out. No terminal
 /// answers it, and the environment here says nothing sure about the terminal at
 /// the other end of an SSH session, so the write is reported as sent, not done.
-const UNCONFIRMED_COPY: &str = "PIN sent to the clipboard; if a paste does not give it, select the PIN instead";
+const UNCONFIRMED_COPY: &str =
+    "PIN sent to the clipboard; if a paste does not give it, select the PIN instead";
 
 /// A six-digit PIN as it is read out and typed: `123-456`. The dash keeps it one
 /// word for a double-click, and the PIN field drops it.
@@ -1234,7 +1280,11 @@ fn dashed(digits: &str) -> String {
 /// of its own beside its label, or why no new browser can log in with one. A
 /// PIN that has logged a browser in leaves the panel, and the panel says so.
 fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
-    let hint = ("press P for a new PIN · c copies it".to_owned(), Some(Color::DarkGrey), false);
+    let hint = (
+        "press P for a new PIN · c copies it".to_owned(),
+        Some(Color::DarkGrey),
+        false,
+    );
     // Browsers already logged in stay in whatever the PIN's state; only a new
     // login needs it.
     let refused = "no new browser can log in · logged-in ones stay in";
@@ -1248,12 +1298,20 @@ fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 (dashed(digits), Some(Color::Magenta), true),
                 // The PIN form takes it either way, as its own hint says.
-                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
+                (
+                    " · enter it with or without the dash".to_owned(),
+                    Some(Color::DarkGrey),
+                    false,
+                ),
             ],
             format!("expires {expires_at} · {minutes_left} min left"),
         ),
         PinState::Used { at } => (
-            vec![(format!("PIN used: a browser logged in at {at}"), Some(Color::Green), true)],
+            vec![(
+                format!("PIN used: a browser logged in at {at}"),
+                Some(Color::Green),
+                true,
+            )],
             refused.to_owned(),
         ),
         PinState::Expired => (
@@ -1261,7 +1319,11 @@ fn access_rows(pin: &PinState) -> [Vec<Run>; 3] {
             refused.to_owned(),
         ),
         PinState::Withdrawn => (
-            vec![(format!("PIN withdrawn after {MAX_WRONG} wrong entries"), Some(Color::Red), true)],
+            vec![(
+                format!("PIN withdrawn after {MAX_WRONG} wrong entries"),
+                Some(Color::Red),
+                true,
+            )],
             refused.to_owned(),
         ),
     };
@@ -1277,7 +1339,12 @@ const LIST_BOTTOM: u16 = 4;
 /// The line above the key bar: the selected instance's detail, saying how it
 /// ended, unless `message` is a `notice` answering the last key, or there is no
 /// detail.
-fn status_line<'a>(instances: &'a [InstanceInfo], selected: usize, message: &'a str, notice: bool) -> &'a str {
+fn status_line<'a>(
+    instances: &'a [InstanceInfo],
+    selected: usize,
+    message: &'a str,
+    notice: bool,
+) -> &'a str {
     instances
         .get(selected)
         .and_then(|instance| instance.detail.as_deref())
@@ -1298,7 +1365,12 @@ fn render(
     let port = options.port;
     let mut frame = Vec::new();
     queue!(frame, MoveTo(0, 0), Clear(ClearType::All))?;
-    if let View::Page { title, lines, offset } = view {
+    if let View::Page {
+        title,
+        lines,
+        offset,
+    } = view
+    {
         render_page(&mut frame, width, height, title, lines, *offset)?;
         return Ok(frame);
     }
@@ -1335,7 +1407,13 @@ fn render(
     } else {
         0
     };
-    for (row, (index, instance)) in instances.iter().enumerate().skip(start).take(available).enumerate() {
+    for (row, (index, instance)) in instances
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(available)
+        .enumerate()
+    {
         let marker = if index == selected { '›' } else { ' ' };
         let text = format!(
             "{marker} {:<20} {:<10} {}",
@@ -1353,11 +1431,25 @@ fn render(
         )?;
     }
     if instances.is_empty() {
-        line(&mut frame, LIST_TOP, width, "  no instances — press n to create one", Some(Color::Yellow), false)?;
+        line(
+            &mut frame,
+            LIST_TOP,
+            width,
+            "  no instances — press n to create one",
+            Some(Color::Yellow),
+            false,
+        )?;
     }
 
     let rule = height.saturating_sub(3);
-    line(&mut frame, rule, width, &"─".repeat(width as usize), Some(Color::DarkGrey), false)?;
+    line(
+        &mut frame,
+        rule,
+        width,
+        &"─".repeat(width as usize),
+        Some(Color::DarkGrey),
+        false,
+    )?;
     if let View::Naming(name) = view {
         line(
             &mut frame,
@@ -1367,7 +1459,12 @@ fn render(
             Some(Color::Yellow),
             true,
         )?;
-        key_bar(&mut frame, rule + 2, width, &[("Enter".to_owned(), "create"), ("Esc".to_owned(), "cancel")])?;
+        key_bar(
+            &mut frame,
+            rule + 2,
+            width,
+            &[("Enter".to_owned(), "create"), ("Esc".to_owned(), "cancel")],
+        )?;
     } else {
         line(&mut frame, rule + 1, width, status, None, false)?;
         key_bar(&mut frame, rule + 2, width, &list_bar(width))?;
@@ -1405,7 +1502,13 @@ fn panel_inner(width: u16) -> usize {
 
 /// A box from row `top`, its title in the top border and `rows` inside, each
 /// cut to fit. Too narrow for the border, the rows alone.
-fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, rows: &[Vec<Run>]) -> std::io::Result<()> {
+fn panel(
+    frame: &mut Vec<u8>,
+    top: u16,
+    width: u16,
+    title: &str,
+    rows: &[Vec<Run>],
+) -> std::io::Result<()> {
     let inner = panel_inner(width);
     let border = 4 + title.chars().count();
     let bordered = inner > 0 && border < width as usize;
@@ -1415,7 +1518,10 @@ fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, rows: &[Vec<Run
     }
     for (index, row) in rows.iter().enumerate() {
         let at = top + 1 + index as u16;
-        let runs: Vec<_> = row.iter().map(|(text, color, bold)| (text.as_str(), *color, *bold)).collect();
+        let runs: Vec<_> = row
+            .iter()
+            .map(|(text, color, bold)| (text.as_str(), *color, *bold))
+            .collect();
         if !bordered {
             spans(frame, at, width, &runs)?;
             continue;
@@ -1429,21 +1535,36 @@ fn panel(frame: &mut Vec<u8>, top: u16, width: u16, title: &str, rows: &[Vec<Run
         }
         let padding = " ".repeat(left);
         let mut boxed = vec![("│ ", Some(Color::DarkGrey), false)];
-        boxed.extend(cut.iter().map(|(text, color, bold)| (text.as_str(), *color, *bold)));
+        boxed.extend(
+            cut.iter()
+                .map(|(text, color, bold)| (text.as_str(), *color, *bold)),
+        );
         boxed.push((&padding, None, false));
         boxed.push((" │", Some(Color::DarkGrey), false));
         spans(frame, at, width, &boxed)?;
     }
     if bordered {
         let bottom = format!("└{}┘", "─".repeat(width as usize - 2));
-        line(frame, top + 1 + rows.len() as u16, width, &bottom, Some(Color::DarkGrey), false)?;
+        line(
+            frame,
+            top + 1 + rows.len() as u16,
+            width,
+            &bottom,
+            Some(Color::DarkGrey),
+            false,
+        )?;
     }
     Ok(())
 }
 
 /// Keys and what they do, the key bold and its word dim. A pair that would not
 /// fit whole is left off rather than cut through.
-fn key_bar(frame: &mut Vec<u8>, row: u16, width: u16, keys: &[(String, &str)]) -> std::io::Result<()> {
+fn key_bar(
+    frame: &mut Vec<u8>,
+    row: u16,
+    width: u16,
+    keys: &[(String, &str)],
+) -> std::io::Result<()> {
     let mut parts = Vec::new();
     let mut used = 0;
     for (key, label) in keys {
@@ -1455,7 +1576,10 @@ fn key_bar(frame: &mut Vec<u8>, row: u16, width: u16, keys: &[(String, &str)]) -
         used += length;
         parts.push((gap, key.as_str(), *label));
     }
-    let words: Vec<_> = parts.iter().map(|(_, _, label)| format!(" {label}")).collect();
+    let words: Vec<_> = parts
+        .iter()
+        .map(|(_, _, label)| format!(" {label}"))
+        .collect();
     let mut runs = Vec::new();
     for ((gap, key, _), word) in parts.iter().zip(&words) {
         runs.push((*gap, None, false));
@@ -1549,7 +1673,10 @@ fn target_specs(target: &TargetConfig) -> Vec<String> {
     lines.push(spec("picker", &describe_offers(target)));
 
     if target.protocol == Protocol::Rdp {
-        lines.push(spec("security", "nla — the credentials are checked before the session"));
+        lines.push(spec(
+            "security",
+            "nla — the credentials are checked before the session",
+        ));
         lines.push(spec(
             "graphics",
             if target.egfx() {
@@ -1602,7 +1729,11 @@ fn describe_offers(target: &TargetConfig) -> String {
     // One passed in every session is no choice, and the render line names it;
     // one passed where no other is named, wlshare's video, is part of the choice.
     let chosen = offers.passthrough.len() > 1;
-    for passthrough in offers.passthrough.iter().filter(|passthrough| chosen || passthrough.chosen()) {
+    for passthrough in offers
+        .passthrough
+        .iter()
+        .filter(|passthrough| chosen || passthrough.chosen())
+    {
         choices.push(format!("{} passed through", passthrough.stream()));
     }
     if offers.placement {
@@ -1630,7 +1761,10 @@ fn describe_audio(target: &TargetConfig) -> String {
         return "none".to_owned();
     }
     let ceiling = crate::config::AUDIO_BITRATE_KBPS;
-    format!("opus ≤{ceiling} kbit/s, adaptive down to {} kbit/s, or flac", sound_opus::walk::BITRATE_FLOOR / 1000)
+    format!(
+        "opus ≤{ceiling} kbit/s, adaptive down to {} kbit/s, or flac",
+        sound_opus::walk::BITRATE_FLOOR / 1000
+    )
 }
 
 /// One `label   value` row of a specs page, indented under its heading.
@@ -1668,7 +1802,12 @@ fn spans(
         if *bold {
             queue!(stdout, SetAttribute(Attribute::Bold))?;
         }
-        queue!(stdout, Print(clipped), SetAttribute(Attribute::Reset), ResetColor)?;
+        queue!(
+            stdout,
+            Print(clipped),
+            SetAttribute(Attribute::Reset),
+            ResetColor
+        )?;
     }
     Ok(())
 }
@@ -1838,9 +1977,13 @@ impl Supervisor {
         }
         // A running process stays manageable even if its directory was renamed or
         // removed behind the TUI. Stopped vanished entries simply leave the list.
-        self.instances.extend(previous.into_values().filter(|instance| {
-            matches!(instance.state, InstanceState::Running(_) | InstanceState::Starting)
-        }));
+        self.instances
+            .extend(previous.into_values().filter(|instance| {
+                matches!(
+                    instance.state,
+                    InstanceState::Running(_) | InstanceState::Starting
+                )
+            }));
         self.arrange().await;
         Ok(())
     }
@@ -1860,7 +2003,11 @@ impl Supervisor {
     /// says so by returning false.
     pub async fn move_instance(&mut self, name: &str, up: bool) -> anyhow::Result<bool> {
         let from = self.index(name)?;
-        let to = if up { from.checked_sub(1) } else { Some(from + 1).filter(|to| *to < self.instances.len()) };
+        let to = if up {
+            from.checked_sub(1)
+        } else {
+            Some(from + 1).filter(|to| *to < self.instances.len())
+        };
         let Some(to) = to else { return Ok(false) };
         // The file's order with every listed instance added after it, so a name
         // with no instance just now (a share not mounted) keeps its place; the
@@ -1877,7 +2024,11 @@ impl Supervisor {
             unreachable!("every listed instance was just added to the order");
         };
         order.swap(a, b);
-        self.settings_seen = Some(Settings::store_order(&self.root, &order, self.settings_seen.as_deref())?);
+        self.settings_seen = Some(Settings::store_order(
+            &self.root,
+            &order,
+            self.settings_seen.as_deref(),
+        )?);
         self.order = order;
         self.arrange().await;
         Ok(true)
@@ -1885,7 +2036,9 @@ impl Supervisor {
 
     /// Where an instance is listed, if it is.
     pub fn position(&self, name: &str) -> Option<usize> {
-        self.instances.iter().position(|instance| instance.name == name)
+        self.instances
+            .iter()
+            .position(|instance| instance.name == name)
     }
 
     /// Sort the instances: those [`Self::order`] names first, in its order, then
@@ -1893,7 +2046,10 @@ impl Supervisor {
     async fn arrange(&mut self) {
         let order = &self.order;
         self.instances.sort_by_cached_key(|instance| {
-            let rank = order.iter().position(|name| *name == instance.name).unwrap_or(usize::MAX);
+            let rank = order
+                .iter()
+                .position(|name| *name == instance.name)
+                .unwrap_or(usize::MAX);
             (rank, instance.name.clone())
         });
         self.publish().await;
@@ -1902,15 +2058,15 @@ impl Supervisor {
     pub async fn create(&mut self, name: &str) -> anyhow::Result<usize> {
         valid_instance_name(name)?;
         let dir = self.root.join(name);
-        std::fs::create_dir(&dir)
-            .with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::create_dir(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
         transport::make_private(&dir)?;
         if let Err(error) = bootstrap_config(&dir) {
             let _ = std::fs::remove_dir(&dir);
             return Err(error);
         }
         self.rescan().await?;
-        self.position(name).context("the new instance did not appear after rescan")
+        self.position(name)
+            .context("the new instance did not appear after rescan")
     }
 
     /// Start an instance, handing its worker `key` — the one that opens its
@@ -1975,7 +2131,11 @@ impl Supervisor {
             let InstanceState::Running(gateway) = &mut instance.state else {
                 continue;
             };
-            if let Some(status) = gateway.child.try_wait().context("cannot inspect gateway child")? {
+            if let Some(status) = gateway
+                .child
+                .try_wait()
+                .context("cannot inspect gateway child")?
+            {
                 let exit = ExitKind::of(status);
                 let detail = format!("{exit}; see {}", instance.dir.join("gateway.log").display());
                 ended = Some(format!("{}: {exit}", instance.name));
@@ -2003,7 +2163,8 @@ impl Supervisor {
     }
 
     fn index(&self, name: &str) -> anyhow::Result<usize> {
-        self.position(name).with_context(|| format!("unknown instance {name:?}"))
+        self.position(name)
+            .with_context(|| format!("unknown instance {name:?}"))
     }
 
     async fn publish(&self) {
@@ -2022,7 +2183,14 @@ impl Supervisor {
                     }),
                 ),
             };
-            published.insert(instance.name.clone(), PublishedInstance { rank, status, target });
+            published.insert(
+                instance.name.clone(),
+                PublishedInstance {
+                    rank,
+                    status,
+                    target,
+                },
+            );
         }
         *self.routes.inner.write().await = published;
     }
@@ -2062,7 +2230,9 @@ impl ExitKind {
         match (status.code(), status.signal()) {
             (Some(0), _) => Self::Clean,
             (Some(code), _) => Self::Code(code),
-            (None, Some(signal)) if [libc::SIGINT, libc::SIGTERM, libc::SIGHUP].contains(&signal) => {
+            (None, Some(signal))
+                if [libc::SIGINT, libc::SIGTERM, libc::SIGHUP].contains(&signal) =>
+            {
                 Self::Stopped(signal)
             }
             (None, Some(signal)) => Self::Crashed(signal),
@@ -2174,7 +2344,11 @@ impl std::fmt::Display for ExitKind {
     }
 }
 
-async fn spawn_gateway(binary: &Path, dir: &Path, key: Option<&Key>) -> anyhow::Result<RunningGateway> {
+async fn spawn_gateway(
+    binary: &Path,
+    dir: &Path,
+    key: Option<&Key>,
+) -> anyhow::Result<RunningGateway> {
     let log_path = dir.join("gateway.log");
     let mut log = std::fs::OpenOptions::new()
         .create(true)
@@ -2204,20 +2378,39 @@ async fn spawn_gateway(binary: &Path, dir: &Path, key: Option<&Key>) -> anyhow::
     // The key line, first and only: see `super::read_key`. The pipe then stays open
     // for as long as this process wants the worker to live.
     let line = format!("{}\n", key.map(Key::to_line).unwrap_or_default());
-    let stdin = child.stdin.as_mut().context("gateway stdin was not piped")?;
-    stdin.write_all(line.as_bytes()).await.context("cannot hand the gateway its key")?;
-    stdin.flush().await.context("cannot hand the gateway its key")?;
-    let stdout = child.stdout.take().context("gateway stdout was not piped")?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .context("gateway stdin was not piped")?;
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .context("cannot hand the gateway its key")?;
+    stdin
+        .flush()
+        .await
+        .context("cannot hand the gateway its key")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("gateway stdout was not piped")?;
     let mut stdout = tokio::io::BufReader::new(stdout);
     let mut line = String::new();
     let bytes = tokio::time::timeout(HANDSHAKE_TIMEOUT, stdout.read_line(&mut line))
         .await
         .context("gateway did not print its handshake within 20 seconds")??;
-    anyhow::ensure!(bytes != 0, "gateway exited before printing its handshake; see {}", log_path.display());
+    anyhow::ensure!(
+        bytes != 0,
+        "gateway exited before printing its handshake; see {}",
+        log_path.display()
+    );
     let handshake: Handshake = serde_json::from_str(line.trim_end())
         .with_context(|| format!("gateway printed a malformed handshake: {line:?}"))?;
     transport::check_endpoint(dir, &handshake.endpoint)?;
-    anyhow::ensure!(!handshake.token.is_empty(), "gateway returned an empty token");
+    anyhow::ensure!(
+        !handshake.token.is_empty(),
+        "gateway returned an empty token"
+    );
     Ok(RunningGateway {
         child,
         endpoint: handshake.endpoint,
@@ -2230,7 +2423,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 async fn stop_gateway(mut gateway: RunningGateway) {
     drop(gateway.child.stdin.take());
-    if tokio::time::timeout(STOP_GRACE, gateway.child.wait()).await.is_err() {
+    if tokio::time::timeout(STOP_GRACE, gateway.child.wait())
+        .await
+        .is_err()
+    {
         let _ = gateway.child.start_kill();
         let _ = gateway.child.wait().await;
     }
@@ -2240,10 +2436,14 @@ fn valid_instance_name(name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(!name.is_empty(), "the name is empty");
     anyhow::ensure!(name.len() <= 63, "the name is longer than one DNS label");
     anyhow::ensure!(
-        name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+        name.bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
         "use lowercase ASCII letters, digits, and hyphens only"
     );
-    anyhow::ensure!(!name.starts_with('-') && !name.ends_with('-'), "the name may not start or end with '-'");
+    anyhow::ensure!(
+        !name.starts_with('-') && !name.ends_with('-'),
+        "the name may not start or end with '-'"
+    );
     Ok(())
 }
 
@@ -2277,7 +2477,9 @@ fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
             (target, Some(permissions))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (path.to_owned(), None),
-        Err(error) => return Err(error).with_context(|| format!("cannot resolve {}", path.display())),
+        Err(error) => {
+            return Err(error).with_context(|| format!("cannot resolve {}", path.display()));
+        }
     };
     let path = path.as_path();
     let mut temporary = path.as_os_str().to_owned();
@@ -2298,8 +2500,9 @@ fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         if let Some(permissions) = permissions {
-            std::fs::set_permissions(&temporary, permissions)
-                .with_context(|| format!("cannot set the permissions of {}", temporary.display()))?;
+            std::fs::set_permissions(&temporary, permissions).with_context(|| {
+                format!("cannot set the permissions of {}", temporary.display())
+            })?;
         }
         std::fs::rename(&temporary, path)
             .with_context(|| format!("cannot install {}", path.display()))
@@ -2348,7 +2551,10 @@ impl SharedPort {
     /// answering and keep routing to *its* instance workers, and which one a page
     /// reached would be the resolver's choice.
     pub async fn bind(port: u16, routes: RouteTable, access: Access) -> anyhow::Result<Self> {
-        anyhow::ensure!(port != 0, "the control plane needs a port a browser can be told");
+        anyhow::ensure!(
+            port != 0,
+            "the control plane needs a port a browser can be told"
+        );
         let addrs = [
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
@@ -2408,7 +2614,14 @@ async fn route_connection(
     // development server's allowed hosts do: a tunnel or forward that reaches the
     // port under any other host is refused before anything is read.
     let Some(host) = host_at(&parsed.host, public_port) else {
-        write_response(&mut client, "403 Forbidden", "text/plain; charset=utf-8", "blocked host\n", &[]).await?;
+        write_response(
+            &mut client,
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            "blocked host\n",
+            &[],
+        )
+        .await?;
         return Ok(());
     };
 
@@ -2417,7 +2630,14 @@ async fn route_connection(
     // set only under its own name.
     if matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
         let location = format!("http://{MASTER_HOST}:{public_port}{}", parsed.target);
-        write_response(&mut client, "307 Temporary Redirect", "text/plain; charset=utf-8", "", &[("Location", location.as_str())]).await?;
+        write_response(
+            &mut client,
+            "307 Temporary Redirect",
+            "text/plain; charset=utf-8",
+            "",
+            &[("Location", location.as_str())],
+        )
+        .await?;
         return Ok(());
     }
     let landing = host == MASTER_HOST;
@@ -2427,11 +2647,25 @@ async fn route_connection(
         match host.strip_suffix(&format!(".{MASTER_HOST}")) {
             Some(name) if valid_instance_name(name).is_ok() => Some(name.to_owned()),
             Some(_) => {
-                write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
+                write_response(
+                    &mut client,
+                    "404 Not Found",
+                    "text/plain; charset=utf-8",
+                    "unknown zDesk instance\n",
+                    &[],
+                )
+                .await?;
                 return Ok(());
             }
             None => {
-                write_response(&mut client, "403 Forbidden", "text/plain; charset=utf-8", "blocked host\n", &[]).await?;
+                write_response(
+                    &mut client,
+                    "403 Forbidden",
+                    "text/plain; charset=utf-8",
+                    "blocked host\n",
+                    &[],
+                )
+                .await?;
                 return Ok(());
             }
         }
@@ -2496,17 +2730,36 @@ async fn route_connection(
                     })
                 })
                 .collect();
-            return write_json(&mut client, "200 OK", &serde_json::Value::from(instances), &[]).await;
+            return write_json(
+                &mut client,
+                "200 OK",
+                &serde_json::Value::from(instances),
+                &[],
+            )
+            .await;
         }
         if is_api(path) {
-            return write_json(&mut client, "404 Not Found", &serde_json::json!({ "error": "not found" }), &[]).await;
+            return write_json(
+                &mut client,
+                "404 Not Found",
+                &serde_json::json!({ "error": "not found" }),
+                &[],
+            )
+            .await;
         }
         return write_bundle(&mut client, &parsed, path).await;
     };
 
     let published = routes.inner.read().await.get(&name).cloned();
     let Some(published) = published else {
-        write_response(&mut client, "404 Not Found", "text/plain; charset=utf-8", "unknown zDesk instance\n", &[]).await?;
+        write_response(
+            &mut client,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "unknown zDesk instance\n",
+            &[],
+        )
+        .await?;
         return Ok(());
     };
     let Some(target) = published.target else {
@@ -2514,7 +2767,14 @@ async fn route_connection(
             "instance {name} is {}; start it from the zDesk TUI\n",
             published.status.label()
         );
-        write_response(&mut client, "503 Service Unavailable", "text/plain; charset=utf-8", &body, &[]).await?;
+        write_response(
+            &mut client,
+            "503 Service Unavailable",
+            "text/plain; charset=utf-8",
+            &body,
+            &[],
+        )
+        .await?;
         return Ok(());
     };
 
@@ -2532,7 +2792,9 @@ async fn route_connection(
             return Ok(());
         }
     };
-    gateway.write_all(&forwarded(&request, &parsed, &target.token)?).await?;
+    gateway
+        .write_all(&forwarded(&request, &parsed, &target.token)?)
+        .await?;
     tokio::io::copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
@@ -2572,10 +2834,17 @@ async fn log_in(
     request: &[u8],
 ) -> anyhow::Result<()> {
     if parsed.method != "POST" {
-        return write_json(&mut client, "405 Method Not Allowed", &serde_json::json!({ "error": "post the PIN" }), &[]).await;
+        return write_json(
+            &mut client,
+            "405 Method Not Allowed",
+            &serde_json::json!({ "error": "post the PIN" }),
+            &[],
+        )
+        .await;
     }
     if parsed.origin.as_deref() != Some(format!("http://{}", parsed.host).as_str()) {
-        let refusal = serde_json::json!({ "error": "a PIN is taken only from its own origin's page" });
+        let refusal =
+            serde_json::json!({ "error": "a PIN is taken only from its own origin's page" });
         return write_json(&mut client, "403 Forbidden", &refusal, &[]).await;
     }
     let body = read_body(&mut client, request, parsed.content_length).await?;
@@ -2584,35 +2853,77 @@ async fn log_in(
         return write_json(&mut client, "400 Bad Request", &refusal, &[]).await;
     };
     if logged_in {
-        return write_json(&mut client, "200 OK", &serde_json::json!({ "ok": true }), &[]).await;
+        return write_json(
+            &mut client,
+            "200 OK",
+            &serde_json::json!({ "ok": true }),
+            &[],
+        )
+        .await;
     }
     match access.log_in(&entry.pin) {
         Ok(login) => {
             let cookie = access.set_cookie(&login);
-            write_json(&mut client, "200 OK", &serde_json::json!({ "ok": true }), &[("Set-Cookie", cookie.as_str())]).await
+            write_json(
+                &mut client,
+                "200 OK",
+                &serde_json::json!({ "ok": true }),
+                &[("Set-Cookie", cookie.as_str())],
+            )
+            .await
         }
         Err(refusal) => {
-            write_json(&mut client, "401 Unauthorized", &serde_json::json!({ "error": refusal.message() }), &[]).await
+            write_json(
+                &mut client,
+                "401 Unauthorized",
+                &serde_json::json!({ "error": refusal.message() }),
+                &[],
+            )
+            .await
         }
     }
 }
 
 /// The bundle's file for `path`, as a gateway serves it: the page for any path
 /// that is not a file, isolated, with its validator.
-async fn write_bundle(stream: &mut tokio::net::TcpStream, parsed: &ParsedRequest, path: &str) -> anyhow::Result<()> {
+async fn write_bundle(
+    stream: &mut tokio::net::TcpStream,
+    parsed: &ParsedRequest,
+    path: &str,
+) -> anyhow::Result<()> {
     if parsed.method != "GET" {
-        write_response(stream, "405 Method Not Allowed", "text/plain; charset=utf-8", "", &[]).await?;
+        write_response(
+            stream,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            "",
+            &[],
+        )
+        .await?;
         return Ok(());
     }
     // The software HEVC decoder is a worker's, and the page with it never loads
     // before a login; the document here would read as having found it.
     if path.starts_with("/hevc/") {
-        write_response(stream, "404 Not Found", "text/plain; charset=utf-8", "", &[]).await?;
+        write_response(
+            stream,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "",
+            &[],
+        )
+        .await?;
         return Ok(());
     }
     let asset = crate::assets::asset(path);
-    let etag = asset.etag.to_str().context("an embedded file's validator is ASCII")?;
-    let content_type = asset.content_type.to_str().context("an embedded file's type is ASCII")?;
+    let etag = asset
+        .etag
+        .to_str()
+        .context("an embedded file's validator is ASCII")?;
+    let content_type = asset
+        .content_type
+        .to_str()
+        .context("an embedded file's type is ASCII")?;
     let mut headers = crate::assets::ISOLATION.to_vec();
     headers.push(("ETag", etag));
     if parsed.if_none_match.as_deref() == Some(etag) {
@@ -2634,8 +2945,15 @@ async fn write_json(
 }
 
 /// A request's body of `length` bytes, the part already read with its head first.
-async fn read_body(stream: &mut tokio::net::TcpStream, request: &[u8], length: usize) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(length <= MAX_LOGIN_BODY, "a login body exceeds {MAX_LOGIN_BODY} bytes");
+async fn read_body(
+    stream: &mut tokio::net::TcpStream,
+    request: &[u8],
+    length: usize,
+) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(
+        length <= MAX_LOGIN_BODY,
+        "a login body exceeds {MAX_LOGIN_BODY} bytes"
+    );
     let start = head_end(request)? + 4;
     let mut body = request[start..].to_vec();
     tokio::time::timeout(REQUEST_HEAD_TIMEOUT, async {
@@ -2678,12 +2996,18 @@ fn forwarded(request: &[u8], parsed: &ParsedRequest, token: &str) -> anyhow::Res
     for line in lines {
         let name = line.split_once(':').map_or(line, |(name, _)| name).trim();
         if name.eq_ignore_ascii_case("cookie") {
-            cookies.extend(line.split_once(':').into_iter().flat_map(|(_, value)| value.split(';')).map(str::trim).filter(
-                |pair| {
-                    let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
-                    !pair.is_empty() && !key.starts_with(LOGIN_COOKIE_PREFIX) && key != crate::auth::COOKIE_NAME
-                },
-            ));
+            cookies.extend(
+                line.split_once(':')
+                    .into_iter()
+                    .flat_map(|(_, value)| value.split(';'))
+                    .map(str::trim)
+                    .filter(|pair| {
+                        let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
+                        !pair.is_empty()
+                            && !key.starts_with(LOGIN_COOKIE_PREFIX)
+                            && key != crate::auth::COOKIE_NAME
+                    }),
+            );
             continue;
         }
         if !parsed.upgrade
@@ -2730,7 +3054,10 @@ async fn read_request_head(stream: &mut tokio::net::TcpStream) -> anyhow::Result
                 return Ok((!request.is_empty()).then_some(request));
             }
             request.extend_from_slice(&chunk[..read]);
-            anyhow::ensure!(request.len() <= MAX_REQUEST_HEAD, "request headers exceed 64 KiB");
+            anyhow::ensure!(
+                request.len() <= MAX_REQUEST_HEAD,
+                "request headers exceed 64 KiB"
+            );
             if request.windows(4).any(|window| window == b"\r\n\r\n") {
                 return Ok(Some(request));
             }
@@ -2755,10 +3082,16 @@ fn parse_request(request: &[u8]) -> anyhow::Result<ParsedRequest> {
     let request_line = lines.next().context("missing HTTP request line")?;
     let mut pieces = request_line.split_whitespace();
     let method = pieces.next().context("missing HTTP method")?.to_owned();
-    let target = pieces.next().context("missing HTTP request target")?.to_owned();
+    let target = pieces
+        .next()
+        .context("missing HTTP request target")?
+        .to_owned();
     let version = pieces.next().context("missing HTTP version")?;
     anyhow::ensure!(version.starts_with("HTTP/"), "invalid HTTP version");
-    anyhow::ensure!(target.starts_with('/'), "only origin-form HTTP requests are accepted");
+    anyhow::ensure!(
+        target.starts_with('/'),
+        "only origin-form HTTP requests are accepted"
+    );
 
     let mut host = None;
     let mut cookies = Vec::new();
@@ -2875,7 +3208,11 @@ mod tests {
         let mut seen = Vec::new();
         for binding in BINDINGS {
             assert!(
-                BINDINGS.iter().filter(|other| other.action == binding.action).count() == 1,
+                BINDINGS
+                    .iter()
+                    .filter(|other| other.action == binding.action)
+                    .count()
+                    == 1,
                 "{:?} is bound twice",
                 binding.action
             );
@@ -2889,7 +3226,11 @@ mod tests {
 
         let page = key_lines().join("\n");
         for binding in BINDINGS {
-            assert!(page.contains(binding.about), "the keys page lists {:?}: {page}", binding.action);
+            assert!(
+                page.contains(binding.about),
+                "the keys page lists {:?}: {page}",
+                binding.action
+            );
         }
     }
 
@@ -2899,19 +3240,45 @@ mod tests {
     #[test]
     fn the_list_screen_fits_an_80_column_terminal() {
         // A wide terminal names every ranked key.
-        let every: Vec<_> = BINDINGS.iter().filter(|binding| binding.bar.is_some()).collect();
+        let every: Vec<_> = BINDINGS
+            .iter()
+            .filter(|binding| binding.bar.is_some())
+            .collect();
         assert_eq!(list_bar(u16::MAX).len(), every.len());
-        for action in [Action::Restart, Action::Password, Action::StartAll, Action::Rescan, Action::MoveUp, Action::MoveDown, Action::OpenDirectory, Action::EditSettings] {
-            assert!(every.iter().any(|binding| binding.action == action), "{action:?}");
+        for action in [
+            Action::Restart,
+            Action::Password,
+            Action::StartAll,
+            Action::Rescan,
+            Action::MoveUp,
+            Action::MoveDown,
+            Action::OpenDirectory,
+            Action::EditSettings,
+        ] {
+            assert!(
+                every.iter().any(|binding| binding.action == action),
+                "{action:?}"
+            );
         }
 
         // At 80 columns the rarer keys give way first, and every everyday key stays.
-        let everyday: Vec<_> = every.iter().copied().filter(|binding| binding.bar <= Some(2)).collect();
-        assert!(bar_width(&everyday) <= 80, "the everyday key bar is {} columns", bar_width(&everyday));
+        let everyday: Vec<_> = every
+            .iter()
+            .copied()
+            .filter(|binding| binding.bar <= Some(2))
+            .collect();
+        assert!(
+            bar_width(&everyday) <= 80,
+            "the everyday key bar is {} columns",
+            bar_width(&everyday)
+        );
         let at_80 = list_bar(80);
         assert!(at_80.len() < every.len());
         for binding in &everyday {
-            assert!(at_80.contains(&(key_name(binding.codes[0]), binding.label)), "{at_80:?}");
+            assert!(
+                at_80.contains(&(key_name(binding.codes[0]), binding.label)),
+                "{at_80:?}"
+            );
         }
 
         // Narrower, the instance keys give way and the keys page stays named.
@@ -2935,16 +3302,34 @@ mod tests {
             expires_at: "14:32".to_owned(),
             minutes_left: 10,
         };
-        let frame = render((80, 24), &options, &pin, &instances, 0, &View::List, "started work").unwrap();
+        let frame = render(
+            (80, 24),
+            &options,
+            &pin,
+            &instances,
+            0,
+            &View::List,
+            "started work",
+        )
+        .unwrap();
         let frame = String::from_utf8(frame).unwrap();
         assert!(frame.contains("123-456") && !frame.contains('█'), "{frame}");
-        assert!(frame.contains("press P for a new PIN · c copies it"), "{frame}");
+        assert!(
+            frame.contains("press P for a new PIN · c copies it"),
+            "{frame}"
+        );
         assert!(frame.contains("expires 14:32 · 10 min left"), "{frame}");
         assert!(frame.contains("┌ access PIN "), "{frame}");
-        assert!(frame.contains("http://work.zdesk.localhost:52380"), "{frame}");
+        assert!(
+            frame.contains("http://work.zdesk.localhost:52380"),
+            "{frame}"
+        );
         assert!(frame.contains("instances directory /instances"), "{frame}");
         for (key, label) in list_bar(80) {
-            assert!(frame.contains(&key) && frame.contains(&format!(" {label}")), "{key} {label}: {frame}");
+            assert!(
+                frame.contains(&key) && frame.contains(&format!(" {label}")),
+                "{key} {label}: {frame}"
+            );
         }
 
         // An answer to the last key outranks a failed instance's detail, which
@@ -2954,16 +3339,28 @@ mod tests {
             detail: Some("exit code 1".to_owned()),
             ..instances[0].clone()
         }];
-        assert_eq!(status_line(&failed, 0, "work is already first", false), "exit code 1");
-        assert_eq!(status_line(&failed, 0, "work is already first", true), "work is already first");
-        assert_eq!(status_line(&instances, 0, "started work", false), "started work");
+        assert_eq!(
+            status_line(&failed, 0, "work is already first", false),
+            "exit code 1"
+        );
+        assert_eq!(
+            status_line(&failed, 0, "work is already first", true),
+            "work is already first"
+        );
+        assert_eq!(
+            status_line(&instances, 0, "started work", false),
+            "started work"
+        );
 
         // Too narrow for the keys page and quitting together, the screen still
         // names quitting.
         assert_eq!(list_bar(10), vec![("q".to_owned(), "quit")]);
         let frame = render((10, 24), &options, &pin, &instances, 0, &View::List, "").unwrap();
         let frame = String::from_utf8(frame).unwrap();
-        assert!(frame.contains(" quit") && !frame.contains(" help"), "{frame}");
+        assert!(
+            frame.contains(" quit") && !frame.contains(" help"),
+            "{frame}"
+        );
     }
 
     /// The PIN is shown in a colour of its own, apart from its label, and a PIN
@@ -2981,16 +3378,28 @@ mod tests {
             vec![
                 ("PIN ".to_owned(), Some(Color::Green), true),
                 ("123-456".to_owned(), Some(Color::Magenta), true),
-                (" · enter it with or without the dash".to_owned(), Some(Color::DarkGrey), false),
+                (
+                    " · enter it with or without the dash".to_owned(),
+                    Some(Color::DarkGrey),
+                    false
+                ),
             ]
         );
-        let used = PinState::Used { at: "14:25".to_owned() };
+        let used = PinState::Used {
+            at: "14:25".to_owned(),
+        };
         let [heading, ..] = access_rows(&used);
         assert_eq!(heading[0].0, "PIN used: a browser logged in at 14:25");
-        assert!(!format!("{:?}", access_rows(&used)).contains("123"), "the used PIN leaves the panel");
+        assert!(
+            !format!("{:?}", access_rows(&used)).contains("123"),
+            "the used PIN leaves the panel"
+        );
         for pin in [used, PinState::Expired, PinState::Withdrawn] {
             let [_, detail, _] = access_rows(&pin);
-            assert_eq!(detail[0].0, "no new browser can log in · logged-in ones stay in");
+            assert_eq!(
+                detail[0].0,
+                "no new browser can log in · logged-in ones stay in"
+            );
         }
     }
 
@@ -3000,7 +3409,10 @@ mod tests {
     #[test]
     fn the_pin_is_copied_through_the_terminal() {
         assert_eq!(dashed("123456"), "123-456");
-        assert_eq!(clipboard_write(&dashed("123456")), b"\x1b]52;c;MTIzLTQ1Ng==\x07");
+        assert_eq!(
+            clipboard_write(&dashed("123456")),
+            b"\x1b]52;c;MTIzLTQ1Ng==\x07"
+        );
     }
 
     /// The specs page answers from the config the instance would start on, and
@@ -3018,11 +3430,13 @@ mod tests {
         };
         std::fs::write(
             instance.config_path(),
-            crate::config::vaulted("[branding]\ntext = \"work laptop\"\n\n\
+            crate::config::vaulted(
+                "[branding]\ntext = \"work laptop\"\n\n\
              [[targets]]\nname = \"win\"\nprotocol = \"rdp\"\nhost = \"192.168.1.20\"\n\
              username = \"andrew\"\npassword_ref = \"win11\"\n\n\
              [[targets]]\nname = \"desk\"\nprotocol = \"vnc\"\nsubtype = \"wlshare\"\n\
-             host = \"192.168.1.21\"\n"),
+             host = \"192.168.1.21\"\n",
+            ),
         )
         .unwrap();
 
@@ -3031,18 +3445,30 @@ mod tests {
         assert!(page.contains("http://work.zdesk.localhost:52380"), "{page}");
         assert!(page.contains(&spec("shown as", "work laptop")), "{page}");
         assert!(page.contains("target win"), "{page}");
-        assert!(page.contains("192.168.1.20:3389"), "the standard port is filled in: {page}");
-        assert!(page.contains("account password [passwords].win11"), "{page}");
+        assert!(
+            page.contains("192.168.1.20:3389"),
+            "the standard port is filled in: {page}"
+        );
+        assert!(
+            page.contains("account password [passwords].win11"),
+            "{page}"
+        );
         assert!(
             page.contains("opus ≤192 kbit/s, adaptive down to 24 kbit/s"),
             "an unset switch is named with the one rate, walk included: {page}"
         );
         assert!(
-            page.contains(&spec("render", "the host's graphics pipeline, passed through")),
+            page.contains(&spec(
+                "render",
+                "the host's graphics pipeline, passed through"
+            )),
             "the render plan describes itself: {page}"
         );
         assert!(
-            page.contains(&spec("picker", "offers resize, sound, camera, microphone, high quality or adaptive H.264")),
+            page.contains(&spec(
+                "picker",
+                "offers resize, sound, camera, microphone, high quality or adaptive H.264"
+            )),
             "what a session's starter chooses is the type's to offer, and the pipeline is passed unasked: {page}"
         );
         assert!(
@@ -3109,20 +3535,33 @@ mod tests {
         assert_eq!(code, ExitKind::Code(2));
         assert!(!code.is_clean());
         assert!(code.to_string().contains("exit code 2"), "{code}");
-        assert_eq!(ExitKind::of(status(1)), ExitKind::Code(1), "what TerminateProcess leaves");
+        assert_eq!(
+            ExitKind::of(status(1)),
+            ExitKind::Code(1),
+            "what TerminateProcess leaves"
+        );
 
         let interrupted = ExitKind::of(status(STATUS_CONTROL_C_EXIT));
         assert_eq!(interrupted, ExitKind::Stopped(STATUS_CONTROL_C_EXIT));
         assert!(interrupted.is_clean());
-        assert!(interrupted.to_string().contains("0xC000013A"), "{interrupted}");
+        assert!(
+            interrupted.to_string().contains("0xC000013A"),
+            "{interrupted}"
+        );
 
         let violation = ExitKind::of(status(0xC000_0005));
         assert_eq!(violation, ExitKind::Crashed(0xC000_0005));
         assert!(!violation.is_clean());
-        assert!(violation.to_string().contains("STATUS_ACCESS_VIOLATION"), "{violation}");
+        assert!(
+            violation.to_string().contains("STATUS_ACCESS_VIOLATION"),
+            "{violation}"
+        );
         let abort = ExitKind::of(status(0xC000_0409));
         assert!(!abort.is_clean());
-        assert!(abort.to_string().contains("abort"), "a panic's end is named: {abort}");
+        assert!(
+            abort.to_string().contains("abort"),
+            "a panic's end is named: {abort}"
+        );
     }
 
     #[test]
@@ -3141,11 +3580,17 @@ mod tests {
             b"GET /api/targets?q=1 HTTP/1.1\r\nHost: Work.zdesk.localhost:52380\r\nCookie: other=1; zdesk_session=secret\r\n\r\n",
         )
         .unwrap();
-        assert_eq!(host_at(&parsed.host, 52380).as_deref(), Some("work.zdesk.localhost"));
+        assert_eq!(
+            host_at(&parsed.host, 52380).as_deref(),
+            Some("work.zdesk.localhost")
+        );
         assert_eq!(parsed.target, "/api/targets?q=1");
         assert_eq!(parsed.method, "GET");
         assert!(!parsed.upgrade);
-        assert_eq!(parsed.cookie.as_deref(), Some("other=1; zdesk_session=secret"));
+        assert_eq!(
+            parsed.cookie.as_deref(),
+            Some("other=1; zdesk_session=secret")
+        );
     }
 
     /// The worker is given its token by the master, in place of whatever zDesk
@@ -3155,21 +3600,38 @@ mod tests {
     fn a_forwarded_request_carries_the_token_and_not_the_browsers_logins() {
         let request = b"POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: keep-alive\r\nCookie: zdesk_login_52380=mine; zdesk_login_52381=theirs; theme=dark\r\nCookie: zdesk_session=served\r\nContent-Length: 2\r\n\r\nhi";
         let parsed = parse_request(request).unwrap();
-        let given = String::from_utf8(forwarded(request, &parsed, "worker-token").unwrap()).unwrap();
-        assert!(given.starts_with("POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\n"), "{given}");
-        assert!(given.contains("\r\nCookie: theme=dark; zdesk_session=worker-token\r\n"), "{given}");
-        assert!(!given.contains("mine") && !given.contains("theirs") && !given.contains("served"), "{given}");
+        let given =
+            String::from_utf8(forwarded(request, &parsed, "worker-token").unwrap()).unwrap();
+        assert!(
+            given.starts_with("POST /api/x HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\n"),
+            "{given}"
+        );
+        assert!(
+            given.contains("\r\nCookie: theme=dark; zdesk_session=worker-token\r\n"),
+            "{given}"
+        );
+        assert!(
+            !given.contains("mine") && !given.contains("theirs") && !given.contains("served"),
+            "{given}"
+        );
         assert!(!given.contains("keep-alive"), "{given}");
         assert!(given.contains("\r\nConnection: close\r\n"), "{given}");
-        assert!(given.ends_with("\r\n\r\nhi"), "the body read with the head follows it: {given}");
+        assert!(
+            given.ends_with("\r\n\r\nhi"),
+            "the body read with the head follows it: {given}"
+        );
 
         let upgrade = b"GET /ws HTTP/1.1\r\nHost: work.zdesk.localhost:52380\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
         let parsed = parse_request(upgrade).unwrap();
         assert!(parsed.upgrade);
-        let given = String::from_utf8(forwarded(upgrade, &parsed, "worker-token").unwrap()).unwrap();
+        let given =
+            String::from_utf8(forwarded(upgrade, &parsed, "worker-token").unwrap()).unwrap();
         assert!(given.contains("\r\nConnection: Upgrade\r\n"), "{given}");
         assert!(!given.contains("Connection: close"), "{given}");
-        assert!(given.contains("\r\nCookie: zdesk_session=worker-token\r\n"), "{given}");
+        assert!(
+            given.contains("\r\nCookie: zdesk_session=worker-token\r\n"),
+            "{given}"
+        );
     }
 
     #[test]
@@ -3190,13 +3652,19 @@ mod tests {
         for name in ["alpha", "beta", "delta", "gamma"] {
             std::fs::create_dir(temp.path().join(name)).unwrap();
         }
-        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
+        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk"))
+            .await
+            .unwrap();
         let settings = temp.path().join(SETTINGS_FILE);
         Settings::parse(SETTINGS_TEMPLATE).unwrap();
         // No settings file is the defaults: every instance by name.
         supervisor.reload_settings().await.unwrap();
         let names = |supervisor: &Supervisor| -> Vec<String> {
-            supervisor.instances().into_iter().map(|instance| instance.name).collect()
+            supervisor
+                .instances()
+                .into_iter()
+                .map(|instance| instance.name)
+                .collect()
         };
         assert_eq!(names(&supervisor), ["alpha", "beta", "delta", "gamma"]);
 
@@ -3207,16 +3675,33 @@ mod tests {
         let published = supervisor.routes().inner.read().await.clone();
         let mut landing: Vec<_> = published.iter().collect();
         landing.sort_by_key(|(_, instance)| instance.rank);
-        assert_eq!(landing.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), arranged);
+        assert_eq!(
+            landing
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            arranged
+        );
 
         // A new instance the order does not name joins the rest by name.
         supervisor.create("beta2").await.unwrap();
-        assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"]);
+        assert_eq!(
+            names(&supervisor),
+            ["gamma", "beta", "alpha", "beta2", "delta"]
+        );
 
-        for broken in ["order = [\"beta\", \"beta\"]\n", "order = [\"Beta\"]\n", "sort = \"name\"\n"] {
+        for broken in [
+            "order = [\"beta\", \"beta\"]\n",
+            "order = [\"Beta\"]\n",
+            "sort = \"name\"\n",
+        ] {
             std::fs::write(&settings, broken).unwrap();
             supervisor.reload_settings().await.unwrap_err();
-            assert_eq!(names(&supervisor), ["gamma", "beta", "alpha", "beta2", "delta"], "{broken}");
+            assert_eq!(
+                names(&supervisor),
+                ["gamma", "beta", "alpha", "beta2", "delta"],
+                "{broken}"
+            );
         }
     }
 
@@ -3229,20 +3714,35 @@ mod tests {
         for name in ["alpha", "beta", "gamma"] {
             std::fs::create_dir(temp.path().join(name)).unwrap();
         }
-        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk")).await.unwrap();
+        let mut supervisor = Supervisor::open(temp.path().to_owned(), PathBuf::from("zdesk"))
+            .await
+            .unwrap();
         supervisor.reload_settings().await.unwrap();
         let names = |supervisor: &Supervisor| -> Vec<String> {
-            supervisor.instances().into_iter().map(|instance| instance.name).collect()
+            supervisor
+                .instances()
+                .into_iter()
+                .map(|instance| instance.name)
+                .collect()
         };
 
         // No file yet: the first move creates it from the template.
-        assert!(!supervisor.move_instance("alpha", true).await.unwrap(), "already first");
+        assert!(
+            !supervisor.move_instance("alpha", true).await.unwrap(),
+            "already first"
+        );
         assert!(supervisor.move_instance("gamma", true).await.unwrap());
         assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
         let settings = temp.path().join(SETTINGS_FILE);
         let text = std::fs::read_to_string(&settings).unwrap();
-        assert_eq!(text, format!("{SETTINGS_TEMPLATE}order = [\"alpha\", \"gamma\", \"beta\"]\n"));
-        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "gamma", "beta"]);
+        assert_eq!(
+            text,
+            format!("{SETTINGS_TEMPLATE}order = [\"alpha\", \"gamma\", \"beta\"]\n")
+        );
+        assert_eq!(
+            Settings::parse(&text).unwrap().order,
+            ["alpha", "gamma", "beta"]
+        );
 
         // A file somebody wrote keeps its own lines.
         std::fs::write(&settings, "# mine\norder = [\"beta\"] # trailing\n").unwrap();
@@ -3250,16 +3750,31 @@ mod tests {
         assert_eq!(names(&supervisor), ["beta", "alpha", "gamma"]);
         assert!(supervisor.move_instance("beta", false).await.unwrap());
         let text = std::fs::read_to_string(&settings).unwrap();
-        assert_eq!(text, "# mine\norder = [\"alpha\", \"beta\", \"gamma\"] # trailing\n");
-        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "beta", "gamma"]);
+        assert_eq!(
+            text,
+            "# mine\norder = [\"alpha\", \"beta\", \"gamma\"] # trailing\n"
+        );
+        assert_eq!(
+            Settings::parse(&text).unwrap().order,
+            ["alpha", "beta", "gamma"]
+        );
         assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
-        assert!(!supervisor.move_instance("gamma", false).await.unwrap(), "already last");
+        assert!(
+            !supervisor.move_instance("gamma", false).await.unwrap(),
+            "already last"
+        );
 
         // A file saved elsewhere since is not overwritten until R reads it.
         std::fs::write(&settings, "order = [\"gamma\"]\n").unwrap();
         let error = supervisor.move_instance("beta", true).await.unwrap_err();
-        assert!(format!("{error:#}").contains("changed since the TUI read it"), "{error:#}");
-        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "order = [\"gamma\"]\n");
+        assert!(
+            format!("{error:#}").contains("changed since the TUI read it"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            "order = [\"gamma\"]\n"
+        );
         assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
         supervisor.reload_settings().await.unwrap();
         assert!(supervisor.move_instance("beta", true).await.unwrap());
@@ -3278,7 +3793,10 @@ mod tests {
         assert!(supervisor.move_instance("alpha", true).await.unwrap());
         assert_eq!(names(&supervisor), ["alpha", "gamma", "beta"]);
         let text = std::fs::read_to_string(&settings).unwrap();
-        assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "gamma", "beta"]);
+        assert_eq!(
+            Settings::parse(&text).unwrap().order,
+            ["alpha", "away", "gamma", "beta"]
+        );
 
         // A file that is a link stays one, and the file it names keeps its mode.
         #[cfg(unix)]
@@ -3289,10 +3807,21 @@ mod tests {
             std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
             std::os::unix::fs::symlink(&elsewhere, &settings).unwrap();
             assert!(supervisor.move_instance("beta", true).await.unwrap());
-            assert!(std::fs::symlink_metadata(&settings).unwrap().file_type().is_symlink());
+            assert!(
+                std::fs::symlink_metadata(&settings)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
             let text = std::fs::read_to_string(&elsewhere).unwrap();
-            assert_eq!(Settings::parse(&text).unwrap().order, ["alpha", "away", "beta", "gamma"]);
-            assert_eq!(std::fs::metadata(&elsewhere).unwrap().permissions().mode() & 0o777, 0o644);
+            assert_eq!(
+                Settings::parse(&text).unwrap().order,
+                ["alpha", "away", "beta", "gamma"]
+            );
+            assert_eq!(
+                std::fs::metadata(&elsewhere).unwrap().permissions().mode() & 0o777,
+                0o644
+            );
             std::fs::remove_file(&settings).unwrap();
             std::fs::rename(&elsewhere, &settings).unwrap();
             supervisor.reload_settings().await.unwrap();
@@ -3300,7 +3829,10 @@ mod tests {
 
         std::fs::write(&settings, "order = [\"beta\", \"beta\"]\n").unwrap();
         supervisor.move_instance("beta", true).await.unwrap_err();
-        assert_eq!(std::fs::read_to_string(&settings).unwrap(), "order = [\"beta\", \"beta\"]\n");
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            "order = [\"beta\", \"beta\"]\n"
+        );
         assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
     }
 
@@ -3328,14 +3860,21 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_instance_another_gateway_holds_is_refused_before_spawning() {
         let root = tempfile::tempdir().unwrap();
-        let mut supervisor = Supervisor::open(root.path().to_path_buf(), PathBuf::from("no-such-zdesk"))
+        let mut supervisor =
+            Supervisor::open(root.path().to_path_buf(), PathBuf::from("no-such-zdesk"))
+                .await
+                .unwrap();
+        supervisor.create("alpha").await.unwrap();
+        let _held = super::super::Instance::new(root.path().join("alpha"))
+            .claim()
             .await
             .unwrap();
-        supervisor.create("alpha").await.unwrap();
-        let _held = super::super::Instance::new(root.path().join("alpha")).claim().await.unwrap();
 
         let error = supervisor.start("alpha", None).await.unwrap_err();
-        assert!(format!("{error:#}").contains("already served by another gateway"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("already served by another gateway"),
+            "{error:#}"
+        );
         assert_eq!(supervisor.instances()[0].status, InstanceStatus::Stopped);
     }
 
@@ -3370,15 +3909,33 @@ mod tests {
         ]);
         let port = free_port();
         let access = Access::open(port);
-        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let login = format!(
+            "{}={}",
+            access.cookie_name(),
+            access.log_in(&pin_of(&access)).unwrap()
+        );
         let router = SharedPort::bind(port, routes, access).await.unwrap();
 
         let first_response = request(router.port(), "one.zdesk.localhost", Some(&login)).await;
         let second_response = request(router.port(), "two.zdesk.localhost", Some(&login)).await;
-        assert_eq!(body_of(&first_response).lines().next(), Some("one"), "{first_response}");
-        assert_eq!(body_of(&second_response).lines().next(), Some("two"), "{second_response}");
-        assert!(first_response.contains("zdesk_session=token-one"), "the worker got its own token: {first_response}");
-        assert!(second_response.contains("zdesk_session=token-two"), "{second_response}");
+        assert_eq!(
+            body_of(&first_response).lines().next(),
+            Some("one"),
+            "{first_response}"
+        );
+        assert_eq!(
+            body_of(&second_response).lines().next(),
+            Some("two"),
+            "{second_response}"
+        );
+        assert!(
+            first_response.contains("zdesk_session=token-one"),
+            "the worker got its own token: {first_response}"
+        );
+        assert!(
+            second_response.contains("zdesk_session=token-two"),
+            "{second_response}"
+        );
         first.1.await.unwrap();
         second.1.await.unwrap();
     }
@@ -3401,25 +3958,68 @@ mod tests {
             },
         );
         let port = free_port();
-        let router = SharedPort::bind(port, routes, Access::open(port)).await.unwrap();
+        let router = SharedPort::bind(port, routes, Access::open(port))
+            .await
+            .unwrap();
 
-        for host in ["zdesk.localhost", "one.zdesk.localhost", "nothing.zdesk.localhost"] {
+        for host in [
+            "zdesk.localhost",
+            "one.zdesk.localhost",
+            "nothing.zdesk.localhost",
+        ] {
             for path in ["/", "/display/2?x=1"] {
                 let page = get(port, host, path, Some("zdesk_session=launch-token")).await;
                 assert!(page.starts_with("HTTP/1.1 200 OK"), "{host}{path}: {page}");
-                assert!(page.contains("Content-Type: text/html; charset=utf-8\r\n"), "{host}{path}: {page}");
-                assert!(page.contains("<div id=\"root\">"), "the bundle's document: {host}{path}: {page}");
-                assert!(page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"), "isolated as a gateway's: {page}");
-                assert!(!page.contains("launch-token") && !page.contains("Set-Cookie"), "{host}{path}: {page}");
-                assert!(!page.contains("Location"), "never sent elsewhere: {host}{path}: {page}");
+                assert!(
+                    page.contains("Content-Type: text/html; charset=utf-8\r\n"),
+                    "{host}{path}: {page}"
+                );
+                assert!(
+                    page.contains("<div id=\"root\">"),
+                    "the bundle's document: {host}{path}: {page}"
+                );
+                assert!(
+                    page.contains("Cross-Origin-Embedder-Policy: require-corp\r\n"),
+                    "isolated as a gateway's: {page}"
+                );
+                assert!(
+                    !page.contains("launch-token") && !page.contains("Set-Cookie"),
+                    "{host}{path}: {page}"
+                );
+                assert!(
+                    !page.contains("Location"),
+                    "never sent elsewhere: {host}{path}: {page}"
+                );
             }
-            let status = get(port, host, "/api/auth/status", Some("zdesk_session=launch-token")).await;
-            assert_eq!(body_of(&status), "{\"authenticated\":false,\"login\":\"pin\",\"problem\":null}", "{host}: {status}");
-            let config = get(port, host, "/api/config", Some("zdesk_session=launch-token")).await;
-            assert!(body_of(&config).contains(&format!("\"branding\":\"{DEFAULT_BRANDING}\"")), "{host}: {config}");
+            let status = get(
+                port,
+                host,
+                "/api/auth/status",
+                Some("zdesk_session=launch-token"),
+            )
+            .await;
+            assert_eq!(
+                body_of(&status),
+                "{\"authenticated\":false,\"login\":\"pin\",\"problem\":null}",
+                "{host}: {status}"
+            );
+            let config = get(
+                port,
+                host,
+                "/api/config",
+                Some("zdesk_session=launch-token"),
+            )
+            .await;
+            assert!(
+                body_of(&config).contains(&format!("\"branding\":\"{DEFAULT_BRANDING}\"")),
+                "{host}: {config}"
+            );
             for path in ["/api/targets", "/api/instances", "/ws", "/ws/audio"] {
                 let refused = get(port, host, path, Some("zdesk_session=launch-token")).await;
-                assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{host}{path}: {refused}");
+                assert!(
+                    refused.starts_with("HTTP/1.1 401 Unauthorized"),
+                    "{host}{path}: {refused}"
+                );
                 let version = format!("\r\nX-Zdesk-Version: {}\r\n", env!("CARGO_PKG_VERSION"));
                 assert!(refused.contains(&version), "{host}{path}: {refused}");
             }
@@ -3432,12 +4032,23 @@ mod tests {
     #[tokio::test]
     async fn a_bare_loopback_name_is_sent_to_the_masters_own() {
         let port = free_port();
-        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
+        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port))
+            .await
+            .unwrap();
         for host in ["localhost", "127.0.0.1", "[::1]"] {
-            let response = send(port, &format!("GET /display/2?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n")).await;
-            assert!(response.starts_with("HTTP/1.1 307 Temporary Redirect"), "{host}: {response}");
+            let response = send(
+                port,
+                &format!("GET /display/2?x=1 HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"),
+            )
+            .await;
             assert!(
-                response.contains(&format!("Location: http://zdesk.localhost:{port}/display/2?x=1\r\n")),
+                response.starts_with("HTTP/1.1 307 Temporary Redirect"),
+                "{host}: {response}"
+            );
+            assert!(
+                response.contains(&format!(
+                    "Location: http://zdesk.localhost:{port}/display/2?x=1\r\n"
+                )),
                 "{host}: {response}"
             );
             assert!(!response.contains("Set-Cookie"), "{host}: {response}");
@@ -3448,8 +4059,17 @@ mod tests {
     #[test]
     fn a_host_counts_only_at_the_masters_port() {
         assert_eq!(host_at("[::1]:52380", 52380).as_deref(), Some("[::1]"));
-        assert_eq!(host_at("zdesk.localhost", 80).as_deref(), Some("zdesk.localhost"));
-        for other in ["zdesk.localhost", "zdesk.localhost:8080", "zdesk.localhost:x", "[::1]x", "::1"] {
+        assert_eq!(
+            host_at("zdesk.localhost", 80).as_deref(),
+            Some("zdesk.localhost")
+        );
+        for other in [
+            "zdesk.localhost",
+            "zdesk.localhost:8080",
+            "zdesk.localhost:x",
+            "[::1]x",
+            "::1",
+        ] {
             assert_eq!(host_at(other, 52380), None, "{other}");
         }
     }
@@ -3459,7 +4079,9 @@ mod tests {
     #[tokio::test]
     async fn any_other_host_or_port_is_blocked() {
         let port = free_port();
-        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await.unwrap();
+        let router = SharedPort::bind(port, RouteTable::default(), Access::open(port))
+            .await
+            .unwrap();
         for host in [
             "example.trycloudflare.com".to_owned(),
             format!("zdesk.localhost.example.com:{port}"),
@@ -3469,9 +4091,19 @@ mod tests {
             "work.zdesk.localhost:8080".to_owned(),
             "localhost:8080".to_owned(),
         ] {
-            let response = send(port, &format!("GET /api/auth/status HTTP/1.1\r\nHost: {host}\r\n\r\n")).await;
-            assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host}: {response}");
-            assert!(!response.contains("Set-Cookie") && !response.contains("Location"), "{host}: {response}");
+            let response = send(
+                port,
+                &format!("GET /api/auth/status HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+            )
+            .await;
+            assert!(
+                response.starts_with("HTTP/1.1 403 Forbidden"),
+                "{host}: {response}"
+            );
+            assert!(
+                !response.contains("Set-Cookie") && !response.contains("Location"),
+                "{host}: {response}"
+            );
         }
         drop(router);
     }
@@ -3483,7 +4115,9 @@ mod tests {
     async fn the_pin_logs_a_browser_in_from_its_own_origin_only() {
         let port = free_port();
         let access = Access::open(port);
-        let _router = SharedPort::bind(port, RouteTable::default(), access.clone()).await.unwrap();
+        let _router = SharedPort::bind(port, RouteTable::default(), access.clone())
+            .await
+            .unwrap();
         let post = |host: &str, origin: String, pin: &str| {
             let body = format!("{{\"pin\":\"{pin}\"}}");
             format!(
@@ -3496,45 +4130,88 @@ mod tests {
             // A PIN logs one browser in, so each host is entered with its own.
             access.generate();
             let pin = pin_of(&access);
-            for origin in ["http://evil.example".to_owned(), format!("http://{host}"), format!("http://other.zdesk.localhost:{port}")] {
+            for origin in [
+                "http://evil.example".to_owned(),
+                format!("http://{host}"),
+                format!("http://other.zdesk.localhost:{port}"),
+            ] {
                 let response = send(port, &post(host, origin.clone(), "000000")).await;
-                assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{host} from {origin}: {response}");
+                assert!(
+                    response.starts_with("HTTP/1.1 403 Forbidden"),
+                    "{host} from {origin}: {response}"
+                );
                 assert!(response.contains("its own origin"), "{response}");
             }
 
             let wrong = if pin == "000000" { "000001" } else { "000000" };
             let response = send(port, &post(host, format!("http://{host}:{port}"), wrong)).await;
-            assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{host}: {response}");
+            assert!(
+                response.starts_with("HTTP/1.1 401 Unauthorized"),
+                "{host}: {response}"
+            );
             let left = MAX_WRONG - 1;
-            assert!(response.contains(&format!("{left} more wrong entries")), "only this one counted: {host}: {response}");
+            assert!(
+                response.contains(&format!("{left} more wrong entries")),
+                "only this one counted: {host}: {response}"
+            );
 
             let response = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
-            assert!(response.starts_with("HTTP/1.1 200 OK"), "{host}: {response}");
+            assert!(
+                response.starts_with("HTTP/1.1 200 OK"),
+                "{host}: {response}"
+            );
             let cookie = response
                 .lines()
                 .find_map(|line| line.strip_prefix("Set-Cookie: "))
                 .expect("a login cookie");
-            assert!(cookie.starts_with(&format!("zdesk_login_{port}=")), "{cookie}");
-            assert!(cookie.contains("; Domain=zdesk.localhost;") && cookie.contains("; HttpOnly; SameSite=Lax;"), "{cookie}");
+            assert!(
+                cookie.starts_with(&format!("zdesk_login_{port}=")),
+                "{cookie}"
+            );
+            assert!(
+                cookie.contains("; Domain=zdesk.localhost;")
+                    && cookie.contains("; HttpOnly; SameSite=Lax;"),
+                "{cookie}"
+            );
             let login = cookie.split(';').next().unwrap();
 
             let again = send(port, &post(host, format!("http://{host}:{port}"), &pin)).await;
-            assert!(again.starts_with("HTTP/1.1 401 Unauthorized") && again.contains("already logged a browser in"), "{host}: {again}");
+            assert!(
+                again.starts_with("HTTP/1.1 401 Unauthorized")
+                    && again.contains("already logged a browser in"),
+                "{host}: {again}"
+            );
 
             // A browser already in, as a stale tab, is answered as in and leaves
             // the next browser's PIN open.
             access.generate();
             let next = pin_of(&access);
-            let stale = post(host, format!("http://{host}:{port}"), &next)
-                .replacen("Connection: close\r\n", &format!("Cookie: {login}\r\nConnection: close\r\n"), 1);
+            let stale = post(host, format!("http://{host}:{port}"), &next).replacen(
+                "Connection: close\r\n",
+                &format!("Cookie: {login}\r\nConnection: close\r\n"),
+                1,
+            );
             let response = send(port, &stale).await;
-            assert!(response.starts_with("HTTP/1.1 200 OK") && !response.contains("Set-Cookie"), "{host}: {response}");
-            assert_eq!(pin_of(&access), next, "the PIN is not used by a browser already in");
+            assert!(
+                response.starts_with("HTTP/1.1 200 OK") && !response.contains("Set-Cookie"),
+                "{host}: {response}"
+            );
+            assert_eq!(
+                pin_of(&access),
+                next,
+                "the PIN is not used by a browser already in"
+            );
 
             let status = get(port, "zdesk.localhost", "/api/auth/status", Some(login)).await;
-            assert!(body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","), "{host}: {status}");
+            assert!(
+                body_of(&status).starts_with("{\"authenticated\":true,\"login\":\"pin\","),
+                "{host}: {status}"
+            );
             let instances = get(port, "zdesk.localhost", "/api/instances", Some(login)).await;
-            assert!(instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]", "{host}: {instances}");
+            assert!(
+                instances.starts_with("HTTP/1.1 200 OK") && body_of(&instances) == "[]",
+                "{host}: {instances}"
+            );
         }
     }
 
@@ -3558,13 +4235,19 @@ mod tests {
         );
         let port = free_port();
         let access = Access::open(port);
-        let login = format!("{}={}", access.cookie_name(), access.log_in(&pin_of(&access)).unwrap());
+        let login = format!(
+            "{}={}",
+            access.cookie_name(),
+            access.log_in(&pin_of(&access)).unwrap()
+        );
         let _router = SharedPort::bind(port, routes, access).await.unwrap();
 
         let listed = get(port, "zdesk.localhost", "/api/instances", Some(&login)).await;
         assert_eq!(
             body_of(&listed),
-            format!("[{{\"name\":\"one\",\"open\":\"http://one.zdesk.localhost:{port}\",\"state\":\"running\"}}]"),
+            format!(
+                "[{{\"name\":\"one\",\"open\":\"http://one.zdesk.localhost:{port}\",\"state\":\"running\"}}]"
+            ),
             "{listed}"
         );
         let unknown = get(port, "two.zdesk.localhost", "/", Some(&login)).await;
@@ -3573,7 +4256,10 @@ mod tests {
         let reached = request(port, "one.zdesk.localhost", Some(&login)).await;
         let seen = body_of(&reached);
         assert_eq!(seen.lines().next(), Some("one"), "{reached}");
-        assert!(seen.contains("Cookie: zdesk_session=token-one\r\n"), "{seen}");
+        assert!(
+            seen.contains("Cookie: zdesk_session=token-one\r\n"),
+            "{seen}"
+        );
         assert!(seen.contains("Connection: close\r\n"), "{seen}");
         worker.1.await.unwrap();
     }
@@ -3613,7 +4299,10 @@ mod tests {
         assert_eq!(first.get().unwrap().as_str(), generated.as_str());
         let mut second = Master::default();
         assert_eq!(second.get().unwrap().as_str(), generated.as_str());
-        assert_eq!(crate::keychain::load().unwrap().unwrap().as_str(), generated.as_str());
+        assert_eq!(
+            crate::keychain::load().unwrap().unwrap().as_str(),
+            generated.as_str()
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("zdesk.toml");
@@ -3628,13 +4317,21 @@ mod tests {
         crate::vault::init_file(&path, &foreign).unwrap();
         crate::vault::set_file(&path, "w", "hunter2", &foreign).unwrap();
         let err = second.key_for(&path).unwrap_err();
-        assert!(format!("{err:#}").contains("another account's master password"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("another account's master password"),
+            "{err:#}"
+        );
 
         std::fs::write(&path, target).unwrap();
         crate::vault::init_file(&path, &generated).unwrap();
         crate::vault::set_file(&path, "w", "hunter2", &generated).unwrap();
-        let key = second.key_for(&path).unwrap().expect("a config naming passwords has a key");
-        let mut file = ConfigFile::parse_with(&std::fs::read_to_string(&path).unwrap(), Audience::Worker).unwrap();
+        let key = second
+            .key_for(&path)
+            .unwrap()
+            .expect("a config naming passwords has a key");
+        let mut file =
+            ConfigFile::parse_with(&std::fs::read_to_string(&path).unwrap(), Audience::Worker)
+                .unwrap();
         file.unlock(Some(&key)).unwrap();
         assert_eq!(file.targets[0].password, "hunter2");
     }
@@ -3655,12 +4352,16 @@ mod tests {
             Err(error) => panic!("cannot hold the v6 half of {port}: {error}"),
         };
 
-        let Err(error) = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await else {
+        let Err(error) = SharedPort::bind(port, RouteTable::default(), Access::open(port)).await
+        else {
             panic!("the v6 half of this port is already served");
         };
         let text = format!("{error:#}");
         assert!(text.contains("already in use"), "{text}");
-        assert!(text.contains(&port.to_string()), "it must name the port: {text}");
+        assert!(
+            text.contains(&port.to_string()),
+            "it must name the port: {text}"
+        );
 
         // And the refusal took nothing: the v4 half it bound on the way through is
         // released, so a retry after stopping the other master works.
@@ -3677,7 +4378,10 @@ mod tests {
         let Err(error) = SharedPort::bind(0, RouteTable::default(), Access::open(0)).await else {
             panic!("port 0 is a control plane nobody can be told how to reach");
         };
-        assert!(format!("{error:#}").contains("a browser can be told"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("a browser can be told"),
+            "{error:#}"
+        );
     }
 
     /// A worker's endpoint answering one request with `body` and, on the next
@@ -3688,7 +4392,10 @@ mod tests {
     ) -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
         let directory = tempfile::tempdir().unwrap();
         let endpoint = transport::endpoint(directory.path());
-        let claim = super::super::Instance::new(directory.path()).claim().await.unwrap();
+        let claim = super::super::Instance::new(directory.path())
+            .claim()
+            .await
+            .unwrap();
         let mut listener = transport::WorkerListener::bind(&endpoint, &claim).unwrap();
         let task = tokio::spawn(async move {
             let _claim = claim;
@@ -3718,7 +4425,13 @@ mod tests {
 
     async fn get(port: u16, host: &str, path: &str, cookie: Option<&str>) -> String {
         let cookie = cookie.map_or(String::new(), |cookie| format!("Cookie: {cookie}\r\n"));
-        send(port, &format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n")).await
+        send(
+            port,
+            &format!(
+                "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n{cookie}Connection: close\r\n\r\n"
+            ),
+        )
+        .await
     }
 
     async fn send(port: u16, raw: &str) -> String {

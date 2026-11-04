@@ -26,7 +26,10 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::feedback::LinkFeedback;
-use crate::protocol::{CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoColour, VideoUnit};
+use crate::protocol::{
+    CacheUnit, CopyUnit, GraphicsUnit, Held, HoldCause, Painted, RegionUnit, ServerMsg,
+    StandardUnit, TileUnit, VideoColour, VideoUnit,
+};
 use crate::shadow::Rect;
 use crate::tiles::{Coded, Format, LEVELS, Round, Tiles};
 use crate::video;
@@ -229,13 +232,21 @@ impl PaintWindow {
     /// hold is kept, for their paintings to give back.
     fn attach(&mut self, attachment: u64) {
         if attachment != self.attachment {
-            *self = Self { attachment, ahead: self.ahead, ..Self::default() };
+            *self = Self {
+                attachment,
+                ahead: self.ahead,
+                ..Self::default()
+            };
         }
     }
 
     /// The bound at `now`.
     fn bound(&mut self, now: Instant) -> u64 {
-        while self.rates.front().is_some_and(|(at, _)| now.duration_since(*at) > RATE_SPAN) {
+        while self
+            .rates
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > RATE_SPAN)
+        {
             self.rates.pop_front();
         }
         let rate = self.rates.iter().map(|(_, rate)| *rate).fold(0.0, f64::max);
@@ -261,10 +272,18 @@ impl PaintWindow {
     /// less than half of it, which is close to what the link carried once it spans
     /// [`CARRY_BYTES`].
     fn carries(&mut self, now: Instant) -> Option<f64> {
-        while self.carried.front().is_some_and(|(at, _)| now.duration_since(*at) > CARRY_SPAN) {
+        while self
+            .carried
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > CARRY_SPAN)
+        {
             self.carried.pop_front();
         }
-        self.carried.iter().map(|(_, rate)| *rate).reduce(f64::max).or(self.last_carried)
+        self.carried
+            .iter()
+            .map(|(_, rate)| *rate)
+            .reduce(f64::max)
+            .or(self.last_carried)
     }
 
     /// The level a round of changed tiles that would come to `bytes` at each of the
@@ -275,7 +294,10 @@ impl PaintWindow {
     /// link comes coarse and settles, rather than taking seconds to arrive.
     fn level(&mut self, bytes: [u64; LEVELS], now: Instant) -> usize {
         match self.carries(now) {
-            Some(rate) => bytes.iter().position(|&bytes| bytes as f64 <= rate * COARSE_SPAN.as_secs_f64()).unwrap_or(LEVELS - 1),
+            Some(rate) => bytes
+                .iter()
+                .position(|&bytes| bytes as f64 <= rate * COARSE_SPAN.as_secs_f64())
+                .unwrap_or(LEVELS - 1),
             None => usize::from(bytes[0] > AHEAD),
         }
     }
@@ -296,7 +318,13 @@ impl PaintWindow {
 
     fn ticket(&mut self, taken: u64, bytes: u64, now: Instant) -> PaintTicket {
         self.ahead += taken;
-        PaintTicket { taken, bytes, attachment: self.attachment, passed: now, painted_before: (self.painted, self.painted_at.unwrap_or(now)) }
+        PaintTicket {
+            taken,
+            bytes,
+            attachment: self.attachment,
+            passed: now,
+            painted_before: (self.painted, self.painted_at.unwrap_or(now)),
+        }
     }
 
     /// The rectangle `ticket` was given for is painted.
@@ -308,10 +336,13 @@ impl PaintWindow {
         }
         self.painted += ticket.bytes;
         self.painted_at = Some(now);
-        let trip = now.duration_since(ticket.passed).max(Duration::from_millis(1));
+        let trip = now
+            .duration_since(ticket.passed)
+            .max(Duration::from_millis(1));
         let (before, since) = ticket.painted_before;
         let span = now.duration_since(since).max(trip);
-        self.rates.push_back((now, (self.painted - before) as f64 / span.as_secs_f64()));
+        self.rates
+            .push_back((now, (self.painted - before) as f64 / span.as_secs_f64()));
         if ticket.bytes <= TRIP_BYTES {
             self.shortest = Some(self.shortest.map_or(trip, |shortest| shortest.min(trip)));
         }
@@ -321,7 +352,11 @@ impl PaintWindow {
             // attachment's first rectangles are, would otherwise leave next to no
             // time and read any link as a fast one.
             let distance = self.shortest.unwrap_or_default().min(trip / 2);
-            let rate = carried as f64 / trip.saturating_sub(distance).max(Duration::from_millis(1)).as_secs_f64();
+            let rate = carried as f64
+                / trip
+                    .saturating_sub(distance)
+                    .max(Duration::from_millis(1))
+                    .as_secs_f64();
             self.carried.push_back((now, rate));
             self.last_carried = Some(rate);
         }
@@ -339,7 +374,11 @@ struct PaintAhead {
 
 impl PaintAhead {
     fn new(link: Arc<LinkFeedback>) -> Self {
-        Self { window: Mutex::default(), room: Notify::new(), link }
+        Self {
+            window: Mutex::default(),
+            room: Notify::new(),
+            link,
+        }
     }
 
     /// The window, of the attachment the link is now.
@@ -577,7 +616,10 @@ impl Shared {
             oversize,
             oversized: AtomicBool::new(false),
             failure: Mutex::default(),
-            video: tokio::sync::Mutex::new(Video { tiles: Tiles::new(crate::tiles::QUALITY), due_at: None }),
+            video: tokio::sync::Mutex::new(Video {
+                tiles: Tiles::new(crate::tiles::QUALITY),
+                due_at: None,
+            }),
             round_returned: Arc::new(Notify::new()),
             passing: AtomicBool::new(false),
             pass_restart: AtomicBool::new(true),
@@ -671,7 +713,10 @@ impl VideoSink {
             return Ok(());
         }
         if self.shared.passing.swap(false, Ordering::Relaxed) {
-            debug!("{}: the source's rectangles carry the picture again, as tiles coded here", self.engine);
+            debug!(
+                "{}: the source's rectangles carry the picture again, as tiles coded here",
+                self.engine
+            );
             self.reset_render();
         }
         let mut video = self.shared.video.lock().await;
@@ -764,7 +809,8 @@ impl VideoSink {
             let coded = round.code();
             (round, coded, micros(started))
         });
-        let round_bytes = usize::try_from(self.shared.round_bytes.load(Ordering::Relaxed)).unwrap_or(usize::MAX);
+        let round_bytes =
+            usize::try_from(self.shared.round_bytes.load(Ordering::Relaxed)).unwrap_or(usize::MAX);
         let held = self.hold(round_bytes).await;
         self.push(Pending::Round(handle, held)).await
     }
@@ -859,7 +905,9 @@ impl VideoSink {
     /// that falls behind gives up is frames.
     pub async fn pass(&self, w: u16, h: u16, frame: Vec<u8>) -> anyhow::Result<()> {
         let passed = self.shared.whole.lock().unwrap().pass(w, h, &frame)?;
-        self.forward(w, h, frame, passed, None, Painted::default()).await.map(drop)
+        self.forward(w, h, frame, passed, None, Painted::default())
+            .await
+            .map(drop)
     }
 
     /// Queue one access unit of a High Performance Mac's HEVC, `w`×`h`, as the next
@@ -885,7 +933,8 @@ impl VideoSink {
         passed: video::Passed,
     ) -> anyhow::Result<bool> {
         video::check_picture((w, h))?;
-        self.forward(w, h, frame, passed, None, Painted::default()).await
+        self.forward(w, h, frame, passed, None, Painted::default())
+            .await
     }
 
     /// Queue one access unit of an RDP host's H.264, the luma view of a surface
@@ -901,11 +950,20 @@ impl VideoSink {
     /// and a unit the check refuses starts it waiting. Each unit not passed is
     /// owed its acknowledgement at once, as `painted` is dropped. A keyframe the
     /// check refuses is the error: another would be refused as it was.
-    pub async fn pass_rdp(&self, w: u16, h: u16, unit: Vec<u8>, painted: Painted) -> anyhow::Result<RdpPassed> {
+    pub async fn pass_rdp(
+        &self,
+        w: u16,
+        h: u16,
+        unit: Vec<u8>,
+        painted: Painted,
+    ) -> anyhow::Result<RdpPassed> {
         // Read for its IDR only where that decides something: a stream waiting for
         // one, and a unit the check refuses. The check reads every other.
         if self.shared.pass_restart.load(Ordering::Relaxed) && !crate::h264::idr(&unit) {
-            debug!("{}: dropping a passed frame until the keyframe a restart needs", self.engine);
+            debug!(
+                "{}: dropping a passed frame until the keyframe a restart needs",
+                self.engine
+            );
             return Ok(RdpPassed::Waiting);
         }
         let checked = self.shared.surface.lock().unwrap().pass(w, h, &unit);
@@ -917,7 +975,16 @@ impl VideoSink {
                 return Ok(RdpPassed::Refused(e));
             }
         };
-        Ok(if self.forward(w, h, unit, passed, Some(VideoColour::RDP), painted).await? { RdpPassed::Queued } else { RdpPassed::Waiting })
+        Ok(
+            if self
+                .forward(w, h, unit, passed, Some(VideoColour::RDP), painted)
+                .await?
+            {
+                RdpPassed::Queued
+            } else {
+                RdpPassed::Waiting
+            },
+        )
     }
 
     /// Queue a checked, passed unit: see [`Self::pass`]. `false` when it was dropped
@@ -935,13 +1002,20 @@ impl VideoSink {
         let restart = if passed.keyframe {
             self.shared.pass_restart.swap(false, Ordering::Relaxed)
         } else if self.shared.pass_restart.load(Ordering::Relaxed) {
-            debug!("{}: dropping a passed frame until the keyframe a restart needs", self.engine);
+            debug!(
+                "{}: dropping a passed frame until the keyframe a restart needs",
+                self.engine
+            );
             return Ok(false);
         } else {
             false
         };
         // A stream that comes in strips says so with its format.
-        let strips = if passed.strip.is_some() { crate::protocol::Strip::COUNT } else { 1 };
+        let strips = if passed.strip.is_some() {
+            crate::protocol::Strip::COUNT
+        } else {
+            1
+        };
         let announce = {
             let mut announced = self.shared.pass_announced.lock().unwrap();
             let format = (passed.decode, strips);
@@ -956,15 +1030,33 @@ impl VideoSink {
         // which is what tells [`Self::fence_hold`] the batches ahead from its own.
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.units.fetch_add(1, Ordering::Relaxed);
-        self.shared.passed_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.shared
+            .passed_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
         if passed.keyframe {
             self.shared.keyframes.fetch_add(1, Ordering::Relaxed);
-            self.shared.keyframe_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            self.shared
+                .keyframe_bytes
+                .fetch_add(bytes as u64, Ordering::Relaxed);
         }
         if let Some(decode) = announce {
-            self.push(Pending::Msg(ServerMsg::VideoFormat { decode, strips, colour, engine: 0 })).await?;
+            self.push(Pending::Msg(ServerMsg::VideoFormat {
+                decode,
+                strips,
+                colour,
+                engine: 0,
+            }))
+            .await?;
         }
-        let unit = VideoUnit { w, h, strip: passed.strip, keyframe: passed.keyframe, data: frame, held, painted };
+        let unit = VideoUnit {
+            w,
+            h,
+            strip: passed.strip,
+            keyframe: passed.keyframe,
+            data: frame,
+            held,
+            painted,
+        };
         self.push(Pending::Msg(ServerMsg::Video(unit))).await?;
         self.uncover_behind().await?;
         Ok(true)
@@ -984,7 +1076,15 @@ impl VideoSink {
     /// picture starts over ([`Self::reset_render`]) goes behind a `TilesStart`, which
     /// tells the browser every region it held is over; the full update the engine asks
     /// for at the same moment is what brings wlshare's whole picture.
-    pub async fn pass_tile(&self, x: u16, y: u16, w: u16, h: u16, format: Format, image: Vec<u8>) -> anyhow::Result<()> {
+    pub async fn pass_tile(
+        &self,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        format: Format,
+        image: Vec<u8>,
+    ) -> anyhow::Result<()> {
         self.tiles_begin().await?;
         let bytes = image.len();
         self.gather_room(bytes).await?;
@@ -993,7 +1093,16 @@ impl VideoSink {
         let (count, total) = self.shared.tally(format);
         count.fetch_add(1, Ordering::Relaxed);
         total.fetch_add(bytes as u64, Ordering::Relaxed);
-        let unit = TileUnit { x, y, w, h, format, data: image, held, painted: Painted::default() };
+        let unit = TileUnit {
+            x,
+            y,
+            w,
+            h,
+            format,
+            data: image,
+            held,
+            painted: Painted::default(),
+        };
         self.gather(ServerMsg::Tile(unit), bytes).await;
         self.uncover_behind().await
     }
@@ -1004,11 +1113,20 @@ impl VideoSink {
     /// [`QUEUE_BUDGET`], and the browser draws it in its turn, from its canvas as the
     /// records before it left it.
     #[allow(clippy::too_many_arguments)]
-    pub async fn pass_copy(&self, sx: u16, sy: u16, x: u16, y: u16, w: u16, h: u16) -> anyhow::Result<()> {
+    pub async fn pass_copy(
+        &self,
+        sx: u16,
+        sy: u16,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+    ) -> anyhow::Result<()> {
         self.tiles_begin().await?;
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.copies.fetch_add(1, Ordering::Relaxed);
-        self.gather(ServerMsg::Copy(CopyUnit { sx, sy, x, y, w, h }), 0).await;
+        self.gather(ServerMsg::Copy(CopyUnit { sx, sy, x, y, w, h }), 0)
+            .await;
         self.uncover_behind().await
     }
 
@@ -1023,7 +1141,8 @@ impl VideoSink {
         if !store {
             self.shared.cached.fetch_add(1, Ordering::Relaxed);
         }
-        self.gather(ServerMsg::Cache(CacheUnit { store, slot, x, y }), 0).await;
+        self.gather(ServerMsg::Cache(CacheUnit { store, slot, x, y }), 0)
+            .await;
         self.uncover_behind().await
     }
 
@@ -1039,9 +1158,21 @@ impl VideoSink {
     /// browser was not told of since the tiles started over is dropped: one coded
     /// before a reattach or a resize, of a stream the browser no longer has.
     #[allow(clippy::too_many_arguments)]
-    pub async fn pass_region(&self, stream: u8, x: u16, y: u16, w: u16, h: u16, start: bool, frame: Vec<u8>) -> anyhow::Result<()> {
+    pub async fn pass_region(
+        &self,
+        stream: u8,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        start: bool,
+        frame: Vec<u8>,
+    ) -> anyhow::Result<()> {
         if !start && !self.shared.regions.lock().unwrap().contains_key(&stream) {
-            debug!("{}: dropping a frame of region {stream}, which the browser does not hold", self.engine);
+            debug!(
+                "{}: dropping a frame of region {stream}, which the browser does not hold",
+                self.engine
+            );
             return Ok(());
         }
         let region = crate::h264::pass(w, h, &frame)?;
@@ -1056,10 +1187,16 @@ impl VideoSink {
         {
             let mut regions = self.shared.regions.lock().unwrap();
             if start {
-                anyhow::ensure!(regions.insert(stream, (x, y, w, h)).is_none(), "the server started region {stream} while it was live");
+                anyhow::ensure!(
+                    regions.insert(stream, (x, y, w, h)).is_none(),
+                    "the server started region {stream} while it was live"
+                );
             } else {
                 let Some(&(rx, ry, rw, rh)) = regions.get(&stream) else {
-                    debug!("{}: dropping a frame of region {stream}, which the browser does not hold", self.engine);
+                    debug!(
+                        "{}: dropping a frame of region {stream}, which the browser does not hold",
+                        self.engine
+                    );
                     return Ok(());
                 };
                 anyhow::ensure!(
@@ -1069,19 +1206,37 @@ impl VideoSink {
             }
         }
         if let Some(decode) = decode {
-            self.push(Pending::Msg(ServerMsg::RegionFormat { stream, decode, engine: 0 })).await?;
+            self.push(Pending::Msg(ServerMsg::RegionFormat {
+                stream,
+                decode,
+                engine: 0,
+            }))
+            .await?;
         }
         let bytes = frame.len();
         self.gather_room(bytes).await?;
         let held = self.hold(bytes).await;
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.units.fetch_add(1, Ordering::Relaxed);
-        self.shared.passed_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.shared
+            .passed_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
         if keyframe {
             self.shared.keyframes.fetch_add(1, Ordering::Relaxed);
-            self.shared.keyframe_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            self.shared
+                .keyframe_bytes
+                .fetch_add(bytes as u64, Ordering::Relaxed);
         }
-        let unit = RegionUnit { stream, x, y, w, h, keyframe, data: frame, held };
+        let unit = RegionUnit {
+            stream,
+            x,
+            y,
+            w,
+            h,
+            keyframe,
+            data: frame,
+            held,
+        };
         self.gather(ServerMsg::Region(unit), bytes).await;
         self.uncover_behind().await
     }
@@ -1090,8 +1245,16 @@ impl VideoSink {
     /// it holds the stream.
     pub async fn pass_region_end(&self, stream: u8) -> anyhow::Result<()> {
         self.tiles_begin().await?;
-        if self.shared.regions.lock().unwrap().remove(&stream).is_some() {
-            self.push(Pending::Msg(ServerMsg::RegionEnd { stream, engine: 0 })).await?;
+        if self
+            .shared
+            .regions
+            .lock()
+            .unwrap()
+            .remove(&stream)
+            .is_some()
+        {
+            self.push(Pending::Msg(ServerMsg::RegionEnd { stream, engine: 0 }))
+                .await?;
         }
         Ok(())
     }
@@ -1102,7 +1265,8 @@ impl VideoSink {
         self.shared.passing.store(true, Ordering::Relaxed);
         if self.shared.pass_restart.swap(false, Ordering::Relaxed) {
             self.shared.regions.lock().unwrap().clear();
-            self.push(Pending::Msg(ServerMsg::TilesStart { engine: 0 })).await?;
+            self.push(Pending::Msg(ServerMsg::TilesStart { engine: 0 }))
+                .await?;
         }
         Ok(())
     }
@@ -1129,7 +1293,8 @@ impl VideoSink {
     /// follows its tiles, in the order task.
     async fn uncover_behind(&self) -> anyhow::Result<()> {
         if self.shared.uncover_owed.swap(false, Ordering::Relaxed) {
-            self.push(Pending::Msg(ServerMsg::ScreenUnavailable { active: false })).await?;
+            self.push(Pending::Msg(ServerMsg::ScreenUnavailable { active: false }))
+                .await?;
         }
         Ok(())
     }
@@ -1142,7 +1307,8 @@ impl VideoSink {
     /// its RDP client decodes no bitmap update.
     pub async fn graphics_start(&self) -> anyhow::Result<()> {
         self.shared.passing.store(true, Ordering::Relaxed);
-        self.push(Pending::Msg(ServerMsg::GraphicsStart { engine: 0 })).await
+        self.push(Pending::Msg(ServerMsg::GraphicsStart { engine: 0 }))
+            .await
     }
 
     /// Queue a message of an RDP host's graphics pipeline as the next record,
@@ -1161,20 +1327,32 @@ impl VideoSink {
     /// page, so a page that composes more slowly than the host draws has to be what
     /// the host hears from. The budget is what is left for a browser that says
     /// nothing at all.
-    pub async fn pass_graphics(&self, wrapped: Vec<u8>, frame: Option<Painted>) -> anyhow::Result<()> {
+    pub async fn pass_graphics(
+        &self,
+        wrapped: Vec<u8>,
+        frame: Option<Painted>,
+    ) -> anyhow::Result<()> {
         self.shared.passing.store(true, Ordering::Relaxed);
         let bytes = wrapped.len();
         let held = self.hold(bytes).await;
         self.shared.graphics.fetch_add(1, Ordering::Relaxed);
-        self.shared.graphics_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
-        self.push(Pending::Msg(ServerMsg::Graphics(GraphicsUnit { data: wrapped, frame, held }))).await
+        self.shared
+            .graphics_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+        self.push(Pending::Msg(ServerMsg::Graphics(GraphicsUnit {
+            data: wrapped,
+            frame,
+            held,
+        })))
+        .await
     }
 
     /// A Mac's Adaptive picture starts here, from nothing, and is the picture from
     /// now on ([`Self::pass_standard`]): said ahead of the Mac's first rectangle.
     pub async fn standard_start(&self) -> anyhow::Result<()> {
         self.shared.passing.store(true, Ordering::Relaxed);
-        self.push(Pending::Msg(ServerMsg::StandardStart { engine: 0 })).await
+        self.push(Pending::Msg(ServerMsg::StandardStart { engine: 0 }))
+            .await
     }
 
     /// Queue one of a Mac's rectangles in its Adaptive picture as the next record,
@@ -1191,19 +1369,38 @@ impl VideoSink {
     /// twice its shortest round trip is passed and not yet painted ([`PaintWindow`]),
     /// and while it waits the engine reads nothing more of the Mac's connection,
     /// which backs up, so the Mac sends as few updates as the browser's link takes.
-    pub async fn pass_standard(&self, x: u16, y: u16, w: u16, h: u16, data: Vec<u8>) -> anyhow::Result<()> {
+    pub async fn pass_standard(
+        &self,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        data: Vec<u8>,
+    ) -> anyhow::Result<()> {
         self.shared.passing.store(true, Ordering::Relaxed);
         let bytes = data.len();
         let started = Instant::now();
         let ticket = self.shared.ahead.acquire(bytes as u64).await;
-        self.shared.stalled_micros.fetch_add(micros(started), Ordering::Relaxed);
+        self.shared
+            .stalled_micros
+            .fetch_add(micros(started), Ordering::Relaxed);
         let ahead = Arc::clone(&self.shared.ahead);
         let painted = Painted::new(move || ahead.release(ticket));
         let held = self.hold(bytes).await;
         self.shared.feedback.handed(tokio::time::Instant::now());
         self.shared.units.fetch_add(1, Ordering::Relaxed);
-        self.shared.passed_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
-        let unit = StandardUnit { x, y, w, h, data, held, painted };
+        self.shared
+            .passed_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+        let unit = StandardUnit {
+            x,
+            y,
+            w,
+            h,
+            data,
+            held,
+            painted,
+        };
         self.push(Pending::Msg(ServerMsg::Standard(unit))).await
     }
 
@@ -1234,7 +1431,9 @@ impl VideoSink {
     async fn hold(&self, bytes: usize) -> Held {
         let started = Instant::now();
         let held = Held::take(&self.shared.budget, bytes, QUEUE_BUDGET).await;
-        self.shared.stalled_micros.fetch_add(micros(started), Ordering::Relaxed);
+        self.shared
+            .stalled_micros
+            .fetch_add(micros(started), Ordering::Relaxed);
         held
     }
 
@@ -1276,7 +1475,10 @@ impl VideoSink {
                         self.engine
                     );
                 } else {
-                    info!("{}: a {w}x{h} desktop is within the ceiling, and its picture shown again", self.engine);
+                    info!(
+                        "{}: a {w}x{h} desktop is within the ceiling, and its picture shown again",
+                        self.engine
+                    );
                     self.reset_render();
                 }
             }
@@ -1293,7 +1495,12 @@ impl VideoSink {
     /// channel, for an engine test that reads the channel and never sent one.
     #[cfg(test)]
     pub(crate) fn presize(&self, w: u16, h: u16) {
-        self.shared.video.try_lock().expect("a fresh sink").tiles.want(w, h);
+        self.shared
+            .video
+            .try_lock()
+            .expect("a fresh sink")
+            .tiles
+            .want(w, h);
     }
 
     /// Shut the picture down: deliver what is still in flight, then log what it cost.
@@ -1365,12 +1572,20 @@ impl VideoSink {
 
     /// Queue the records gathered as a run, `continued` where their update goes on
     /// in the next ([`ServerMsg::Run`]).
-    async fn send_run_continued(&self, gathered: &mut Gathered, continued: bool) -> anyhow::Result<()> {
+    async fn send_run_continued(
+        &self,
+        gathered: &mut Gathered,
+        continued: bool,
+    ) -> anyhow::Result<()> {
         if gathered.records.is_empty() {
             return Ok(());
         }
         gathered.bytes = 0;
-        self.send(Pending::Msg(ServerMsg::Run { records: std::mem::take(&mut gathered.records), continued })).await
+        self.send(Pending::Msg(ServerMsg::Run {
+            records: std::mem::take(&mut gathered.records),
+            continued,
+        }))
+        .await
     }
 
     async fn send(&self, item: Pending) -> anyhow::Result<()> {
@@ -1465,13 +1680,19 @@ async fn order_loop(
         // read loop overlapped it.
         let started = Instant::now();
         let joined = handle.await;
-        shared.waited_micros.fetch_add(micros(started), Ordering::Relaxed);
+        shared
+            .waited_micros
+            .fetch_add(micros(started), Ordering::Relaxed);
         let (round, coded, code_micros) = match joined {
             Ok(finished) => finished,
             // Only reachable by cancellation — `panic = "abort"` in release means a
             // panicking worker never gets this far.
             Err(e) => {
-                give_up(engine, &shared, anyhow::Error::new(e).context("the tile coder stopped"));
+                give_up(
+                    engine,
+                    &shared,
+                    anyhow::Error::new(e).context("the tile coder stopped"),
+                );
                 break;
             }
         };
@@ -1515,7 +1736,12 @@ async fn send_round(
     coded: Vec<Coded>,
     mut held: Held,
 ) -> bool {
-    if round.start && frame_tx.send(ServerMsg::TilesStart { engine: 0 }).await.is_err() {
+    if round.start
+        && frame_tx
+            .send(ServerMsg::TilesStart { engine: 0 })
+            .await
+            .is_err()
+    {
         return false;
     }
     let bytes: usize = coded.iter().map(|part| part.data.len()).sum();
@@ -1547,14 +1773,26 @@ async fn send_round(
 
         total.fetch_add(len as u64, Ordering::Relaxed);
         let ticket = shared.ahead.take_over(len as u64);
-        let (ahead, wake) = (Arc::clone(&shared.ahead), Arc::clone(&shared.round_returned));
+        let (ahead, wake) = (
+            Arc::clone(&shared.ahead),
+            Arc::clone(&shared.round_returned),
+        );
         // A painting that brings the window back under its bound is what lets the
         // next round be taken, so it wakes the engine too.
         let painted = Painted::new(move || {
             ahead.release(ticket);
             wake.notify_one();
         });
-        let unit = TileUnit { x: part.x, y: part.y, w: part.w, h: part.h, format: part.format, data: part.data, held: held.split(len), painted };
+        let unit = TileUnit {
+            x: part.x,
+            y: part.y,
+            w: part.w,
+            h: part.h,
+            format: part.format,
+            data: part.data,
+            held: held.split(len),
+            painted,
+        };
         if frame_tx.send(ServerMsg::Tile(unit)).await.is_err() {
             return false;
         }
@@ -1562,7 +1800,10 @@ async fn send_round(
     // Here and not where the round was queued: the notice comes down on a canvas
     // with the round's tiles on it.
     !(shared.uncover_owed.swap(false, Ordering::Relaxed)
-        && frame_tx.send(ServerMsg::ScreenUnavailable { active: false }).await.is_err())
+        && frame_tx
+            .send(ServerMsg::ScreenUnavailable { active: false })
+            .await
+            .is_err())
 }
 
 /// Record why the queue stopped, for the engine's next push to report.
@@ -1755,10 +1996,19 @@ mod tests {
     async fn video_sink(w: u16, h: u16) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, mut frame_rx) = mpsc::channel(256);
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Refuse);
-        sink.msg(ServerMsg::Resize { w, h, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w,
+            h,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         sink.flush().await;
         // The resize itself, so a test can count what follows.
-        assert!(matches!(frame_rx.recv().await, Some(ServerMsg::Resize { .. })));
+        assert!(matches!(
+            frame_rx.recv().await,
+            Some(ServerMsg::Resize { .. })
+        ));
         (sink, frame_rx)
     }
 
@@ -1773,10 +2023,20 @@ mod tests {
     async fn holding_sink(w: u16, h: u16) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, mut frame_rx) = mpsc::channel(256);
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Hold);
-        sink.msg(ServerMsg::Resize { w, h, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w,
+            h,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         sink.flush().await;
-        assert!(matches!(frame_rx.recv().await, Some(ServerMsg::Resize { .. })));
-        let cause = (!video::within_ceiling((u32::from(w), u32::from(h)))).then_some(HoldCause::Size);
+        assert!(matches!(
+            frame_rx.recv().await,
+            Some(ServerMsg::Resize { .. })
+        ));
+        let cause =
+            (!video::within_ceiling((u32::from(w), u32::from(h)))).then_some(HoldCause::Size);
         assert!(
             matches!(frame_rx.recv().await, Some(ServerMsg::Oversize { cause: said }) if said == cause),
             "a resize of a source that holds did not say whether the picture follows"
@@ -1786,7 +2046,12 @@ mod tests {
 
     /// A round, from damage to what it sent, waiting out the interval and the paint
     /// window as an engine does: the tiles it sent.
-    async fn round(sink: &VideoSink, frame_rx: &mut mpsc::Receiver<ServerMsg>, area: Rect, pixels: &[u8]) -> Vec<TileUnit> {
+    async fn round(
+        sink: &VideoSink,
+        frame_rx: &mut mpsc::Receiver<ServerMsg>,
+        area: Rect,
+        pixels: &[u8],
+    ) -> Vec<TileUnit> {
         sink.damage(area, pixels).await.unwrap();
         if let Some(due) = sink.due_at().await {
             tokio::time::sleep_until(due).await;
@@ -1804,18 +2069,33 @@ mod tests {
         let (sink, mut rx) = video_sink(64, 32).await;
         sink.graphics_start().await.unwrap();
         sink.pass_graphics(vec![1; 40], None).await.unwrap();
-        sink.msg(ServerMsg::Resize { w: 32, h: 32, scale: UNSCALED }).await.unwrap();
-        sink.pass_graphics(vec![2; 9], Some(Painted::default())).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 32,
+            h: 32,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
+        sink.pass_graphics(vec![2; 9], Some(Painted::default()))
+            .await
+            .unwrap();
         assert!(sink.passing());
-        assert!(sink.due_at().await.is_none(), "there is nothing to come back and code");
+        assert!(
+            sink.due_at().await.is_none(),
+            "there is nothing to come back and code"
+        );
         sink.frame().await.unwrap();
         sink.flush().await;
 
         let out = drain(&mut rx, 4).await;
         assert!(matches!(out[0], ServerMsg::GraphicsStart { .. }));
-        assert!(matches!(&out[1], ServerMsg::Graphics(run) if run.data == vec![1; 40] && run.frame.is_none()));
+        assert!(
+            matches!(&out[1], ServerMsg::Graphics(run) if run.data == vec![1; 40] && run.frame.is_none())
+        );
         assert!(matches!(out[2], ServerMsg::Resize { w: 32, h: 32, .. }));
-        assert!(matches!(&out[3], ServerMsg::Graphics(run) if run.data == vec![2; 9] && run.frame.is_some()));
+        assert!(
+            matches!(&out[3], ServerMsg::Graphics(run) if run.data == vec![2; 9] && run.frame.is_some())
+        );
         assert!(rx.try_recv().is_err(), "and no tile beside them");
     }
 
@@ -1825,16 +2105,28 @@ mod tests {
     #[tokio::test]
     async fn a_passed_graphics_run_holds_its_share_of_the_budget() {
         let (sink, mut rx) = video_sink(64, 32).await;
-        sink.pass_graphics(vec![0; QUEUE_BUDGET as usize], None).await.unwrap();
+        sink.pass_graphics(vec![0; QUEUE_BUDGET as usize], None)
+            .await
+            .unwrap();
         sink.flush().await;
         let held = drain(&mut rx, 1).await;
-        let waiting = tokio::time::timeout(Duration::from_millis(50), sink.pass_graphics(vec![0; 16], None)).await;
-        assert!(waiting.is_err(), "the budget is spent, so the next run waits");
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(50),
+            sink.pass_graphics(vec![0; 16], None),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "the budget is spent, so the next run waits"
+        );
         drop(held);
-        tokio::time::timeout(Duration::from_secs(1), sink.pass_graphics(vec![0; 16], None))
-            .await
-            .expect("the share came back with the run")
-            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            sink.pass_graphics(vec![0; 16], None),
+        )
+        .await
+        .expect("the share came back with the run")
+        .unwrap();
     }
 
     /// A Mac's Adaptive rectangles go out in order behind the message that starts
@@ -1845,24 +2137,45 @@ mod tests {
     async fn standard_rectangles_wait_for_the_ones_before_them_to_be_painted() {
         let (sink, mut rx) = video_sink(64, 32).await;
         sink.standard_start().await.unwrap();
-        sink.pass_standard(0, 0, 64, 16, vec![1; 16 * 1024]).await.unwrap();
-        sink.pass_standard(0, 16, 64, 16, vec![2; 16 * 1024]).await.unwrap();
+        sink.pass_standard(0, 0, 64, 16, vec![1; 16 * 1024])
+            .await
+            .unwrap();
+        sink.pass_standard(0, 16, 64, 16, vec![2; 16 * 1024])
+            .await
+            .unwrap();
         assert!(sink.passing());
-        assert!(sink.due_at().await.is_none(), "there is nothing to come back and code");
+        assert!(
+            sink.due_at().await.is_none(),
+            "there is nothing to come back and code"
+        );
         sink.flush().await;
         let out = drain(&mut rx, 3).await;
         assert!(matches!(out[0], ServerMsg::StandardStart { .. }));
-        assert!(matches!(&out[1], ServerMsg::Standard(unit) if unit.data[0] == 1 && (unit.x, unit.y) == (0, 0)));
-        assert!(matches!(&out[2], ServerMsg::Standard(unit) if unit.data[0] == 2 && (unit.x, unit.y) == (0, 16)));
+        assert!(
+            matches!(&out[1], ServerMsg::Standard(unit) if unit.data[0] == 1 && (unit.x, unit.y) == (0, 0))
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::Standard(unit) if unit.data[0] == 2 && (unit.x, unit.y) == (0, 16))
+        );
 
-        let waiting = tokio::time::timeout(Duration::from_millis(50), sink.pass_standard(0, 0, 8, 8, vec![3; 8])).await;
-        assert!(waiting.is_err(), "two unpainted rectangles fill the bound, so the next waits");
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(50),
+            sink.pass_standard(0, 0, 8, 8, vec![3; 8]),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "two unpainted rectangles fill the bound, so the next waits"
+        );
         let mut out = out.into_iter();
         drop(out.nth(1));
-        tokio::time::timeout(Duration::from_secs(1), sink.pass_standard(0, 0, 8, 8, vec![3; 8]))
-            .await
-            .expect("painting the first made room")
-            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            sink.pass_standard(0, 0, 8, 8, vec![3; 8]),
+        )
+        .await
+        .expect("painting the first made room")
+        .unwrap();
 
         // One larger than the widest bound waits for everything before it, and
         // holds the next until it is painted itself.
@@ -1870,16 +2183,25 @@ mod tests {
         sink.flush().await;
         let small = drain(&mut rx, 1).await;
         drop(small);
-        sink.pass_standard(0, 0, 64, 32, vec![4; AHEAD_MOST as usize + 1]).await.unwrap();
+        sink.pass_standard(0, 0, 64, 32, vec![4; AHEAD_MOST as usize + 1])
+            .await
+            .unwrap();
         sink.flush().await;
         let large = drain(&mut rx, 1).await;
-        let waiting = tokio::time::timeout(Duration::from_millis(50), sink.pass_standard(0, 0, 8, 8, vec![5; 8])).await;
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(50),
+            sink.pass_standard(0, 0, 8, 8, vec![5; 8]),
+        )
+        .await;
         assert!(waiting.is_err());
         drop(large);
-        tokio::time::timeout(Duration::from_secs(1), sink.pass_standard(0, 0, 8, 8, vec![5; 8]))
-            .await
-            .expect("painting the large one made room")
-            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            sink.pass_standard(0, 0, 8, 8, vec![5; 8]),
+        )
+        .await
+        .expect("painting the large one made room")
+        .unwrap();
     }
 
     /// The bound follows how fast the browser paints: no wider than the floor for
@@ -1932,7 +2254,11 @@ mod tests {
         let mut window = PaintWindow::default();
         assert_eq!(window.room(start), Some(AHEAD));
         let over = window.take_over(3 * AHEAD, start);
-        assert_eq!(window.room(start), None, "a round past the bound leaves no room");
+        assert_eq!(
+            window.room(start),
+            None,
+            "a round past the bound leaves no room"
+        );
         window.painted(over, start + Duration::from_millis(5));
         assert!(window.room(start + Duration::from_millis(5)).is_some());
     }
@@ -1951,8 +2277,16 @@ mod tests {
         let mut window = PaintWindow::default();
         assert!(window.carries(at(0)).is_none());
         assert_eq!(window.level(round(AHEAD), at(0)), 0);
-        assert_eq!(window.level(round(AHEAD + 1), at(0)), 1, "an unmeasured link is a slow one");
-        assert_eq!(window.level(round(16 * 1024 * 1024), at(0)), 1, "an unmeasured link went past the baseline");
+        assert_eq!(
+            window.level(round(AHEAD + 1), at(0)),
+            1,
+            "an unmeasured link is a slow one"
+        );
+        assert_eq!(
+            window.level(round(16 * 1024 * 1024), at(0)),
+            1,
+            "an unmeasured link went past the baseline"
+        );
 
         // A tile of a few hundred bytes taking a whole animation frame says nothing.
         let ticket = window.take(300, at(0)).unwrap();
@@ -1964,15 +2298,35 @@ mod tests {
         window.painted(ticket, at(1150));
         let slow = window.carries(at(1150)).expect("measured");
         assert!((120_000.0..130_000.0).contains(&slow), "{slow}");
-        assert_eq!(window.level(round(24 * 1024), at(1150)), 0, "a few tiles of typing went coarse");
-        assert_eq!(window.level(round(128 * 1024), at(1150)), 1, "a new screen on a slow link stayed fine");
-        assert_eq!(window.level(round(256 * 1024), at(1150)), 2, "a large one stayed at the baseline");
-        assert_eq!(window.level(round(2 * 1024 * 1024), at(1150)), 3, "a whole desktop stayed short of the coarsest");
+        assert_eq!(
+            window.level(round(24 * 1024), at(1150)),
+            0,
+            "a few tiles of typing went coarse"
+        );
+        assert_eq!(
+            window.level(round(128 * 1024), at(1150)),
+            1,
+            "a new screen on a slow link stayed fine"
+        );
+        assert_eq!(
+            window.level(round(256 * 1024), at(1150)),
+            2,
+            "a large one stayed at the baseline"
+        );
+        assert_eq!(
+            window.level(round(2 * 1024 * 1024), at(1150)),
+            3,
+            "a whole desktop stayed short of the coarsest"
+        );
 
         // A LAN: 256 KiB in a frame, which the slow sample does not outweigh.
         let ticket = window.take_over(256 * 1024, at(2000));
         window.painted(ticket, at(2016));
-        assert_eq!(window.level(round(2 * 1024 * 1024), at(2016)), 0, "a whole screen went coarse on a LAN");
+        assert_eq!(
+            window.level(round(2 * 1024 * 1024), at(2016)),
+            0,
+            "a whole screen went coarse on a LAN"
+        );
 
         // Long past both, the latest still stands.
         assert_eq!(window.carries(at(60_000)), window.last_carried);
@@ -1992,7 +2346,9 @@ mod tests {
         window.painted(ticket, at(60));
         assert_eq!(window.level(screen, at(60)), 1);
         // 300 kbit/s: 24 KiB in about 0.65 s, and the 60 ms of distance.
-        let ticket = window.take(24 * 1024, at(100)).expect("room under the floor");
+        let ticket = window
+            .take(24 * 1024, at(100))
+            .expect("room under the floor");
         window.painted(ticket, at(815));
         let slow = window.carries(at(815)).expect("measured");
         assert!((36_000.0..40_000.0).contains(&slow), "{slow}");
@@ -2016,11 +2372,24 @@ mod tests {
         let gone = window.take_over(512 * 1024, at(30));
 
         window.attach(1);
-        assert!(window.carries(at(40)).is_none() && window.shortest.is_none(), "the LAN's measures outlived it");
-        assert_eq!(window.level(screen, at(40)), 1, "a reattached browser went at the last one's link");
+        assert!(
+            window.carries(at(40)).is_none() && window.shortest.is_none(),
+            "the LAN's measures outlived it"
+        );
+        assert_eq!(
+            window.level(screen, at(40)),
+            1,
+            "a reattached browser went at the last one's link"
+        );
         window.painted(gone, at(41));
-        assert_eq!(window.ahead, 0, "a rectangle of the last attachment kept its room");
-        assert!(window.carries(at(41)).is_none(), "a rectangle of the last attachment measured the new one");
+        assert_eq!(
+            window.ahead, 0,
+            "a rectangle of the last attachment kept its room"
+        );
+        assert!(
+            window.carries(at(41)).is_none(),
+            "a rectangle of the last attachment measured the new one"
+        );
         window.attach(1);
         assert_eq!(window.attachment, 1);
 
@@ -2032,8 +2401,15 @@ mod tests {
         window.painted(first, at(550));
         window.painted(queued, at(550));
         let carried = window.carries(at(550)).expect("measured");
-        assert!(carried < 2.0 * (24 * 1024 + 300) as f64 / 0.45 + 1.0, "{carried}");
-        assert_eq!(window.level(screen, at(550)), 3, "a queued start read a slow link as a fast one");
+        assert!(
+            carried < 2.0 * (24 * 1024 + 300) as f64 / 0.45 + 1.0,
+            "{carried}"
+        );
+        assert_eq!(
+            window.level(screen, at(550)),
+            3,
+            "a queued start read a slow link as a fast one"
+        );
     }
 
     /// A 300 kbit/s link kept full for a minute: its queue never empties, every
@@ -2073,15 +2449,25 @@ mod tests {
     async fn wlshares_tiles_and_regions_go_out_as_they_came() {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
-        sink.pass_tile(0, 0, 1280, 64, Format::Png, vec![0x89, 0x50]).await.unwrap();
-        sink.pass_region(0, 64, 64, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
-        sink.pass_region(0, 64, 64, 320, 192, false, FRAME.to_vec()).await.unwrap();
+        sink.pass_tile(0, 0, 1280, 64, Format::Png, vec![0x89, 0x50])
+            .await
+            .unwrap();
+        sink.pass_region(0, 64, 64, 320, 192, true, KEYFRAME.to_vec())
+            .await
+            .unwrap();
+        sink.pass_region(0, 64, 64, 320, 192, false, FRAME.to_vec())
+            .await
+            .unwrap();
         // A later IDR, which a moved dial brings, is a keyframe of the same stream,
         // and no new format.
-        sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec()).await.unwrap();
+        sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec())
+            .await
+            .unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
-        sink.pass_tile(64, 64, 64, 64, Format::Progressive, vec![0xC6, 0xCC]).await.unwrap();
+        sink.pass_tile(64, 64, 64, 64, Format::Progressive, vec![0xC6, 0xCC])
+            .await
+            .unwrap();
         sink.pass_copy(0, 40, 0, 0, 1280, 600).await.unwrap();
         sink.pass_cache(true, 9, 64, 64).await.unwrap();
         sink.pass_cache(false, 9, 128, 64).await.unwrap();
@@ -2089,23 +2475,94 @@ mod tests {
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
         let out = drain(&mut frame_rx, 6).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
-        assert!(matches!(run(&out[1]), [ServerMsg::Tile(unit)] if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50]));
-        assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "avc1.64000D"), "{:?}", out[2]);
-        let [ServerMsg::Region(first), ServerMsg::Region(second), ServerMsg::Region(third)] = run(&out[3]) else {
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(run(&out[1]), [ServerMsg::Tile(unit)] if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50])
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "avc1.64000D"),
+            "{:?}",
+            out[2]
+        );
+        let [
+            ServerMsg::Region(first),
+            ServerMsg::Region(second),
+            ServerMsg::Region(third),
+        ] = run(&out[3])
+        else {
             panic!("the region's three frames: {:?}", out[3]);
         };
-        assert!(first.keyframe && (first.x, first.y, first.w, first.h) == (64, 64, 320, 192) && first.data == KEYFRAME);
+        assert!(
+            first.keyframe
+                && (first.x, first.y, first.w, first.h) == (64, 64, 320, 192)
+                && first.data == KEYFRAME
+        );
         assert!(!second.keyframe && second.data == FRAME);
         assert!(third.keyframe, "a later IDR is a keyframe");
-        assert!(matches!(out[4], ServerMsg::RegionEnd { stream: 0, .. }), "{:?}", out[4]);
+        assert!(
+            matches!(out[4], ServerMsg::RegionEnd { stream: 0, .. }),
+            "{:?}",
+            out[4]
+        );
         let records = run(&out[5]);
         assert_eq!(records.len(), 4, "the end was said twice: {records:?}");
-        assert!(matches!(&records[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]), "{:?}", records[0]);
-        assert!(matches!(records[1], ServerMsg::Copy(CopyUnit { sx: 0, sy: 40, x: 0, y: 0, w: 1280, h: 600 })), "{:?}", records[1]);
-        assert!(matches!(records[2], ServerMsg::Cache(CacheUnit { store: true, slot: 9, x: 64, y: 64 })), "{:?}", records[2]);
-        assert!(matches!(records[3], ServerMsg::Cache(CacheUnit { store: false, slot: 9, x: 128, y: 64 })), "{:?}", records[3]);
-        assert_eq!((Totals::of(&sink.shared).copies, Totals::of(&sink.shared).cached), (1, 1));
+        assert!(
+            matches!(&records[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]),
+            "{:?}",
+            records[0]
+        );
+        assert!(
+            matches!(
+                records[1],
+                ServerMsg::Copy(CopyUnit {
+                    sx: 0,
+                    sy: 40,
+                    x: 0,
+                    y: 0,
+                    w: 1280,
+                    h: 600
+                })
+            ),
+            "{:?}",
+            records[1]
+        );
+        assert!(
+            matches!(
+                records[2],
+                ServerMsg::Cache(CacheUnit {
+                    store: true,
+                    slot: 9,
+                    x: 64,
+                    y: 64
+                })
+            ),
+            "{:?}",
+            records[2]
+        );
+        assert!(
+            matches!(
+                records[3],
+                ServerMsg::Cache(CacheUnit {
+                    store: false,
+                    slot: 9,
+                    x: 128,
+                    y: 64
+                })
+            ),
+            "{:?}",
+            records[3]
+        );
+        assert_eq!(
+            (
+                Totals::of(&sink.shared).copies,
+                Totals::of(&sink.shared).cached
+            ),
+            (1, 1)
+        );
 
         assert!(frame_rx.try_recv().is_err());
     }
@@ -2117,22 +2574,41 @@ mod tests {
     async fn wlshares_tiles_start_over_without_the_regions_before() {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
-        sink.pass_region(1, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
+        sink.pass_region(1, 0, 0, 320, 192, true, KEYFRAME.to_vec())
+            .await
+            .unwrap();
         sink.flush().await;
         assert_eq!(drain(&mut frame_rx, 3).await.len(), 3);
         sink.reset_render();
-        sink.pass_region(1, 0, 0, 320, 192, false, FRAME.to_vec()).await.unwrap();
+        sink.pass_region(1, 0, 0, 320, 192, false, FRAME.to_vec())
+            .await
+            .unwrap();
         sink.pass_region_end(1).await.unwrap();
-        sink.pass_tile(0, 0, 1280, 800, Format::Png, vec![0x89]).await.unwrap();
+        sink.pass_tile(0, 0, 1280, 800, Format::Png, vec![0x89])
+            .await
+            .unwrap();
 
-        sink.pass_region(1, 64, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
+        sink.pass_region(1, 64, 0, 320, 192, true, KEYFRAME.to_vec())
+            .await
+            .unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 4).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "{:?}",
+            out[0]
+        );
         assert!(matches!(run(&out[1]), [ServerMsg::Tile(_)]), "{:?}", out[1]);
-        assert!(matches!(&out[2], ServerMsg::RegionFormat { stream: 1, .. }), "{:?}", out[2]);
+        assert!(
+            matches!(&out[2], ServerMsg::RegionFormat { stream: 1, .. }),
+            "{:?}",
+            out[2]
+        );
         assert!(matches!(run(&out[3]), [ServerMsg::Region(unit)] if unit.keyframe && unit.x == 64));
-        assert!(frame_rx.try_recv().is_err(), "a region from before the start went out");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "a region from before the start went out"
+        );
     }
 
     /// wlshare's tiles wait for the end of the update that carried them, and go then
@@ -2143,27 +2619,59 @@ mod tests {
     async fn wlshares_tiles_go_as_one_run_an_update() {
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
         for x in (0..1280).step_by(64) {
-            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; 100]).await.unwrap();
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; 100])
+                .await
+                .unwrap();
         }
         sink.pass_copy(0, 0, 0, 64, 64, 64).await.unwrap();
-        assert!(matches!(frame_rx.recv().await, Some(ServerMsg::TilesStart { .. })));
+        assert!(matches!(
+            frame_rx.recv().await,
+            Some(ServerMsg::TilesStart { .. })
+        ));
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 1).await;
         assert_eq!(run(&out[0]).len(), 21, "the update's 20 tiles and its copy");
-        assert!(matches!(out[0], ServerMsg::Run { continued: false, .. }), "the update's whole");
+        assert!(
+            matches!(
+                out[0],
+                ServerMsg::Run {
+                    continued: false,
+                    ..
+                }
+            ),
+            "the update's whole"
+        );
         assert!(frame_rx.try_recv().is_err());
 
         let half = MAX_BATCH_BYTES / 2;
         for x in [0, 64, 128] {
-            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; half]).await.unwrap();
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; half])
+                .await
+                .unwrap();
         }
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
-        assert_eq!((run(&out[0]).len(), run(&out[1]).len()), (2, 1), "cut at a batch's worth");
+        assert_eq!(
+            (run(&out[0]).len(), run(&out[1]).len()),
+            (2, 1),
+            "cut at a batch's worth"
+        );
         assert!(
-            matches!((&out[0], &out[1]), (ServerMsg::Run { continued: true, .. }, ServerMsg::Run { continued: false, .. })),
+            matches!(
+                (&out[0], &out[1]),
+                (
+                    ServerMsg::Run {
+                        continued: true,
+                        ..
+                    },
+                    ServerMsg::Run {
+                        continued: false,
+                        ..
+                    }
+                )
+            ),
             "the cut run continued into the update's last"
         );
         assert!(frame_rx.try_recv().is_err());
@@ -2176,15 +2684,54 @@ mod tests {
     async fn a_region_wlshare_did_not_promise_is_refused() {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, _frame_rx) = video_sink(1280, 800).await;
-        assert!(sink.pass_region(0, 0, 0, 320, 192, true, FRAME.to_vec()).await.is_err(), "a start that is no IDR");
-        assert!(sink.pass_region(0, 0, 0, 640, 192, true, KEYFRAME.to_vec()).await.is_err(), "a picture of another size");
-        assert!(sink.pass_region(0, 0, 0, 320, 192, true, vec![0x80; 100]).await.is_err(), "a frame that is no access unit");
-        assert!(sink.pass_region(0, 0, 0, 3841, 64, true, KEYFRAME.to_vec()).await.is_err(), "past the ceiling");
-        sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.unwrap();
-        assert!(sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec()).await.is_err(), "a stream started twice");
-        assert!(sink.pass_region(0, 64, 0, 320, 192, false, FRAME.to_vec()).await.is_err(), "a stream moved");
-        assert!(sink.pass_region(0, 0, 0, 320, 190, false, FRAME.to_vec()).await.is_err(), "a stream resized");
-        sink.pass_region(0, 0, 0, 320, 192, false, FRAME.to_vec()).await.unwrap();
+        assert!(
+            sink.pass_region(0, 0, 0, 320, 192, true, FRAME.to_vec())
+                .await
+                .is_err(),
+            "a start that is no IDR"
+        );
+        assert!(
+            sink.pass_region(0, 0, 0, 640, 192, true, KEYFRAME.to_vec())
+                .await
+                .is_err(),
+            "a picture of another size"
+        );
+        assert!(
+            sink.pass_region(0, 0, 0, 320, 192, true, vec![0x80; 100])
+                .await
+                .is_err(),
+            "a frame that is no access unit"
+        );
+        assert!(
+            sink.pass_region(0, 0, 0, 3841, 64, true, KEYFRAME.to_vec())
+                .await
+                .is_err(),
+            "past the ceiling"
+        );
+        sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec())
+            .await
+            .unwrap();
+        assert!(
+            sink.pass_region(0, 0, 0, 320, 192, true, KEYFRAME.to_vec())
+                .await
+                .is_err(),
+            "a stream started twice"
+        );
+        assert!(
+            sink.pass_region(0, 64, 0, 320, 192, false, FRAME.to_vec())
+                .await
+                .is_err(),
+            "a stream moved"
+        );
+        assert!(
+            sink.pass_region(0, 0, 0, 320, 190, false, FRAME.to_vec())
+                .await
+                .is_err(),
+            "a stream resized"
+        );
+        sink.pass_region(0, 0, 0, 320, 192, false, FRAME.to_vec())
+            .await
+            .unwrap();
     }
 
     /// A frame of wlshare's video goes out as it came, behind the announcement its
@@ -2201,16 +2748,31 @@ mod tests {
         assert!(sink.passing());
 
         let out = drain(&mut frame_rx, 3).await;
-        assert!(matches!(&out[0], ServerMsg::VideoFormat { decode, strips: 1, .. } if decode == "avc1.64000D"), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data == KEYFRAME));
+        assert!(
+            matches!(&out[0], ServerMsg::VideoFormat { decode, strips: 1, .. } if decode == "avc1.64000D"),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data == KEYFRAME)
+        );
         assert!(matches!(&out[2], ServerMsg::Video(unit) if !unit.keyframe && unit.data == FRAME));
-        assert!(frame_rx.try_recv().is_err(), "a frame went out twice, or a format again");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "a frame went out twice, or a format again"
+        );
 
         let (sink, mut frame_rx) = video_sink(320, 192).await;
         let error = sink.pass(320, 192, FRAME.to_vec()).await.unwrap_err();
-        assert!(format!("{error:#}").contains("does not start at an IDR picture"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("does not start at an IDR picture"),
+            "{error:#}"
+        );
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "a stream that started on a P frame went out");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "a stream that started on a P frame went out"
+        );
     }
 
     /// A reset — a reattach, a resize — restarts the passed stream: nothing until a
@@ -2229,8 +2791,14 @@ mod tests {
         sink.pass(320, 192, KEYFRAME.to_vec()).await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
-        assert!(matches!(&out[0], ServerMsg::VideoFormat { decode, .. } if decode == "avc1.64000D"), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data == KEYFRAME));
+        assert!(
+            matches!(&out[0], ServerMsg::VideoFormat { decode, .. } if decode == "avc1.64000D"),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data == KEYFRAME)
+        );
         assert!(frame_rx.try_recv().is_err());
     }
 
@@ -2245,15 +2813,30 @@ mod tests {
         sink.uncover();
         sink.frame().await.unwrap();
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "nothing to queue, nothing to follow");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "nothing to queue, nothing to follow"
+        );
 
         sink.damage(area, &[7; 64 * 48 * 3]).await.unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 3).await;
-        assert!(matches!(&out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Tile(unit) if (unit.w, unit.h) == (64, 48)), "{:?}", out[1]);
-        assert!(matches!(&out[2], ServerMsg::ScreenUnavailable { active: false }), "{:?}", out[2]);
+        assert!(
+            matches!(&out[0], ServerMsg::TilesStart { .. }),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(&out[1], ServerMsg::Tile(unit) if (unit.w, unit.h) == (64, 48)),
+            "{:?}",
+            out[1]
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::ScreenUnavailable { active: false }),
+            "{:?}",
+            out[2]
+        );
 
         // Owed once: the next round brings no second notice.
         drop(out);
@@ -2263,21 +2846,46 @@ mod tests {
 
         // A passed unit dropped for a keyframe brings it no sooner than the one sent.
         sink.uncover();
-        let hevc = |keyframe| crate::video::Passed { decode: "hev1.4.10.L150.BE.8".to_owned(), keyframe, strip: None };
+        let hevc = |keyframe| crate::video::Passed {
+            decode: "hev1.4.10.L150.BE.8".to_owned(),
+            keyframe,
+            strip: None,
+        };
         sink.reset_render();
-        assert!(!sink.pass_media(64, 48, vec![1; 30], hevc(false)).await.unwrap());
+        assert!(
+            !sink
+                .pass_media(64, 48, vec![1; 30], hevc(false))
+                .await
+                .unwrap()
+        );
         sink.flush().await;
         assert!(frame_rx.try_recv().is_err(), "dropped, so nothing follows");
-        assert!(sink.pass_media(64, 48, vec![2; 900], hevc(true)).await.unwrap());
+        assert!(
+            sink.pass_media(64, 48, vec![2; 900], hevc(true))
+                .await
+                .unwrap()
+        );
         sink.flush().await;
         let out = drain(&mut frame_rx, 3).await;
-        assert!(matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe), "{:?}", out[1]);
-        assert!(matches!(&out[2], ServerMsg::ScreenUnavailable { active: false }), "{:?}", out[2]);
+        assert!(
+            matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe),
+            "{:?}",
+            out[1]
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::ScreenUnavailable { active: false }),
+            "{:?}",
+            out[2]
+        );
 
         // A stream that stopped before its unit went leaves the notice up.
         sink.uncover();
         sink.cover();
-        assert!(sink.pass_media(64, 48, vec![3; 900], hevc(true)).await.unwrap());
+        assert!(
+            sink.pass_media(64, 48, vec![3; 900], hevc(true))
+                .await
+                .unwrap()
+        );
         sink.flush().await;
         let out = drain(&mut frame_rx, 1).await;
         assert!(matches!(&out[0], ServerMsg::Video(_)), "{:?}", out[0]);
@@ -2294,7 +2902,11 @@ mod tests {
         const HEVC: &str = "hev1.4.10.L150.BE.8";
         let (sink, mut frame_rx) = video_sink(64, 48).await;
         let area = rect(0, 0, 64, 48);
-        let hevc = |keyframe| crate::video::Passed { decode: HEVC.to_owned(), keyframe, strip: None };
+        let hevc = |keyframe| crate::video::Passed {
+            decode: HEVC.to_owned(),
+            keyframe,
+            strip: None,
+        };
         let is_hevc = |msg: &ServerMsg| matches!(msg, ServerMsg::VideoFormat { decode, .. } if decode == HEVC);
 
         // Before the passed stream flows: tiles from the rectangles.
@@ -2302,47 +2914,99 @@ mod tests {
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "{:?}",
+            out[0]
+        );
         assert!(matches!(&out[1], ServerMsg::Tile(_)));
         drop(out);
 
         // The passed stream takes over at its IDR, announced.
-        assert!(!sink.pass_media(64, 48, vec![1; 30], hevc(false)).await.unwrap(), "dropped for a keyframe");
-        assert!(sink.pass_media(64, 48, vec![2; 900], hevc(true)).await.unwrap());
-        assert!(sink.pass_media(64, 48, vec![3; 40], hevc(false)).await.unwrap());
+        assert!(
+            !sink
+                .pass_media(64, 48, vec![1; 30], hevc(false))
+                .await
+                .unwrap(),
+            "dropped for a keyframe"
+        );
+        assert!(
+            sink.pass_media(64, 48, vec![2; 900], hevc(true))
+                .await
+                .unwrap()
+        );
+        assert!(
+            sink.pass_media(64, 48, vec![3; 40], hevc(false))
+                .await
+                .unwrap()
+        );
         // A repaint while it passes codes nothing here.
         sink.reset_render();
         sink.frame().await.unwrap();
         assert_eq!(sink.due_at().await, None);
-        assert!(sink.pass_media(64, 48, vec![4; 800], hevc(true)).await.unwrap());
+        assert!(
+            sink.pass_media(64, 48, vec![4; 800], hevc(true))
+                .await
+                .unwrap()
+        );
         sink.flush().await;
         let out = drain(&mut frame_rx, 5).await;
         assert!(is_hevc(&out[0]), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 900));
-        assert!(matches!(&out[2], ServerMsg::Video(unit) if !unit.keyframe && unit.data.len() == 40));
+        assert!(
+            matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 900)
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::Video(unit) if !unit.keyframe && unit.data.len() == 40)
+        );
         assert!(is_hevc(&out[3]), "a repaint announces again: {:?}", out[3]);
-        assert!(matches!(&out[4], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 800));
-        assert!(frame_rx.try_recv().is_err(), "nothing coded here while the stream passed");
+        assert!(
+            matches!(&out[4], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 800)
+        );
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "nothing coded here while the stream passed"
+        );
 
         // The source switches back to rectangles: tiles again, the whole picture from
         // its start.
-        sink.damage(rect(0, 0, 8, 8), &[9; 8 * 8 * 3]).await.unwrap();
+        sink.damage(rect(0, 0, 8, 8), &[9; 8 * 8 * 3])
+            .await
+            .unwrap();
         assert!(!sink.passing());
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Tile(unit) if (unit.w, unit.h) == (64, 48)), "not the whole picture: {:?}", out[1]);
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(&out[1], ServerMsg::Tile(unit) if (unit.w, unit.h) == (64, 48)),
+            "not the whole picture: {:?}",
+            out[1]
+        );
         drop(out);
 
         // And the passed stream back, from an IDR, announced for the decoder the tiles
         // displaced.
-        assert!(!sink.pass_media(64, 48, vec![5; 30], hevc(false)).await.unwrap());
-        assert!(sink.pass_media(64, 48, vec![6; 700], hevc(true)).await.unwrap());
+        assert!(
+            !sink
+                .pass_media(64, 48, vec![5; 30], hevc(false))
+                .await
+                .unwrap()
+        );
+        assert!(
+            sink.pass_media(64, 48, vec![6; 700], hevc(true))
+                .await
+                .unwrap()
+        );
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
         assert!(is_hevc(&out[0]), "{:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 700));
+        assert!(
+            matches!(&out[1], ServerMsg::Video(unit) if unit.keyframe && unit.data.len() == 700)
+        );
         assert!(frame_rx.try_recv().is_err());
     }
 
@@ -2354,12 +3018,21 @@ mod tests {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, _frame_rx) = video_sink(640, 384).await;
         let error = sink.pass(640, 384, vec![0xa0, 0, 0, 0]).await.unwrap_err();
-        assert!(format!("{error:#}").contains("is not an Annex B access unit"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("is not an Annex B access unit"),
+            "{error:#}"
+        );
         let error = sink.pass(640, 384, KEYFRAME.to_vec()).await.unwrap_err();
-        assert!(format!("{error:#}").contains("of a 320x192 picture, not the 640x384"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("of a 320x192 picture, not the 640x384"),
+            "{error:#}"
+        );
         sink.pass(320, 192, KEYFRAME.to_vec()).await.unwrap();
         let error = sink.pass(640, 384, FRAME.to_vec()).await.unwrap_err();
-        assert!(format!("{error:#}").contains("without the parameter sets of a new size"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("without the parameter sets of a new size"),
+            "{error:#}"
+        );
     }
 
     /// Past the ceiling, a source that holds sends nothing of the picture: its
@@ -2369,14 +3042,25 @@ mod tests {
         let (sink, mut frame_rx) = holding_sink(5376, 2288).await;
         assert!(sink.oversized());
 
-        for (seed, area) in [rect(5000, 2000, 7, 5), rect(3, 4, 64, 2)].iter().enumerate() {
-            sink.damage(*area, &rgb(area.w(), area.h(), seed as u8)).await.unwrap();
+        for (seed, area) in [rect(5000, 2000, 7, 5), rect(3, 4, 64, 2)]
+            .iter()
+            .enumerate()
+        {
+            sink.damage(*area, &rgb(area.w(), area.h(), seed as u8))
+                .await
+                .unwrap();
         }
         sink.frame().await.unwrap();
         sink.flush().await;
 
-        assert!(frame_rx.try_recv().is_err(), "an oversize desktop sent a picture");
-        assert!(sink.due_at().await.is_none(), "an oversize desktop is owed a round");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "an oversize desktop sent a picture"
+        );
+        assert!(
+            sink.due_at().await.is_none(),
+            "an oversize desktop is owed a round"
+        );
     }
 
     /// A source with no ceiling is tiles at any size: a 5K desktop is coded like
@@ -2385,16 +3069,33 @@ mod tests {
     async fn a_source_with_no_ceiling_shows_a_desktop_past_it() {
         let (frame_tx, mut frame_rx) = mpsc::channel(256);
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Shown);
-        sink.msg(ServerMsg::Resize { w: 5376, h: 2288, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 5376,
+            h: 2288,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         assert!(!sink.oversized());
         let area = rect(5312, 2240, 64, 48);
         sink.damage(area, &rgb(64, 48, 1)).await.unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 3).await;
-        assert!(matches!(out[0], ServerMsg::Resize { w: 5376, .. }), "{:?}", out[0]);
-        assert!(matches!(out[1], ServerMsg::TilesStart { .. }), "a hold was said, or the picture had no start");
-        assert!(matches!(&out[2], ServerMsg::Tile(unit) if (unit.x, unit.y) == (5312, 2240)), "{:?}", out[2]);
+        assert!(
+            matches!(out[0], ServerMsg::Resize { w: 5376, .. }),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            matches!(out[1], ServerMsg::TilesStart { .. }),
+            "a hold was said, or the picture had no start"
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::Tile(unit) if (unit.x, unit.y) == (5312, 2240)),
+            "{:?}",
+            out[2]
+        );
     }
 
     /// A Standard Mac's own rectangles are passed whatever the desktop's size: they
@@ -2403,14 +3104,28 @@ mod tests {
     async fn a_standard_picture_past_the_ceiling_is_passed() {
         let (frame_tx, mut rx) = mpsc::channel(256);
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Shown);
-        sink.msg(ServerMsg::Resize { w: 5376, h: 2288, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 5376,
+            h: 2288,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         sink.standard_start().await.unwrap();
-        sink.pass_standard(5000, 2000, 64, 16, vec![1; 16]).await.unwrap();
+        sink.pass_standard(5000, 2000, 64, 16, vec![1; 16])
+            .await
+            .unwrap();
         sink.flush().await;
         let out = drain(&mut rx, 3).await;
         assert!(matches!(out[0], ServerMsg::Resize { .. }));
-        assert!(matches!(out[1], ServerMsg::StandardStart { .. }), "{:?}", out[1]);
-        assert!(matches!(&out[2], ServerMsg::Standard(unit) if unit.data[0] == 1 && (unit.x, unit.y) == (5000, 2000)));
+        assert!(
+            matches!(out[1], ServerMsg::StandardStart { .. }),
+            "{:?}",
+            out[1]
+        );
+        assert!(
+            matches!(&out[2], ServerMsg::Standard(unit) if unit.data[0] == 1 && (unit.x, unit.y) == (5000, 2000))
+        );
     }
 
     /// Within the ceiling a source that holds is tiles like any other, and a source
@@ -2446,10 +3161,22 @@ mod tests {
         sink.flush().await;
         drop(drain_tiles(&mut frame_rx).await);
 
-        sink.msg(ServerMsg::Resize { w: 5376, h: 2288, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 5376,
+            h: 2288,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         sink.damage(area, &rgb(64, 64, 2)).await.unwrap();
         sink.frame().await.unwrap();
-        sink.msg(ServerMsg::Resize { w: 1280, h: 800, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 1280,
+            h: 800,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         assert!(!sink.oversized());
         sink.damage(area, &rgb(64, 64, 3)).await.unwrap();
         sink.frame().await.unwrap();
@@ -2457,10 +3184,21 @@ mod tests {
 
         let out = drain(&mut frame_rx, 6).await;
         assert!(matches!(out[0], ServerMsg::Resize { w: 5376, .. }));
-        assert!(matches!(out[1], ServerMsg::Oversize { cause: Some(HoldCause::Size) }));
-        assert!(matches!(out[2], ServerMsg::Resize { w: 1280, .. }), "a held desktop sent a picture");
+        assert!(matches!(
+            out[1],
+            ServerMsg::Oversize {
+                cause: Some(HoldCause::Size)
+            }
+        ));
+        assert!(
+            matches!(out[2], ServerMsg::Resize { w: 1280, .. }),
+            "a held desktop sent a picture"
+        );
         assert!(matches!(out[3], ServerMsg::Oversize { cause: None }));
-        assert!(matches!(out[4], ServerMsg::TilesStart { .. }), "the picture came back without its start");
+        assert!(
+            matches!(out[4], ServerMsg::TilesStart { .. }),
+            "the picture came back without its start"
+        );
         assert!(matches!(&out[5], ServerMsg::Tile(unit) if (unit.x, unit.y) == (0, 0)));
     }
 
@@ -2474,21 +3212,34 @@ mod tests {
         on_a_fast_link(&sink);
         let area = rect(0, 0, 320, 64);
 
-        sink.damage(area, &rgb(area.w(), area.h(), 1)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 1))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 2).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "the first thing a picture sends must be its start, got {:?}", out[0]);
-        assert!(matches!(&out[1], ServerMsg::Tile(unit) if (unit.x, unit.y, unit.w, unit.h) == (0, 0, 320, 64)));
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "the first thing a picture sends must be its start, got {:?}",
+            out[0]
+        );
+        assert!(
+            matches!(&out[1], ServerMsg::Tile(unit) if (unit.x, unit.y, unit.w, unit.h) == (0, 0, 320, 64))
+        );
         drop(out);
 
         // A second round starts nothing.
         tokio::time::sleep(ROUND_INTERVAL).await;
-        sink.damage(area, &rgb(area.w(), area.h(), 2)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 2))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 1).await;
-        assert!(matches!(out[0], ServerMsg::Tile(_)), "the start was said again for a picture going on");
+        assert!(
+            matches!(out[0], ServerMsg::Tile(_)),
+            "the start was said again for a picture going on"
+        );
         drop(out);
 
         // A repaint does, inside the interval and with nothing damaged since: this is
@@ -2498,12 +3249,23 @@ mod tests {
         sink.frame().await.unwrap();
         sink.flush().await;
         let out = drain(&mut frame_rx, 9).await;
-        assert!(matches!(out[0], ServerMsg::TilesStart { .. }), "a repaint must start the picture again, got {:?}", out[0]);
-        let rows: Vec<_> = out[1..].iter().map(|msg| match msg {
-            ServerMsg::Tile(unit) => (unit.y, unit.w),
-            other => panic!("expected tiles, got {other:?}"),
-        }).collect();
-        assert_eq!(rows, (0..8).map(|row| (row * 64, 640)).collect::<Vec<_>>(), "not the whole picture, a row at a time");
+        assert!(
+            matches!(out[0], ServerMsg::TilesStart { .. }),
+            "a repaint must start the picture again, got {:?}",
+            out[0]
+        );
+        let rows: Vec<_> = out[1..]
+            .iter()
+            .map(|msg| match msg {
+                ServerMsg::Tile(unit) => (unit.y, unit.w),
+                other => panic!("expected tiles, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            (0..8).map(|row| (row * 64, 640)).collect::<Vec<_>>(),
+            "not the whole picture, a row at a time"
+        );
     }
 
     /// A session's first picture on a link not yet measured comes coarse, every tile
@@ -2527,7 +3289,9 @@ mod tests {
                 sink.frame().await.unwrap();
                 sink.flush().await;
                 while let Ok(msg) = frame_rx.try_recv() {
-                    let ServerMsg::Tile(unit) = msg else { panic!("expected tiles, got {msg:?}") };
+                    let ServerMsg::Tile(unit) = msg else {
+                        panic!("expected tiles, got {msg:?}")
+                    };
                     assert_eq!(unit.format, Format::Png, "a refresh was not lossless");
                     lossless += usize::from(unit.w / 64);
                 }
@@ -2535,7 +3299,11 @@ mod tests {
         })
         .await
         .expect("the coarse picture never settled");
-        assert_eq!(sink.shared.coarse.load(Ordering::Relaxed), 1, "a refresh went coarse");
+        assert_eq!(
+            sink.shared.coarse.load(Ordering::Relaxed),
+            1,
+            "a refresh went coarse"
+        );
 
         let (sink, mut frame_rx) = video_sink(256, 128).await;
         on_a_fast_link(&sink);
@@ -2554,13 +3322,21 @@ mod tests {
         on_a_fast_link(&sink);
         let whole = rect(0, 0, 256, 128);
         let first = round(&sink, &mut frame_rx, whole, &noise(256, 128, 5)).await;
-        assert_eq!(sink.shared.coarse.load(Ordering::Relaxed), 0, "a fast link's picture went coarse");
+        assert_eq!(
+            sink.shared.coarse.load(Ordering::Relaxed),
+            0,
+            "a fast link's picture went coarse"
+        );
         drop(first);
 
         sink.shared.feedback.reset();
         let again = round(&sink, &mut frame_rx, whole, &noise(256, 128, 6)).await;
         assert!(again.iter().all(|unit| unit.format == Format::Jpeg));
-        assert_eq!(sink.shared.coarse.load(Ordering::Relaxed), 1, "a reattached browser went at the last one's link");
+        assert_eq!(
+            sink.shared.coarse.load(Ordering::Relaxed),
+            1,
+            "a reattached browser went at the last one's link"
+        );
     }
 
     /// The wake-up contract both engines rely on now that a round is coded on a
@@ -2575,17 +3351,31 @@ mod tests {
     #[tokio::test]
     async fn a_round_in_flight_defers_frame_and_its_return_wakes_the_engine() {
         let (sink, mut frame_rx) = video_sink(64, 64).await;
-        sink.damage(rect(0, 0, 64, 64), &rgb(64, 64, 1)).await.unwrap();
-        let round = sink.shared.video.lock().await.tiles.take_round(u64::MAX, 0).expect("owed tiles");
+        sink.damage(rect(0, 0, 64, 64), &rgb(64, 64, 1))
+            .await
+            .unwrap();
+        let round = sink
+            .shared
+            .video
+            .lock()
+            .await
+            .tiles
+            .take_round(u64::MAX, 0)
+            .expect("owed tiles");
 
         // frame() while the round is out: early return, with the restart left for a
         // call that has the tiles' marks home.
         sink.reset_render();
         sink.frame().await.unwrap();
-        assert!(sink.shared.restart_owed.load(Ordering::Relaxed), "the restart was consumed while the round was away");
+        assert!(
+            sink.shared.restart_owed.load(Ordering::Relaxed),
+            "the restart was consumed while the round was away"
+        );
 
         // Damage lands while the round is out, and nothing is due for it yet.
-        sink.damage(rect(0, 0, 64, 64), &rgb(64, 64, 2)).await.unwrap();
+        sink.damage(rect(0, 0, 64, 64), &rgb(64, 64, 2))
+            .await
+            .unwrap();
         assert!(sink.due_at().await.is_none(), "due while the round is out");
 
         // Hand the round to the real order task, the way frame() does.
@@ -2594,11 +3384,16 @@ mod tests {
             let coded = round.code();
             (round, coded, micros(started))
         });
-        sink.push(Pending::Round(handle, Held::default())).await.unwrap();
+        sink.push(Pending::Round(handle, Held::default()))
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(30), sink.round_returned())
             .await
             .expect("the order task never signalled the returning round");
-        assert!(sink.due_at().await.is_some(), "the wake-up promised tiles no round has carried");
+        assert!(
+            sink.due_at().await.is_some(),
+            "the wake-up promised tiles no round has carried"
+        );
 
         // The woken engine's next frame() carries them, and the preserved restart makes
         // its round the picture's start.
@@ -2607,9 +3402,15 @@ mod tests {
         let out = drain(&mut frame_rx, 4).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }));
         assert!(matches!(out[1], ServerMsg::Tile(_)));
-        assert!(matches!(out[2], ServerMsg::TilesStart { .. }), "the preserved restart never started the picture again");
+        assert!(
+            matches!(out[2], ServerMsg::TilesStart { .. }),
+            "the preserved restart never started the picture again"
+        );
         assert!(matches!(out[3], ServerMsg::Tile(_)));
-        assert!(frame_rx.try_recv().is_err(), "two rounds sent more than two tiles");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "two rounds sent more than two tiles"
+        );
     }
 
     /// The test for the whole design: `damage` is called once per damage
@@ -2620,13 +3421,19 @@ mod tests {
         let (sink, mut frame_rx) = video_sink(640, 480).await;
         for y in [0, 16, 32] {
             let area = rect(0, y, 320, 16);
-            sink.damage(area, &rgb(area.w(), area.h(), 3)).await.unwrap();
+            sink.damage(area, &rgb(area.w(), area.h(), 3))
+                .await
+                .unwrap();
         }
         sink.frame().await.unwrap();
         sink.flush().await;
 
         let tiles = drain_tiles(&mut frame_rx).await;
-        assert_eq!(tiles.len(), 1, "three rectangles in one row of tiles were more than one rectangle");
+        assert_eq!(
+            tiles.len(),
+            1,
+            "three rectangles in one row of tiles were more than one rectangle"
+        );
         assert_eq!(sink.shared.rounds.load(Ordering::Relaxed), 1);
     }
 
@@ -2636,11 +3443,19 @@ mod tests {
     async fn a_tile_at_the_edge_is_cut_there() {
         let (sink, mut frame_rx) = video_sink(1919, 1079).await;
         let area = rect(1900, 1060, 19, 19);
-        sink.damage(area, &rgb(area.w(), area.h(), 5)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 5))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         let tiles = drain_tiles(&mut frame_rx).await;
-        assert_eq!(tiles.iter().map(|unit| (unit.x, unit.y, unit.w, unit.h)).collect::<Vec<_>>(), [(1856, 1024, 63, 55)]);
+        assert_eq!(
+            tiles
+                .iter()
+                .map(|unit| (unit.x, unit.y, unit.w, unit.h))
+                .collect::<Vec<_>>(),
+            [(1856, 1024, 63, 55)]
+        );
     }
 
     /// RDP's loop turns once per PDU and most redraw nothing, so a frame boundary
@@ -2652,15 +3467,23 @@ mod tests {
         sink.frame().await.unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "an untouched framebuffer was sent");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "an untouched framebuffer was sent"
+        );
 
         let area = rect(0, 0, 320, 64);
-        sink.damage(area, &rgb(area.w(), area.h(), 9)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 9))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         drain_tiles(&mut frame_rx).await;
-        assert!(frame_rx.try_recv().is_err(), "the same pixels were sent twice");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "the same pixels were sent twice"
+        );
     }
 
     /// The pacing, from the engine's side: a boundary is a proposal. Three boundaries
@@ -2672,14 +3495,22 @@ mod tests {
 
         for y in [0, 64, 128] {
             let area = rect(0, y, 320, 64);
-            sink.damage(area, &rgb(area.w(), area.h(), 3)).await.unwrap();
+            sink.damage(area, &rgb(area.w(), area.h(), 3))
+                .await
+                .unwrap();
             sink.frame().await.unwrap();
         }
         sink.flush().await;
 
         drain_tiles(&mut frame_rx).await;
-        assert!(frame_rx.try_recv().is_err(), "the interval did not hold the later boundaries");
-        assert!(sink.due_at().await.is_some(), "the deferred blits were dropped rather than held for the next round");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "the interval did not hold the later boundaries"
+        );
+        assert!(
+            sink.due_at().await.is_some(),
+            "the deferred blits were dropped rather than held for the next round"
+        );
     }
 
     /// The half that makes deferring safe.
@@ -2693,23 +3524,36 @@ mod tests {
         let (sink, mut frame_rx) = video_sink(320, 240).await;
         let area = rect(0, 0, 320, 64);
 
-        sink.damage(area, &rgb(area.w(), area.h(), 1)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 1))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         drop(drain_tiles(&mut frame_rx).await);
 
-        sink.damage(area, &rgb(area.w(), area.h(), 2)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 2))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "the second frame was not held");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "the second frame was not held"
+        );
 
         // What an engine's flush arm does, and the only thing that happens here.
-        let due = sink.due_at().await.expect("pixels the shadow calls delivered are owed");
+        let due = sink
+            .due_at()
+            .await
+            .expect("pixels the shadow calls delivered are owed");
         tokio::time::sleep_until(due).await;
         sink.frame().await.unwrap();
         sink.flush().await;
         drain_tiles(&mut frame_rx).await;
-        assert!(sink.due_at().await.is_none(), "tiles are still owed that nothing will send again");
+        assert!(
+            sink.due_at().await.is_none(),
+            "tiles are still owed that nothing will send again"
+        );
     }
 
     /// The browser's painting paces the rounds: one past the paint window holds the
@@ -2721,7 +3565,10 @@ mod tests {
         on_a_fast_link(&sink);
         let whole = rect(0, 0, 640, 192);
         let first = round(&sink, &mut frame_rx, whole, &noise(640, 192, 1)).await;
-        assert!(first.iter().map(|unit| unit.data.len() as u64).sum::<u64>() > AHEAD, "a round smaller than the window's floor");
+        assert!(
+            first.iter().map(|unit| unit.data.len() as u64).sum::<u64>() > AHEAD,
+            "a round smaller than the window's floor"
+        );
 
         // Two changes while the browser has not painted the first round: nothing goes.
         tokio::time::sleep(ROUND_INTERVAL * 2).await;
@@ -2730,16 +3577,28 @@ mod tests {
             sink.frame().await.unwrap();
         }
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "a round went ahead of the browser's painting");
-        assert!(sink.due_at().await.is_none(), "due while the browser has not painted");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "a round went ahead of the browser's painting"
+        );
+        assert!(
+            sink.due_at().await.is_none(),
+            "due while the browser has not painted"
+        );
 
         // Painted: the engine is woken, and takes one round of the latest pixels.
         drop(first);
-        tokio::time::timeout(Duration::from_secs(5), sink.round_returned()).await.expect("the painting never woke the engine");
+        tokio::time::timeout(Duration::from_secs(5), sink.round_returned())
+            .await
+            .expect("the painting never woke the engine");
         sink.frame().await.unwrap();
         sink.flush().await;
         let second = drain_tiles(&mut frame_rx).await;
-        assert_eq!(sink.shared.rounds.load(Ordering::Relaxed), 2, "the two changes were not one round");
+        assert_eq!(
+            sink.shared.rounds.load(Ordering::Relaxed),
+            2,
+            "the two changes were not one round"
+        );
         assert_eq!(second.iter().map(|unit| unit.h).sum::<u16>(), 192);
     }
 
@@ -2751,7 +3610,10 @@ mod tests {
         let (sink, mut frame_rx) = video_sink(128, 64).await;
         let photo = rect(0, 0, 64, 64);
         let lossy = round(&sink, &mut frame_rx, photo, &noise(64, 64, 1)).await;
-        assert_eq!(lossy.iter().map(|unit| unit.format).collect::<Vec<_>>(), [Format::Jpeg]);
+        assert_eq!(
+            lossy.iter().map(|unit| unit.format).collect::<Vec<_>>(),
+            [Format::Jpeg]
+        );
         drop(lossy);
 
         // As an engine does: every wake-up a frame, until one sends something. The
@@ -2766,15 +3628,27 @@ mod tests {
         .await
         .expect("a still JPEG tile was never refreshed");
         let lossless = drain_tiles(&mut frame_rx).await;
-        assert_eq!(lossless.iter().map(|unit| (unit.x, unit.y, unit.w, unit.h, unit.format)).collect::<Vec<_>>(), [(0, 0, 64, 64, Format::Png)]);
+        assert_eq!(
+            lossless
+                .iter()
+                .map(|unit| (unit.x, unit.y, unit.w, unit.h, unit.format))
+                .collect::<Vec<_>>(),
+            [(0, 0, 64, 64, Format::Png)]
+        );
         assert_eq!(sink.shared.refreshes.load(Ordering::Relaxed), 1);
         drop(lossless);
 
         tokio::time::sleep(SETTLE_TICK * 4).await;
-        assert!(sink.due_at().await.is_none(), "a lossless picture was owed again");
+        assert!(
+            sink.due_at().await.is_none(),
+            "a lossless picture was owed again"
+        );
         sink.frame().await.unwrap();
         sink.flush().await;
-        assert!(frame_rx.try_recv().is_err(), "a lossless picture was sent again");
+        assert!(
+            frame_rx.try_recv().is_err(),
+            "a lossless picture was sent again"
+        );
     }
 
     /// A tile of few colours is lossless the first time, and owes nothing when it goes
@@ -2787,7 +3661,10 @@ mod tests {
         assert!(tiles.iter().all(|unit| unit.format == Format::Png));
         drop(tiles);
         tokio::time::sleep(SETTLE_TICK * 4).await;
-        assert!(sink.due_at().await.is_none(), "a lossless tile was owed a refresh");
+        assert!(
+            sink.due_at().await.is_none(),
+            "a lossless tile was owed a refresh"
+        );
     }
 
     /// What the engines park on. `None` has to mean "nothing could be taken now", or a
@@ -2795,11 +3672,19 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn nothing_is_due_while_nothing_is_owed() {
         let (sink, mut frame_rx) = video_sink(320, 240).await;
-        assert!(sink.due_at().await.is_none(), "an untouched mirror owes nothing");
+        assert!(
+            sink.due_at().await.is_none(),
+            "an untouched mirror owes nothing"
+        );
 
         let area = rect(0, 0, 320, 64);
-        sink.damage(area, &rgb(area.w(), area.h(), 4)).await.unwrap();
-        assert!(sink.due_at().await.is_some(), "blitted pixels are owed a round");
+        sink.damage(area, &rgb(area.w(), area.h(), 4))
+            .await
+            .unwrap();
+        assert!(
+            sink.due_at().await.is_some(),
+            "blitted pixels are owed a round"
+        );
 
         sink.frame().await.unwrap();
         sink.flush().await;
@@ -2813,21 +3698,37 @@ mod tests {
     async fn a_resize_starts_the_picture_again() {
         let (sink, mut frame_rx) = video_sink(320, 240).await;
         let area = rect(0, 0, 320, 64);
-        sink.damage(area, &rgb(area.w(), area.h(), 1)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 1))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
         drain_tiles(&mut frame_rx).await;
 
         sink.reset_render();
-        sink.msg(ServerMsg::Resize { w: 640, h: 480, scale: UNSCALED }).await.unwrap();
-        sink.damage(rect(0, 0, 640, 64), &rgb(640, 64, 2)).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: 640,
+            h: 480,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
+        sink.damage(rect(0, 0, 640, 64), &rgb(640, 64, 2))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
         sink.flush().await;
 
         let out = drain(&mut frame_rx, 3).await;
-        assert!(matches!(out[0], ServerMsg::Resize { w: 640, .. }), "the resize lost its place");
+        assert!(
+            matches!(out[0], ServerMsg::Resize { w: 640, .. }),
+            "the resize lost its place"
+        );
         assert!(matches!(out[1], ServerMsg::TilesStart { .. }));
-        assert!(matches!(&out[2], ServerMsg::Tile(unit) if unit.w == 640), "the tiles kept the old picture size");
+        assert!(
+            matches!(&out[2], ServerMsg::Tile(unit) if unit.w == 640),
+            "the tiles kept the old picture size"
+        );
     }
 
     /// Where a desktop past the ceiling has to surface. Learning the size must not
@@ -2839,9 +3740,13 @@ mod tests {
         let (frame_tx, _frame_rx) = mpsc::channel(64);
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Refuse);
 
-        sink.msg(ServerMsg::Resize { w: 5120, h: 2880, scale: UNSCALED })
-            .await
-            .expect("learning a size must not be the thing that fails");
+        sink.msg(ServerMsg::Resize {
+            w: 5120,
+            h: 2880,
+            scale: UNSCALED,
+        })
+        .await
+        .expect("learning a size must not be the thing that fails");
 
         let area = rect(0, 0, 320, 64);
         let refused = sink
@@ -2857,15 +3762,25 @@ mod tests {
     async fn a_control_message_cannot_overtake_the_round_before_it() {
         let (sink, mut frame_rx) = video_sink(320, 240).await;
         let area = rect(0, 0, 320, 64);
-        sink.damage(area, &rgb(area.w(), area.h(), 1)).await.unwrap();
+        sink.damage(area, &rgb(area.w(), area.h(), 1))
+            .await
+            .unwrap();
         sink.frame().await.unwrap();
-        sink.msg(ServerMsg::RemoteOs { macos: false }).await.unwrap();
+        sink.msg(ServerMsg::RemoteOs { macos: false })
+            .await
+            .unwrap();
         sink.flush().await;
 
         let out = drain(&mut frame_rx, 3).await;
         assert!(matches!(out[0], ServerMsg::TilesStart { .. }));
-        assert!(matches!(out[1], ServerMsg::Tile(_)), "the round lost its place");
-        assert!(matches!(out[2], ServerMsg::RemoteOs { .. }), "the message overtook the round");
+        assert!(
+            matches!(out[1], ServerMsg::Tile(_)),
+            "the round lost its place"
+        );
+        assert!(
+            matches!(out[2], ServerMsg::RemoteOs { .. }),
+            "the message overtook the round"
+        );
     }
 
     /// Not an error: a browser that leaves mid-frame ends the sink the same way a
@@ -2876,7 +3791,9 @@ mod tests {
         let sink = VideoSink::new("test", frame_tx, feedback(), Oversize::Refuse);
         drop(frame_rx);
 
-        sink.msg(ServerMsg::RemoteOs { macos: false }).await.unwrap();
+        sink.msg(ServerMsg::RemoteOs { macos: false })
+            .await
+            .unwrap();
         sink.flush().await; // the order task discovers it has nowhere to forward to
         let error = sink
             .msg(ServerMsg::RemoteOs { macos: false })

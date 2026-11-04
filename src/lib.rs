@@ -8,11 +8,9 @@ pub mod assets;
 pub mod audio;
 pub mod auth;
 pub mod camera;
-pub mod combined;
 pub mod cli;
+pub mod combined;
 pub mod config;
-#[cfg(feature = "tui")]
-pub mod worker;
 pub mod encode;
 pub mod engine;
 pub mod error;
@@ -52,4 +50,6 @@ pub mod vnc_mic;
 pub mod vnc_record;
 pub mod vnc_rsa_aes;
 pub mod wire;
+#[cfg(feature = "tui")]
+pub mod worker;
 pub mod ws;

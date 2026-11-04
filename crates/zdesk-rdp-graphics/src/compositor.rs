@@ -50,7 +50,10 @@ impl Default for Compositor {
 
 impl Compositor {
     pub fn new() -> Self {
-        Self { graphics: Graphics::new(), framebuffer: Framebuffer::new() }
+        Self {
+            graphics: Graphics::new(),
+            framebuffer: Framebuffer::new(),
+        }
     }
 
     /// One message of a session's `Event::Graphics`, as the host sent it, out of
@@ -121,7 +124,8 @@ impl Compositor {
     /// [`GpuArea::output`] says. The framebuffer takes them too, so that it is the
     /// picture whole for a second display's tab.
     pub fn restore(&mut self, surface: u16, rect: Rect, rgbx: &[u8]) -> Result<()> {
-        self.graphics.restore(surface, rect, rgbx, &self.framebuffer)
+        self.graphics
+            .restore(surface, rect, rgbx, &self.framebuffer)
     }
 
     /// The decoded picture of one H.264 access unit in the run composed next:

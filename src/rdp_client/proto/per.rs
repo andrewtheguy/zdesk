@@ -32,7 +32,10 @@ pub fn length_size(length: u16) -> usize {
 /// client sends is long enough to need PER's fragmented form, so nothing here writes
 /// one.
 pub fn write_length(w: &mut Writer, length: u16) {
-    assert!(length <= MAX_LENGTH, "a PER length this client writes is fourteen bits");
+    assert!(
+        length <= MAX_LENGTH,
+        "a PER length this client writes is fourteen bits"
+    );
     if length > 0x7F {
         w.u16_be(length | 0x8000);
     } else {
@@ -88,12 +91,18 @@ pub fn read_integer(r: &mut Reader<'_>) -> Result<u32, Malformed> {
 /// user and 0 for a channel — so the same number on the wire means different things in
 /// the two fields, and the bound is not optional context.
 pub fn write_integer16(w: &mut Writer, value: u16, min: u16) {
-    w.u16_be(value.checked_sub(min).expect("an identifier is never below its own bound"));
+    w.u16_be(
+        value
+            .checked_sub(min)
+            .expect("an identifier is never below its own bound"),
+    );
 }
 
 pub fn read_integer16(r: &mut Reader<'_>, min: u16) -> Result<u16, Malformed> {
     let value = r.u16_be()?;
-    value.checked_add(min).ok_or_else(|| r.refuse("an identifier of", value))
+    value
+        .checked_add(min)
+        .ok_or_else(|| r.refuse("an identifier of", value))
 }
 
 /// An OCTET STRING whose schema gives it a lower size bound: the length written is the
@@ -148,7 +157,10 @@ mod tests {
         for length in [0_u16, 1, 0x7F, 0x80, 0x1234, MAX_LENGTH] {
             let bytes = written(|w| write_length(w, length));
             assert_eq!(bytes.len(), length_size(length));
-            assert_eq!(read_length(&mut Reader::new("a test", &bytes)).unwrap(), length);
+            assert_eq!(
+                read_length(&mut Reader::new("a test", &bytes)).unwrap(),
+                length
+            );
         }
     }
 
@@ -156,7 +168,10 @@ mod tests {
     /// spends it — and never written.
     #[test]
     fn the_two_byte_form_is_read_as_fifteen_bits() {
-        assert_eq!(read_length(&mut Reader::new("a test", &[0xC1, 0x23])).unwrap(), 0x4123);
+        assert_eq!(
+            read_length(&mut Reader::new("a test", &[0xC1, 0x23])).unwrap(),
+            0x4123
+        );
     }
 
     #[test]
@@ -170,11 +185,17 @@ mod tests {
         assert_eq!(written(|w| write_integer(w, 0)), vec![1, 0]);
         assert_eq!(written(|w| write_integer(w, 0xFF)), vec![1, 0xFF]);
         assert_eq!(written(|w| write_integer(w, 0x0100)), vec![2, 0x01, 0x00]);
-        assert_eq!(written(|w| write_integer(w, 0x0001_0000)), vec![4, 0, 1, 0, 0]);
+        assert_eq!(
+            written(|w| write_integer(w, 0x0001_0000)),
+            vec![4, 0, 1, 0, 0]
+        );
 
         for value in [0_u32, 1, 0xFF, 0x100, 0xFFFF, 0x1_0000, u32::MAX] {
             let bytes = written(|w| write_integer(w, value));
-            assert_eq!(read_integer(&mut Reader::new("a test", &bytes)).unwrap(), value);
+            assert_eq!(
+                read_integer(&mut Reader::new("a test", &bytes)).unwrap(),
+                value
+            );
         }
     }
 
@@ -182,17 +203,32 @@ mod tests {
     /// and channel 1001.
     #[test]
     fn a_bounded_integer_is_the_distance_from_its_bound() {
-        assert_eq!(written(|w| write_integer16(w, 1004, 1001)), vec![0x00, 0x03]);
+        assert_eq!(
+            written(|w| write_integer16(w, 1004, 1001)),
+            vec![0x00, 0x03]
+        );
         assert_eq!(written(|w| write_integer16(w, 1004, 0)), vec![0x03, 0xEC]);
-        assert_eq!(read_integer16(&mut Reader::new("a test", &[0x00, 0x03]), 1001).unwrap(), 1004);
-        assert_eq!(read_integer16(&mut Reader::new("a test", &[0x00, 0x03]), 0).unwrap(), 3);
+        assert_eq!(
+            read_integer16(&mut Reader::new("a test", &[0x00, 0x03]), 1001).unwrap(),
+            1004
+        );
+        assert_eq!(
+            read_integer16(&mut Reader::new("a test", &[0x00, 0x03]), 0).unwrap(),
+            3
+        );
         assert!(read_integer16(&mut Reader::new("a test", &[0xFF, 0xFF]), 1001).is_err());
     }
 
     #[test]
     fn a_fixed_size_octet_string_writes_no_length_of_its_own() {
-        assert_eq!(written(|w| write_octet_string(w, b"Duca", 4)), b"\x00Duca".to_vec());
-        assert_eq!(written(|w| write_octet_string(w, b"ab", 0)), b"\x02ab".to_vec());
+        assert_eq!(
+            written(|w| write_octet_string(w, b"Duca", 4)),
+            b"\x00Duca".to_vec()
+        );
+        assert_eq!(
+            written(|w| write_octet_string(w, b"ab", 0)),
+            b"\x02ab".to_vec()
+        );
 
         let mut r = Reader::new("a test", b"\x00McDn");
         expect_octet_string(&mut r, "an H.221 key", b"McDn").unwrap();
@@ -200,6 +236,12 @@ mod tests {
 
         let mut r = Reader::new("a test", b"\x00Duca");
         let err = expect_octet_string(&mut r, "an H.221 key", b"McDn").unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an H.221 key", .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "an H.221 key",
+                ..
+            }
+        ));
     }
 }

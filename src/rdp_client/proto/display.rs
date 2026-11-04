@@ -96,7 +96,10 @@ pub fn capabilities(payload: &[u8]) -> Result<Capabilities, Malformed> {
     let monitors = r.u32_le()?;
     let a = u64::from(r.u32_le()?);
     let b = u64::from(r.u32_le()?);
-    Ok(Capabilities { monitors, area: a * b * u64::from(monitors) })
+    Ok(Capabilities {
+        monitors,
+        area: a * b * u64::from(monitors),
+    })
 }
 
 /// Bring a desktop size inside what a monitor layout may ask for: [`MIN_DIMENSION`]
@@ -108,7 +111,10 @@ pub fn capabilities(payload: &[u8]) -> Result<Capabilities, Malformed> {
 /// is not free — it answers with a full resize — so a client comparing an unadjusted
 /// 1281 against a live 1280 would ask again forever.
 pub fn adjust_size(width: u32, height: u32) -> (u32, u32) {
-    (width.clamp(MIN_DIMENSION, MAX_DIMENSION) & !1, height.clamp(MIN_DIMENSION, MAX_DIMENSION))
+    (
+        width.clamp(MIN_DIMENSION, MAX_DIMENSION) & !1,
+        height.clamp(MIN_DIMENSION, MAX_DIMENSION),
+    )
 }
 
 /// Ask the host for desktops of these sizes, the second where `placement` puts it
@@ -126,9 +132,16 @@ pub fn adjust_size(width: u32, height: u32) -> (u32, u32) {
 /// 2.2.2.2.1), so a monitor to its left or above it has a negative one; each
 /// monitor after the second continues the way the second went.
 pub fn monitor_layout(sizes: &[(u32, u32)], placement: Placement, scales: &[u32]) -> Vec<u8> {
-    let sizes: Vec<(u32, u32)> = if sizes.is_empty() { vec![(0, 0)] } else { sizes.to_vec() };
-    let sizes: Vec<(u32, u32)> =
-        sizes.iter().take(MAX_MONITORS as usize).map(|&(w, h)| adjust_size(w, h)).collect();
+    let sizes: Vec<(u32, u32)> = if sizes.is_empty() {
+        vec![(0, 0)]
+    } else {
+        sizes.to_vec()
+    };
+    let sizes: Vec<(u32, u32)> = sizes
+        .iter()
+        .take(MAX_MONITORS as usize)
+        .map(|&(w, h)| adjust_size(w, h))
+        .collect();
     let monitors = sizes.len() as u32;
     let scale = |index: usize| {
         let scale = scales.get(index).or(scales.last()).copied().unwrap_or(0);
@@ -141,7 +154,9 @@ pub fn monitor_layout(sizes: &[(u32, u32)], placement: Placement, scales: &[u32]
     w.u32_le(length);
     w.u32_le(ENTRY); // MonitorLayoutSize, the size of one entry
     w.u32_le(monitors); // NumMonitors
-    for (index, (&(width, height), (left, top))) in sizes.iter().zip(corners(&sizes, placement)).enumerate() {
+    for (index, (&(width, height), (left, top))) in
+        sizes.iter().zip(corners(&sizes, placement)).enumerate()
+    {
         w.u32_le(if index == 0 { PRIMARY } else { 0 });
         w.u32_le(left as u32); // Left, signed
         w.u32_le(top as u32); // Top, signed
@@ -191,7 +206,10 @@ mod tests {
     fn the_capabilities_say_how_large_a_desktop_may_be_asked_for() {
         assert_eq!(
             capabilities(&caps(16, 8192, 8192)).unwrap(),
-            Capabilities { monitors: 16, area: 8192 * 8192 * 16 }
+            Capabilities {
+                monitors: 16,
+                area: 8192 * 8192 * 16
+            }
         );
     }
 
@@ -199,12 +217,25 @@ mod tests {
     fn a_pdu_that_is_not_the_capabilities_is_refused_by_type() {
         let layout = monitor_layout(&[(1280, 800)], Placement::Right, &[100]);
         let err = capabilities(&layout).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a PDU type", value: 2, .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "a PDU type",
+                value: 2,
+                ..
+            }
+        ));
 
         let mut truncated = caps(1, 8192, 8192);
         truncated.pop();
         let err = capabilities(&truncated).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a length that is not the PDU's", .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "a length that is not the PDU's",
+                ..
+            }
+        ));
     }
 
     /// The whole PDU, byte for byte: it never varies in shape, only in the four
@@ -254,21 +285,35 @@ mod tests {
         }
         assert!(r.is_empty());
         // The odd width was rounded down, and the second monitor starts at it.
-        assert_eq!(entries[0], [PRIMARY, 0, 0, 1280, 800, 0, 0, 0, 200, DEVICE_SCALE]);
-        assert_eq!(entries[1], [0, 1280, 0, 1024, 700, 0, 0, 0, 200, DEVICE_SCALE]);
+        assert_eq!(
+            entries[0],
+            [PRIMARY, 0, 0, 1280, 800, 0, 0, 0, 200, DEVICE_SCALE]
+        );
+        assert_eq!(
+            entries[1],
+            [0, 1280, 0, 1024, 700, 0, 0, 0, 200, DEVICE_SCALE]
+        );
         let mixed = monitor_layout(&[(1280, 800), (1024, 700)], Placement::Right, &[200, 100]);
         let scale = |entry: u32| {
             let at = (LAYOUT_HEAD + entry * ENTRY + 32) as usize;
             u32::from_le_bytes(mixed[at..at + 4].try_into().unwrap())
         };
-        assert_eq!((scale(0), scale(1)), (200, 100), "each monitor states its own");
+        assert_eq!(
+            (scale(0), scale(1)),
+            (200, 100),
+            "each monitor states its own"
+        );
         // Anywhere but the right, the second is placed against the primary's
         // corner, which stays the origin: negative to its left and above it.
         let corner = |placement| {
             let bytes = monitor_layout(&[(1280, 800), (1024, 700)], placement, &[100]);
             let at = (LAYOUT_HEAD + ENTRY + 4) as usize;
             let field = |at: usize| i32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
-            assert_eq!(&bytes[..(LAYOUT_HEAD + ENTRY) as usize], &monitor_layout(&[(1280, 800), (1024, 700)], Placement::Right, &[100])[..(LAYOUT_HEAD + ENTRY) as usize]);
+            assert_eq!(
+                &bytes[..(LAYOUT_HEAD + ENTRY) as usize],
+                &monitor_layout(&[(1280, 800), (1024, 700)], Placement::Right, &[100])
+                    [..(LAYOUT_HEAD + ENTRY) as usize]
+            );
             (field(at), field(at + 4))
         };
         assert_eq!(corner(Placement::Right), (1280, 0));
@@ -276,20 +321,33 @@ mod tests {
         assert_eq!(corner(Placement::Top), (0, -700));
         assert_eq!(corner(Placement::Bottom), (0, 800));
         // No monitors is one, and more than the protocol allows is the most it does.
-        assert_eq!(monitor_layout(&[], Placement::Right, &[100]), monitor_layout(&[(0, 0)], Placement::Right, &[100]));
-        assert_eq!(monitor_layout(&[(1280, 800); 99], Placement::Right, &[100]).len(), (LAYOUT_HEAD + MAX_MONITORS * ENTRY) as usize);
+        assert_eq!(
+            monitor_layout(&[], Placement::Right, &[100]),
+            monitor_layout(&[(0, 0)], Placement::Right, &[100])
+        );
+        assert_eq!(
+            monitor_layout(&[(1280, 800); 99], Placement::Right, &[100]).len(),
+            (LAYOUT_HEAD + MAX_MONITORS * ENTRY) as usize
+        );
     }
 
     /// A window is whatever size the person made it; a desktop has to be one the
     /// protocol allows.
     #[test]
     fn a_size_a_host_would_refuse_is_brought_into_range_rather_than_sent() {
-        let sizes =
-            [((1367, 768), (1366, 768)), ((100, 99), (200, 200)), ((9000, 9000), (8192, 8192))];
+        let sizes = [
+            ((1367, 768), (1366, 768)),
+            ((100, 99), (200, 200)),
+            ((9000, 9000), (8192, 8192)),
+        ];
         for (asked, sent) in sizes {
             let bytes = monitor_layout(&[asked], Placement::Right, &[100]);
             let mut r = Reader::new("a test", &bytes[28..]);
-            assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), sent, "asked for {asked:?}");
+            assert_eq!(
+                (r.u32_le().unwrap(), r.u32_le().unwrap()),
+                sent,
+                "asked for {asked:?}"
+            );
         }
     }
 

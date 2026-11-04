@@ -29,18 +29,34 @@
 pub enum Malformed {
     /// The buffer ended in the middle of a field.
     #[error("{what} is {len} bytes, and reading {need} more at offset {at} runs past the end")]
-    Short { what: &'static str, len: usize, at: usize, need: usize },
+    Short {
+        what: &'static str,
+        len: usize,
+        at: usize,
+        need: usize,
+    },
     /// A field carries a value this client will not go on from.
     #[error("{what} carries {field} {value:#x}, which this client does not accept")]
-    Refused { what: &'static str, field: &'static str, value: u64 },
+    Refused {
+        what: &'static str,
+        field: &'static str,
+        value: u64,
+    },
     /// The structure is whole and well formed, and does not contain something this
     /// client cannot continue without.
     #[error("{what} does not carry {field}")]
-    Missing { what: &'static str, field: &'static str },
+    Missing {
+        what: &'static str,
+        field: &'static str,
+    },
     /// The structure is whole and well formed, and carries the other end's own
     /// account of why the session is over.
     #[error("{what}: {reason} ({code:#010x})")]
-    Reported { what: &'static str, reason: &'static str, code: u32 },
+    Reported {
+        what: &'static str,
+        reason: &'static str,
+        code: u32,
+    },
 }
 
 /// A buffer being taken apart, front to back.
@@ -77,9 +93,16 @@ impl<'a> Reader<'a> {
 
     /// The next `n` bytes.
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8], Malformed> {
-        let end = self.at.checked_add(n).filter(|end| *end <= self.bytes.len()).ok_or(
-            Malformed::Short { what: self.what, len: self.bytes.len(), at: self.at, need: n },
-        )?;
+        let end = self
+            .at
+            .checked_add(n)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(Malformed::Short {
+                what: self.what,
+                len: self.bytes.len(),
+                at: self.at,
+                need: n,
+            })?;
         let taken = &self.bytes[self.at..end];
         self.at = end;
         Ok(taken)
@@ -115,23 +138,36 @@ impl<'a> Reader<'a> {
 
     /// The error for a field whose value this client will not go on from.
     pub fn refuse(&self, field: &'static str, value: impl Into<u64>) -> Malformed {
-        Malformed::Refused { what: self.what, field, value: value.into() }
+        Malformed::Refused {
+            what: self.what,
+            field,
+            value: value.into(),
+        }
     }
 
     /// The error for something a well-formed structure should have carried and did
     /// not.
     pub fn missing(&self, field: &'static str) -> Malformed {
-        Malformed::Missing { what: self.what, field }
+        Malformed::Missing {
+            what: self.what,
+            field,
+        }
     }
 
     /// The error for a structure whose whole purpose was to say the session is over.
     pub fn report(&self, reason: &'static str, code: u32) -> Malformed {
-        Malformed::Reported { what: self.what, reason, code }
+        Malformed::Reported {
+            what: self.what,
+            reason,
+            code,
+        }
     }
 
     fn array<const N: usize>(&mut self) -> Result<[u8; N], Malformed> {
         let bytes = self.bytes(N)?;
-        Ok(bytes.try_into().expect("`bytes` yields exactly the length it was asked for"))
+        Ok(bytes
+            .try_into()
+            .expect("`bytes` yields exactly the length it was asked for"))
     }
 }
 
@@ -153,7 +189,9 @@ impl Writer {
     /// A writer for a PDU whose size is already known, so the buffer is allocated
     /// once.
     pub fn with_capacity(bytes: usize) -> Self {
-        Self { bytes: Vec::with_capacity(bytes) }
+        Self {
+            bytes: Vec::with_capacity(bytes),
+        }
     }
 
     pub fn u8(&mut self, value: u8) {
@@ -222,7 +260,10 @@ mod tests {
         assert_eq!(r.at(), 1);
 
         // A length that would overflow the offset is short, not a wrapped success.
-        assert!(matches!(r.bytes(usize::MAX).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            r.bytes(usize::MAX).unwrap_err(),
+            Malformed::Short { .. }
+        ));
     }
 
     #[test]
@@ -260,6 +301,9 @@ mod tests {
         w.u32_le(0x0000_0003);
         w.zeros(2);
         w.bytes(b"hi");
-        assert_eq!(w.finish(), vec![0xE0, 0x01, 0x02, 0x03, 0, 0, 0, 0, 0, b'h', b'i']);
+        assert_eq!(
+            w.finish(),
+            vec![0xE0, 0x01, 0x02, 0x03, 0, 0, 0, 0, 0, b'h', b'i']
+        );
     }
 }

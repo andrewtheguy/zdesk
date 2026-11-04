@@ -112,11 +112,18 @@ mod tests {
     #[test]
     fn the_format_asked_for_is_the_one_declared() {
         assert_eq!(WANTED.sample, SampleFormat::S16);
-        assert_eq!(u32::from(WANTED.channels), u32::from(SOURCE_FORMAT.channels));
+        assert_eq!(
+            u32::from(WANTED.channels),
+            u32::from(SOURCE_FORMAT.channels)
+        );
         assert_eq!(WANTED.frequency, SOURCE_FORMAT.sample_rate);
         assert_eq!(SOURCE_FORMAT.bits_per_sample, 16);
         assert_eq!(WANTED.check(), Ok(()));
-        assert_eq!(usize::from(BLOCK_FRAMES), WANTED.block_frames(), "20 ms at 48 kHz");
+        assert_eq!(
+            usize::from(BLOCK_FRAMES),
+            WANTED.block_frames(),
+            "20 ms at 48 kHz"
+        );
         assert_eq!(BLOCK_FRAMES, 960);
     }
 
@@ -125,11 +132,22 @@ mod tests {
     /// encoder lays out for this format, and FLAC has none.
     #[test]
     fn a_passed_stream_is_described_as_the_format_that_was_asked_for() {
-        let stream = sound_opus::Stream { rate: SOURCE_FORMAT.sample_rate, channels: SOURCE_FORMAT.channels as u8 };
-        assert_eq!(PASSED_OPUS.head, stream.head(sound_opus::PRE_SKIP, SOURCE_FORMAT.sample_rate).unwrap());
+        let stream = sound_opus::Stream {
+            rate: SOURCE_FORMAT.sample_rate,
+            channels: SOURCE_FORMAT.channels as u8,
+        };
+        assert_eq!(
+            PASSED_OPUS.head,
+            stream
+                .head(sound_opus::PRE_SKIP, SOURCE_FORMAT.sample_rate)
+                .unwrap()
+        );
         assert_eq!(stream.block(), usize::from(BLOCK_FRAMES));
         for format in [PASSED_OPUS, PASSED_FLAC] {
-            assert_eq!((format.sample_rate, format.channels, format.packet_frames), (48_000, 2, 960));
+            assert_eq!(
+                (format.sample_rate, format.channels, format.packet_frames),
+                (48_000, 2, 960)
+            );
         }
         assert_eq!((passed(false).codec, passed(true).codec), ("opus", "flac"));
         assert!(PASSED_FLAC.head.is_empty());

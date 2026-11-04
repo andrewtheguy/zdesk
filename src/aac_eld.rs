@@ -59,8 +59,10 @@ mod tests {
         while bits.len() % 8 != 0 {
             bits.push(0);
         }
-        let bytes: Vec<u8> =
-            bits.chunks(8).map(|byte| byte.iter().fold(0u8, |acc, b| (acc << 1) | b)).collect();
+        let bytes: Vec<u8> = bits
+            .chunks(8)
+            .map(|byte| byte.iter().fold(0u8, |acc, b| (acc << 1) | b))
+            .collect();
         assert_eq!(bytes, AUDIO_SPECIFIC_CONFIG);
     }
 }

@@ -65,11 +65,18 @@ pub fn decode_unicode(bytes: &[u8]) -> Option<String> {
     if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    let units: Vec<u16> =
-        bytes.as_chunks::<2>().0.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair))
+        .collect();
     // Trailing NULs only. One is the terminator; a peer that pads with several
     // is padding, and a NUL in the middle is the remote's own data.
-    let end = units.iter().rposition(|unit| *unit != 0).map_or(0, |last| last + 1);
+    let end = units
+        .iter()
+        .rposition(|unit| *unit != 0)
+        .map_or(0, |last| last + 1);
     String::from_utf16(&units[..end]).ok()
 }
 
@@ -201,7 +208,10 @@ mod tests {
         let ansi = 1; // CF_TEXT
         let bitmap = 2; // CF_BITMAP
 
-        assert_eq!(pick_text_format(&[ansi, unicode, bitmap]), Some(CF_UNICODETEXT));
+        assert_eq!(
+            pick_text_format(&[ansi, unicode, bitmap]),
+            Some(CF_UNICODETEXT)
+        );
         assert_eq!(pick_text_format(&[unicode]), Some(CF_UNICODETEXT));
 
         // ANSI alone is refused rather than guessed at: CF_TEXT is in the
@@ -215,7 +225,14 @@ mod tests {
     /// than a pin on somebody else's library.
     #[test]
     fn utf16_survives_a_round_trip_including_the_hard_cases() {
-        for original in ["plain", "画面 ☕", "emoji 🚀 non-BMP", "", "line\r\nbreak", "a\0b"] {
+        for original in [
+            "plain",
+            "画面 ☕",
+            "emoji 🚀 non-BMP",
+            "",
+            "line\r\nbreak",
+            "a\0b",
+        ] {
             let encoded = encode_unicode(original);
             assert_eq!(encoded.len() % 2, 0, "UTF-16 is whole code units");
             assert_eq!(decode_unicode(&encoded).unwrap(), original, "{original:?}");

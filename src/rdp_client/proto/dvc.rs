@@ -125,7 +125,9 @@ impl Incoming {
         match command {
             CAPABILITIES => {
                 r.u8()?; // Pad
-                Ok(Some(Message::Capabilities { version: r.u16_le()? }))
+                Ok(Some(Message::Capabilities {
+                    version: r.u16_le()?,
+                }))
             }
             CREATE => {
                 let channel = read_field(&mut r, cb_id)?;
@@ -139,7 +141,8 @@ impl Incoming {
             CLOSE => {
                 let channel = read_field(&mut r, cb_id)?;
                 // Whatever was being gathered for it is not going to finish.
-                self.gathering.retain(|gathering| gathering.channel != channel);
+                self.gathering
+                    .retain(|gathering| gathering.channel != channel);
                 Ok(Some(Message::Close { channel }))
             }
             DATA_FIRST => {
@@ -158,27 +161,50 @@ impl Incoming {
                 if total > MAX_PAYLOAD {
                     return Err(self.abandon(channel, "a payload announcing", announced));
                 }
-                if self.gathering.iter().any(|gathering| gathering.channel == channel) {
-                    return Err(self.abandon(channel, "a first piece inside an unfinished payload for channel", channel));
+                if self
+                    .gathering
+                    .iter()
+                    .any(|gathering| gathering.channel == channel)
+                {
+                    return Err(self.abandon(
+                        channel,
+                        "a first piece inside an unfinished payload for channel",
+                        channel,
+                    ));
                 }
                 let in_flight: usize = self.gathering.iter().map(|gathering| gathering.total).sum();
                 if in_flight + total > MAX_PAYLOAD {
                     let together = u64::try_from(in_flight + total).unwrap_or(u64::MAX);
-                    return Err(self.abandon(channel, "payloads in flight together announcing", together));
+                    return Err(self.abandon(
+                        channel,
+                        "payloads in flight together announcing",
+                        together,
+                    ));
                 }
                 if self.gathering.len() >= MAX_GATHERING {
                     let count = u64::try_from(self.gathering.len()).unwrap_or(u64::MAX);
-                    return Err(self.abandon(channel, "a first piece with channels already gathering numbering", count));
+                    return Err(self.abandon(
+                        channel,
+                        "a first piece with channels already gathering numbering",
+                        count,
+                    ));
                 }
                 let mut buffer = Vec::with_capacity(total);
                 buffer.extend_from_slice(data);
-                self.gathering.push(Gathering { channel, total, buffer });
+                self.gathering.push(Gathering {
+                    channel,
+                    total,
+                    buffer,
+                });
                 Ok(None)
             }
             DATA => {
                 let channel = read_field(&mut r, cb_id)?;
                 let data = r.rest();
-                let Some(at) = self.gathering.iter().position(|gathering| gathering.channel == channel)
+                let Some(at) = self
+                    .gathering
+                    .iter()
+                    .position(|gathering| gathering.channel == channel)
                 else {
                     return Ok(Some(Message::Data { channel, data }));
                 };
@@ -192,7 +218,10 @@ impl Incoming {
                     return Err(self.abandon(channel, "pieces coming to", gathered));
                 }
                 self.done = self.gathering.swap_remove(at).buffer;
-                Ok(Some(Message::Data { channel, data: &self.done }))
+                Ok(Some(Message::Data {
+                    channel,
+                    data: &self.done,
+                }))
             }
             other => Err(r.refuse("a command", other)),
         }
@@ -200,8 +229,13 @@ impl Incoming {
 
     /// Forget what was being gathered for `channel`, and say why it was given up on.
     fn abandon(&mut self, channel: u32, field: &'static str, value: impl Into<u64>) -> Malformed {
-        self.gathering.retain(|gathering| gathering.channel != channel);
-        Malformed::Refused { what: WHAT, field, value: value.into() }
+        self.gathering
+            .retain(|gathering| gathering.channel != channel);
+        Malformed::Refused {
+            what: WHAT,
+            field,
+            value: value.into(),
+        }
     }
 }
 
@@ -356,12 +390,20 @@ mod tests {
     #[test]
     fn the_version_a_server_asks_for_is_the_one_that_goes_back() {
         let mut incoming = Incoming::new();
-        let request = server(CAPABILITIES, BYTE, BYTE, &[0x00, 0x02, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let request = server(
+            CAPABILITIES,
+            BYTE,
+            BYTE,
+            &[0x00, 0x02, 0x00, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
         let Some(Message::Capabilities { version }) = incoming.push(&request).unwrap() else {
             panic!("a capabilities request");
         };
         assert_eq!(version, 2);
-        assert_eq!(capabilities_response(answer_version(version)), vec![0x50, 0x00, 0x02, 0x00]);
+        assert_eq!(
+            capabilities_response(answer_version(version)),
+            vec![0x50, 0x00, 0x02, 0x00]
+        );
     }
 
     /// Version 3 promises compressed data, which this client does not decompress, so a
@@ -375,7 +417,12 @@ mod tests {
     #[test]
     fn a_create_request_carries_the_name_the_answer_is_decided_by() {
         let mut incoming = Incoming::new();
-        let request = server(CREATE, BYTE, BYTE, b"\x03Microsoft::Windows::RDS::DisplayControl\0");
+        let request = server(
+            CREATE,
+            BYTE,
+            BYTE,
+            b"\x03Microsoft::Windows::RDS::DisplayControl\0",
+        );
         assert_eq!(
             incoming.push(&request).unwrap(),
             Some(Message::Create {
@@ -385,7 +432,10 @@ mod tests {
         );
 
         assert_eq!(create_response(3, ACCEPTED), vec![0x10, 0x03, 0, 0, 0, 0]);
-        assert_eq!(create_response(3, NO_LISTENER), vec![0x10, 0x03, 0x01, 0x00, 0x00, 0xC0]);
+        assert_eq!(
+            create_response(3, NO_LISTENER),
+            vec![0x10, 0x03, 0x01, 0x00, 0x00, 0xC0]
+        );
     }
 
     /// The width bits are the one place in RDP where a field's size is written rather
@@ -403,7 +453,10 @@ mod tests {
             (LONG, &[0x02, 0x00, 0x01, 0x00][..], 0x0001_0002),
         ] {
             let pdu = server(CLOSE, BYTE, width, rest);
-            assert_eq!(incoming.push(&pdu).unwrap(), Some(Message::Close { channel: expected }));
+            assert_eq!(
+                incoming.push(&pdu).unwrap(),
+                Some(Message::Close { channel: expected })
+            );
         }
     }
 
@@ -413,7 +466,10 @@ mod tests {
         let pdu = server(DATA, BYTE, BYTE, &[0x03, 1, 2, 3]);
         assert_eq!(
             incoming.push(&pdu).unwrap(),
-            Some(Message::Data { channel: 3, data: &[1, 2, 3] })
+            Some(Message::Data {
+                channel: 3,
+                data: &[1, 2, 3]
+            })
         );
         assert_eq!(data(3, &[1, 2, 3]).unwrap(), pdu);
     }
@@ -424,16 +480,31 @@ mod tests {
         // A Data First whose length field is two bytes wide, saying six follow.
         let first = server(DATA_FIRST, SHORT, BYTE, &[0x03, 0x06, 0x00, 1, 2]);
         assert_eq!(incoming.push(&first).unwrap(), None);
-        assert_eq!(incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4])).unwrap(), None);
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 5, 6])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[1, 2, 3, 4, 5, 6] })
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4]))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 5, 6]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[1, 2, 3, 4, 5, 6]
+            })
         );
 
         // And the next whole PDU is not appended to the one that finished.
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 7])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[7] })
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 7]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[7]
+            })
         );
     }
 
@@ -443,19 +514,44 @@ mod tests {
     #[test]
     fn the_pieces_of_two_channels_interleave_and_a_whole_pdu_passes_between_them() {
         let mut incoming = Incoming::new();
-        assert_eq!(incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x04, 1, 2])).unwrap(), None);
-        assert_eq!(incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x04, 0x03, 7])).unwrap(), None);
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x05, 9])).unwrap(),
-            Some(Message::Data { channel: 5, data: &[9] })
+            incoming
+                .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x04, 1, 2]))
+                .unwrap(),
+            None
         );
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x04, 8, 9])).unwrap(),
-            Some(Message::Data { channel: 4, data: &[7, 8, 9] })
+            incoming
+                .push(&server(DATA_FIRST, BYTE, BYTE, &[0x04, 0x03, 7]))
+                .unwrap(),
+            None
         );
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[1, 2, 3, 4] })
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x05, 9]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 5,
+                data: &[9]
+            })
+        );
+        assert_eq!(
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x04, 8, 9]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 4,
+                data: &[7, 8, 9]
+            })
+        );
+        assert_eq!(
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[1, 2, 3, 4]
+            })
         );
     }
 
@@ -466,7 +562,9 @@ mod tests {
         let mut incoming = Incoming::new();
         let first = server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x03, 1, 2]);
         assert_eq!(incoming.push(&first).unwrap(), None);
-        let err = incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4])).unwrap_err();
+        let err = incoming
+            .push(&server(DATA, BYTE, BYTE, &[0x03, 3, 4]))
+            .unwrap_err();
         assert_eq!(
             err.to_string(),
             "a dynamic virtual channel PDU carries pieces coming to 0x4, which this client does \
@@ -475,8 +573,13 @@ mod tests {
 
         // The sequence is gone, so the next PDU for the channel stands on its own.
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 9])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[9] })
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 9]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[9]
+            })
         );
     }
 
@@ -487,10 +590,17 @@ mod tests {
     fn a_first_piece_that_is_the_whole_payload_is_delivered_at_once() {
         let mut incoming = Incoming::new();
         assert_eq!(
-            incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x02, 1, 2])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[1, 2] })
+            incoming
+                .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x02, 1, 2]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[1, 2]
+            })
         );
-        let err = incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x01, 1, 2])).unwrap_err();
+        let err = incoming
+            .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x01, 1, 2]))
+            .unwrap_err();
         assert_eq!(
             err.to_string(),
             "a dynamic virtual channel PDU carries a first piece longer than its 0x1, which this \
@@ -498,8 +608,13 @@ mod tests {
         );
         // Nothing was left gathering for the channel.
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 9])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[9] })
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 9]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[9]
+            })
         );
     }
 
@@ -508,15 +623,35 @@ mod tests {
     #[test]
     fn a_first_piece_inside_an_unfinished_payload_is_refused_and_a_close_drops_the_pieces() {
         let mut incoming = Incoming::new();
-        assert_eq!(incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2])).unwrap(), None);
-        let err = incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2])).unwrap_err();
+        assert_eq!(
+            incoming
+                .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2]))
+                .unwrap(),
+            None
+        );
+        let err = incoming
+            .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2]))
+            .unwrap_err();
         assert!(matches!(err, Malformed::Refused { value: 3, .. }), "{err}");
 
-        assert_eq!(incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2])).unwrap(), None);
-        assert_eq!(incoming.push(&server(CLOSE, BYTE, BYTE, &[0x03])).unwrap(), Some(Message::Close { channel: 3 }));
         assert_eq!(
-            incoming.push(&server(DATA, BYTE, BYTE, &[0x03, 9])).unwrap(),
-            Some(Message::Data { channel: 3, data: &[9] })
+            incoming
+                .push(&server(DATA_FIRST, BYTE, BYTE, &[0x03, 0x06, 1, 2]))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            incoming.push(&server(CLOSE, BYTE, BYTE, &[0x03])).unwrap(),
+            Some(Message::Close { channel: 3 })
+        );
+        assert_eq!(
+            incoming
+                .push(&server(DATA, BYTE, BYTE, &[0x03, 9]))
+                .unwrap(),
+            Some(Message::Data {
+                channel: 3,
+                data: &[9]
+            })
         );
     }
 
@@ -528,8 +663,19 @@ mod tests {
         let mut rest = vec![0x03];
         rest.extend_from_slice(&huge);
         rest.push(1);
-        let err = incoming.push(&server(DATA_FIRST, LONG, BYTE, &rest)).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a payload announcing", .. }), "{err}");
+        let err = incoming
+            .push(&server(DATA_FIRST, LONG, BYTE, &rest))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "a payload announcing",
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     /// The payloads gathering on every channel share the one budget: a second channel
@@ -542,9 +688,25 @@ mod tests {
         let mut rest = vec![0x03];
         rest.extend_from_slice(&whole);
         rest.push(1);
-        assert_eq!(incoming.push(&server(DATA_FIRST, LONG, BYTE, &rest)).unwrap(), None);
-        let err = incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x04, 0x08, 1, 2])).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "payloads in flight together announcing", .. }), "{err}");
+        assert_eq!(
+            incoming
+                .push(&server(DATA_FIRST, LONG, BYTE, &rest))
+                .unwrap(),
+            None
+        );
+        let err = incoming
+            .push(&server(DATA_FIRST, BYTE, BYTE, &[0x04, 0x08, 1, 2]))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "payloads in flight together announcing",
+                    ..
+                }
+            ),
+            "{err}"
+        );
         // The first channel is still gathering; only the newcomer was turned away.
         assert_eq!(incoming.gathering.len(), 1);
     }
@@ -555,11 +717,24 @@ mod tests {
     fn only_so_many_channels_gather_at_once() {
         let mut incoming = Incoming::new();
         for channel in 0..u8::try_from(MAX_GATHERING).unwrap() {
-            assert_eq!(incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[channel, 0x04, 1])).unwrap(), None);
+            assert_eq!(
+                incoming
+                    .push(&server(DATA_FIRST, BYTE, BYTE, &[channel, 0x04, 1]))
+                    .unwrap(),
+                None
+            );
         }
-        let err = incoming.push(&server(DATA_FIRST, BYTE, BYTE, &[0x77, 0x04, 1])).unwrap_err();
+        let err = incoming
+            .push(&server(DATA_FIRST, BYTE, BYTE, &[0x77, 0x04, 1]))
+            .unwrap_err();
         assert!(
-            matches!(err, Malformed::Refused { field: "a first piece with channels already gathering numbering", .. }),
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "a first piece with channels already gathering numbering",
+                    ..
+                }
+            ),
             "{err}"
         );
         assert_eq!(incoming.gathering.len(), MAX_GATHERING);
@@ -570,8 +745,17 @@ mod tests {
         let mut incoming = Incoming::new();
         // Soft-Sync, which belongs to a multitransport tunnel this client never asks
         // for, and which a server therefore never has cause to send.
-        let err = incoming.push(&server(0x08, BYTE, BYTE, &[0x00])).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a command", value: 8, .. }));
+        let err = incoming
+            .push(&server(0x08, BYTE, BYTE, &[0x00]))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "a command",
+                value: 8,
+                ..
+            }
+        ));
     }
 
     /// A message that fits goes as the one Data PDU [`data`] writes. One that does not goes
@@ -579,12 +763,22 @@ mod tests {
     /// into the message that went out — for channel numbers and lengths of every width.
     #[test]
     fn a_long_message_goes_as_a_data_first_and_the_data_pdus_after_it() {
-        assert_eq!(pieces(3, &[7; MAX_DATA]).unwrap(), vec![data(3, &[7; MAX_DATA]).unwrap()]);
+        assert_eq!(
+            pieces(3, &[7; MAX_DATA]).unwrap(),
+            vec![data(3, &[7; MAX_DATA]).unwrap()]
+        );
 
         let message: Vec<u8> = (0..4000u32).map(|n| n as u8).collect();
         let pdus = pieces(3, &message).unwrap();
-        assert_eq!(&pdus[0][..4], &[0x24, 0x03, 0xA0, 0x0F], "Data First, a two-byte length of 4000");
-        assert_eq!(pdus.iter().map(Vec::len).collect::<Vec<_>>(), vec![1600, 1600, 808]);
+        assert_eq!(
+            &pdus[0][..4],
+            &[0x24, 0x03, 0xA0, 0x0F],
+            "Data First, a two-byte length of 4000"
+        );
+        assert_eq!(
+            pdus.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![1600, 1600, 808]
+        );
         assert_eq!(pdus[1][..2], [0x30, 0x03], "Data");
 
         for (channel, length) in [(3, 1591), (0x0102, 70_000), (0x0001_0002, 3200)] {
@@ -599,7 +793,10 @@ mod tests {
             }
             assert_eq!(
                 incoming.push(last).unwrap(),
-                Some(Message::Data { channel, data: &message }),
+                Some(Message::Data {
+                    channel,
+                    data: &message
+                }),
                 "channel {channel:#x}, {length} bytes"
             );
         }
@@ -607,8 +804,10 @@ mod tests {
 
     #[test]
     fn a_payload_too_long_for_one_pdu_is_refused_rather_than_split() {
-        assert_eq!(data(3, &[0; MAX_DATA + 1]).unwrap_err().to_string(),
-            "a 1591-byte dynamic channel payload does not fit one PDU");
+        assert_eq!(
+            data(3, &[0; MAX_DATA + 1]).unwrap_err().to_string(),
+            "a 1591-byte dynamic channel payload does not fit one PDU"
+        );
         assert!(data(3, &[0; MAX_DATA]).is_ok());
     }
 }

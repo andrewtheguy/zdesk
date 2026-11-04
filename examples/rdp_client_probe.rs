@@ -128,16 +128,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use tokio::sync::mpsc::Receiver;
 use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
 use zdesk::rdp_client::proto::{rdpeai, rdpecam, rdpsnd};
 use zdesk::rdp_client::{
-    AudioSink, Camera, CameraSink, Compositor, Connect, Event, Fed, Fidelity, Framebuffer, Input, MicrophoneSink,
-    Session,
+    AudioSink, Camera, CameraSink, Compositor, Connect, Event, Fed, Fidelity, Framebuffer, Input,
+    MicrophoneSink, Session,
 };
 use zdesk::rdp_clipboard::{self, CF_UNICODETEXT};
 use zdesk_rdp_graphics::avc::{Scanned, scan};
 use zdesk_rdp_graphics::proto::avc::access_unit;
-use tokio::sync::mpsc::Receiver;
 
 /// Which target in `tmp/test_uat.toml` to drive — see the module docs.
 const TARGET_ENV: &str = "ZDESK_UAT_TARGET";
@@ -172,8 +172,12 @@ const MICROPHONE_ENV: &str = "ZDESK_UAT_MICROPHONE";
 const SOUND_ENV: &str = "ZDESK_UAT_SOUND";
 
 /// The camera the probe plugs: what a browser's webcam typically announces.
-const PROBE_CAMERA: rdpecam::Format =
-    rdpecam::Format { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 };
+const PROBE_CAMERA: rdpecam::Format = rdpecam::Format {
+    width: 640,
+    height: 480,
+    fps_numerator: 30,
+    fps_denominator: 1,
+};
 
 /// An Annex B H.264 file for [`stream_camera`] to play, in [`PROBE_CAMERA`]'s geometry
 /// and rate, written with an access unit delimiter before every picture and the
@@ -259,7 +263,9 @@ impl AudioSink for Listen {
 
     fn wave(&self, samples: Vec<u8>) {
         self.0.buffers.fetch_add(1, Ordering::Relaxed);
-        self.0.bytes.fetch_add(samples.len() as u64, Ordering::Relaxed);
+        self.0
+            .bytes
+            .fetch_add(samples.len() as u64, Ordering::Relaxed);
     }
 
     fn closed(&self) {
@@ -295,7 +301,10 @@ impl CameraSink for Watch {
     }
 
     fn started(&self, format: rdpecam::Format) {
-        assert_eq!(format, PROBE_CAMERA, "the host started the camera in a format it was never offered");
+        assert_eq!(
+            format, PROBE_CAMERA,
+            "the host started the camera in a format it was never offered"
+        );
         self.0.starts.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -337,7 +346,10 @@ impl MicrophoneSink for Speak {
     }
 
     fn opened(&self, format: rdpeai::Format) {
-        self.0.opened.store(u64::from(format.sample_rate) * 10 + u64::from(format.channels), Ordering::Relaxed);
+        self.0.opened.store(
+            u64::from(format.sample_rate) * 10 + u64::from(format.channels),
+            Ordering::Relaxed,
+        );
         self.0.opens.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -356,7 +368,12 @@ fn connect_with_voice() -> (Session, Receiver<Event>, Arc<Ear>, Arc<Eye>, Arc<Vo
         panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
     });
     let target = common::uat_target(&name);
-    println!("rdp_client_probe: {name} ({}:{}), egfx {}", target.host, target.port, egfx());
+    println!(
+        "rdp_client_probe: {name} ({}:{}), egfx {}",
+        target.host,
+        target.port,
+        egfx()
+    );
     let ear = Arc::new(Ear::default());
     let eye = Arc::new(Eye::default());
     let voice = Arc::new(Voice::default());
@@ -380,7 +397,10 @@ fn connect_with_voice() -> (Session, Receiver<Event>, Arc<Ear>, Arc<Eye>, Arc<Vo
         multitransport: false,
         paced: false,
         audio: sound().then(|| Box::new(Listen(Arc::clone(&ear))) as Box<dyn AudioSink>),
-        camera: Some(Camera { name: "zDesk Probe Camera".to_owned(), sink: Box::new(Watch(Arc::clone(&eye))) }),
+        camera: Some(Camera {
+            name: "zDesk Probe Camera".to_owned(),
+            sink: Box::new(Watch(Arc::clone(&eye))),
+        }),
         microphone: Some(Box::new(Speak(Arc::clone(&voice)))),
     });
     (session, events, ear, eye, voice)
@@ -402,16 +422,35 @@ async fn record_microphone() {
         .await
         .expect("no first event within 60s")
         .expect("the event channel closed");
-    assert!(matches!(first, Event::Connected { .. }), "the session did not connect: {first:?}");
-    let microphone = session.microphone().expect("the session was given a microphone");
+    assert!(
+        matches!(first, Event::Connected { .. }),
+        "the session did not connect: {first:?}"
+    );
+    let microphone = session
+        .microphone()
+        .expect("the session was given a microphone");
 
     let mut tally = Tally::default();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(15), |t| {
-        t.drawn() && t.clipboard_ready
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(15),
+        |t| t.drawn() && t.clipboard_ready,
+    )
     .await;
-    assert!(tally.clipboard_ready, "the host never opened its clipboard channel");
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(3), |_| false).await;
+    assert!(
+        tally.clipboard_ready,
+        "the host never opened its clipboard channel"
+    );
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(3),
+        |_| false,
+    )
+    .await;
     println!("  sound {}, microphone after connect: {voice:?}", sound());
 
     // Something records: the Recording tab, opened as the Camera app is.
@@ -419,17 +458,32 @@ async fn record_microphone() {
     tally.offer = Some(RECORDING_TAB);
     input.advertise_clipboard(vec![CF_UNICODETEXT]);
     chord(input, &[(LWIN, true)], KEY_R, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false).await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
     chord(input, &[(LCTRL, false)], KEY_A, false);
     chord(input, &[(LCTRL, false)], KEY_V, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(4), |t| {
-        !t.pastes.is_empty()
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(4),
+        |t| !t.pastes.is_empty(),
+    )
     .await;
     chord(input, &[], ENTER, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(20), |_| {
-        voice.opens.load(Ordering::Relaxed) > 0
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(20),
+        |_| voice.opens.load(Ordering::Relaxed) > 0,
+    )
     .await;
     println!("  microphone with the Recording tab open: {voice:?}");
 
@@ -444,7 +498,8 @@ async fn record_microphone() {
         while feeding.elapsed() < Duration::from_secs(4) {
             let mut pcm = Vec::with_capacity(group * channels * 2);
             for _ in 0..group {
-                let value = ((phase as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 8000.0) as i16;
+                let value = ((phase as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin()
+                    * 8000.0) as i16;
                 phase += 1;
                 for _ in 0..channels {
                     pcm.extend_from_slice(&value.to_le_bytes());
@@ -462,8 +517,18 @@ async fn record_microphone() {
     }
     // Close the Sound dialog, whatever happened above.
     chord(input, &[(LALT, false)], F4, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(3), |_| false).await;
-    println!("  microphone: {voice:?}; buffers taken {}, refused {}", fed[0], fed[1]);
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(3),
+        |_| false,
+    )
+    .await;
+    println!(
+        "  microphone: {voice:?}; buffers taken {}, refused {}",
+        fed[0], fed[1]
+    );
     if microphone_offered() {
         assert_eq!(
             voice.version.load(Ordering::Relaxed),
@@ -481,7 +546,10 @@ async fn record_microphone() {
             ended = Some(result);
         }
     }
-    assert!(matches!(ended, Some(Ok(()))), "a disconnect this end asked for is an orderly end: {ended:?}");
+    assert!(
+        matches!(ended, Some(Ok(()))),
+        "a disconnect this end asked for is an orderly end: {ended:?}"
+    );
 }
 
 /// What a stretch of the session did.
@@ -575,13 +643,26 @@ async fn pump(
             }
             Event::Graphics { wrapped, frame } => {
                 let page = &mut tally.page;
-                assert!(page.started > 0, "commands arrived before the pipeline was said to begin");
+                assert!(
+                    page.started > 0,
+                    "commands arrived before the pipeline was said to begin"
+                );
                 page.runs += 1;
                 page.bytes += wrapped.len() as u64;
-                let commands = page.compositor.unwrap(&wrapped).expect("the passed message unwraps");
+                let commands = page
+                    .compositor
+                    .unwrap(&wrapped)
+                    .expect("the passed message unwraps");
                 page.unwrapped += commands.len() as u64;
-                let composed = page.compositor.compose(&commands).expect("the passed commands compose");
-                assert_eq!(composed.frames > 0, frame.is_some(), "a message names the last frame it ends");
+                let composed = page
+                    .compositor
+                    .compose(&commands)
+                    .expect("the passed commands compose");
+                assert_eq!(
+                    composed.frames > 0,
+                    frame.is_some(),
+                    "a message names the last frame it ends"
+                );
                 if let Some(frame) = frame {
                     session.input().frame_composed(frame);
                 }
@@ -644,12 +725,18 @@ const DUMP_ENV: &str = "ZDESK_UAT_DUMP";
 /// The desktop as it stands: the page's picture under the pipeline, the session's
 /// framebuffer on the bitmap path.
 fn picture<'a>(session: &'a Session, tally: &'a Tally) -> &'a Framebuffer {
-    if egfx() { tally.page.compositor.framebuffer() } else { session.framebuffer() }
+    if egfx() {
+        tally.page.compositor.framebuffer()
+    } else {
+        session.framebuffer()
+    }
 }
 
 /// Write the picture as `<dir>/<name>.png` when [`DUMP_ENV`] names a directory.
 fn dump(session: &Session, tally: &Tally, name: &str) {
-    let Ok(dir) = std::env::var(DUMP_ENV) else { return };
+    let Ok(dir) = std::env::var(DUMP_ENV) else {
+        return;
+    };
     std::fs::create_dir_all(&dir).expect("creating the framebuffer dump directory");
     let path = std::path::Path::new(&dir).join(format!("{name}.png"));
     let bytes = picture(session, tally).with(|frame| {
@@ -674,7 +761,13 @@ fn dump(session: &Session, tally: &Tally, name: &str) {
 /// nothing — the classic failure of a codec that is not really working — is all 0.
 fn lit(session: &Session, tally: &Tally) -> (u64, u64) {
     picture(session, tally).with(|frame| {
-        let lit = frame.pixels.as_chunks::<4>().0.iter().filter(|px| px[..3] != [0, 0, 0]).count();
+        let lit = frame
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[..3] != [0, 0, 0])
+            .count();
         (lit as u64, u64::from(frame.width) * u64::from(frame.height))
     })
 }
@@ -692,7 +785,11 @@ async fn resize_to(
     loop {
         session.input().resize(&[(size.0, size.1)], &[100]);
         let retry = (Instant::now() + RESIZE_RETRY).min(deadline);
-        if pump(session, events, tally, retry, |t| t.resizes.last() == Some(&size)).await {
+        if pump(session, events, tally, retry, |t| {
+            t.resizes.last() == Some(&size)
+        })
+        .await
+        {
             return started.elapsed();
         }
         assert!(
@@ -728,39 +825,79 @@ async fn case() {
     let egfx = egfx();
     let drawn = |t: &Tally| if egfx { t.frames > 0 } else { t.paints > 0 };
     let mut tally = Tally::default();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(8), |t| {
-        (t.resize_ready || !egfx) && t.clipboard_ready && drawn(t)
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(8),
+        |t| (t.resize_ready || !egfx) && t.clipboard_ready && drawn(t),
+    )
     .await;
     // And a moment more, so a desktop still arriving is counted whole.
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
     let (on, total) = lit(&session, &tally);
     println!("  opening: {tally:?}, {on} of {total} pixels lit");
     dump(&session, &tally, "opening");
     assert!(drawn(&tally), "the host drew nothing");
     assert!(on > 0, "the desktop decoded to pure black");
-    assert_eq!(tally.resize_ready, egfx, "Display Control is offered under the pipeline alone");
-    assert!(tally.clipboard_ready, "the host never opened its clipboard channel");
+    assert_eq!(
+        tally.resize_ready, egfx,
+        "Display Control is offered under the pipeline alone"
+    );
+    assert!(
+        tally.clipboard_ready,
+        "the host never opened its clipboard channel"
+    );
     if egfx {
         let began = tally.pipeline_began.expect("the pipeline never began");
-        println!("  the pipeline began {:.2}s after the desktop connected", (began - connected).as_secs_f32());
+        println!(
+            "  the pipeline began {:.2}s after the desktop connected",
+            (began - connected).as_secs_f32()
+        );
         assert_eq!(tally.page.started, 1, "the pipeline was said to begin once");
-        assert_eq!(tally.paints, 0, "a session that passes the pipeline painted");
-        assert_eq!(tally.page.composed_frames, tally.frames, "every frame the session marked was in what it passed");
-        assert_eq!(picture(&session, &tally).with(|frame| (frame.width, frame.height)), (width, height));
+        assert_eq!(
+            tally.paints, 0,
+            "a session that passes the pipeline painted"
+        );
+        assert_eq!(
+            tally.page.composed_frames, tally.frames,
+            "every frame the session marked was in what it passed"
+        );
+        assert_eq!(
+            picture(&session, &tally).with(|frame| (frame.width, frame.height)),
+            (width, height)
+        );
         session.framebuffer().with(|frame| {
-            assert!(frame.pixels.is_empty(), "a session that passes the pipeline sized a framebuffer of its own");
+            assert!(
+                frame.pixels.is_empty(),
+                "a session that passes the pipeline sized a framebuffer of its own"
+            );
         });
     }
 
-    for size in if egfx { &[RESIZED, OPENING][..] } else { &[] }.iter().copied() {
+    for size in if egfx { &[RESIZED, OPENING][..] } else { &[] }
+        .iter()
+        .copied()
+    {
         let took = resize_to(&session, &mut events, &mut tally, size).await;
         // Let the repaint after the resize land.
         tally.paints = 0;
         tally.frames = 0;
-        pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(3), |_| false)
-            .await;
+        pump(
+            &session,
+            &mut events,
+            &mut tally,
+            Instant::now() + Duration::from_secs(3),
+            |_| false,
+        )
+        .await;
         let (on, total) = lit(&session, &tally);
         let framebuffer = picture(&session, &tally).with(|frame| (frame.width, frame.height));
         println!(
@@ -786,8 +923,14 @@ async fn case() {
     }
     input.key(0x2A, false, true);
     input.key(0x2A, false, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
     println!("  after input: {} cursor updates in all", tally.cursors);
 
     // The clipboard. Taking it over is this end's half of the bargain: one format
@@ -804,19 +947,24 @@ async fn case() {
     // advertised, not even with the `CB_RESPONSE_FAIL` the specification allows. The
     // point of asking is that the session must not mind.
     input.request_clipboard(CF_UNICODETEXT);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(4), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(4),
+        |_| false,
+    )
+    .await;
     println!(
         "  clipboard: the remote announced {:?}, asked this end for {:?}, sent {:?} \
          ({} refusals, oversized {:?})",
-        tally.remote_formats,
-        tally.pastes,
-        tally.remote_text,
-        tally.refusals,
-        tally.oversized,
+        tally.remote_formats, tally.pastes, tally.remote_text, tally.refusals, tally.oversized,
     );
     for format in &tally.pastes[before..] {
-        assert_eq!(*format, CF_UNICODETEXT, "the host asked for a format never offered");
+        assert_eq!(
+            *format, CF_UNICODETEXT,
+            "the host asked for a format never offered"
+        );
     }
     println!("  sound: {ear:?}");
     if audio_playing() {
@@ -826,7 +974,9 @@ async fn case() {
              playing on the remote"
         );
     } else if !ear.negotiated.load(Ordering::Relaxed) {
-        println!("  (no sound negotiated: a quiet host sends no format list; set {AUDIO_ENV}=1 with a sound playing to assert it)");
+        println!(
+            "  (no sound negotiated: a quiet host sends no format list; set {AUDIO_ENV}=1 with a sound playing to assert it)"
+        );
     }
 
     // The camera had the whole session to be negotiated and opened. Unplugging it is the
@@ -845,11 +995,19 @@ async fn case() {
             "the host never opened the announced camera's device channel"
         );
     } else if eye.version.load(Ordering::Relaxed) == 0 {
-        println!("  (no camera negotiated: set {CAMERA_ENV}=1 against a host that offers cameras to assert it)");
+        println!(
+            "  (no camera negotiated: set {CAMERA_ENV}=1 against a host that offers cameras to assert it)"
+        );
     }
     camera.unplug();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
 
     drop(session);
     // The drop disconnected and joined the thread, so its last word is here.
@@ -860,7 +1018,10 @@ async fn case() {
         }
     }
     println!("  ended: {ended:?}");
-    assert!(matches!(ended, Some(Ok(()))), "a disconnect this end asked for is an orderly end");
+    assert!(
+        matches!(ended, Some(Ok(()))),
+        "a disconnect this end asked for is an orderly end"
+    );
 }
 
 /// Tap one key, with modifiers held around it.
@@ -902,14 +1063,24 @@ async fn round_trip() {
         .await
         .expect("no first event within 60s")
         .expect("the event channel closed");
-    assert!(matches!(first, Event::Connected { .. }), "the session did not connect: {first:?}");
+    assert!(
+        matches!(first, Event::Connected { .. }),
+        "the session did not connect: {first:?}"
+    );
 
     let mut tally = Tally::default();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(10), |t| {
-        t.clipboard_ready && t.drawn()
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(10),
+        |t| t.clipboard_ready && t.drawn(),
+    )
     .await;
-    assert!(tally.clipboard_ready, "the host never opened its clipboard channel");
+    assert!(
+        tally.clipboard_ready,
+        "the host never opened its clipboard channel"
+    );
 
     // 1. Take the remote clipboard over. Nothing is transferred: the host now knows
     //    this end holds text, and will ask for it if anything pastes.
@@ -919,16 +1090,26 @@ async fn round_trip() {
     // 2. Open the Run dialog and paste into it. The dialog needs a moment to exist
     //    and take focus before the paste can land in it.
     chord(input, &[(LWIN, true)], KEY_R, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
     // Select what the dialog pre-filled itself with before pasting over it: it opens
     // holding whatever was last run on that desktop, and a paste that landed beside
     // it would be read back as somebody else's text with this end's appended.
     chord(input, &[(LCTRL, false)], KEY_A, false);
     chord(input, &[(LCTRL, false)], KEY_V, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(4), |t| {
-        !t.pastes.is_empty()
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(4),
+        |t| !t.pastes.is_empty(),
+    )
     .await;
     assert_eq!(
         tally.pastes,
@@ -941,24 +1122,40 @@ async fn round_trip() {
     //    remote — and this end asks for it the moment the format list arrives.
     chord(input, &[(LCTRL, false)], KEY_A, false);
     chord(input, &[(LCTRL, false)], KEY_C, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(6), |t| {
-        !t.remote_text.is_empty()
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(6),
+        |t| !t.remote_text.is_empty(),
+    )
     .await;
 
     // 4. Close the dialog, whatever happened above, before anything is asserted: an
     //    open dialog left on the desktop is this test's litter.
     chord(input, &[], ESCAPE, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
 
     println!(
         "  round trip: pasted {:?}, the remote then announced {:?} and sent {:?} \
          ({} refusals, oversized {:?})",
         tally.pastes, tally.remote_formats, tally.remote_text, tally.refusals, tally.oversized,
     );
-    let announced = tally.remote_formats.last().expect("the remote announced its copy");
-    assert!(announced.contains(&CF_UNICODETEXT), "the copy carried no Unicode text: {announced:?}");
+    let announced = tally
+        .remote_formats
+        .last()
+        .expect("the remote announced its copy");
+    assert!(
+        announced.contains(&CF_UNICODETEXT),
+        "the copy carried no Unicode text: {announced:?}"
+    );
     assert_eq!(
         tally.remote_text,
         vec![COPIED.to_owned()],
@@ -972,7 +1169,10 @@ async fn round_trip() {
             ended = Some(result);
         }
     }
-    assert!(matches!(ended, Some(Ok(()))), "a disconnect this end asked for is an orderly end");
+    assert!(
+        matches!(ended, Some(Ok(()))),
+        "a disconnect this end asked for is an orderly end"
+    );
 }
 
 /// The access units of an Annex B stream written with access unit delimiters, each with
@@ -986,7 +1186,9 @@ fn access_units(stream: &[u8]) -> Vec<(Vec<u8>, bool)> {
         .enumerate()
         .map(|(n, &at)| {
             let unit = &stream[at..starts.get(n + 1).copied().unwrap_or(stream.len())];
-            let idr = unit.windows(4).any(|w| w[..3] == [0, 0, 1] && w[3] & 0x1F == 5);
+            let idr = unit
+                .windows(4)
+                .any(|w| w[..3] == [0, 0, 1] && w[3] & 0x1F == 5);
             (unit.to_vec(), idr)
         })
         .collect()
@@ -1012,7 +1214,10 @@ async fn stream_camera() {
         panic!("set {CAMERA_STREAM_ENV} to an Annex B H.264 file at 640x480, 30 frames a second")
     });
     let units = access_units(&std::fs::read(&path).expect("reading the camera stream"));
-    assert!(units.first().is_some_and(|(_, idr)| *idr), "the stream does not open on a keyframe");
+    assert!(
+        units.first().is_some_and(|(_, idr)| *idr),
+        "the stream does not open on a keyframe"
+    );
     println!("  {} access units from {path}", units.len());
 
     let (session, mut events, _ear, eye) = connect();
@@ -1020,42 +1225,75 @@ async fn stream_camera() {
         .await
         .expect("no first event within 60s")
         .expect("the event channel closed");
-    assert!(matches!(first, Event::Connected { .. }), "the session did not connect: {first:?}");
+    assert!(
+        matches!(first, Event::Connected { .. }),
+        "the session did not connect: {first:?}"
+    );
     let camera = session.camera().expect("the session was given a camera");
     camera.plug(PROBE_CAMERA);
 
     let mut tally = Tally::default();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(20), |t| {
-        t.clipboard_ready && t.drawn() && eye.attached.load(Ordering::Relaxed)
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(20),
+        |t| t.clipboard_ready && t.drawn() && eye.attached.load(Ordering::Relaxed),
+    )
     .await;
-    assert!(tally.clipboard_ready, "the host never opened its clipboard channel");
-    assert!(eye.attached.load(Ordering::Relaxed), "the host never opened the camera's device channel");
+    assert!(
+        tally.clipboard_ready,
+        "the host never opened its clipboard channel"
+    );
+    assert!(
+        eye.attached.load(Ordering::Relaxed),
+        "the host never opened the camera's device channel"
+    );
     // A desktop a moment old is still being rebuilt — a reclaimed session resets its
     // graphics here — and a keystroke that lands before it settles opens nothing.
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(3), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(3),
+        |_| false,
+    )
+    .await;
 
     // 1. Open the Camera app.
     let input = session.input();
     tally.offer = Some(CAMERA_APP);
     input.advertise_clipboard(vec![CF_UNICODETEXT]);
     chord(input, &[(LWIN, true)], KEY_R, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
     chord(input, &[(LCTRL, false)], KEY_A, false);
     chord(input, &[(LCTRL, false)], KEY_V, false);
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(4), |t| {
-        !t.pastes.is_empty()
-    })
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(4),
+        |t| !t.pastes.is_empty(),
+    )
     .await;
     // Not asserted: the Run dialog remembers what it last ran, and a paste it did not ask
     // this end for still opens the app. Whether the host starts a stream is the check.
     println!("  the Run dialog asked this end for {:?}", tally.pastes);
     chord(input, &[], ENTER, false);
-    let started = pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(30), |_| {
-        eye.starts.load(Ordering::Relaxed) > 0
-    })
+    let started = pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(30),
+        |_| eye.starts.load(Ordering::Relaxed) > 0,
+    )
     .await;
 
     // 2. Play the stream into it.
@@ -1089,7 +1327,9 @@ async fn stream_camera() {
     let closing = Instant::now();
     let mut next = closing;
     let mut frames = units.iter().cycle();
-    while closing.elapsed() < Duration::from_secs(10) && eye.stops.load(Ordering::Relaxed) <= stops_while_playing {
+    while closing.elapsed() < Duration::from_secs(10)
+        && eye.stops.load(Ordering::Relaxed) <= stops_while_playing
+    {
         if let (true, Some((unit, idr))) = (started, frames.next()) {
             camera.sample(unit, *idr);
         }
@@ -1103,10 +1343,19 @@ async fn stream_camera() {
         fed[0], fed[1], fed[2], fed[3]
     );
     camera.unplug();
-    pump(&session, &mut events, &mut tally, Instant::now() + Duration::from_secs(2), |_| false)
-        .await;
+    pump(
+        &session,
+        &mut events,
+        &mut tally,
+        Instant::now() + Duration::from_secs(2),
+        |_| false,
+    )
+    .await;
 
-    assert!(started, "the host never started the camera; the Camera app may not have opened");
+    assert!(
+        started,
+        "the host never started the camera; the Camera app may not have opened"
+    );
     assert!(fed[0] > 0, "no sample reached the session");
     assert_eq!(fed[3], 0, "the session ended while the samples played");
     assert!(playing, "no stream was running when the samples ran out");
@@ -1122,7 +1371,10 @@ async fn stream_camera() {
             ended = Some(result);
         }
     }
-    assert!(matches!(ended, Some(Ok(()))), "a disconnect this end asked for is an orderly end");
+    assert!(
+        matches!(ended, Some(Ok(()))),
+        "a disconnect this end asked for is an orderly end"
+    );
 }
 
 /// The pipeline, passed to a client that takes H.264: the host draws the video
@@ -1134,7 +1386,10 @@ async fn pass_h264() {
         panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
     });
     let target = common::uat_target(&name);
-    println!("rdp_client_probe: {name} ({}:{}), the pipeline passed with H.264", target.host, target.port);
+    println!(
+        "rdp_client_probe: {name} ({}:{}), the pipeline passed with H.264",
+        target.host, target.port
+    );
     let (session, mut events) = Session::start(Connect {
         host: target.host.clone(),
         port: target.port,
@@ -1166,12 +1421,16 @@ async fn pass_h264() {
     // Long enough past the first unit to see a stream's deltas follow its keyframe.
     while units < 30 {
         let left = deadline.saturating_duration_since(Instant::now());
-        let Ok(event) = tokio::time::timeout(left, events.recv()).await else { break };
+        let Ok(event) = tokio::time::timeout(left, events.recv()).await else {
+            break;
+        };
         match event.expect("the event channel closed without an Ended") {
             Event::FramesMarked => compositor = Compositor::new(),
             Event::Graphics { wrapped, frame } => {
                 runs += 1;
-                let commands = compositor.unwrap(&wrapped).expect("the passed message unwraps");
+                let commands = compositor
+                    .unwrap(&wrapped)
+                    .expect("the passed message unwraps");
                 for found in scan(&commands).expect("the passed commands scan") {
                     match found {
                         Scanned::Gone { surface } => {
@@ -1180,13 +1439,19 @@ async fn pass_h264() {
                         Scanned::Unit(unit) => {
                             let unit_bytes = &commands[unit.start..unit.end];
                             assert!(
-                                unit_bytes.starts_with(&[0, 0, 1]) || unit_bytes.starts_with(&[0, 0, 0, 1]),
+                                unit_bytes.starts_with(&[0, 0, 1])
+                                    || unit_bytes.starts_with(&[0, 0, 0, 1]),
                                 "an access unit that is not Annex B: {:02x?}",
                                 &unit_bytes[..unit_bytes.len().min(8)]
                             );
                             if streams.insert(unit.surface) {
-                                assert!(unit.key, "surface {}'s stream did not start at a keyframe", unit.surface);
-                                let profile = unit.profile.expect("a keyframe carries its parameter sets");
+                                assert!(
+                                    unit.key,
+                                    "surface {}'s stream did not start at a keyframe",
+                                    unit.surface
+                                );
+                                let profile =
+                                    unit.profile.expect("a keyframe carries its parameter sets");
                                 println!(
                                     "  surface {}: a stream starts, avc1.{:02x}{:02x}{:02x}, showing {:?}",
                                     unit.surface, profile[0], profile[1], profile[2], unit.window
@@ -1200,7 +1465,9 @@ async fn pass_h264() {
                 }
                 // No picture is supplied: the H.264 rectangles are left as they
                 // were, and every other command composes around them.
-                compositor.compose(&commands).expect("the passed commands compose");
+                compositor
+                    .compose(&commands)
+                    .expect("the passed commands compose");
                 if let Some(frame) = frame {
                     input.frame_composed(frame);
                 }
@@ -1209,8 +1476,13 @@ async fn pass_h264() {
             _ => {}
         }
     }
-    println!("  {runs} runs passed, carrying {units} access units ({keys} keyframes) in {bytes} bytes");
-    assert!(units > 0, "the host drew nothing with H.264: is a video playing on its desktop?");
+    println!(
+        "  {runs} runs passed, carrying {units} access units ({keys} keyframes) in {bytes} bytes"
+    );
+    assert!(
+        units > 0,
+        "the host drew nothing with H.264: is a video playing on its desktop?"
+    );
     assert!(keys > 0);
     drop(session);
 }
@@ -1231,7 +1503,10 @@ async fn stream_whole_desktop() {
         panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
     });
     let target = common::uat_target(&name);
-    println!("rdp_client_probe: {name} ({}:{}), the whole desktop in H.264", target.host, target.port);
+    println!(
+        "rdp_client_probe: {name} ({}:{}), the whole desktop in H.264",
+        target.host, target.port
+    );
     let (session, mut events) = Session::start(Connect {
         host: target.host.clone(),
         port: target.port,
@@ -1264,9 +1539,13 @@ async fn stream_whole_desktop() {
     let deadline = Instant::now() + Duration::from_secs(40);
     while answered.is_none() {
         let left = deadline.saturating_duration_since(Instant::now());
-        let Ok(event) = tokio::time::timeout(left, events.recv()).await else { break };
+        let Ok(event) = tokio::time::timeout(left, events.recv()).await else {
+            break;
+        };
         match event.expect("the event channel closed without an Ended") {
-            Event::Graphics { .. } => panic!("the whole desktop in H.264 was passed as the pipeline"),
+            Event::Graphics { .. } => {
+                panic!("the whole desktop in H.264 was passed as the pipeline")
+            }
             Event::Surface { surface, rect } => {
                 if rect.is_some() {
                     mapped.insert(surface);
@@ -1277,20 +1556,35 @@ async fn stream_whole_desktop() {
             }
             Event::UnitLost { surface } => panic!("surface {surface} lost a unit"),
             Event::ResizeReady { .. } => ready = true,
-            Event::Video { units: drawn, frame } => {
+            Event::Video {
+                units: drawn,
+                frame,
+            } => {
                 frames += 1;
                 for (surface, unit) in &drawn {
-                    assert!(mapped.contains(surface), "a unit of surface {surface}, which is not mapped");
+                    assert!(
+                        mapped.contains(surface),
+                        "a unit of surface {surface}, which is not mapped"
+                    );
                     let read = access_unit(unit);
                     if started.insert(*surface) {
-                        assert!(read.key, "surface {surface}'s stream did not start at a keyframe");
+                        assert!(
+                            read.key,
+                            "surface {surface}'s stream did not start at a keyframe"
+                        );
                         let profile = read.profile.expect("a keyframe carries its parameter sets");
-                        println!("  surface {surface}: a stream starts, avc1.{:02x}{:02x}{:02x}", profile[0], profile[1], profile[2]);
+                        println!(
+                            "  surface {surface}: a stream starts, avc1.{:02x}{:02x}{:02x}",
+                            profile[0], profile[1], profile[2]
+                        );
                     }
                     units += 1;
                     keys += u64::from(read.key);
                     bytes += unit.len() as u64;
-                    if read.key && let Some((at, before)) = asked && keys > before {
+                    if read.key
+                        && let Some((at, before)) = asked
+                        && keys > before
+                    {
                         answered = Some(at.elapsed());
                     }
                 }
@@ -1310,7 +1604,10 @@ async fn stream_whole_desktop() {
     assert!(units > 0, "the host drew nothing in H.264");
     let answered = answered.expect("no keyframe answered the one asked for");
     println!("  the keyframe asked for came {answered:?} later");
-    assert!(answered < Duration::from_secs(1), "the keyframe took {answered:?}");
+    assert!(
+        answered < Duration::from_secs(1),
+        "the keyframe took {answered:?}"
+    );
     drop(session);
 }
 
@@ -1340,22 +1637,36 @@ async fn a_real_host_records_the_microphone() {
 }
 
 /// The cases this runs, named on its command line, in the order named.
-const CASES: &[&str] = &["a_real_host_draws_video_with_h264", "a_real_host_streams_the_whole_desktop_in_h264", "a_real_host_paints_and_resizes", "a_real_host_round_trips_the_clipboard", "a_real_host_streams_the_camera", "a_real_host_records_the_microphone"];
+const CASES: &[&str] = &[
+    "a_real_host_draws_video_with_h264",
+    "a_real_host_streams_the_whole_desktop_in_h264",
+    "a_real_host_paints_and_resizes",
+    "a_real_host_round_trips_the_clipboard",
+    "a_real_host_streams_the_camera",
+    "a_real_host_records_the_microphone",
+];
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let named: Vec<String> = std::env::args().skip(1).collect();
     if named.is_empty() || named.iter().any(|case| !CASES.contains(&case.as_str())) {
-        eprintln!("usage: cargo run --example rdp_client_probe -- CASE...\ncases: {}", CASES.join(", "));
+        eprintln!(
+            "usage: cargo run --example rdp_client_probe -- CASE...\ncases: {}",
+            CASES.join(", ")
+        );
         std::process::exit(2);
     }
     for case in named {
         println!("== {case}");
         match case.as_str() {
             "a_real_host_draws_video_with_h264" => a_real_host_draws_video_with_h264().await,
-            "a_real_host_streams_the_whole_desktop_in_h264" => a_real_host_streams_the_whole_desktop_in_h264().await,
+            "a_real_host_streams_the_whole_desktop_in_h264" => {
+                a_real_host_streams_the_whole_desktop_in_h264().await
+            }
             "a_real_host_paints_and_resizes" => a_real_host_paints_and_resizes().await,
-            "a_real_host_round_trips_the_clipboard" => a_real_host_round_trips_the_clipboard().await,
+            "a_real_host_round_trips_the_clipboard" => {
+                a_real_host_round_trips_the_clipboard().await
+            }
             "a_real_host_streams_the_camera" => a_real_host_streams_the_camera().await,
             "a_real_host_records_the_microphone" => a_real_host_records_the_microphone().await,
             _ => unreachable!("checked above"),

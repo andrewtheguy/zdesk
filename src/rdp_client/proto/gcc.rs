@@ -26,8 +26,8 @@
 //! server has nothing to answer about either.
 
 use super::wire::{Malformed, Reader, Writer};
-use crate::config::Placement;
 use super::{channel, display, per};
+use crate::config::Placement;
 
 /// `ConnectData` up to the connectPDU length, which never varies: a CHOICE selecting
 /// the object-identifier form of the key, and the identifier itself — T.124 (02/98),
@@ -49,8 +49,9 @@ const SERVER_KEY: &[u8; 4] = b"McDn";
 /// omitted because its lower bound is its length), a byte of alignment padding, a SET
 /// OF count of one, the CHOICE selecting `h221NonStandard` with its value present, and
 /// the key.
-const CREATE_REQUEST: [u8; 12] =
-    [0x00, 0x08, 0x00, 0x10, 0x00, 0x01, 0xC0, 0x00, b'D', b'u', b'c', b'a'];
+const CREATE_REQUEST: [u8; 12] = [
+    0x00, 0x08, 0x00, 0x10, 0x00, 0x01, 0xC0, 0x00, b'D', b'u', b'c', b'a',
+];
 
 /// Client data block types.
 const CS_CORE: u16 = 0xC001;
@@ -210,7 +211,10 @@ impl Channel {
     fn wire_name(&self) -> [u8; 8] {
         let mut bytes = [0_u8; 8];
         let name = self.name.as_bytes();
-        assert!(name.len() < bytes.len(), "a channel name is seven bytes and a terminator");
+        assert!(
+            name.len() < bytes.len(),
+            "a channel name is seven bytes and a terminator"
+        );
         bytes[..name.len()].copy_from_slice(name);
         bytes
     }
@@ -279,7 +283,9 @@ impl ConferenceCreateRequest<'_> {
 
     /// The RDP blocks, which is what the server actually reads.
     fn blocks(&self) -> Vec<u8> {
-        let mut w = Writer::with_capacity(256 + self.channels.len() * 12 + self.monitors().len() * MONITOR_DEF);
+        let mut w = Writer::with_capacity(
+            256 + self.channels.len() * 12 + self.monitors().len() * MONITOR_DEF,
+        );
         self.core(&mut w);
         security(&mut w);
         self.network(&mut w);
@@ -314,10 +320,18 @@ impl ConferenceCreateRequest<'_> {
         if self.monitors <= 1 || self.width == 0 || self.height == 0 {
             return Vec::new();
         }
-        let sizes = vec![(u32::from(self.width), u32::from(self.height)); usize::from(self.monitors)];
+        let sizes =
+            vec![(u32::from(self.width), u32::from(self.height)); usize::from(self.monitors)];
         display::corners(&sizes, self.placement)
             .into_iter()
-            .map(|(left, top)| (left, top, left + i32::from(self.width) - 1, top + i32::from(self.height) - 1))
+            .map(|(left, top)| {
+                (
+                    left,
+                    top,
+                    left + i32::from(self.width) - 1,
+                    top + i32::from(self.height) - 1,
+                )
+            })
             .collect()
     }
 
@@ -341,11 +355,23 @@ impl ConferenceCreateRequest<'_> {
         w.u32_le(0); // serialNumber
         w.u16_le(HIGH_COLOR_24BPP);
         w.u16_le(COLOR_DEPTHS);
-        let graphics = if self.graphics { SUPPORT_DYNVC_GFX_PROTOCOL } else { 0 };
-        let autodetect = if self.autodetect { SUPPORT_NETCHAR_AUTODETECT } else { 0 };
+        let graphics = if self.graphics {
+            SUPPORT_DYNVC_GFX_PROTOCOL
+        } else {
+            0
+        };
+        let autodetect = if self.autodetect {
+            SUPPORT_NETCHAR_AUTODETECT
+        } else {
+            0
+        };
         w.u16_le(EARLY_CAPABILITIES | graphics | autodetect);
         w.zeros(64); // clientDigProductId: an installation identifier we do not have
-        w.u8(if self.autodetect { CONNECTION_TYPE_AUTODETECT } else { CONNECTION_TYPE_LAN });
+        w.u8(if self.autodetect {
+            CONNECTION_TYPE_AUTODETECT
+        } else {
+            CONNECTION_TYPE_LAN
+        });
         w.u8(0); // pad1octet
         w.u32_le(self.selected_protocol);
         // The physical size of the client's screen is not measured — a browser
@@ -370,7 +396,11 @@ impl ConferenceCreateRequest<'_> {
             return;
         }
         let contents = 8 + monitors.len() * MONITOR_DEF;
-        block_header(w, CS_MONITOR, u16::try_from(contents).expect("at most sixteen monitors"));
+        block_header(
+            w,
+            CS_MONITOR,
+            u16::try_from(contents).expect("at most sixteen monitors"),
+        );
         w.u32_le(0); // flags, reserved
         w.u32_le(u32::try_from(monitors.len()).expect("at most sixteen monitors"));
         for (index, (left, top, right, bottom)) in monitors.into_iter().enumerate() {
@@ -387,7 +417,11 @@ impl ConferenceCreateRequest<'_> {
             return;
         }
         let length = BLOCK_HEADER + 4 + self.channels.len() * 12;
-        block_header(w, CS_NET, u16::try_from(length - BLOCK_HEADER).expect("a few channels"));
+        block_header(
+            w,
+            CS_NET,
+            u16::try_from(length - BLOCK_HEADER).expect("a few channels"),
+        );
         w.u32_le(u32::try_from(self.channels.len()).expect("a few channels"));
         for channel in self.channels {
             w.bytes(&channel.wire_name());
@@ -522,9 +556,17 @@ impl ConferenceCreateResponse {
             }
         }
 
-        let (io_channel, channels) = network
-            .ok_or(Malformed::Missing { what: WHAT, field: "the channel numbers of SC_NET" })?;
-        Ok(Self { io_channel, channels, requested_protocols, message_channel, multitransport })
+        let (io_channel, channels) = network.ok_or(Malformed::Missing {
+            what: WHAT,
+            field: "the channel numbers of SC_NET",
+        })?;
+        Ok(Self {
+            io_channel,
+            channels,
+            requested_protocols,
+            message_channel,
+            multitransport,
+        })
     }
 
     /// `SC_CORE`: the `clientRequestedProtocols` in it. The server's version and its
@@ -604,7 +646,8 @@ mod tests {
     /// version, the size, the depths, the layout, the build, the name, the keyboard
     /// fields, the IME name, the two superseded depths, the product id, the serial
     /// number, the high colour depth and the supported depths.
-    const EARLY_CAPABILITIES_AT: usize = 4 + 2 + 2 + 2 + 2 + 4 + 4 + 32 + 4 + 4 + 4 + 64 + 2 + 2 + 4 + 2 + 2;
+    const EARLY_CAPABILITIES_AT: usize =
+        4 + 2 + 2 + 2 + 2 + 4 + 4 + 32 + 4 + 4 + 4 + 64 + 2 + 2 + 4 + 2 + 2;
 
     fn early_capabilities(request: &ConferenceCreateRequest<'_>) -> u16 {
         let bytes = request.blocks();
@@ -620,7 +663,10 @@ mod tests {
     fn the_graphics_pipeline_is_offered_by_one_early_capability_bit() {
         let without = request();
         assert_eq!(early_capabilities(&without), EARLY_CAPABILITIES);
-        let with = ConferenceCreateRequest { graphics: true, ..request() };
+        let with = ConferenceCreateRequest {
+            graphics: true,
+            ..request()
+        };
         assert_eq!(early_capabilities(&with), EARLY_CAPABILITIES | 0x0100);
     }
 
@@ -637,9 +683,27 @@ mod tests {
     #[test]
     fn an_opening_scale_rides_the_core_data_with_a_device_scale_of_100() {
         assert_eq!(scale_factors(&request()), (0, 0));
-        assert_eq!(scale_factors(&ConferenceCreateRequest { scale_percent: 200, ..request() }), (200, 100));
-        assert_eq!(scale_factors(&ConferenceCreateRequest { scale_percent: 100, ..request() }), (100, 100));
-        assert_eq!(scale_factors(&ConferenceCreateRequest { scale_percent: 600, ..request() }), (0, 0));
+        assert_eq!(
+            scale_factors(&ConferenceCreateRequest {
+                scale_percent: 200,
+                ..request()
+            }),
+            (200, 100)
+        );
+        assert_eq!(
+            scale_factors(&ConferenceCreateRequest {
+                scale_percent: 100,
+                ..request()
+            }),
+            (100, 100)
+        );
+        assert_eq!(
+            scale_factors(&ConferenceCreateRequest {
+                scale_percent: 600,
+                ..request()
+            }),
+            (0, 0)
+        );
     }
 
     #[test]
@@ -681,7 +745,11 @@ mod tests {
     /// the transports in a block of its own.
     #[test]
     fn a_claim_of_udp_asks_for_the_message_channel_too() {
-        let bytes = ConferenceCreateRequest { multitransport: 0x201, ..request() }.blocks();
+        let bytes = ConferenceCreateRequest {
+            multitransport: 0x201,
+            ..request()
+        }
+        .blocks();
         let mut r = Reader::new("a test", &bytes);
         let mut seen = Vec::new();
         while !r.is_empty() {
@@ -690,7 +758,10 @@ mod tests {
             let contents = r.bytes(length - BLOCK_HEADER).unwrap();
             seen.push((block, u32::from_le_bytes(contents[..4].try_into().unwrap())));
         }
-        assert_eq!(seen[3..], [(CS_MCS_MSGCHANNEL, 0), (CS_MULTITRANSPORT, 0x201)]);
+        assert_eq!(
+            seen[3..],
+            [(CS_MCS_MSGCHANNEL, 0), (CS_MULTITRANSPORT, 0x201)]
+        );
     }
 
     /// A session asking for two monitors sends the extended block after the three
@@ -699,13 +770,20 @@ mod tests {
     /// it always did.
     #[test]
     fn two_monitors_are_a_row_in_an_extended_block_and_the_cores_desktop_is_their_union() {
-        let two_monitors = || ConferenceCreateRequest { monitors: 2, ..request() };
+        let two_monitors = || ConferenceCreateRequest {
+            monitors: 2,
+            ..request()
+        };
         let two = two_monitors();
         let bytes = two.blocks();
         // The core desktop, right after the block header and the version.
         let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
         assert_eq!((u16_at(8), u16_at(10)), (3840, 1080));
-        assert_eq!(request().blocks()[8..12], [0x80, 0x07, 0x38, 0x04], "one monitor is 1920x1080");
+        assert_eq!(
+            request().blocks()[8..12],
+            [0x80, 0x07, 0x38, 0x04],
+            "one monitor is 1920x1080"
+        );
 
         let mut r = Reader::new("a test", &bytes);
         let mut seen = Vec::new();
@@ -720,7 +798,13 @@ mod tests {
             seen.push(block);
         }
         assert_eq!(seen, vec![CS_CORE, CS_SECURITY, CS_NET, CS_MONITOR]);
-        assert!(!request().blocks().windows(2).any(|w| w == CS_MONITOR.to_le_bytes()), "one monitor sends no block");
+        assert!(
+            !request()
+                .blocks()
+                .windows(2)
+                .any(|w| w == CS_MONITOR.to_le_bytes()),
+            "one monitor sends no block"
+        );
 
         let monitor = monitor.unwrap();
         let mut r = Reader::new("a test", &monitor);
@@ -746,7 +830,10 @@ mod tests {
             (Placement::Top, (1920, 2160), (0, -1080, 1919, -1)),
             (Placement::Bottom, (1920, 2160), (0, 1080, 1919, 2159)),
         ] {
-            let placed = ConferenceCreateRequest { placement, ..two_monitors() };
+            let placed = ConferenceCreateRequest {
+                placement,
+                ..two_monitors()
+            };
             assert_eq!(placed.desktop(), desktop);
             assert_eq!(placed.monitors(), vec![(0, 0, 1919, 1079), second]);
         }
@@ -763,8 +850,14 @@ mod tests {
         assert_eq!(bytes[30..], [0, 0]);
         // A character outside the BMP is two code units, and goes on whole or not at
         // all: half a surrogate pair is not text in any encoding.
-        assert_eq!(&utf16_fixed::<8>("\u{1F600}x"), &[0x3D, 0xD8, 0x00, 0xDE, b'x', 0, 0, 0]);
-        assert_eq!(&utf16_fixed::<6>("\u{1F600}x"), &[0x3D, 0xD8, 0x00, 0xDE, 0, 0]);
+        assert_eq!(
+            &utf16_fixed::<8>("\u{1F600}x"),
+            &[0x3D, 0xD8, 0x00, 0xDE, b'x', 0, 0, 0]
+        );
+        assert_eq!(
+            &utf16_fixed::<6>("\u{1F600}x"),
+            &[0x3D, 0xD8, 0x00, 0xDE, 0, 0]
+        );
         assert_eq!(&utf16_fixed::<4>("\u{1F600}x"), &[0, 0, 0, 0]);
     }
 
@@ -818,13 +911,16 @@ mod tests {
     #[test]
     fn a_response_yields_the_numbers_every_later_pdu_is_addressed_with() {
         let decoded = ConferenceCreateResponse::decode(&response(&[1004, 1005], (0, 0))).unwrap();
-        assert_eq!(decoded, ConferenceCreateResponse {
-            io_channel: 1003,
-            channels: vec![1004, 1005],
-            requested_protocols: 2,
-            message_channel: None,
-            multitransport: None,
-        });
+        assert_eq!(
+            decoded,
+            ConferenceCreateResponse {
+                io_channel: 1003,
+                channels: vec![1004, 1005],
+                requested_protocols: 2,
+                message_channel: None,
+                multitransport: None,
+            }
+        );
     }
 
     /// A server that leaves `clientRequestedProtocols` off is taken to mean
@@ -846,7 +942,9 @@ mod tests {
         assert_eq!(bytes[at], 0, "the success the response was written with");
         bytes[at] = 0x10; // userRejected
         assert_eq!(
-            ConferenceCreateResponse::decode(&bytes).unwrap_err().to_string(),
+            ConferenceCreateResponse::decode(&bytes)
+                .unwrap_err()
+                .to_string(),
             "a GCC Conference Create Response carries a refusal to create the conference, \
              result 0x1, which this client does not accept"
         );
@@ -863,14 +961,23 @@ mod tests {
              not accept"
         );
         let err = ConferenceCreateResponse::decode(&response(&[1004], (0, 1))).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an RDP encryption level", .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "an RDP encryption level",
+                ..
+            }
+        ));
     }
 
     #[test]
     fn an_answer_with_no_channel_block_is_an_error_rather_than_an_empty_list() {
         let mut bytes = response(&[1004], (0, 0));
         // Turn SC_NET into a block type nothing reads.
-        let at = bytes.windows(2).position(|w| w == SC_NET.to_le_bytes()).unwrap();
+        let at = bytes
+            .windows(2)
+            .position(|w| w == SC_NET.to_le_bytes())
+            .unwrap();
         bytes[at..at + 2].copy_from_slice(&0x0C09_u16.to_le_bytes());
         assert!(ConferenceCreateResponse::decode(&bytes).is_err());
     }

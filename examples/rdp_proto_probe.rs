@@ -38,25 +38,25 @@ mod common;
 
 use std::time::Duration;
 
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::net::TcpStream;
 use zdesk::rdp_client::proto::bitmap::{self, Scratch};
 use zdesk::rdp_client::proto::capabilities::{ConfirmActive, DemandActive};
+use zdesk::rdp_client::proto::channel::Chunk;
 use zdesk::rdp_client::proto::credssp::{self, Credentials};
 use zdesk::rdp_client::proto::fastpath::{self, Fragments};
 use zdesk::rdp_client::proto::finalization::{self, Response};
 use zdesk::rdp_client::proto::gcc::{Channel, ConferenceCreateRequest, ConferenceCreateResponse};
-use zdesk::rdp_client::proto::channel::Chunk;
-use zdesk::rdp_client::proto::{channel, cliprdr, display, dvc};
+use zdesk::rdp_client::proto::info::ClientInfo;
 #[cfg(test)]
 use zdesk::rdp_client::proto::input::{self, Button, Event};
 use zdesk::rdp_client::proto::pointer::{self, Pointer};
-use zdesk::rdp_client::proto::info::ClientInfo;
 use zdesk::rdp_client::proto::share::{self, Pdu};
-use zdesk::rdp_client::proto::{license, mcs, tls};
 use zdesk::rdp_client::proto::x224::{
     ConfirmFlags, ConnectionConfirm, ConnectionRequest, Security, TPKT_HEADER, frame_length,
 };
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::net::TcpStream;
+use zdesk::rdp_client::proto::{channel, cliprdr, display, dvc};
+use zdesk::rdp_client::proto::{license, mcs, tls};
 
 /// Which target in `tmp/test_uat.toml` to dial — see the module docs.
 const TARGET_ENV: &str = "ZDESK_UAT_TARGET";
@@ -100,7 +100,11 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
     let target = common::uat_target(&name);
     // The name TLS and CredSSP are told, without the brackets an IPv6 literal is
     // written with in a host:port.
-    let server_name = target.host.trim_start_matches('[').trim_end_matches(']').to_owned();
+    let server_name = target
+        .host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
     println!("rdp_proto_probe: {name} ({server_name}:{})", target.port);
 
     tokio::time::timeout(BUDGET, async {
@@ -108,14 +112,21 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
             .await
             .expect("connect to the host");
         // This end of the socket, which the Client Info PDU tells the server about.
-        let client_address = tcp.local_addr().expect("the local address of the socket").ip();
+        let client_address = tcp
+            .local_addr()
+            .expect("the local address of the socket")
+            .ip();
 
         // 1. The X.224 negotiation, in the clear.
-        let request =
-            ConnectionRequest { cookie: Some(target.username.clone()), protocols: OFFERED };
+        let request = ConnectionRequest {
+            cookie: Some(target.username.clone()),
+            protocols: OFFERED,
+        };
         let bytes = request.encode();
         println!("-> {} bytes: {}", bytes.len(), hex(&bytes));
-        tcp.write_all(&bytes).await.expect("send the connection request");
+        tcp.write_all(&bytes)
+            .await
+            .expect("send the connection request");
 
         let frame = read_frame(&mut tcp).await;
         println!("<- {} bytes: {}", frame.len(), hex(&frame));
@@ -128,10 +139,16 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
             flags.bits(),
             flags.contains(ConfirmFlags::EXTENDED_CLIENT_DATA)
         );
-        assert_eq!(protocol, Security::HYBRID, "only NLA is offered, so only NLA can be chosen");
+        assert_eq!(
+            protocol,
+            Security::HYBRID,
+            "only NLA is offered, so only NLA can be chosen"
+        );
 
         // 2. The TLS session everything after this lives inside.
-        let mut stream = tls::upgrade(tcp, &server_name).await.expect("the TLS handshake");
+        let mut stream = tls::upgrade(tcp, &server_name)
+            .await
+            .expect("the TLS handshake");
         let public_key = tls::public_key(&stream).expect("the server's public key");
         println!("TLS up, server public key {} bytes", public_key.len());
 
@@ -166,14 +183,20 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         .encode();
         let initial = mcs::connect_initial(&conference).expect("the conference fits a frame");
         println!("-> MCS Connect-Initial, {} bytes", initial.len());
-        stream.write_all(&initial).await.expect("send the Connect-Initial");
+        stream
+            .write_all(&initial)
+            .await
+            .expect("send the Connect-Initial");
         stream.flush().await.expect("send the Connect-Initial");
 
         let frame = read_frame(&mut stream).await;
         println!("<- MCS Connect-Response, {} bytes", frame.len());
         let answer = mcs::connect_response(&frame).expect("an MCS Connect-Response");
-        let ConferenceCreateResponse { io_channel, channels, .. } =
-            ConferenceCreateResponse::decode(answer).expect("a GCC Conference Create Response");
+        let ConferenceCreateResponse {
+            io_channel,
+            channels,
+            ..
+        } = ConferenceCreateResponse::decode(answer).expect("a GCC Conference Create Response");
         println!("I/O channel {io_channel}, virtual channels {channels:?}");
         assert_eq!(
             channels.len(),
@@ -182,8 +205,14 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         );
 
         // 5. Erect the domain — unanswered — and attach a user to it.
-        stream.write_all(&mcs::erect_domain_request()).await.expect("send the Erect Domain");
-        stream.write_all(&mcs::attach_user_request()).await.expect("send the Attach User");
+        stream
+            .write_all(&mcs::erect_domain_request())
+            .await
+            .expect("send the Erect Domain");
+        stream
+            .write_all(&mcs::attach_user_request())
+            .await
+            .expect("send the Attach User");
         stream.flush().await.expect("send the Attach User");
 
         let frame = read_frame(&mut stream).await;
@@ -196,7 +225,10 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         // order they were named: the transport Display Control is opened over, and
         // the clipboard's own.
         let (dynamic, clipboard) = (channels[0], channels[1]);
-        for channel in std::iter::once(user).chain(std::iter::once(io_channel)).chain(channels) {
+        for channel in std::iter::once(user)
+            .chain(std::iter::once(io_channel))
+            .chain(channels)
+        {
             stream
                 .write_all(&mcs::channel_join_request(user, channel))
                 .await
@@ -205,7 +237,10 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
             let frame = read_frame(&mut stream).await;
             let joined = mcs::channel_join_confirm(&frame).expect("an MCS Channel Join Confirm");
             println!("joined channel {joined}");
-            assert_eq!(joined, channel, "the server joined the channel that was asked for");
+            assert_eq!(
+                joined, channel,
+                "the server joined the channel that was asked for"
+            );
         }
 
         // 7. The logon. The credentials went through CredSSP already; this says to
@@ -233,7 +268,8 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         // 9. The capability exchange. The server's Demand Active is the first PDU
         //    that says what the session will actually be.
         let payload = receive(&mut stream, io_channel).await;
-        let Pdu::DemandActive { source, body } = share::decode(&payload).expect("a share control PDU")
+        let Pdu::DemandActive { source, body } =
+            share::decode(&payload).expect("a share control PDU")
         else {
             panic!("the server did not demand a share once licensing was done");
         };
@@ -263,7 +299,8 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         // 10. The finalization handshake. All four go out without waiting; the
         //     server's four come back in its own time, with session PDUs among them.
         for request in finalization::requests(user, demand.server_channel, demand.share_id) {
-            stream.write_all(&mcs::send_data_request(user, io_channel, &request).unwrap())
+            stream
+                .write_all(&mcs::send_data_request(user, io_channel, &request).unwrap())
                 .await
                 .expect("send a finalization PDU");
         }
@@ -286,8 +323,17 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         // 11. The updates. Nothing is asked for: a share that has just gone live
         //     paints itself, and what arrives is whatever the host decided to send —
         //     including the dynamic channel it opens, which is answered as it comes.
-        let watched =
-            watch(&mut stream, &demand, user, Channels { io_channel, dynamic, clipboard }).await;
+        let watched = watch(
+            &mut stream,
+            &demand,
+            user,
+            Channels {
+                io_channel,
+                dynamic,
+                clipboard,
+            },
+        )
+        .await;
         let display = watched.display;
 
         // 12. The resize. A monitor layout is the one thing this client says on a
@@ -301,7 +347,10 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
         // exchange settled on. A host that disliked any of those would answer nothing
         // at all and never say why, so this assertion is the whole of what the far end
         // can be asked about this channel.
-        assert!(watched.clipboard_ready, "the host opened its clipboard channel");
+        assert!(
+            watched.clipboard_ready,
+            "the host opened its clipboard channel"
+        );
         assert_eq!(
             watched.clipboard_list_taken,
             Some(true),
@@ -313,10 +362,13 @@ async fn a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence() {
             display.caps.is_some(),
             "Display Control is not usable until its capabilities arrive"
         );
-        let layout = display::monitor_layout(&[(RESIZED.0.into(), RESIZED.1.into())], zdesk::config::Placement::Right, &[100]);
+        let layout = display::monitor_layout(
+            &[(RESIZED.0.into(), RESIZED.1.into())],
+            zdesk::config::Placement::Right,
+            &[100],
+        );
         let pdu = dvc::data(control, &layout).unwrap();
-        for chunk in channel::chunks(&pdu, demand.chunk, Channel::DYNAMIC.chunk_flags()).unwrap()
-        {
+        for chunk in channel::chunks(&pdu, demand.chunk, Channel::DYNAMIC.chunk_flags()).unwrap() {
             send(&mut stream, user, dynamic, &chunk).await;
         }
         println!("-> a monitor layout of {}x{}", RESIZED.0, RESIZED.1);
@@ -355,23 +407,36 @@ async fn receive(stream: &mut (impl AsyncRead + AsyncWrite + Unpin), channel: u1
     else {
         panic!("the host left the conference");
     };
-    assert_eq!(data.channel, channel, "the PDU arrived on the channel it was expected on");
+    assert_eq!(
+        data.channel, channel,
+        "the PDU arrived on the channel it was expected on"
+    );
     data.payload.to_vec()
 }
 
 /// One whole TPKT frame: the header, then exactly the length it announces.
 async fn read_frame(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) -> Vec<u8> {
     let mut header = [0_u8; TPKT_HEADER];
-    stream.read_exact(&mut header).await.expect("read a TPKT header");
+    stream
+        .read_exact(&mut header)
+        .await
+        .expect("read a TPKT header");
     let length = frame_length(&header).expect("the answer is a TPKT frame");
     let mut frame = vec![0_u8; length];
     frame[..TPKT_HEADER].copy_from_slice(&header);
-    stream.read_exact(&mut frame[TPKT_HEADER..]).await.expect("read the rest of the frame");
+    stream
+        .read_exact(&mut frame[TPKT_HEADER..])
+        .await
+        .expect("read the rest of the frame");
     frame
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Watch the desktop paint itself, decoding everything that arrives.
@@ -385,7 +450,11 @@ async fn watch(
     user: u16,
     channels: Channels,
 ) -> Watched {
-    let Channels { io_channel, dynamic, clipboard } = channels;
+    let Channels {
+        io_channel,
+        dynamic,
+        clipboard,
+    } = channels;
     let (width, height) = (usize::from(demand.width), usize::from(demand.height));
     let mut desktop = vec![0_u8; width * height * 4];
     let mut painted = vec![false; width * height];
@@ -499,14 +568,23 @@ async fn watch(
                 }
                 continue;
             }
-            assert_eq!(data.channel, io_channel, "a PDU on a channel nothing asked for");
+            assert_eq!(
+                data.channel, io_channel,
+                "a PDU on a channel nothing asked for"
+            );
             // Named rather than printed: a Save Session Info PDU is a kilobyte of
             // Unicode, and what matters here is that it decoded and what it was.
             let what = match share::decode(data.payload).expect("a share control PDU") {
-                Pdu::DemandActive { body, .. } => format!("a Demand Active of {} bytes", body.len()),
+                Pdu::DemandActive { body, .. } => {
+                    format!("a Demand Active of {} bytes", body.len())
+                }
                 Pdu::DeactivateAll => "a Deactivate All".to_owned(),
                 Pdu::Data(pdu) => {
-                    format!("a data PDU of type {:#04x}, {} bytes", pdu.kind, pdu.body.len())
+                    format!(
+                        "a data PDU of type {:#04x}, {} bytes",
+                        pdu.kind,
+                        pdu.body.len()
+                    )
                 }
             };
             println!("<- slow path: {what}");
@@ -523,7 +601,9 @@ async fn watch(
                 // Every pointer update is decoded. A cursor is small enough to print
                 // one line each: there are a dozen in a quiet five seconds, and their
                 // depth is what decides this module's scope.
-                let decoded = cursors.update(update.code, update.data).expect("a pointer update");
+                let decoded = cursors
+                    .update(update.code, update.data)
+                    .expect("a pointer update");
                 match &decoded {
                     Pointer::Shape(shape) => {
                         let depth = depth(update.code, update.data);
@@ -537,7 +617,9 @@ async fn watch(
                 continue;
             }
             for rectangle in bitmap::update(update.data).expect("a Bitmap Update") {
-                rectangle.decode(&mut scratch, &mut pixels).expect("a rectangle of the desktop");
+                rectangle
+                    .decode(&mut scratch, &mut pixels)
+                    .expect("a rectangle of the desktop");
                 assert_eq!(pixels.len(), rectangle.painted_bytes());
                 if rectangle.compressed {
                     compressed += 1;
@@ -552,11 +634,20 @@ async fn watch(
     println!("<- {bytes} bytes of fast-path output: {seen:?}");
     println!("   {rectangles} rectangles, {compressed} of them compressed");
     let covered = painted.iter().filter(|seen| **seen).count();
-    println!("   {}% of the desktop painted", covered * 100 / painted.len());
+    println!(
+        "   {}% of the desktop painted",
+        covered * 100 / painted.len()
+    );
     write_picture(&desktop, width, height);
 
-    assert!(rectangles > 0, "a live share paints itself, and nothing arrived");
-    assert!(covered > 0, "rectangles arrived and none of them landed on the desktop");
+    assert!(
+        rectangles > 0,
+        "a live share paints itself, and nothing arrived"
+    );
+    assert!(
+        covered > 0,
+        "rectangles arrived and none of them landed on the desktop"
+    );
     watched
 }
 
@@ -606,7 +697,11 @@ fn answer(message: dvc::Message<'_>, display: &mut Display) -> Option<Vec<u8>> {
         }
         dvc::Message::Create { channel, name } => {
             let wanted = name == display::CHANNEL_NAME;
-            let status = if wanted { dvc::ACCEPTED } else { dvc::NO_LISTENER };
+            let status = if wanted {
+                dvc::ACCEPTED
+            } else {
+                dvc::NO_LISTENER
+            };
             println!(
                 "<- drdynvc: create {channel} for {name} ({})",
                 if wanted { "taken" } else { "refused" }
@@ -666,7 +761,10 @@ async fn reactivation(
                 deactivated = true;
             }
             Pdu::DemandActive { source, body } => {
-                assert!(deactivated, "a Demand Active without the Deactivate All before it");
+                assert!(
+                    deactivated,
+                    "a Demand Active without the Deactivate All before it"
+                );
                 return DemandActive::decode(source, body).expect("an RDP Demand Active PDU");
             }
             Pdu::Data(_) => {}
@@ -711,7 +809,10 @@ fn blit(
     for row in 0..usize::from(rectangle.paint_height) {
         let from = row * columns * 4;
         let to = ((y + row) * width + x) * 4;
-        assert!(to + columns * 4 <= desktop.len(), "a rectangle outside a {width}-wide desktop");
+        assert!(
+            to + columns * 4 <= desktop.len(),
+            "a rectangle outside a {width}-wide desktop"
+        );
         desktop[to..to + columns * 4].copy_from_slice(&pixels[from..from + columns * 4]);
         painted[(y + row) * width + x..(y + row) * width + x + columns].fill(true);
     }
@@ -722,7 +823,11 @@ fn blit(
 fn write_picture(desktop: &[u8], width: usize, height: usize) {
     let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
     let (pixels, _) = desktop.as_chunks::<4>();
-    ppm.extend(pixels.iter().flat_map(|pixel| [pixel[0], pixel[1], pixel[2]]));
+    ppm.extend(
+        pixels
+            .iter()
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]]),
+    );
     std::fs::write(PICTURE, ppm).expect("write the decoded desktop");
     println!("   the decoded desktop is in {PICTURE}");
 }
@@ -756,15 +861,24 @@ fn name(code: u8) -> &'static str {
 /// One whole frame of either framing, told apart by its first byte.
 async fn read_any(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) -> Vec<u8> {
     let mut first = [0_u8; 1];
-    stream.read_exact(&mut first).await.expect("read the first byte of a frame");
+    stream
+        .read_exact(&mut first)
+        .await
+        .expect("read the first byte of a frame");
     if !fastpath::is_output(first[0]) {
         let mut header = [0_u8; TPKT_HEADER];
         header[0] = first[0];
-        stream.read_exact(&mut header[1..]).await.expect("read a TPKT header");
+        stream
+            .read_exact(&mut header[1..])
+            .await
+            .expect("read a TPKT header");
         let length = frame_length(&header).expect("a TPKT frame");
         let mut frame = vec![0_u8; length];
         frame[..TPKT_HEADER].copy_from_slice(&header);
-        stream.read_exact(&mut frame[TPKT_HEADER..]).await.expect("read the rest of a frame");
+        stream
+            .read_exact(&mut frame[TPKT_HEADER..])
+            .await
+            .expect("read the rest of a frame");
         return frame;
     }
 
@@ -775,14 +889,20 @@ async fn read_any(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) -> Vec<u8>
             Some(length) => break length,
             None => {
                 let mut byte = [0_u8; 1];
-                stream.read_exact(&mut byte).await.expect("read a fast-path length");
+                stream
+                    .read_exact(&mut byte)
+                    .await
+                    .expect("read a fast-path length");
                 frame.push(byte[0]);
             }
         }
     };
     let at = frame.len();
     frame.resize(length, 0);
-    stream.read_exact(&mut frame[at..]).await.expect("read the rest of a fast-path frame");
+    stream
+        .read_exact(&mut frame[at..])
+        .await
+        .expect("read the rest of a fast-path frame");
     frame
 }
 
@@ -798,24 +918,148 @@ async fn read_any(stream: &mut (impl AsyncRead + AsyncWrite + Unpin)) -> Vec<u8>
 fn our_input_events_encode_to_the_bytes_ironrdp_sends() {
     /// One event, and the whole fast-path PDU IronRDP wrapped it in.
     const SINGLES: [(Event, &str); 18] = [
-        (Event::Key { scancode: 0x1E, extended: false, down: true }, "0404001e"),
-        (Event::Key { scancode: 0x1E, extended: false, down: false }, "0404011e"),
-        (Event::Key { scancode: 0x48, extended: true, down: true }, "04040248"),
-        (Event::Key { scancode: 0x5B, extended: true, down: false }, "0404035b"),
+        (
+            Event::Key {
+                scancode: 0x1E,
+                extended: false,
+                down: true,
+            },
+            "0404001e",
+        ),
+        (
+            Event::Key {
+                scancode: 0x1E,
+                extended: false,
+                down: false,
+            },
+            "0404011e",
+        ),
+        (
+            Event::Key {
+                scancode: 0x48,
+                extended: true,
+                down: true,
+            },
+            "04040248",
+        ),
+        (
+            Event::Key {
+                scancode: 0x5B,
+                extended: true,
+                down: false,
+            },
+            "0404035b",
+        ),
         (Event::Move { x: 0, y: 0 }, "040920000800000000"),
         (Event::Move { x: 1919, y: 1079 }, "04092000087f073704"),
-        (Event::Button { button: Button::Left, down: true, x: 10, y: 20 }, "04092000900a001400"),
-        (Event::Button { button: Button::Left, down: false, x: 10, y: 20 }, "04092000100a001400"),
-        (Event::Button { button: Button::Middle, down: true, x: 30, y: 40 }, "04092000c01e002800"),
-        (Event::Button { button: Button::Right, down: true, x: 50, y: 60 }, "04092000a032003c00"),
-        (Event::Button { button: Button::Right, down: false, x: 50, y: 60 }, "040920002032003c00"),
-        (Event::Button { button: Button::X1, down: true, x: 70, y: 80 }, "040940018046005000"),
-        (Event::Button { button: Button::X2, down: false, x: 70, y: 80 }, "040940020046005000"),
-        (Event::Wheel { rotation: 120, horizontal: false, x: 1, y: 2 }, "040920780201000200"),
-        (Event::Wheel { rotation: -120, horizontal: false, x: 1, y: 2 }, "040920880301000200"),
-        (Event::Wheel { rotation: 255, horizontal: true, x: 3, y: 4 }, "040920ff0403000400"),
-        (Event::Wheel { rotation: -255, horizontal: true, x: 3, y: 4 }, "040920010503000400"),
-        (Event::Wheel { rotation: 0, horizontal: false, x: 5, y: 6 }, "040920000205000600"),
+        (
+            Event::Button {
+                button: Button::Left,
+                down: true,
+                x: 10,
+                y: 20,
+            },
+            "04092000900a001400",
+        ),
+        (
+            Event::Button {
+                button: Button::Left,
+                down: false,
+                x: 10,
+                y: 20,
+            },
+            "04092000100a001400",
+        ),
+        (
+            Event::Button {
+                button: Button::Middle,
+                down: true,
+                x: 30,
+                y: 40,
+            },
+            "04092000c01e002800",
+        ),
+        (
+            Event::Button {
+                button: Button::Right,
+                down: true,
+                x: 50,
+                y: 60,
+            },
+            "04092000a032003c00",
+        ),
+        (
+            Event::Button {
+                button: Button::Right,
+                down: false,
+                x: 50,
+                y: 60,
+            },
+            "040920002032003c00",
+        ),
+        (
+            Event::Button {
+                button: Button::X1,
+                down: true,
+                x: 70,
+                y: 80,
+            },
+            "040940018046005000",
+        ),
+        (
+            Event::Button {
+                button: Button::X2,
+                down: false,
+                x: 70,
+                y: 80,
+            },
+            "040940020046005000",
+        ),
+        (
+            Event::Wheel {
+                rotation: 120,
+                horizontal: false,
+                x: 1,
+                y: 2,
+            },
+            "040920780201000200",
+        ),
+        (
+            Event::Wheel {
+                rotation: -120,
+                horizontal: false,
+                x: 1,
+                y: 2,
+            },
+            "040920880301000200",
+        ),
+        (
+            Event::Wheel {
+                rotation: 255,
+                horizontal: true,
+                x: 3,
+                y: 4,
+            },
+            "040920ff0403000400",
+        ),
+        (
+            Event::Wheel {
+                rotation: -255,
+                horizontal: true,
+                x: 3,
+                y: 4,
+            },
+            "040920010503000400",
+        ),
+        (
+            Event::Wheel {
+                rotation: 0,
+                horizontal: false,
+                x: 5,
+                y: 6,
+            },
+            "040920000205000600",
+        ),
     ];
 
     // One event at a time, so a disagreement names the event that caused it.
@@ -829,8 +1073,16 @@ fn our_input_events_encode_to_the_bytes_ironrdp_sends() {
     let ours: Vec<Event> = SINGLES.iter().map(|(event, _)| *event).collect();
     let batch: Vec<Event> = ours.iter().chain(ours.iter()).copied().collect();
     let mine = input::pdus(&batch).next().expect("one PDU holds them all");
-    assert!(mine.len() > 0x7F, "the batch is long enough to need a two-byte length");
-    assert_eq!(hex(&mine).replace(' ', ""), BATCH, "a batch of {} events", batch.len());
+    assert!(
+        mine.len() > 0x7F,
+        "the batch is long enough to need a two-byte length"
+    );
+    assert_eq!(
+        hex(&mine).replace(' ', ""),
+        BATCH,
+        "a batch of {} events",
+        batch.len()
+    );
 }
 
 /// The 36 events of [`our_input_events_encode_to_the_bytes_ironrdp_sends`] in one
@@ -853,7 +1105,10 @@ const BATCH: &str = concat!(
 #[test]
 fn our_dynamic_channel_pdus_encode_to_the_bytes_ironrdp_sends() {
     for (version, theirs) in [(1, "50000100"), (2, "50000200"), (3, "50000300")] {
-        assert_eq!(hex(&dvc::capabilities_response(version)).replace(' ', ""), theirs);
+        assert_eq!(
+            hex(&dvc::capabilities_response(version)).replace(' ', ""),
+            theirs
+        );
     }
 
     /// A channel number, then the accepted create response, the refusal, the close
@@ -861,19 +1116,59 @@ fn our_dynamic_channel_pdus_encode_to_the_bytes_ironrdp_sends() {
     const CHANNELS: [(u32, &str, &str, &str, &str); 6] = [
         (0x3, "100300000000", "1003010000c0", "4003", "3003010203"),
         (0xFF, "10ff00000000", "10ff010000c0", "40ff", "30ff010203"),
-        (0x100, "11000100000000", "110001010000c0", "410001", "310001010203"),
-        (0xFFFF, "11ffff00000000", "11ffff010000c0", "41ffff", "31ffff010203"),
-        (0x0001_0000, "120000010000000000", "1200000100010000c0", "4200000100", "3200000100010203"),
-        (u32::MAX, "12ffffffff00000000", "12ffffffff010000c0", "42ffffffff", "32ffffffff010203"),
+        (
+            0x100,
+            "11000100000000",
+            "110001010000c0",
+            "410001",
+            "310001010203",
+        ),
+        (
+            0xFFFF,
+            "11ffff00000000",
+            "11ffff010000c0",
+            "41ffff",
+            "31ffff010203",
+        ),
+        (
+            0x0001_0000,
+            "120000010000000000",
+            "1200000100010000c0",
+            "4200000100",
+            "3200000100010203",
+        ),
+        (
+            u32::MAX,
+            "12ffffffff00000000",
+            "12ffffffff010000c0",
+            "42ffffffff",
+            "32ffffffff010203",
+        ),
     ];
     for (channel, accepted, refused, closed, data) in CHANNELS {
         let ours = dvc::create_response(channel, dvc::ACCEPTED);
-        assert_eq!(hex(&ours).replace(' ', ""), accepted, "a create response for {channel:#x}");
+        assert_eq!(
+            hex(&ours).replace(' ', ""),
+            accepted,
+            "a create response for {channel:#x}"
+        );
         let ours = dvc::create_response(channel, dvc::NO_LISTENER);
-        assert_eq!(hex(&ours).replace(' ', ""), refused, "a refusal for {channel:#x}");
-        assert_eq!(hex(&dvc::close(channel)).replace(' ', ""), closed, "a close for {channel:#x}");
+        assert_eq!(
+            hex(&ours).replace(' ', ""),
+            refused,
+            "a refusal for {channel:#x}"
+        );
+        assert_eq!(
+            hex(&dvc::close(channel)).replace(' ', ""),
+            closed,
+            "a close for {channel:#x}"
+        );
         let ours = dvc::data(channel, &[1, 2, 3]).unwrap();
-        assert_eq!(hex(&ours).replace(' ', ""), data, "a data PDU for {channel:#x}");
+        assert_eq!(
+            hex(&ours).replace(' ', ""),
+            data,
+            "a data PDU for {channel:#x}"
+        );
     }
 }
 
@@ -885,21 +1180,40 @@ fn our_dynamic_channel_pdus_encode_to_the_bytes_ironrdp_sends() {
 #[test]
 fn our_monitor_layout_encodes_to_the_bytes_ironrdp_sends() {
     const LAYOUTS: [(u32, u32, u32, &str); 3] = [
-        (1280, 800, 100, concat!(
-            "02000000380000002800000001000000010000000000000000000000",
-            "00050000200300000000000000000000000000006400000064000000"
-        )),
-        (1920, 1080, 150, concat!(
-            "02000000380000002800000001000000010000000000000000000000",
-            "80070000380400000000000000000000000000009600000064000000"
-        )),
-        (3840, 2160, 500, concat!(
-            "02000000380000002800000001000000010000000000000000000000",
-            "000f000070080000000000000000000000000000f401000064000000"
-        )),
+        (
+            1280,
+            800,
+            100,
+            concat!(
+                "02000000380000002800000001000000010000000000000000000000",
+                "00050000200300000000000000000000000000006400000064000000"
+            ),
+        ),
+        (
+            1920,
+            1080,
+            150,
+            concat!(
+                "02000000380000002800000001000000010000000000000000000000",
+                "80070000380400000000000000000000000000009600000064000000"
+            ),
+        ),
+        (
+            3840,
+            2160,
+            500,
+            concat!(
+                "02000000380000002800000001000000010000000000000000000000",
+                "000f000070080000000000000000000000000000f401000064000000"
+            ),
+        ),
     ];
     for (width, height, scale, theirs) in LAYOUTS {
-        let ours = display::monitor_layout(&[(width, height)], zdesk::config::Placement::Right, &[scale]);
+        let ours = display::monitor_layout(
+            &[(width, height)],
+            zdesk::config::Placement::Right,
+            &[scale],
+        );
         assert_eq!(
             hex(&ours).replace(' ', ""),
             theirs,
@@ -915,13 +1229,18 @@ const CASES: &[&str] = &["a_windows_host_hands_over_a_live_desktop_to_our_connec
 async fn main() {
     let named: Vec<String> = std::env::args().skip(1).collect();
     if named.is_empty() || named.iter().any(|case| !CASES.contains(&case.as_str())) {
-        eprintln!("usage: cargo run --example rdp_proto_probe -- CASE...\ncases: {}", CASES.join(", "));
+        eprintln!(
+            "usage: cargo run --example rdp_proto_probe -- CASE...\ncases: {}",
+            CASES.join(", ")
+        );
         std::process::exit(2);
     }
     for case in named {
         println!("== {case}");
         match case.as_str() {
-            "a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence" => a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence().await,
+            "a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence" => {
+                a_windows_host_hands_over_a_live_desktop_to_our_connection_sequence().await
+            }
             _ => unreachable!("checked above"),
         }
     }

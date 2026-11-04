@@ -100,12 +100,18 @@ impl Counter {
     /// Take both counts, leaving zero. A byte added between the two swaps lands in the
     /// next timeframe rather than nowhere.
     fn take(&self) -> (u64, u64) {
-        (self.sent.swap(0, Ordering::Relaxed), self.received.swap(0, Ordering::Relaxed))
+        (
+            self.sent.swap(0, Ordering::Relaxed),
+            self.received.swap(0, Ordering::Relaxed),
+        )
     }
 
     /// Both counts so far, left counting.
     fn peek(&self) -> (u64, u64) {
-        (self.sent.load(Ordering::Relaxed), self.received.load(Ordering::Relaxed))
+        (
+            self.sent.load(Ordering::Relaxed),
+            self.received.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -157,7 +163,8 @@ impl Tally {
         // ending at `at` is `at - 1`, and the sample before this one took the rest.
         let spanned = u32::try_from(secs.max(1)).unwrap_or(u32::MAX);
         for index in at.saturating_sub(spanned)..=at.saturating_sub(1) {
-            self.seconds.push(Second(index, self.now_sent, self.now_received));
+            self.seconds
+                .push(Second(index, self.now_sent, self.now_received));
         }
     }
 
@@ -234,7 +241,12 @@ impl ThroughputMeters {
             unwritten: VecDeque::new(),
             next_closed: 0,
         };
-        Self { targets, counters, open: Mutex::new(open), unwritten_cap: usize::MAX }
+        Self {
+            targets,
+            counters,
+            open: Mutex::new(open),
+            unwritten_cap: usize::MAX,
+        }
     }
 
     /// Meters recorded into a database keeping `max_records` per target and socket:
@@ -250,7 +262,9 @@ impl ThroughputMeters {
     /// The counter for `socket` under the target at `target` in the `[[targets]]` list, or
     /// under no target for `None` — and for an index the list does not have.
     pub fn counter(&self, target: Option<usize>, socket: Socket) -> &Counter {
-        let slot = target.filter(|&index| index < self.targets.len()).unwrap_or(self.targets.len());
+        let slot = target
+            .filter(|&index| index < self.targets.len())
+            .unwrap_or(self.targets.len());
         &self.counters[slot][socket as usize]
     }
 
@@ -287,7 +301,11 @@ impl ThroughputMeters {
         Self::sample_into(&self.counters, &mut open, end);
         let records = self.records(&open, end);
         for tally in open.tallies.iter_mut().flatten() {
-            *tally = Tally { now_sent: tally.now_sent, now_received: tally.now_received, ..Default::default() };
+            *tally = Tally {
+                now_sent: tally.now_sent,
+                now_received: tally.now_received,
+                ..Default::default()
+            };
         }
 
         open.since = end;
@@ -307,13 +325,23 @@ impl ThroughputMeters {
     pub(crate) fn unwritten(&self) -> (u64, Vec<Record>) {
         let open = self.lock_open();
         let through = open.unwritten.back().map_or(0, |(number, _)| *number);
-        (through, open.unwritten.iter().map(|(_, record)| record.clone()).collect())
+        (
+            through,
+            open.unwritten
+                .iter()
+                .map(|(_, record)| record.clone())
+                .collect(),
+        )
     }
 
     /// The records closed as `through` and before are in the database.
     pub(crate) fn written(&self, through: u64) {
         let mut open = self.lock_open();
-        while open.unwritten.front().is_some_and(|(number, _)| *number <= through) {
+        while open
+            .unwritten
+            .front()
+            .is_some_and(|(number, _)| *number <= through)
+        {
             open.unwritten.pop_front();
         }
     }
@@ -355,7 +383,11 @@ impl ThroughputMeters {
         };
         Snapshot {
             open: self.records(&peeked, now),
-            unwritten: open.unwritten.iter().map(|(_, record)| record.clone()).collect(),
+            unwritten: open
+                .unwritten
+                .iter()
+                .map(|(_, record)| record.clone())
+                .collect(),
         }
     }
 
@@ -405,7 +437,10 @@ impl ThroughputMeters {
                 });
             }
         }
-        Live { at: open.sampled_at, rates }
+        Live {
+            at: open.sampled_at,
+            rates,
+        }
     }
 }
 
@@ -454,9 +489,13 @@ impl Snapshot {
     /// record the database has a row for — the timeframe closed and was written in
     /// between — yields to that row, as the whole of it.
     pub fn with_written(self, written: Vec<Record>, window: Window) -> Reading {
-        let keys: HashSet<(Option<&str>, Socket, u64)> =
-            written.iter().map(|record| (record.target.as_deref(), record.socket, record.start)).collect();
-        let unwritten = |record: &Record| !keys.contains(&(record.target.as_deref(), record.socket, record.start));
+        let keys: HashSet<(Option<&str>, Socket, u64)> = written
+            .iter()
+            .map(|record| (record.target.as_deref(), record.socket, record.start))
+            .collect();
+        let unwritten = |record: &Record| {
+            !keys.contains(&(record.target.as_deref(), record.socket, record.start))
+        };
         let kept = |record: &Record| window.covers(record) && unwritten(record);
         let mut records = written.clone();
         records.extend(self.unwritten.into_iter().filter(kept));
@@ -572,7 +611,10 @@ fn decode_seconds(mut blob: &[u8]) -> anyhow::Result<Vec<Second>> {
         let mut value: u64 = 0;
         for (index, &byte) in blob.iter().enumerate() {
             let shift = 7 * index as u32;
-            anyhow::ensure!(shift < 64, "a throughput record's seconds hold a number too large");
+            anyhow::ensure!(
+                shift < 64,
+                "a throughput record's seconds hold a number too large"
+            );
             value |= u64::from(byte & 0x7f) << shift;
             if byte & 0x80 == 0 {
                 *blob = &blob[index + 1..];
@@ -629,7 +671,9 @@ impl ThroughputStore {
         let adopted = Connection::open(path)
             .with_context(|| format!("cannot open {}", path.display()))
             .and_then(|mut connection| {
-                connection.busy_timeout(Duration::from_secs(5)).context("cannot set the busy timeout")?;
+                connection
+                    .busy_timeout(Duration::from_secs(5))
+                    .context("cannot set the busy timeout")?;
                 Self::adopt(&mut connection, path, created)?;
                 Ok(connection)
             });
@@ -647,12 +691,19 @@ impl ThroughputStore {
         let journal: String = connection
             .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
             .with_context(|| format!("cannot set the journal mode of {}", path.display()))?;
-        anyhow::ensure!(journal.eq_ignore_ascii_case("wal"), "{} refused WAL ({journal})", path.display());
+        anyhow::ensure!(
+            journal.eq_ignore_ascii_case("wal"),
+            "{} refused WAL ({journal})",
+            path.display()
+        );
         connection
             .pragma_update(None, "synchronous", "NORMAL")
             .context("cannot set synchronous = NORMAL")?;
 
-        let store = Self { connection: Mutex::new(connection), max_records: config.max_records };
+        let store = Self {
+            connection: Mutex::new(connection),
+            max_records: config.max_records,
+        };
         // A cap lowered between runs applies to what is already there.
         store.write(&[])?;
         Ok(store)
@@ -668,20 +719,24 @@ impl ThroughputStore {
         let objects: i64 = transaction
             .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
             .with_context(not_ours)?;
-        let application_id: i64 =
-            transaction.query_row("PRAGMA application_id", [], |row| row.get(0)).with_context(not_ours)?;
+        let application_id: i64 = transaction
+            .query_row("PRAGMA application_id", [], |row| row.get(0))
+            .with_context(not_ours)?;
         if created && objects == 0 && application_id == 0 {
             transaction
                 .execute_batch(SCHEMA)
                 .and_then(|()| transaction.pragma_update(None, "application_id", APPLICATION_ID))
                 .and_then(|()| transaction.pragma_update(None, "user_version", SCHEMA_VERSION))
                 .and_then(|()| transaction.commit())
-                .with_context(|| format!("cannot create the throughput schema in {}", path.display()))?;
+                .with_context(|| {
+                    format!("cannot create the throughput schema in {}", path.display())
+                })?;
             return Ok(());
         }
         anyhow::ensure!(application_id == APPLICATION_ID, "{}", not_ours());
-        let version: i64 =
-            transaction.query_row("PRAGMA user_version", [], |row| row.get(0)).with_context(not_ours)?;
+        let version: i64 = transaction
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .with_context(not_ours)?;
         anyhow::ensure!(
             version == SCHEMA_VERSION,
             "{} holds throughput schema {version}, and this gateway reads only {SCHEMA_VERSION} — \
@@ -691,20 +746,28 @@ impl ThroughputStore {
         let check: String = transaction
             .query_row("PRAGMA quick_check", [], |row| row.get(0))
             .with_context(|| format!("cannot check {}", path.display()))?;
-        anyhow::ensure!(check == "ok", "{} failed its integrity check: {check}", path.display());
+        anyhow::ensure!(
+            check == "ok",
+            "{} failed its integrity check: {check}",
+            path.display()
+        );
         Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         // A panic inside a transaction rolled it back as it unwound; the connection is fine.
-        self.connection.lock().unwrap_or_else(PoisonError::into_inner)
+        self.connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Add `records` and trim what they were added to back to `max_records`, all or
     /// nothing. No records trims every target's every socket.
     pub(crate) fn write(&self, records: &[Record]) -> anyhow::Result<()> {
         let mut connection = self.lock();
-        let transaction = connection.transaction().context("cannot begin a throughput write")?;
+        let transaction = connection
+            .transaction()
+            .context("cannot begin a throughput write")?;
         {
             let mut insert = transaction
                 .prepare_cached(
@@ -738,7 +801,10 @@ impl ThroughputStore {
                     .and_then(Iterator::collect)
                     .context("cannot list the throughput series")?
             } else {
-                records.iter().map(|record| (record.target.clone(), record.socket.name().to_owned())).collect()
+                records
+                    .iter()
+                    .map(|record| (record.target.clone(), record.socket.name().to_owned()))
+                    .collect()
             };
             series.sort();
             series.dedup();
@@ -752,10 +818,13 @@ impl ThroughputStore {
                 .context("cannot prepare the throughput trim")?;
             let keep = i64::try_from(self.max_records).unwrap_or(i64::MAX);
             for (target, socket) in series {
-                trim.execute(params![target, socket, keep]).context("cannot trim throughput records")?;
+                trim.execute(params![target, socket, keep])
+                    .context("cannot trim throughput records")?;
             }
         }
-        transaction.commit().context("cannot commit a throughput write")
+        transaction
+            .commit()
+            .context("cannot commit a throughput write")
     }
 
     /// Every record the `window` covers, oldest first, with the seconds that moved in
@@ -784,7 +853,11 @@ impl ThroughputStore {
                         row.get::<_, i64>(6)?,
                         row.get::<_, i64>(7)?,
                     ],
-                    if seconds { row.get::<_, Vec<u8>>(8)? } else { Vec::new() },
+                    if seconds {
+                        row.get::<_, Vec<u8>>(8)?
+                    } else {
+                        Vec::new()
+                    },
                 ))
             })
             .context("cannot query throughput records")?;
@@ -792,7 +865,8 @@ impl ThroughputStore {
             let (target, socket, numbers, blob) = row.context("cannot read a throughput record")?;
             let socket = Socket::from_name(&socket)
                 .with_context(|| format!("a throughput record names no socket: {socket:?}"))?;
-            let unsigned = |value: i64| u64::try_from(value).context("a throughput record is negative");
+            let unsigned =
+                |value: i64| u64::try_from(value).context("a throughput record is negative");
             let [start, end, sent, received, peak_sent, peak_received] = numbers;
             Ok(Record {
                 target,
@@ -816,7 +890,9 @@ fn sql_int(value: u64) -> anyhow::Result<i64> {
 }
 
 pub(crate) fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// Meters for `targets` (the `[[targets]]` names, in order), and with `config` the
@@ -833,12 +909,18 @@ pub(crate) fn unix_now() -> u64 {
 /// wait, delays no sample and flattens no peak.
 pub fn start(config: Option<&MeterConfig>, targets: Vec<String>) -> anyhow::Result<Throughput> {
     let Some(config) = config else {
-        return Ok(Throughput { meters: Arc::new(ThroughputMeters::new(targets)), store: None });
+        return Ok(Throughput {
+            meters: Arc::new(ThroughputMeters::new(targets)),
+            store: None,
+        });
     };
     let started = tokio::time::Instant::now();
     let store = Arc::new(ThroughputStore::open(config)?);
     let meters = Arc::new(ThroughputMeters::recorded(targets, store.max_records));
-    let throughput = Throughput { meters: Arc::clone(&meters), store: Some(Arc::clone(&store)) };
+    let throughput = Throughput {
+        meters: Arc::clone(&meters),
+        store: Some(Arc::clone(&store)),
+    };
     let closed = Arc::new(Notify::new());
 
     let sampler = Arc::clone(&meters);
@@ -890,12 +972,21 @@ mod tests {
     use super::*;
 
     fn config(database: PathBuf, max_records: usize) -> MeterConfig {
-        MeterConfig { database, max_records }
+        MeterConfig {
+            database,
+            max_records,
+        }
     }
 
     /// A one-minute record whose bytes all moved in the second after it began: its peaks
     /// are its bytes, and that one second is all it carries.
-    fn record(target: Option<&str>, socket: Socket, start: u64, sent_bytes: u64, received_bytes: u64) -> Record {
+    fn record(
+        target: Option<&str>,
+        socket: Socket,
+        start: u64,
+        sent_bytes: u64,
+        received_bytes: u64,
+    ) -> Record {
         Record {
             target: target.map(str::to_owned),
             socket,
@@ -909,8 +1000,18 @@ mod tests {
         }
     }
 
-    fn live(target: Option<&str>, socket: Socket, sent_per_sec: u64, received_per_sec: u64) -> LiveRate {
-        LiveRate { target: target.map(str::to_owned), socket, sent_per_sec, received_per_sec }
+    fn live(
+        target: Option<&str>,
+        socket: Socket,
+        sent_per_sec: u64,
+        received_per_sec: u64,
+    ) -> LiveRate {
+        LiveRate {
+            target: target.map(str::to_owned),
+            socket,
+            sent_per_sec,
+            received_per_sec,
+        }
     }
 
     #[test]
@@ -941,7 +1042,11 @@ mod tests {
         // what has moved since the last sample shows in the open timeframe.
         meters.counter(Some(1), Socket::Session).sent(600);
         meters.sample(102);
-        assert_eq!(meters.live().rates, [live(Some("win"), Socket::Session, 600, 0)], "only what moved in that second");
+        assert_eq!(
+            meters.live().rates,
+            [live(Some("win"), Socket::Session, 600, 0)],
+            "only what moved in that second"
+        );
         meters.counter(Some(1), Socket::Session).sent(7);
         let expected = [
             record(Some("mac"), Socket::Session, 100, 3, 0),
@@ -959,7 +1064,13 @@ mod tests {
         // over 58 seconds round to nothing, so the peak stands. The rate right now is the
         // last sample's, which found only those 7 bytes moving.
         assert_eq!(meters.close_timeframe(160), expected);
-        assert_eq!(meters.live(), Live { at: 160, rates: vec![] });
+        assert_eq!(
+            meters.live(),
+            Live {
+                at: 160,
+                rates: vec![]
+            }
+        );
 
         // The counters were taken, so an idle timeframe after it records nothing.
         assert_eq!(meters.open_timeframe(200), []);
@@ -992,7 +1103,10 @@ mod tests {
     #[test]
     fn closed_records_wait_for_the_writer_and_are_read_meanwhile() {
         let meters = ThroughputMeters::recorded(vec!["mac".to_owned()], 1);
-        assert_eq!(meters.unwritten_cap, 8, "one record per target and socket, and the picker's");
+        assert_eq!(
+            meters.unwritten_cap, 8,
+            "one record per target and socket, and the picker's"
+        );
         let start = meters.lock_open().since;
         meters.counter(Some(0), Socket::Session).sent(10);
         let first = meters.close_timeframe(start + 60);
@@ -1009,27 +1123,63 @@ mod tests {
         assert_eq!(snapshot.unwritten, waiting);
         assert_eq!(snapshot.open.len(), 1);
         let open = snapshot.open.clone();
-        let reading = snapshot.clone().with_written(first.clone(), Window::since(0));
-        assert_eq!(reading, Reading { records: [first.clone(), second.clone()].concat(), open: open.clone() });
-        let reading = snapshot.clone().with_written(vec![], Window::since(start + 60));
-        assert_eq!(reading.records, second, "a record that ended by `since` is left out, as the database leaves it");
+        let reading = snapshot
+            .clone()
+            .with_written(first.clone(), Window::since(0));
+        assert_eq!(
+            reading,
+            Reading {
+                records: [first.clone(), second.clone()].concat(),
+                open: open.clone()
+            }
+        );
+        let reading = snapshot
+            .clone()
+            .with_written(vec![], Window::since(start + 60));
+        assert_eq!(
+            reading.records, second,
+            "a record that ended by `since` is left out, as the database leaves it"
+        );
         // A window that ended before the read leaves out the timeframe still open, which
         // began after it, and keeps the closed ones that began inside it.
-        let ended = Window { since: 0, until: Some(start + 120) };
+        let ended = Window {
+            since: 0,
+            until: Some(start + 120),
+        };
         let reading = snapshot.clone().with_written(vec![], ended);
-        assert_eq!(reading, Reading { records: [first.clone(), second.clone()].concat(), open: vec![] });
+        assert_eq!(
+            reading,
+            Reading {
+                records: [first.clone(), second.clone()].concat(),
+                open: vec![]
+            }
+        );
         // The open timeframe closed and was written between the snapshot and the
         // database read: the database's row is the whole of it, and the rows still
         // waiting are read from the snapshot after it.
-        let written = Record { end: start + 180, received_bytes: 9, ..open[0].clone() };
+        let written = Record {
+            end: start + 180,
+            received_bytes: 9,
+            ..open[0].clone()
+        };
         let reading = snapshot.with_written(vec![written.clone()], Window::since(0));
-        assert_eq!(reading, Reading { records: [vec![written], first.clone(), second.clone()].concat(), open: vec![] });
+        assert_eq!(
+            reading,
+            Reading {
+                records: [vec![written], first.clone(), second.clone()].concat(),
+                open: vec![]
+            }
+        );
 
         // Written through the first: the second still waits.
         meters.written(0);
         assert_eq!(meters.unwritten(), (1, second.clone()));
         meters.written(1);
-        assert_eq!(meters.unwritten(), (0, vec![]), "nothing waits, so no number");
+        assert_eq!(
+            meters.unwritten(),
+            (0, vec![]),
+            "nothing waits, so no number"
+        );
 
         // While writes fail, the oldest go first once the cap is reached.
         for timeframe in 0..10u64 {
@@ -1037,8 +1187,14 @@ mod tests {
             meters.close_timeframe(start + 200 + timeframe);
         }
         let (through, waiting) = meters.unwritten();
-        assert_eq!(through, 12, "two records closed first: the microphone bytes left over, and the session");
-        assert_eq!(waiting.iter().map(|record| record.end).collect::<Vec<_>>(), (start + 202..start + 210).collect::<Vec<_>>());
+        assert_eq!(
+            through, 12,
+            "two records closed first: the microphone bytes left over, and the session"
+        );
+        assert_eq!(
+            waiting.iter().map(|record| record.end).collect::<Vec<_>>(),
+            (start + 202..start + 210).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1046,7 +1202,13 @@ mod tests {
         let meters = ThroughputMeters::open_at(vec![], 100);
         meters.counter(None, Socket::Session).sent(1000);
         meters.sample(105);
-        assert_eq!(meters.live(), Live { at: 105, rates: vec![live(None, Socket::Session, 200, 0)] });
+        assert_eq!(
+            meters.live(),
+            Live {
+                at: 105,
+                rates: vec![live(None, Socket::Session, 200, 0)]
+            }
+        );
         // Two samples in one second read as one second, never a division by nothing.
         meters.counter(None, Socket::Session).received(30);
         meters.sample(105);
@@ -1077,10 +1239,16 @@ mod tests {
         let config = config(dir.path().join("nested/meter.sqlite3"), 10);
         let first = record(Some("mac"), Socket::Session, 0, 2048, 12);
         let second = record(None, Socket::Audio, 60, 9000, 0);
-        ThroughputStore::open(&config).unwrap().write(&[first.clone(), second.clone()]).unwrap();
+        ThroughputStore::open(&config)
+            .unwrap()
+            .write(&[first.clone(), second.clone()])
+            .unwrap();
 
         let store = ThroughputStore::open(&config).unwrap();
-        assert_eq!(store.records(Window::since(0), true).unwrap(), [first.clone(), second.clone()]);
+        assert_eq!(
+            store.records(Window::since(0), true).unwrap(),
+            [first.clone(), second.clone()]
+        );
         assert_eq!(
             store.records(Window::since(60), true).unwrap(),
             std::slice::from_ref(&second),
@@ -1092,19 +1260,57 @@ mod tests {
             "a read of a range too long for them decodes none"
         );
         // A window of its own leaves out what began at its end as well.
-        assert_eq!(store.records(Window { since: 0, until: Some(60) }, true).unwrap(), std::slice::from_ref(&first));
-        assert_eq!(store.records(Window { since: 0, until: Some(61) }, true).unwrap(), [first, second]);
+        assert_eq!(
+            store
+                .records(
+                    Window {
+                        since: 0,
+                        until: Some(60)
+                    },
+                    true
+                )
+                .unwrap(),
+            std::slice::from_ref(&first)
+        );
+        assert_eq!(
+            store
+                .records(
+                    Window {
+                        since: 0,
+                        until: Some(61)
+                    },
+                    true
+                )
+                .unwrap(),
+            [first, second]
+        );
     }
 
     #[test]
     fn the_seconds_that_moved_are_a_blob_of_varints_and_the_quiet_ones_are_nothing() {
         assert_eq!(decode_seconds(&encode_seconds(&[])).unwrap(), []);
-        let seconds = vec![Second(0, 1, 0), Second(7, 400_000, 127), Second(59, 0, u64::MAX)];
+        let seconds = vec![
+            Second(0, 1, 0),
+            Second(7, 400_000, 127),
+            Second(59, 0, u64::MAX),
+        ];
         assert_eq!(decode_seconds(&encode_seconds(&seconds)).unwrap(), seconds);
-        assert_eq!(encode_seconds(&[Second(3, 5, 9)]).len(), 3, "small numbers take a byte each");
+        assert_eq!(
+            encode_seconds(&[Second(3, 5, 9)]).len(),
+            3,
+            "small numbers take a byte each"
+        );
         let busy: Vec<Second> = (0..60).map(|at| Second(at, 400_000, 40_000)).collect();
-        assert_eq!(encode_seconds(&busy).len(), 420, "a minute busy in every second is a few hundred bytes");
-        assert_eq!(encode_seconds(&busy[..3]).len(), 21, "and a minute busy in three of them is nothing");
+        assert_eq!(
+            encode_seconds(&busy).len(),
+            420,
+            "a minute busy in every second is a few hundred bytes"
+        );
+        assert_eq!(
+            encode_seconds(&busy[..3]).len(),
+            21,
+            "and a minute busy in three of them is nothing"
+        );
         for corrupt in [vec![0x80], vec![0x00, 0x00], vec![0xff; 11]] {
             assert!(decode_seconds(&corrupt).is_err(), "{corrupt:?}");
         }
@@ -1116,11 +1322,25 @@ mod tests {
         let path = dir.path().join("meter.sqlite3");
         let store = ThroughputStore::open(&config(path.clone(), 3)).unwrap();
         for timeframe in 0..5 {
-            store.write(&[record(Some("mac"), Socket::Audio, timeframe, timeframe + 1, 0)]).unwrap();
+            store
+                .write(&[record(
+                    Some("mac"),
+                    Socket::Audio,
+                    timeframe,
+                    timeframe + 1,
+                    0,
+                )])
+                .unwrap();
         }
-        store.write(&[record(Some("win"), Socket::Audio, 5, 70, 0)]).unwrap();
-        store.write(&[record(None, Socket::Audio, 6, 80, 0)]).unwrap();
-        store.write(&[record(Some("mac"), Socket::Camera, 7, 0, 7)]).unwrap();
+        store
+            .write(&[record(Some("win"), Socket::Audio, 5, 70, 0)])
+            .unwrap();
+        store
+            .write(&[record(None, Socket::Audio, 6, 80, 0)])
+            .unwrap();
+        store
+            .write(&[record(Some("mac"), Socket::Camera, 7, 0, 7)])
+            .unwrap();
 
         let sent = |store: &ThroughputStore, target: Option<&str>, socket| -> Vec<u64> {
             store
@@ -1131,10 +1351,22 @@ mod tests {
                 .map(|r| r.sent_bytes)
                 .collect()
         };
-        assert_eq!(sent(&store, Some("mac"), Socket::Audio), [3, 4, 5], "the oldest go first");
-        assert_eq!(sent(&store, Some("win"), Socket::Audio), [70], "one target's cap is not another's");
+        assert_eq!(
+            sent(&store, Some("mac"), Socket::Audio),
+            [3, 4, 5],
+            "the oldest go first"
+        );
+        assert_eq!(
+            sent(&store, Some("win"), Socket::Audio),
+            [70],
+            "one target's cap is not another's"
+        );
         assert_eq!(sent(&store, None, Socket::Audio), [80], "nor the picker's");
-        assert_eq!(sent(&store, Some("mac"), Socket::Camera).len(), 1, "nor another socket's");
+        assert_eq!(
+            sent(&store, Some("mac"), Socket::Camera).len(),
+            1,
+            "nor another socket's"
+        );
         drop(store);
 
         // A cap lowered between runs applies to what the database already holds.
@@ -1151,7 +1383,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meter.sqlite3");
         let store = ThroughputStore::open(&config(path.clone(), 10)).unwrap();
-        store.write(&[record(Some("mac"), Socket::Session, 0, 1, 1)]).unwrap();
+        store
+            .write(&[record(Some("mac"), Socket::Session, 0, 1, 1)])
+            .unwrap();
         for suffix in ["", "-wal", "-shm"] {
             let file = PathBuf::from(format!("{}{suffix}", path.display()));
             let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
@@ -1166,29 +1400,53 @@ mod tests {
         let text = dir.path().join("notes.txt");
         std::fs::write(&text, b"not a database, but somebody's").unwrap();
         let error = ThroughputStore::open(&config(text.clone(), 1)).expect_err("not SQLite");
-        assert!(format!("{error:#}").contains("is not a zdesk throughput database"), "{error:#}");
-        assert_eq!(std::fs::read(&text).unwrap(), b"not a database, but somebody's");
+        assert!(
+            format!("{error:#}").contains("is not a zdesk throughput database"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&text).unwrap(),
+            b"not a database, but somebody's"
+        );
 
         let empty = dir.path().join("empty.sqlite3");
         std::fs::write(&empty, b"").unwrap();
-        let error = ThroughputStore::open(&config(empty.clone(), 1)).expect_err("an existing empty file");
-        assert!(format!("{error:#}").contains("is not a zdesk throughput database"), "{error:#}");
+        let error =
+            ThroughputStore::open(&config(empty.clone(), 1)).expect_err("an existing empty file");
+        assert!(
+            format!("{error:#}").contains("is not a zdesk throughput database"),
+            "{error:#}"
+        );
         assert_eq!(std::fs::read(&empty).unwrap(), b"");
 
         let other = dir.path().join("other.sqlite3");
-        Connection::open(&other).unwrap().execute_batch("CREATE TABLE throughput (x INTEGER)").unwrap();
+        Connection::open(&other)
+            .unwrap()
+            .execute_batch("CREATE TABLE throughput (x INTEGER)")
+            .unwrap();
         let before = std::fs::read(&other).unwrap();
-        let error = ThroughputStore::open(&config(other.clone(), 1)).expect_err("another program's SQLite");
-        assert!(format!("{error:#}").contains("is not a zdesk throughput database"), "{error:#}");
+        let error =
+            ThroughputStore::open(&config(other.clone(), 1)).expect_err("another program's SQLite");
+        assert!(
+            format!("{error:#}").contains("is not a zdesk throughput database"),
+            "{error:#}"
+        );
         assert_eq!(std::fs::read(&other).unwrap(), before);
 
         let older = dir.path().join("older.sqlite3");
         let connection = Connection::open(&older).unwrap();
-        connection.execute_batch("CREATE TABLE throughput (x INTEGER)").unwrap();
-        connection.pragma_update(None, "application_id", APPLICATION_ID).unwrap();
+        connection
+            .execute_batch("CREATE TABLE throughput (x INTEGER)")
+            .unwrap();
+        connection
+            .pragma_update(None, "application_id", APPLICATION_ID)
+            .unwrap();
         connection.pragma_update(None, "user_version", 1).unwrap();
         drop(connection);
         let error = ThroughputStore::open(&config(older, 1)).expect_err("another schema version");
-        assert!(format!("{error:#}").contains("holds throughput schema 1"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("holds throughput schema 1"),
+            "{error:#}"
+        );
     }
 }

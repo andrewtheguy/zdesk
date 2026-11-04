@@ -67,46 +67,286 @@ enum Kind {
 /// [MS-RDPEGFX] 2.2.5.2.1.1, in the order FreeRDP walks it: by prefix length, so the
 /// first row whose prefix matches is the row.
 const TOKENS: [Token; 40] = [
-    Token { length: 1, code: 0, bits: 8, kind: Kind::Literal, base: 0 },
-    Token { length: 5, code: 17, bits: 5, kind: Kind::Match, base: 0 },
-    Token { length: 5, code: 18, bits: 7, kind: Kind::Match, base: 32 },
-    Token { length: 5, code: 19, bits: 9, kind: Kind::Match, base: 160 },
-    Token { length: 5, code: 20, bits: 10, kind: Kind::Match, base: 672 },
-    Token { length: 5, code: 21, bits: 12, kind: Kind::Match, base: 1696 },
-    Token { length: 5, code: 24, bits: 0, kind: Kind::Literal, base: 0x00 },
-    Token { length: 5, code: 25, bits: 0, kind: Kind::Literal, base: 0x01 },
-    Token { length: 6, code: 44, bits: 14, kind: Kind::Match, base: 5792 },
-    Token { length: 6, code: 45, bits: 15, kind: Kind::Match, base: 22176 },
-    Token { length: 6, code: 52, bits: 0, kind: Kind::Literal, base: 0x02 },
-    Token { length: 6, code: 53, bits: 0, kind: Kind::Literal, base: 0x03 },
-    Token { length: 6, code: 54, bits: 0, kind: Kind::Literal, base: 0xFF },
-    Token { length: 7, code: 92, bits: 18, kind: Kind::Match, base: 54944 },
-    Token { length: 7, code: 93, bits: 20, kind: Kind::Match, base: 317_088 },
-    Token { length: 7, code: 110, bits: 0, kind: Kind::Literal, base: 0x04 },
-    Token { length: 7, code: 111, bits: 0, kind: Kind::Literal, base: 0x05 },
-    Token { length: 7, code: 112, bits: 0, kind: Kind::Literal, base: 0x06 },
-    Token { length: 7, code: 113, bits: 0, kind: Kind::Literal, base: 0x07 },
-    Token { length: 7, code: 114, bits: 0, kind: Kind::Literal, base: 0x08 },
-    Token { length: 7, code: 115, bits: 0, kind: Kind::Literal, base: 0x09 },
-    Token { length: 7, code: 116, bits: 0, kind: Kind::Literal, base: 0x0A },
-    Token { length: 7, code: 117, bits: 0, kind: Kind::Literal, base: 0x0B },
-    Token { length: 7, code: 118, bits: 0, kind: Kind::Literal, base: 0x3A },
-    Token { length: 7, code: 119, bits: 0, kind: Kind::Literal, base: 0x3B },
-    Token { length: 7, code: 120, bits: 0, kind: Kind::Literal, base: 0x3C },
-    Token { length: 7, code: 121, bits: 0, kind: Kind::Literal, base: 0x3D },
-    Token { length: 7, code: 122, bits: 0, kind: Kind::Literal, base: 0x3E },
-    Token { length: 7, code: 123, bits: 0, kind: Kind::Literal, base: 0x3F },
-    Token { length: 7, code: 124, bits: 0, kind: Kind::Literal, base: 0x40 },
-    Token { length: 7, code: 125, bits: 0, kind: Kind::Literal, base: 0x80 },
-    Token { length: 8, code: 188, bits: 20, kind: Kind::Match, base: 1_365_664 },
-    Token { length: 8, code: 189, bits: 21, kind: Kind::Match, base: 2_414_240 },
-    Token { length: 8, code: 252, bits: 0, kind: Kind::Literal, base: 0x0C },
-    Token { length: 8, code: 253, bits: 0, kind: Kind::Literal, base: 0x38 },
-    Token { length: 8, code: 254, bits: 0, kind: Kind::Literal, base: 0x39 },
-    Token { length: 8, code: 255, bits: 0, kind: Kind::Literal, base: 0x66 },
-    Token { length: 9, code: 380, bits: 22, kind: Kind::Match, base: 4_511_392 },
-    Token { length: 9, code: 381, bits: 23, kind: Kind::Match, base: 8_705_696 },
-    Token { length: 9, code: 382, bits: 24, kind: Kind::Match, base: 17_094_304 },
+    Token {
+        length: 1,
+        code: 0,
+        bits: 8,
+        kind: Kind::Literal,
+        base: 0,
+    },
+    Token {
+        length: 5,
+        code: 17,
+        bits: 5,
+        kind: Kind::Match,
+        base: 0,
+    },
+    Token {
+        length: 5,
+        code: 18,
+        bits: 7,
+        kind: Kind::Match,
+        base: 32,
+    },
+    Token {
+        length: 5,
+        code: 19,
+        bits: 9,
+        kind: Kind::Match,
+        base: 160,
+    },
+    Token {
+        length: 5,
+        code: 20,
+        bits: 10,
+        kind: Kind::Match,
+        base: 672,
+    },
+    Token {
+        length: 5,
+        code: 21,
+        bits: 12,
+        kind: Kind::Match,
+        base: 1696,
+    },
+    Token {
+        length: 5,
+        code: 24,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x00,
+    },
+    Token {
+        length: 5,
+        code: 25,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x01,
+    },
+    Token {
+        length: 6,
+        code: 44,
+        bits: 14,
+        kind: Kind::Match,
+        base: 5792,
+    },
+    Token {
+        length: 6,
+        code: 45,
+        bits: 15,
+        kind: Kind::Match,
+        base: 22176,
+    },
+    Token {
+        length: 6,
+        code: 52,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x02,
+    },
+    Token {
+        length: 6,
+        code: 53,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x03,
+    },
+    Token {
+        length: 6,
+        code: 54,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0xFF,
+    },
+    Token {
+        length: 7,
+        code: 92,
+        bits: 18,
+        kind: Kind::Match,
+        base: 54944,
+    },
+    Token {
+        length: 7,
+        code: 93,
+        bits: 20,
+        kind: Kind::Match,
+        base: 317_088,
+    },
+    Token {
+        length: 7,
+        code: 110,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x04,
+    },
+    Token {
+        length: 7,
+        code: 111,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x05,
+    },
+    Token {
+        length: 7,
+        code: 112,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x06,
+    },
+    Token {
+        length: 7,
+        code: 113,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x07,
+    },
+    Token {
+        length: 7,
+        code: 114,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x08,
+    },
+    Token {
+        length: 7,
+        code: 115,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x09,
+    },
+    Token {
+        length: 7,
+        code: 116,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x0A,
+    },
+    Token {
+        length: 7,
+        code: 117,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x0B,
+    },
+    Token {
+        length: 7,
+        code: 118,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3A,
+    },
+    Token {
+        length: 7,
+        code: 119,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3B,
+    },
+    Token {
+        length: 7,
+        code: 120,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3C,
+    },
+    Token {
+        length: 7,
+        code: 121,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3D,
+    },
+    Token {
+        length: 7,
+        code: 122,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3E,
+    },
+    Token {
+        length: 7,
+        code: 123,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x3F,
+    },
+    Token {
+        length: 7,
+        code: 124,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x40,
+    },
+    Token {
+        length: 7,
+        code: 125,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x80,
+    },
+    Token {
+        length: 8,
+        code: 188,
+        bits: 20,
+        kind: Kind::Match,
+        base: 1_365_664,
+    },
+    Token {
+        length: 8,
+        code: 189,
+        bits: 21,
+        kind: Kind::Match,
+        base: 2_414_240,
+    },
+    Token {
+        length: 8,
+        code: 252,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x0C,
+    },
+    Token {
+        length: 8,
+        code: 253,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x38,
+    },
+    Token {
+        length: 8,
+        code: 254,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x39,
+    },
+    Token {
+        length: 8,
+        code: 255,
+        bits: 0,
+        kind: Kind::Literal,
+        base: 0x66,
+    },
+    Token {
+        length: 9,
+        code: 380,
+        bits: 22,
+        kind: Kind::Match,
+        base: 4_511_392,
+    },
+    Token {
+        length: 9,
+        code: 381,
+        bits: 23,
+        kind: Kind::Match,
+        base: 8_705_696,
+    },
+    Token {
+        length: 9,
+        code: 382,
+        bits: 24,
+        kind: Kind::Match,
+        base: 17_094_304,
+    },
 ];
 
 /// The decompressor for one channel: its history, and nothing else.
@@ -122,7 +362,12 @@ impl Default for Zgfx {
 
 impl Zgfx {
     pub fn new() -> Self {
-        Self { history: History { ring: vec![0; HISTORY_SIZE], at: 0 } }
+        Self {
+            history: History {
+                ring: vec![0; HISTORY_SIZE],
+                at: 0,
+            },
+        }
     }
 
     /// Unwrap one channel PDU into `out`, which is cleared first.
@@ -181,14 +426,25 @@ impl Zgfx {
         // The last byte's low three bits say how many bits of the one before it are
         // padding. Its five high bits are reserved ([MS-RDPEGFX] 3.1.9.1.2.4).
         let Some((&trailer, body)) = data.split_last() else {
-            return Err(Malformed::Short { what: WHAT, len: segment.len(), at: r.at(), need: 1 });
+            return Err(Malformed::Short {
+                what: WHAT,
+                len: segment.len(),
+                at: r.at(),
+                need: 1,
+            });
         };
         let padding = trailer & 0x07;
         let bits = body.len() * 8;
         if usize::from(padding) > bits {
             return Err(r.refuse("a padding count past the segment's bits", padding));
         }
-        let mut bits = Bits { bytes: body, at: 0, acc: 0, have: 0, remaining: bits - usize::from(padding) };
+        let mut bits = Bits {
+            bytes: body,
+            at: 0,
+            acc: 0,
+            have: 0,
+            remaining: bits - usize::from(padding),
+        };
         let start = out.len();
         while bits.remaining > 0 {
             let token = bits.token()?;
@@ -306,7 +562,10 @@ impl Bits<'_> {
         self.remaining = self.remaining.saturating_sub(self.have as usize);
         self.have = 0;
         self.acc = 0;
-        let end = self.at.checked_add(count).filter(|end| *end <= self.bytes.len());
+        let end = self
+            .at
+            .checked_add(count)
+            .filter(|end| *end <= self.bytes.len());
         let Some(end) = end.filter(|_| count * 8 <= self.remaining) else {
             return Err(Malformed::Short {
                 what: WHAT,
@@ -322,7 +581,11 @@ impl Bits<'_> {
     }
 
     fn refuse(&self, field: &'static str, value: u32) -> Malformed {
-        Malformed::Refused { what: WHAT, field, value: u64::from(value) }
+        Malformed::Refused {
+            what: WHAT,
+            field,
+            value: u64::from(value),
+        }
     }
 }
 
@@ -397,8 +660,7 @@ mod tests {
     /// The sample in [MS-RDPEGFX] 4.1, as FreeRDP's own tests carry it.
     const FOX: &[u8] = b"The quick brown fox jumps over the lazy dog";
 
-    const FOX_SINGLE: &[u8] =
-        b"\xE0\x04\x54\x68\x65\x20\x71\x75\x69\x63\x6B\x20\x62\x72\x6F\x77\
+    const FOX_SINGLE: &[u8] = b"\xE0\x04\x54\x68\x65\x20\x71\x75\x69\x63\x6B\x20\x62\x72\x6F\x77\
           \x6E\x20\x66\x6F\x78\x20\x6A\x75\x6D\x70\x73\x20\x6F\x76\x65\x72\
           \x20\x74\x68\x65\x20\x6C\x61\x7A\x79\x20\x64\x6F\x67";
 
@@ -499,8 +761,17 @@ mod tests {
 
     #[test]
     fn a_descriptor_that_is_neither_single_nor_multipart_is_refused() {
-        let err = Zgfx::new().decompress(&[0xE2, 0x04, 1], &mut Vec::new()).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a descriptor", value: 0xE2, .. }));
+        let err = Zgfx::new()
+            .decompress(&[0xE2, 0x04, 1], &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "a descriptor",
+                value: 0xE2,
+                ..
+            }
+        ));
         let err = Zgfx::new().decompress(&[], &mut Vec::new()).unwrap_err();
         assert!(matches!(err, Malformed::Short { .. }));
     }
@@ -519,17 +790,29 @@ mod tests {
     /// across the seam reads both halves.
     #[test]
     fn the_history_ring_wraps_around() {
-        let mut history = History { ring: vec![0; 8], at: 6 };
+        let mut history = History {
+            ring: vec![0; 8],
+            at: 6,
+        };
         history.write(b"abcd");
         assert_eq!(history.ring, b"cd\0\0\0\0ab");
         assert_eq!(history.at, 2);
-        let bits = Bits { bytes: &[], at: 0, acc: 0, have: 0, remaining: 0 };
+        let bits = Bits {
+            bytes: &[],
+            at: 0,
+            acc: 0,
+            have: 0,
+            remaining: 0,
+        };
         let mut out = Vec::new();
         history.copy_match(&bits, 4, 4, &mut out).unwrap();
         assert_eq!(out, b"abcd");
         // A write longer than the ring keeps only its tail.
         history.write(b"0123456789");
-        assert_eq!(history.ring.iter().filter(|b| b.is_ascii_digit()).count(), 8);
+        assert_eq!(
+            history.ring.iter().filter(|b| b.is_ascii_digit()).count(),
+            8
+        );
         let mut out = Vec::new();
         history.copy_match(&bits, 8, 8, &mut out).unwrap();
         assert_eq!(out, b"23456789");

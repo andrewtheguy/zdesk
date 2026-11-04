@@ -44,7 +44,9 @@ fn mock_value(value: Option<&OsStr>) -> anyhow::Result<bool> {
     match value {
         None => Ok(false),
         Some(value) if value == "mock" => Ok(true),
-        Some(value) => anyhow::bail!("{MOCK_ENV} is {value:?}; the only value it takes is \"mock\""),
+        Some(value) => {
+            anyhow::bail!("{MOCK_ENV} is {value:?}; the only value it takes is \"mock\"")
+        }
     }
 }
 
@@ -85,7 +87,9 @@ fn init_store() -> anyhow::Result<()> {
     let mut installed = INSTALLED.lock().unwrap();
     if !*installed {
         if mocked()? {
-            keyring_core::set_default_store(keyring_core::mock::Store::new().context("no mock keychain")?);
+            keyring_core::set_default_store(
+                keyring_core::mock::Store::new().context("no mock keychain")?,
+            );
         } else {
             native_store().map_err(|error| anyhow::anyhow!("no keychain: {error}"))?;
         }
@@ -116,7 +120,9 @@ fn native_store() -> Result<(), String> {
 #[cfg(test)]
 pub(crate) fn empty_test_store() -> std::sync::MutexGuard<'static, ()> {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let guard = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     match entry().unwrap().delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => {}
         Err(error) => panic!("cannot empty the mock store: {error}"),
@@ -151,11 +157,22 @@ mod tests {
         assert!(!vendor.contains("Mock"), "{vendor}");
         let account = format!("test-{}", std::process::id());
         let entry = keyring_core::Entry::new(SERVICE, &account).unwrap();
-        entry.set_password("correct horse battery staple").expect("write the real store");
+        entry
+            .set_password("correct horse battery staple")
+            .expect("write the real store");
         let cleanup = Cleanup(entry);
-        assert_eq!(cleanup.0.get_password().unwrap(), "correct horse battery staple");
-        cleanup.0.delete_credential().expect("delete from the real store");
-        assert!(matches!(cleanup.0.get_password(), Err(keyring_core::Error::NoEntry)));
+        assert_eq!(
+            cleanup.0.get_password().unwrap(),
+            "correct horse battery staple"
+        );
+        cleanup
+            .0
+            .delete_credential()
+            .expect("delete from the real store");
+        assert!(matches!(
+            cleanup.0.get_password(),
+            Err(keyring_core::Error::NoEntry)
+        ));
         eprintln!("round-tripped through {vendor}");
     }
 
@@ -166,7 +183,10 @@ mod tests {
         assert!(mock_value(Some(OsStr::new("mock"))).unwrap());
         for wrong in ["", "Mock", "memory", "1"] {
             let error = mock_value(Some(OsStr::new(wrong))).unwrap_err();
-            assert!(format!("{error:#}").contains("only value it takes"), "{wrong:?}: {error:#}");
+            assert!(
+                format!("{error:#}").contains("only value it takes"),
+                "{wrong:?}: {error:#}"
+            );
         }
     }
 
@@ -177,7 +197,10 @@ mod tests {
         let _store = empty_test_store();
         init_store().unwrap();
         let vendor = keyring_core::get_default_store().unwrap().vendor();
-        assert!(vendor.contains("Mock"), "tests must not reach a real store, got {vendor}");
+        assert!(
+            vendor.contains("Mock"),
+            "tests must not reach a real store, got {vendor}"
+        );
         save(&MasterPassword::new("in memory only".to_owned()).unwrap()).unwrap();
         assert_eq!(load().unwrap().unwrap().as_str(), "in memory only");
     }

@@ -126,7 +126,8 @@ impl LinkFeedback {
     /// Record that a passed frame was handed to the browser's queue at `at` —
     /// what [`Self::hold`] tells the batches ahead of it from its own.
     pub fn handed(&self, at: Instant) {
-        self.handed_us.store(micros_since_epoch(at), Ordering::Relaxed);
+        self.handed_us
+            .store(micros_since_epoch(at), Ordering::Relaxed);
     }
 
     /// Record the link's distance: the smallest ping round trip over the paint
@@ -222,7 +223,10 @@ mod tests {
         );
 
         // A batch younger than the baseline is not lag at all.
-        assert_eq!(feedback.lag(sent + Duration::from_millis(10)), Duration::ZERO);
+        assert_eq!(
+            feedback.lag(sent + Duration::from_millis(10)),
+            Duration::ZERO
+        );
     }
 
     #[test]
@@ -258,12 +262,24 @@ mod tests {
         feedback.baseline(20);
         feedback.owed_since(Some(sent));
         assert!(feedback.lag(later) > Duration::from_millis(370));
-        assert_eq!(feedback.hold(later), Duration::ZERO, "a frame not handed over yet was held");
+        assert_eq!(
+            feedback.hold(later),
+            Duration::ZERO,
+            "a frame not handed over yet was held"
+        );
         feedback.handed(handed);
-        assert_eq!(feedback.hold(later), feedback.lag(later), "the batch ahead of the frame was not held for");
+        assert_eq!(
+            feedback.hold(later),
+            feedback.lag(later),
+            "the batch ahead of the frame was not held for"
+        );
         // The frame's own batch, counted or not, is no queue ahead of it.
         feedback.owed_since(Some(handed));
-        assert_eq!(feedback.hold(later), Duration::ZERO, "a frame owed alone was held for its own delivery");
+        assert_eq!(
+            feedback.hold(later),
+            Duration::ZERO,
+            "a frame owed alone was held for its own delivery"
+        );
         feedback.owed_since(None);
         assert_eq!(feedback.hold(later), Duration::ZERO);
         feedback.owed_since(Some(sent));

@@ -76,13 +76,22 @@ mod tests {
 
     fn shape(width: u16, height: u16) -> Shape {
         let rgba = vec![7; usize::from(width) * usize::from(height) * 4];
-        Shape { width, height, hotspot_x: 3, hotspot_y: 4, rgba }
+        Shape {
+            width,
+            height,
+            hotspot_x: 3,
+            hotspot_y: 4,
+            rgba,
+        }
     }
 
     #[test]
     fn a_pointer_keeps_its_hotspot_and_pixels() {
         let image = CursorImage::from(shape(2, 3));
-        assert_eq!((image.width, image.height, image.hotspot_x, image.hotspot_y), (2, 3, 3, 4));
+        assert_eq!(
+            (image.width, image.height, image.hotspot_x, image.hotspot_y),
+            (2, 3, 3, 4)
+        );
         assert_eq!(image.rgba, vec![7; 24]);
     }
 

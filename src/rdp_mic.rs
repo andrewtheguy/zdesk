@@ -34,7 +34,10 @@ impl MicrophoneSink for Signals {
     fn negotiated(&self, _version: u32) {}
 
     fn opened(&self, format: Format) {
-        self.0.signal(MicSignal::Open(MicFormat { channels: format.channels, sample_rate: format.sample_rate }));
+        self.0.signal(MicSignal::Open(MicFormat {
+            channels: format.channels,
+            sample_rate: format.sample_rate,
+        }));
     }
 
     fn closed(&self) {
@@ -74,11 +77,17 @@ mod tests {
         let mut signals = bridge.subscribe();
         let sink = sink(Arc::clone(&bridge));
         sink.negotiated(2);
-        sink.opened(Format { channels: 1, sample_rate: 16_000 });
+        sink.opened(Format {
+            channels: 1,
+            sample_rate: 16_000,
+        });
         sink.closed();
         assert_eq!(
             signals.try_recv(),
-            Ok(MicSignal::Open(MicFormat { channels: 1, sample_rate: 16_000 }))
+            Ok(MicSignal::Open(MicFormat {
+                channels: 1,
+                sample_rate: 16_000
+            }))
         );
         assert_eq!(signals.try_recv(), Ok(MicSignal::Close));
         assert_eq!(signals.try_recv(), Err(TryRecvError::Empty));

@@ -40,8 +40,6 @@ use crate::protocol::{
     MAX_CLIPBOARD_BYTES, MAX_CURSOR_DIM, MouseButton, Painted, ServerMsg, UNSCALED, WheelUnit,
 };
 use crate::rdp_camera;
-use crate::rdp_mic;
-use crate::session::Uplinks;
 use crate::rdp_client::proto::gfx::{BitmapCache, H264};
 use crate::rdp_client::proto::rdpsnd;
 use crate::rdp_client::{
@@ -49,6 +47,8 @@ use crate::rdp_client::{
     Placed, Session,
 };
 use crate::rdp_clipboard::{self, CF_UNICODETEXT};
+use crate::rdp_mic;
+use crate::session::Uplinks;
 use crate::shadow::{Rect, Shadow};
 
 // A layout — a size, a density, or both — the remote has been asked for and has
@@ -90,7 +90,10 @@ struct PendingLayout {
 
 impl PendingLayout {
     fn new(layout: Layout) -> Self {
-        Self { layout, attempts: 0 }
+        Self {
+            layout,
+            attempts: 0,
+        }
     }
 
     fn wait_again(&mut self) -> Option<Duration> {
@@ -172,9 +175,16 @@ pub async fn run(
     // The picture ceiling is the graphics pipeline's, a stream of the whole desktop
     // passed to the browser: every layout is held under it, and a host that answers
     // past it is refused. The bitmap path's tiles are coded here at any size.
-    let oversize = if config.egfx() { Oversize::Refuse } else { Oversize::Shown };
+    let oversize = if config.egfx() {
+        Oversize::Refuse
+    } else {
+        Oversize::Shown
+    };
     let sink = VideoSink::new("rdp", frame_tx, feedback, oversize);
-    session(config, choices, plan, display, input_rx, audio, uplinks, &sink).await;
+    session(
+        config, choices, plan, display, input_rx, audio, uplinks, &sink,
+    )
+    .await;
     sink.finish().await;
 }
 
@@ -220,7 +230,9 @@ async fn session(
         (u32::from(w), u32::from(h))
     });
     let opening = opening_layout(&config, sizing, display);
-    let (session, mut events) = Session::start(connect_config(&config, choices, opening, plan, audio, &uplinks));
+    let (session, mut events) = Session::start(connect_config(
+        &config, choices, opening, plan, audio, &uplinks,
+    ));
     // The feeds exist from here, so the camera and mic sockets' traffic has somewhere to
     // go before the desktop does: a plug made while the host is still connecting waits in
     // the session's queue for the enumeration channel.
@@ -241,7 +253,12 @@ async fn session(
     // else is taken to be at 1x, and the attachment's `HostDisplay` asks again
     // through Display Control.
     let asked = u32::from(config.virtual_displays);
-    let mut view = View::opened(asked, opening.adjusted(), (width, height), choices.placement);
+    let mut view = View::opened(
+        asked,
+        opening.adjusted(),
+        (width, height),
+        choices.placement,
+    );
     let applied = if (u32::from(width), u32::from(height))
         == span(opening.adjusted(), view.columns, choices.placement)
     {
@@ -256,7 +273,15 @@ async fn session(
     );
 
     let (w, h) = view.size();
-    if sink.msg(ServerMsg::Resize { w, h, scale: applied.of(view.active).scale() }).await.is_err() {
+    if sink
+        .msg(ServerMsg::Resize {
+            w,
+            h,
+            scale: applied.of(view.active).scale(),
+        })
+        .await
+        .is_err()
+    {
         return; // browser already gone
     }
     // A passed pipeline is composed whole in the browser: which part of it the
@@ -265,7 +290,11 @@ async fn session(
         return; // browser already gone
     }
     // No RDP server ships for macOS, so a Mac never answers here.
-    if sink.msg(ServerMsg::RemoteOs { macos: false }).await.is_err() {
+    if sink
+        .msg(ServerMsg::RemoteOs { macos: false })
+        .await
+        .is_err()
+    {
         return; // browser already gone
     }
     if let Some(msg) = view.displays(applied)
@@ -294,7 +323,11 @@ async fn session(
     .await
     {
         warn!("rdp: session error: {e:#}");
-        let _ = sink.msg(ServerMsg::Error { message: format!("RDP session ended: {e}") }).await;
+        let _ = sink
+            .msg(ServerMsg::Error {
+                message: format!("RDP session ended: {e}"),
+            })
+            .await;
     }
     info!("rdp: session terminated");
 }
@@ -314,7 +347,11 @@ async fn await_desktop(
     let dest = engine::host_port(&config.host, config.port);
     let report = async |message: String| {
         warn!("rdp: connect failed: {message}");
-        let _ = sink.msg(ServerMsg::Error { message: format!("RDP connect failed: {message}") }).await;
+        let _ = sink
+            .msg(ServerMsg::Error {
+                message: format!("RDP connect failed: {message}"),
+            })
+            .await;
     };
 
     // One deadline for the whole wait rather than one per event. The budget is
@@ -351,7 +388,10 @@ async fn await_desktop(
             // this does not happen; waiting is still the right answer to one.
             Ok(Some(_)) => continue,
             Ok(None) => {
-                report(format!("the {dest} session ended before it reported a desktop")).await;
+                report(format!(
+                    "the {dest} session ended before it reported a desktop"
+                ))
+                .await;
                 return None;
             }
             Err(_) => {
@@ -387,7 +427,9 @@ async fn await_desktop(
 fn opening_layout(config: &TargetConfig, sizing: Sizing, display: Option<HostDisplay>) -> Layout {
     let (width, height) = config.opening_size(sizing, display);
     let density = display.map_or(Density::One, |screen| Density::from_host(screen.scale));
-    Layout::points(u32::from(width), u32::from(height)).at_density(density).held(config.egfx())
+    Layout::points(u32::from(width), u32::from(height))
+        .at_density(density)
+        .held(config.egfx())
 }
 
 /// Everything the RDP client needs to open this target's session.
@@ -426,7 +468,11 @@ fn connect_config(
             (true, _) => H264::WholeDesktop,
             (false, _) => H264::Refused,
         },
-        cache: if plan.rdp_small_cache { BitmapCache::Small } else { BitmapCache::Large },
+        cache: if plan.rdp_small_cache {
+            BitmapCache::Small
+        } else {
+            BitmapCache::Large
+        },
         // Every session that offers the pipeline takes the host's network
         // detection: MS-RDPBCGR 2.2.1.3.2 has the pipeline's flag require it, and
         // the detection alone changes nothing a Windows host draws.
@@ -440,8 +486,14 @@ fn connect_config(
         multitransport: plan.rdp_h264,
         paced: plan.rdp_h264,
         audio: audio.map(|bridge| Box::new(Sound(bridge)) as Box<dyn AudioSink>),
-        camera: uplinks.camera.as_ref().map(|bridge| rdp_camera::camera(Arc::clone(bridge))),
-        microphone: uplinks.microphone.as_ref().map(|bridge| rdp_mic::sink(Arc::clone(bridge))),
+        camera: uplinks
+            .camera
+            .as_ref()
+            .map(|bridge| rdp_camera::camera(Arc::clone(bridge))),
+        microphone: uplinks
+            .microphone
+            .as_ref()
+            .map(|bridge| rdp_mic::sink(Arc::clone(bridge))),
     }
 }
 
@@ -530,7 +582,6 @@ impl Density {
             Self::Two => 2.0,
         }
     }
-
 }
 
 /// A desktop the server is being asked for: the size in pixels, and the density
@@ -573,13 +624,21 @@ impl Second {
 
     /// A window of `w` by `h` points, at 1x.
     fn points(w: u32, h: u32) -> Self {
-        Self { w, h, density: Density::One }
+        Self {
+            w,
+            h,
+            density: Density::One,
+        }
     }
 
     /// The same number of points at another density.
     fn at_density(self, density: Density) -> Self {
         let px = |v: u32| v * density.percent() / self.density.percent();
-        Self { w: px(self.w), h: px(self.h), density }
+        Self {
+            w: px(self.w),
+            h: px(self.h),
+            density,
+        }
     }
 
     fn sized(self, (w, h): (u32, u32)) -> Self {
@@ -596,7 +655,10 @@ struct Densities {
 
 impl Densities {
     fn even(density: Density) -> Self {
-        Self { first: density, second: density }
+        Self {
+            first: density,
+            second: density,
+        }
     }
 
     /// `column`'s: the first's, or every later monitor's.
@@ -608,34 +670,57 @@ impl Densities {
 impl Layout {
     /// A window of `w` by `h` points, at 1x.
     fn points(w: u32, h: u32) -> Self {
-        Self { w, h, density: Density::One, second: None }
+        Self {
+            w,
+            h,
+            density: Density::One,
+            second: None,
+        }
     }
 
     /// `second`, as `None` when it is the first monitor over again.
     fn normalized(self) -> Self {
-        let first = Second { w: self.w, h: self.h, density: self.density };
-        Self { second: self.second.filter(|second| *second != first), ..self }
+        let first = Second {
+            w: self.w,
+            h: self.h,
+            density: self.density,
+        };
+        Self {
+            second: self.second.filter(|second| *second != first),
+            ..self
+        }
     }
 
     /// The second monitor, whether or not it is the first over again.
     fn second(self) -> Second {
-        self.second.unwrap_or(Second { w: self.w, h: self.h, density: self.density })
+        self.second.unwrap_or(Second {
+            w: self.w,
+            h: self.h,
+            density: self.density,
+        })
     }
 
     /// Each monitor's density.
     fn densities(self) -> Densities {
-        Densities { first: self.density, second: self.second().density }
+        Densities {
+            first: self.density,
+            second: self.second().density,
+        }
     }
 
     /// Each monitor's size, the first first, for a layout of `monitors`.
     fn row(self, monitors: u16) -> Vec<(u32, u32)> {
         let second = self.second().size();
-        (0..monitors.max(1)).map(|index| if index == 0 { (self.w, self.h) } else { second }).collect()
+        (0..monitors.max(1))
+            .map(|index| if index == 0 { (self.w, self.h) } else { second })
+            .collect()
     }
 
     /// Each monitor's `DesktopScaleFactor`, in [`Self::row`]'s order.
     fn scales(self, monitors: u16) -> Vec<u32> {
-        (0..monitors.max(1)).map(|index| self.densities().of(index).percent()).collect()
+        (0..monitors.max(1))
+            .map(|index| self.densities().of(index).percent())
+            .collect()
     }
 
     /// The same request at the size the protocol would actually accept: an even
@@ -646,8 +731,16 @@ impl Layout {
     /// number different from the one that will be sent asks forever.
     fn adjusted(self) -> Self {
         let (w, h) = client::sanitise_size(self.w, self.h);
-        let second = self.second.map(|second| second.sized(client::sanitise_size(second.w, second.h)));
-        Self { w, h, second, ..self }.normalized()
+        let second = self
+            .second
+            .map(|second| second.sized(client::sanitise_size(second.w, second.h)));
+        Self {
+            w,
+            h,
+            second,
+            ..self
+        }
+        .normalized()
     }
 
     /// The same desktop — the same number of *points* — re-expressed at another
@@ -669,7 +762,13 @@ impl Layout {
             return self;
         }
         let px = |v: u32| v * density.percent() / self.density.percent();
-        Self { w: px(self.w), h: px(self.h), density, second: self.second }.normalized()
+        Self {
+            w: px(self.w),
+            h: px(self.h),
+            density,
+            second: self.second,
+        }
+        .normalized()
     }
 
     /// The same request held under the video stream's picture ceiling, where
@@ -690,11 +789,19 @@ impl Layout {
             return self;
         }
         let (w, h) = crate::video::fit_ceiling(self.size());
-        let second = self.second.map(|second| second.sized(crate::video::fit_ceiling(second.size())));
+        let second = self
+            .second
+            .map(|second| second.sized(crate::video::fit_ceiling(second.size())));
         if (w, h) != self.size() || second != self.second {
             info!("rdp: holding {self} under the video stream's picture ceiling");
         }
-        Self { w, h, second, ..self }.normalized()
+        Self {
+            w,
+            h,
+            second,
+            ..self
+        }
+        .normalized()
     }
 
     fn size(self) -> (u32, u32) {
@@ -705,7 +812,11 @@ impl Layout {
     /// is `open`, whose window and screen it follows, and otherwise whatever it
     /// already was, the first over again included.
     fn tab_second(self, open: bool) -> Option<Second> {
-        if open { Some(self.second()) } else { self.second }
+        if open {
+            Some(self.second())
+        } else {
+            self.second
+        }
     }
 
     /// The same first monitor, with `second` as the second.
@@ -836,7 +947,11 @@ impl View {
             columns,
             sizes,
             origins,
-            active: if self.active < columns { self.active } else { 0 },
+            active: if self.active < columns {
+                self.active
+            } else {
+                0
+            },
             // A second monitor the host adds starts shown beside the first, as
             // one it opened with does, unless one display alone was picked.
             all: columns > 1 && (self.all || (self.columns <= 1 && !self.picked)),
@@ -875,7 +990,10 @@ impl View {
         (0..self.columns).fold((0, 0), |(w, h), column| {
             let (cw, ch) = self.column_size(column);
             let (left, top) = self.column_origin(column);
-            (w.max(left.saturating_add(cw)), h.max(top.saturating_add(ch)))
+            (
+                w.max(left.saturating_add(cw)),
+                h.max(top.saturating_add(ch)),
+            )
         })
     }
 
@@ -889,12 +1007,25 @@ impl View {
     /// on neither at the nearest edge of the nearest ([`engine::hold_on_display`]).
     fn desktop_point(self, column: u16, x: i32, y: i32) -> (u16, u16) {
         let (left, top) = self.column_origin(column);
-        let point = (x.saturating_add(i32::from(left)), y.saturating_add(i32::from(top)));
-        let mut columns = [engine::DisplayRect { x: 0, y: 0, w: 0, h: 0 }; COLUMNS];
+        let point = (
+            x.saturating_add(i32::from(left)),
+            y.saturating_add(i32::from(top)),
+        );
+        let mut columns = [engine::DisplayRect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        }; COLUMNS];
         let shown = usize::from(self.columns).min(COLUMNS);
         for (index, rect) in columns.iter_mut().enumerate().take(shown) {
             let ((x, y), (w, h)) = (self.origins[index], self.sizes[index]);
-            *rect = engine::DisplayRect { x: i32::from(x), y: i32::from(y), w: i32::from(w), h: i32::from(h) };
+            *rect = engine::DisplayRect {
+                x: i32::from(x),
+                y: i32::from(y),
+                w: i32::from(w),
+                h: i32::from(h),
+            };
         }
         let (x, y) = engine::hold_on_display(point, &columns[..shown], usize::from(column));
         (clamp_u16(x), clamp_u16(y))
@@ -903,7 +1034,10 @@ impl View {
     /// A position made on the canvas, held on the column it shows.
     fn held(self, x: i32, y: i32) -> (i32, i32) {
         let (w, h) = self.size();
-        (x.clamp(0, i32::from(w.max(1)) - 1), y.clamp(0, i32::from(h.max(1)) - 1))
+        (
+            x.clamp(0, i32::from(w.max(1)) - 1),
+            y.clamp(0, i32::from(h.max(1)) - 1),
+        )
     }
 
     /// The column shown in tab `display`, while *All Displays* is chosen: every
@@ -941,9 +1075,19 @@ impl View {
         let (w, h) = size(0);
         let second = (self.columns > 1).then(|| {
             let (w, h) = size(1);
-            Second { w, h, density: applied.second }
+            Second {
+                w,
+                h,
+                density: applied.second,
+            }
         });
-        Layout { w, h, density: applied.first, second }.normalized()
+        Layout {
+            w,
+            h,
+            density: applied.first,
+            second,
+        }
+        .normalized()
     }
 
     /// Take the picker's choice: `None` for an id the list does not have, else
@@ -959,7 +1103,9 @@ impl View {
             self.picked = false;
             return Some(moved);
         }
-        let column = u16::try_from(id).ok().filter(|column| *column < self.columns)?;
+        let column = u16::try_from(id)
+            .ok()
+            .filter(|column| *column < self.columns)?;
         let moved = column != self.active;
         self.active = column;
         self.all = false;
@@ -979,7 +1125,12 @@ impl View {
             let density = applied.of(column);
             let points = |pixels: u16| (f32::from(pixels) / density.scale()).round() as u32;
             let (w, h) = self.column_size(column);
-            format!("{}×{} at {}x", points(w), points(h), density.percent() / 100)
+            format!(
+                "{}×{} at {}x",
+                points(w),
+                points(h),
+                density.percent() / 100
+            )
         };
         let mut displays: Vec<DisplayInfo> = (0..self.columns)
             .map(|column| DisplayInfo {
@@ -1003,7 +1154,11 @@ impl View {
                 tab: None,
             });
         }
-        let active = if self.all { ALL_DISPLAYS } else { u32::from(self.active) };
+        let active = if self.all {
+            ALL_DISPLAYS
+        } else {
+            u32::from(self.active)
+        };
         Some(ServerMsg::Displays { active, displays })
     }
 }
@@ -1144,9 +1299,15 @@ impl Tab {
     /// column now is.
     async fn resized(&mut self, view: View, density: Density, composes: bool) {
         let (w, h) = view.column_size(self.column());
-        self.msg(ServerMsg::Resize { w, h, scale: density.scale() }).await;
+        self.msg(ServerMsg::Resize {
+            w,
+            h,
+            scale: density.scale(),
+        })
+        .await;
         if composes {
-            self.msg(graphics_view(view.column_rect(self.column()))).await;
+            self.msg(graphics_view(view.column_rect(self.column())))
+                .await;
         }
     }
 
@@ -1157,11 +1318,17 @@ impl Tab {
     /// own stream ([`Self::pass`]), from its next keyframe.
     async fn repaint(&mut self, view: View, density: Density, pointer: ServerMsg, composes: bool) {
         let (w, h) = view.column_size(self.column());
-        self.msg(ServerMsg::Resize { w, h, scale: density.scale() }).await;
+        self.msg(ServerMsg::Resize {
+            w,
+            h,
+            scale: density.scale(),
+        })
+        .await;
         self.msg(ServerMsg::RemoteOs { macos: false }).await;
         self.msg(pointer).await;
         if composes {
-            self.msg(graphics_view(view.column_rect(self.column()))).await;
+            self.msg(graphics_view(view.column_rect(self.column())))
+                .await;
         } else {
             self.sink.restart_pass();
         }
@@ -1214,7 +1381,9 @@ fn waits(passed: RdpPassed, whom: &str) -> bool {
         RdpPassed::Queued => false,
         RdpPassed::Waiting => true,
         RdpPassed::Refused(e) => {
-            warn!("rdp: a unit of the host's H.264 for {whom} was refused, waiting for a keyframe: {e:#}");
+            warn!(
+                "rdp: a unit of the host's H.264 for {whom} was refused, waiting for a keyframe: {e:#}"
+            );
             true
         }
     }
@@ -1264,14 +1433,19 @@ impl KeyframeAsks {
         let until = match (self.sent, self.owed) {
             (Some(sent), 1..) => sent + KEYFRAME_UNANSWERED,
             _ if now => at,
-            _ => self.answered.map_or(at, |answered| answered + KEYFRAME_AGAIN),
+            _ => self
+                .answered
+                .map_or(at, |answered| answered + KEYFRAME_AGAIN),
         };
         if at < until {
             self.defer(until, now);
             return false;
         }
         // Layouts unanswered this long went nowhere.
-        if self.sent.is_some_and(|sent| at >= sent + KEYFRAME_UNANSWERED) {
+        if self
+            .sent
+            .is_some_and(|sent| at >= sent + KEYFRAME_UNANSWERED)
+        {
             self.owed = 0;
         }
         self.sent(at);
@@ -1346,7 +1520,10 @@ struct PendingClipboardRead {
 
 impl PendingClipboardRead {
     fn new(format: u32) -> Self {
-        Self { format, failures: 0 }
+        Self {
+            format,
+            failures: 0,
+        }
     }
 
     fn retry_after_failure(&mut self) -> Option<Duration> {
@@ -1424,7 +1601,10 @@ impl ClipboardState {
         // Invalid bytes cannot become valid by asking the same question again, so a
         // malformed payload keeps the last good value and schedules nothing.
         let Some(text) = rdp_clipboard::decode_unicode(data) else {
-            warn!("rdp: undecodable clipboard text from the remote, {} bytes", data.len());
+            warn!(
+                "rdp: undecodable clipboard text from the remote, {} bytes",
+                data.len()
+            );
             return Ok(());
         };
         let snapshot = match rdp_clipboard::from_remote(&text) {
@@ -1436,7 +1616,9 @@ impl ClipboardState {
             // can say what happened, where a truncated paste could not be told from a
             // whole one.
             Err(bytes) => {
-                debug!("rdp: remote clipboard is {bytes} bytes, over the {MAX_CLIPBOARD_BYTES} byte limit");
+                debug!(
+                    "rdp: remote clipboard is {bytes} bytes, over the {MAX_CLIPBOARD_BYTES} byte limit"
+                );
                 ClipboardSnapshot::oversized(bytes, self.remote.as_ref())
             }
         };
@@ -1468,7 +1650,10 @@ impl ClipboardState {
         };
         match read.retry_after_failure() {
             Some(delay) => {
-                debug!("rdp: retrying a refused remote clipboard read in {}ms", delay.as_millis());
+                debug!(
+                    "rdp: retrying a refused remote clipboard read in {}ms",
+                    delay.as_millis()
+                );
                 self.retry_at = Some(Instant::now() + delay);
             }
             None => {
@@ -1516,7 +1701,10 @@ impl ClipboardState {
         self.retry_at = None;
         match rdp_clipboard::to_remote(text) {
             Some(text) => {
-                debug!("rdp: advertising {} bytes to the remote clipboard", text.len());
+                debug!(
+                    "rdp: advertising {} bytes to the remote clipboard",
+                    text.len()
+                );
                 self.local = Some(text);
                 self.advertise(input);
             }
@@ -1544,10 +1732,16 @@ impl ClipboardState {
     /// The answer to the panel's Fetch. Empty until the remote copies something,
     /// which reads in the panel as "nothing has been copied over there yet".
     fn snapshot(&self) -> ClipboardSnapshot {
-        self.remote.clone().unwrap_or_else(ClipboardSnapshot::unobserved)
+        self.remote
+            .clone()
+            .unwrap_or_else(ClipboardSnapshot::unobserved)
     }
 
-    async fn publish(&mut self, snapshot: ClipboardSnapshot, sink: &VideoSink) -> anyhow::Result<()> {
+    async fn publish(
+        &mut self,
+        snapshot: ClipboardSnapshot,
+        sink: &VideoSink,
+    ) -> anyhow::Result<()> {
         self.remote = Some(snapshot.clone());
         sink.msg(ServerMsg::Clipboard {
             text: snapshot.text,
@@ -1570,7 +1764,15 @@ async fn active_loop(
     mut input_rx: mpsc::UnboundedReceiver<ClientMsg>,
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    let Flags { resize, kept, restates, ceiling, pass_graphics, video, monitors } = flags;
+    let Flags {
+        resize,
+        kept,
+        restates,
+        ceiling,
+        pass_graphics,
+        video,
+        monitors,
+    } = flags;
     // Whether the browser composes the pipeline: passed whole, rather than as the
     // video stream of its H.264.
     let composes = pass_graphics && !video;
@@ -1691,9 +1893,17 @@ async fn active_loop(
         }
         if restates
             && !view.all
-            && let Some(wanted) = pending_layout.as_ref().map(|p| p.layout).filter(|l| l.second.is_some())
+            && let Some(wanted) = pending_layout
+                .as_ref()
+                .map(|p| p.layout)
+                .filter(|l| l.second.is_some())
         {
-            install_layout(wanted.with_second(None), view.current(applied), &mut pending_layout, &mut layout_retry_at);
+            install_layout(
+                wanted.with_second(None),
+                view.current(applied),
+                &mut pending_layout,
+                &mut layout_retry_at,
+            );
         }
         // A keyframe held back, asked for once its wait is past.
         let keyframe_due = async {
@@ -2445,7 +2655,14 @@ async fn active_loop(
                     damage_due = Some(Instant::now() + FRAME_NET);
                 }
             } else if damage_flushed.elapsed() >= DAMAGE_INTERVAL {
-                flush_damage(framebuffer, &mut pending_damage, view, shadow.as_mut(), sink).await?;
+                flush_damage(
+                    framebuffer,
+                    &mut pending_damage,
+                    view,
+                    shadow.as_mut(),
+                    sink,
+                )
+                .await?;
                 damage_flushed = Instant::now();
                 damage_due = None;
             } else if damage_due.is_none() {
@@ -2541,7 +2758,10 @@ fn install_layout(
 /// that reported it: the answer to a layout is its sizes, as many of its monitors
 /// as the host laid out.
 fn confirms(pending: &PendingLayout, monitors: &[Placed]) -> bool {
-    let sizes: Vec<(u32, u32)> = monitors.iter().map(|monitor| (monitor.w, monitor.h)).collect();
+    let sizes: Vec<(u32, u32)> = monitors
+        .iter()
+        .map(|monitor| (monitor.w, monitor.h))
+        .collect();
     pending.layout.adjusted().row(narrow(monitors.len() as u32)) == sizes
 }
 
@@ -2551,19 +2771,33 @@ fn confirms(pending: &PendingLayout, monitors: &[Placed]) -> bool {
 /// other size, or where the two are the same size, held under the ceiling alike.
 /// `ceiling` is whether the session's layouts are held under it ([`Layout::held`]).
 fn kept_densities((w, h): (u32, u32), ceiling: bool, monitors: &[Placed]) -> Option<Densities> {
-    let size = |density| Layout::points(w, h).at_density(density).held(ceiling).adjusted().size();
+    let size = |density| {
+        Layout::points(w, h)
+            .at_density(density)
+            .held(ceiling)
+            .adjusted()
+            .size()
+    };
     if size(Density::One) == size(Density::Two) {
         return None;
     }
     let of = |monitor: &Placed| {
-        [Density::One, Density::Two].into_iter().find(|density| size(*density) == (monitor.w, monitor.h))
+        [Density::One, Density::Two]
+            .into_iter()
+            .find(|density| size(*density) == (monitor.w, monitor.h))
     };
     let first = of(monitors.first()?)?;
     let second = monitors.get(1).map_or(Some(first), of)?;
     Some(Densities { first, second })
 }
 
-fn request_layout(input: &Input, ready: bool, current: Layout, wanted: Layout, monitors: u16) -> Asked {
+fn request_layout(
+    input: &Input,
+    ready: bool,
+    current: Layout,
+    wanted: Layout,
+    monitors: u16,
+) -> Asked {
     let wanted = wanted.adjusted();
     if !ready {
         debug!("rdp: {wanted} requested before the remote offered dynamic resize");
@@ -2611,10 +2845,27 @@ fn damaged(rect: client::Rect) -> Rect {
 /// an input path live — can be asserted without a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemoteInput {
-    Move { x: u16, y: u16 },
-    Button { button: RdpButton, down: bool, x: u16, y: u16 },
-    Wheel { delta: i16, horizontal: bool, x: u16, y: u16 },
-    Key { scancode: u8, extended: bool, down: bool },
+    Move {
+        x: u16,
+        y: u16,
+    },
+    Button {
+        button: RdpButton,
+        down: bool,
+        x: u16,
+        y: u16,
+    },
+    Wheel {
+        delta: i16,
+        horizontal: bool,
+        x: u16,
+        y: u16,
+    },
+    Key {
+        scancode: u8,
+        extended: bool,
+        down: bool,
+    },
 }
 
 impl RemoteInput {
@@ -2622,8 +2873,17 @@ impl RemoteInput {
         match self {
             Self::Move { x, y } => input.mouse_move(x, y),
             Self::Button { button, down, x, y } => input.mouse_button(button, down, x, y),
-            Self::Wheel { delta, horizontal, x, y } => input.wheel(delta, horizontal, x, y),
-            Self::Key { scancode, extended, down } => input.key(scancode, extended, down),
+            Self::Wheel {
+                delta,
+                horizontal,
+                x,
+                y,
+            } => input.wheel(delta, horizontal, x, y),
+            Self::Key {
+                scancode,
+                extended,
+                down,
+            } => input.key(scancode, extended, down),
         }
     }
 }
@@ -2738,7 +2998,9 @@ fn translate_input(
         }
         // `clicks` goes nowhere: RDP carries button state alone, and Windows
         // counts the clicks itself from the events it receives.
-        ClientMsg::MouseButton { button, pressed, .. } => {
+        ClientMsg::MouseButton {
+            button, pressed, ..
+        } => {
             let button = match button {
                 MouseButton::Left => RdpButton::Left,
                 MouseButton::Right => RdpButton::Right,
@@ -2762,14 +3024,23 @@ fn translate_input(
             let horizontal = horizontal.into_iter().map(|delta| (delta, true));
             vertical
                 .chain(horizontal)
-                .map(|(delta, horizontal)| RemoteInput::Wheel { delta, horizontal, x, y })
+                .map(|(delta, horizontal)| RemoteInput::Wheel {
+                    delta,
+                    horizontal,
+                    x,
+                    y,
+                })
                 .collect()
         }
         // `caps` is VNC-only: the RDP host tracks its own CapsLock from the
         // forwarded scancode.
         ClientMsg::Key { code, pressed, .. } => match keymap::scancode(&code) {
             Some((scancode, extended)) => {
-                vec![RemoteInput::Key { scancode, extended, down: pressed }]
+                vec![RemoteInput::Key {
+                    scancode,
+                    extended,
+                    down: pressed,
+                }]
             }
             None => {
                 debug!("rdp: unmapped key code {code}");
@@ -2790,7 +3061,9 @@ fn translate_input(
         ClientMsg::CameraFormat { .. } | ClientMsg::CameraUnavailable => Vec::new(),
         // Session-control messages act on the slot, not an engine — the ws
         // bridge handles them and they never reach here.
-        ClientMsg::Connect { .. } | ClientMsg::Disconnect | ClientMsg::PaintAck { .. } => Vec::new(),
+        ClientMsg::Connect { .. } | ClientMsg::Disconnect | ClientMsg::PaintAck { .. } => {
+            Vec::new()
+        }
         // Answered by the active loop before translation: the host has no
         // message for it and is asked for nothing.
         ClientMsg::SelectDisplay { .. } => Vec::new(),
@@ -2932,12 +3205,22 @@ async fn send_damage(
             return None;
         }
         let (shadow_w, shadow_h) = shadow.size();
-        let right = rect.right.min(w - 1).min(view.left.saturating_add(shadow_w).saturating_sub(1));
-        let bottom = rect.bottom.min(h - 1).min(view.top.saturating_add(shadow_h).saturating_sub(1));
+        let right = rect
+            .right
+            .min(w - 1)
+            .min(view.left.saturating_add(shadow_w).saturating_sub(1));
+        let bottom = rect
+            .bottom
+            .min(h - 1)
+            .min(view.top.saturating_add(shadow_h).saturating_sub(1));
         if right < rect.left || bottom < rect.top {
             return None;
         }
-        let rect = Rect { right, bottom, ..rect };
+        let rect = Rect {
+            right,
+            bottom,
+            ..rect
+        };
         pack_rgb(frame, rect, &mut buf);
         Some(Rect {
             left: rect.left - view.left,
@@ -2978,7 +3261,12 @@ fn pack_rgb(frame: &Frame, rect: Rect, buf: &mut Vec<u8>) {
     for (dst, src) in buf.chunks_exact_mut(w * 3).zip(rows) {
         // The literal strides are what let the compiler vectorize the 4-in/3-out
         // shuffle; sized writes rather than per-pixel `extend` for the same reason.
-        for (out, px) in dst.as_chunks_mut::<3>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+        for (out, px) in dst
+            .as_chunks_mut::<3>()
+            .0
+            .iter_mut()
+            .zip(src.as_chunks::<4>().0)
+        {
             out.copy_from_slice(&px[..3]);
         }
     }
@@ -3001,9 +3289,15 @@ mod tests {
         // A slow host's answer: the limit runs from it, not from the ask.
         asks.reset(at(6_000));
         assert!(!asks.asks(at(6_100), false, true));
-        assert!(!asks.asks(at(6_200), false, true), "still one ask, however many want it");
+        assert!(
+            !asks.asks(at(6_200), false, true),
+            "still one ask, however many want it"
+        );
         assert_eq!(asks.due, Some(at(6_000) + KEYFRAME_AGAIN));
-        assert!(asks.asks(at(6_300), true, true), "one wanted now is asked for at once");
+        assert!(
+            asks.asks(at(6_300), true, true),
+            "one wanted now is asked for at once"
+        );
         assert_eq!(asks.due, None);
     }
 
@@ -3017,15 +3311,31 @@ mod tests {
         let at = |s| start + Duration::from_secs(s);
         let mut asks = KeyframeAsks::default();
         assert!(asks.asks(start, true, true), "the page");
-        assert!(!asks.asks(start + Duration::from_millis(50), true, true), "its tab, served by the same");
+        assert!(
+            !asks.asks(start + Duration::from_millis(50), true, true),
+            "its tab, served by the same"
+        );
         for waited in [2, 4, 6, 9] {
-            assert!(!asks.asks(at(waited), false, true), "a waiting stream at {waited} s");
-            assert!(!asks.asks(at(waited), true, true), "a display switched at {waited} s");
+            assert!(
+                !asks.asks(at(waited), false, true),
+                "a waiting stream at {waited} s"
+            );
+            assert!(
+                !asks.asks(at(waited), true, true),
+                "a display switched at {waited} s"
+            );
         }
-        assert_eq!((asks.due, asks.due_now), (Some(at(10)), true), "asked for again if nothing came");
+        assert_eq!(
+            (asks.due, asks.due_now),
+            (Some(at(10)), true),
+            "asked for again if nothing came"
+        );
         assert!(asks.asks(at(10), true, true));
         asks.reset(at(11));
-        assert!(asks.asks(at(11), true, true), "answered, one wanted now goes at once");
+        assert!(
+            asks.asks(at(11), true, true),
+            "answered, one wanted now goes at once"
+        );
     }
 
     /// A resize is a layout the host answers with a reset as it does a
@@ -3038,9 +3348,15 @@ mod tests {
         let mut asks = KeyframeAsks::default();
         asks.sent(start);
         asks.sent(at(750));
-        assert!(!asks.asks(at(1_000), true, true), "a resize sent twice, unanswered");
+        assert!(
+            !asks.asks(at(1_000), true, true),
+            "a resize sent twice, unanswered"
+        );
         asks.reset(at(1_200));
-        assert!(!asks.asks(at(1_300), true, true), "one of its layouts answered, not both");
+        assert!(
+            !asks.asks(at(1_300), true, true),
+            "one of its layouts answered, not both"
+        );
         asks.reset(at(1_400));
         assert!(asks.asks(at(1_500), true, true));
     }
@@ -3059,7 +3375,10 @@ mod tests {
         asks.sent(at(5));
         // The timer at the earlier deadline clears it and asks again.
         asks.due = None;
-        assert!(!asks.asks(at(10), false, true), "nothing before the resize's own wait is past");
+        assert!(
+            !asks.asks(at(10), false, true),
+            "nothing before the resize's own wait is past"
+        );
         assert_eq!(asks.due, Some(at(15)));
         assert!(!asks.asks(at(12), false, true));
         assert_eq!(asks.due, Some(at(15)), "due once, at the new deadline");
@@ -3073,15 +3392,26 @@ mod tests {
         let start = Instant::now();
         let mut asks = KeyframeAsks::default();
         assert!(!asks.asks(start, true, false));
-        assert_eq!((asks.sent, asks.owed, asks.due, asks.due_now), (None, 0, Some(start + KEYFRAME_AGAIN), true));
-        assert!(asks.asks(start + KEYFRAME_AGAIN, true, true), "once open, at once");
+        assert_eq!(
+            (asks.sent, asks.owed, asks.due, asks.due_now),
+            (None, 0, Some(start + KEYFRAME_AGAIN), true)
+        );
+        assert!(
+            asks.asks(start + KEYFRAME_AGAIN, true, true),
+            "once open, at once"
+        );
     }
 
     /// A column's stream is the surface mapped at its corner, as a Windows host
     /// maps one surface for each monitor; a corner nothing is mapped at has none.
     #[test]
     fn a_columns_stream_is_the_surface_at_its_corner() {
-        let rect = |x, width| client::Rect { x, y: 0, width, height: 800 };
+        let rect = |x, width| client::Rect {
+            x,
+            y: 0,
+            width,
+            height: 800,
+        };
         let surfaces = BTreeMap::from([(0, rect(1280, 1280)), (1, rect(0, 1280))]);
         assert_eq!(surface_at(&surfaces, (0, 0)), Some(1));
         assert_eq!(surface_at(&surfaces, (1280, 0)), Some(0));
@@ -3102,7 +3432,12 @@ mod tests {
     }
 
     fn rect(left: u16, top: u16, right: u16, bottom: u16) -> Rect {
-        Rect { left, top, right, bottom }
+        Rect {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     /// A cursor image of `w`x`h` opaque red, as the RDP client hands one over.
@@ -3169,7 +3504,10 @@ mod tests {
     fn hiding_an_already_hidden_pointer_says_nothing() {
         let mut pointer = Pointer::default();
         pointer.set(client::Cursor::Hidden);
-        assert!(pointer.change().is_none(), "it was already the client's arrow");
+        assert!(
+            pointer.change().is_none(),
+            "it was already the client's arrow"
+        );
         pointer.set(cursor(16, 16));
         assert!(pointer.change().is_some());
         pointer.set(client::Cursor::Default);
@@ -3185,7 +3523,9 @@ mod tests {
         pointer.set(cursor(16, 16));
         assert!(pointer.change().is_some());
         pointer.set(cursor(u32::from(MAX_CURSOR_DIM) + 1, 16));
-        let msg = pointer.change().expect("the oversized shape is still a change");
+        let msg = pointer
+            .change()
+            .expect("the oversized shape is still a change");
         assert!(shape(&msg).is_none(), "and it is the client's own arrow");
     }
 
@@ -3211,7 +3551,10 @@ mod tests {
         let climbed: Vec<Duration> = std::iter::from_fn(|| read.retry_after_failure()).collect();
         assert_eq!(climbed, CLIPBOARD_READ_RETRY_DELAYS.to_vec());
         assert_eq!(read.retry_after_failure(), None, "and it stays given up on");
-        assert_eq!(read.format, CF_UNICODETEXT, "the format asked for never changes");
+        assert_eq!(
+            read.format, CF_UNICODETEXT,
+            "the format asked for never changes"
+        );
     }
 
     /// A read is answered once, and only while it is outstanding. The browser taking
@@ -3262,15 +3605,33 @@ mod tests {
     /// down the right and bottom of every damage rectangle — visible, and easy to stare past.
     #[test]
     fn a_damage_rectangle_becomes_inclusive_on_every_edge() {
-        let r = damaged(client::Rect { x: 10, y: 20, width: 4, height: 2 });
+        let r = damaged(client::Rect {
+            x: 10,
+            y: 20,
+            width: 4,
+            height: 2,
+        });
         assert_eq!(r, rect(10, 20, 13, 21));
         // The whole of a 1280x800 desktop, which is the repaint case.
         assert_eq!(
-            damaged(client::Rect { x: 0, y: 0, width: 1280, height: 800 }),
+            damaged(client::Rect {
+                x: 0,
+                y: 0,
+                width: 1280,
+                height: 800
+            }),
             rect(0, 0, 1279, 799)
         );
         // One pixel is one pixel, not zero and not two.
-        assert_eq!(damaged(client::Rect { x: 5, y: 5, width: 1, height: 1 }), rect(5, 5, 5, 5));
+        assert_eq!(
+            damaged(client::Rect {
+                x: 5,
+                y: 5,
+                width: 1,
+                height: 1
+            }),
+            rect(5, 5, 5, 5)
+        );
     }
 
     /// Nothing real reaches these, which is exactly why they are worth pinning: an
@@ -3284,7 +3645,12 @@ mod tests {
         assert_eq!(narrow(70_000), u16::MAX);
         assert_eq!(narrow(u32::MAX), u16::MAX);
         // And a rectangle whose corner would overflow the addition.
-        let r = damaged(client::Rect { x: u32::MAX, y: 0, width: u32::MAX, height: 1 });
+        let r = damaged(client::Rect {
+            x: u32::MAX,
+            y: 0,
+            width: u32::MAX,
+            height: 1,
+        });
         assert_eq!((r.left, r.right), (u16::MAX, u16::MAX - 1));
     }
 
@@ -3314,7 +3680,11 @@ mod tests {
         // Far below the row of staged rectangles, so every merge wastes something and
         // the cheapest is the one directly above it.
         stage_damage(&mut pending, rect(0, 100, 5, 105));
-        assert_eq!(pending.len(), DAMAGE_RECTS_CAP, "the cap merges rather than collapses");
+        assert_eq!(
+            pending.len(),
+            DAMAGE_RECTS_CAP,
+            "the cap merges rather than collapses"
+        );
         assert_eq!(
             pending[0],
             rect(0, 0, 5, 105),
@@ -3338,7 +3708,10 @@ mod tests {
             stage_damage(&mut pending, rect(i * 64, 0, i * 64 + 63, 63));
         }
         assert_eq!(pending.len(), DAMAGE_RECTS_CAP);
-        let covered: u64 = pending.iter().map(|r| u64::from(r.w()) * u64::from(r.h())).sum();
+        let covered: u64 = pending
+            .iter()
+            .map(|r| u64::from(r.w()) * u64::from(r.h()))
+            .sum();
         assert_eq!(
             covered,
             u64::from(DAMAGE_RECTS_CAP as u16 + 8) * 64 * 64,
@@ -3355,7 +3728,12 @@ mod tests {
     /// width in.
     #[test]
     fn a_position_on_the_second_display_is_offset_by_the_first() {
-        let per = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let per = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let two = View::opened(2, per, (2560, 800), Placement::Right);
         let mut last_pos = (0, 0);
         let events = translate_input(
@@ -3369,13 +3747,25 @@ mod tests {
         assert_eq!(last_pos, (1290, 20), "the position kept is the desktop's");
         // A button then lands where the pointer is, on that display.
         let events = translate_input(
-            ClientMsg::MouseButton { button: MouseButton::Left, pressed: true, clicks: 1 },
+            ClientMsg::MouseButton {
+                button: MouseButton::Left,
+                pressed: true,
+                clicks: 1,
+            },
             &mut last_pos,
             &mut WheelRotation::default(),
             two,
             1,
         );
-        assert_eq!(events, vec![RemoteInput::Button { button: RdpButton::Left, down: true, x: 1290, y: 20 }]);
+        assert_eq!(
+            events,
+            vec![RemoteInput::Button {
+                button: RdpButton::Left,
+                down: true,
+                x: 1290,
+                y: 20
+            }]
+        );
     }
 
     /// A position past the edge between two displays, which the page lets through
@@ -3384,10 +3774,19 @@ mod tests {
     /// the desktop, nor is the button that follows.
     #[test]
     fn a_position_past_a_display_is_held_inside_the_desktop() {
-        let per = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let per = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let two = View::opened(2, per, (2560, 800), Placement::Right);
         assert_eq!(two.desktop(), (2560, 800));
-        assert_eq!(two.desktop_point(0, 1300, 20), (1300, 20), "onto the second");
+        assert_eq!(
+            two.desktop_point(0, 1300, 20),
+            (1300, 20),
+            "onto the second"
+        );
         assert_eq!(two.desktop_point(1, -100, 20), (1180, 20), "onto the first");
         assert_eq!(two.desktop_point(0, 5000, 2000), (2559, 799));
         assert_eq!(two.desktop_point(1, -5000, -5), (0, 0));
@@ -3401,13 +3800,25 @@ mod tests {
         );
         assert_eq!(events, vec![RemoteInput::Move { x: 2559, y: 20 }]);
         let events = translate_input(
-            ClientMsg::MouseButton { button: MouseButton::Left, pressed: true, clicks: 1 },
+            ClientMsg::MouseButton {
+                button: MouseButton::Left,
+                pressed: true,
+                clicks: 1,
+            },
             &mut last_pos,
             &mut WheelRotation::default(),
             two,
             1,
         );
-        assert_eq!(events, vec![RemoteInput::Button { button: RdpButton::Left, down: true, x: 2559, y: 20 }]);
+        assert_eq!(
+            events,
+            vec![RemoteInput::Button {
+                button: RdpButton::Left,
+                down: true,
+                x: 2559,
+                y: 20
+            }]
+        );
         // A row of two sizes is as tall as its taller column.
         let row = two.laid_out(&row(&[(1280, 800), (1024, 1000)]), (2304, 1000));
         assert_eq!(row.desktop(), (2304, 1000));
@@ -3425,14 +3836,22 @@ mod tests {
             ServerMsg::GraphicsView { x, y, w, h } => (x, y, w, h),
             other => panic!("not a view: {other:?}"),
         };
-        let per = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let per = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let mut view = View::opened(2, per, (2560, 800), Placement::Right);
         assert_eq!(part(view.graphics_view()), (0, 0, 1280, 800));
         assert_eq!(view.select(1), Some(true));
         assert_eq!(part(view.graphics_view()), (1280, 0, 1280, 800));
         assert_eq!(view.select(ALL_DISPLAYS), Some(true));
         assert_eq!(part(view.graphics_view()), (0, 0, 1280, 800));
-        assert_eq!(part(graphics_view(view.column_rect(1))), (1280, 0, 1280, 800));
+        assert_eq!(
+            part(graphics_view(view.column_rect(1))),
+            (1280, 0, 1280, 800)
+        );
         // One display is the whole picture.
         let one = View::opened(1, per, (1280, 800), Placement::Right);
         assert_eq!(part(one.graphics_view()), (0, 0, 1280, 800));
@@ -3443,45 +3862,118 @@ mod tests {
     /// framebuffer, and follows wherever the host says it put them after.
     #[test]
     fn the_second_display_is_where_it_was_placed() {
-        let per = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let per = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let opened = |placement, desktop| {
             let view = View::opened(2, per, desktop, placement);
-            (view.columns, view.column_rect(0), view.column_rect(1), view.desktop())
+            (
+                view.columns,
+                view.column_rect(0),
+                view.column_rect(1),
+                view.desktop(),
+            )
         };
-        let rect = |left, top, right, bottom| Rect { left, top, right, bottom };
+        let rect = |left, top, right, bottom| Rect {
+            left,
+            top,
+            right,
+            bottom,
+        };
         assert_eq!(
             opened(Placement::Left, (2560, 800)),
-            (2, rect(1280, 0, 2559, 799), rect(0, 0, 1279, 799), (2560, 800))
+            (
+                2,
+                rect(1280, 0, 2559, 799),
+                rect(0, 0, 1279, 799),
+                (2560, 800)
+            )
         );
         assert_eq!(
             opened(Placement::Top, (1280, 1600)),
-            (2, rect(0, 800, 1279, 1599), rect(0, 0, 1279, 799), (1280, 1600))
+            (
+                2,
+                rect(0, 800, 1279, 1599),
+                rect(0, 0, 1279, 799),
+                (1280, 1600)
+            )
         );
         assert_eq!(
             opened(Placement::Bottom, (1280, 1600)),
-            (2, rect(0, 0, 1279, 799), rect(0, 800, 1279, 1599), (1280, 1600))
+            (
+                2,
+                rect(0, 0, 1279, 799),
+                rect(0, 800, 1279, 1599),
+                (1280, 1600)
+            )
         );
         // A desktop that is not the union asked for is one display.
         assert_eq!(opened(Placement::Bottom, (2560, 800)).0, 1);
         assert_eq!(span(per, 2, Placement::Top), (1280, 1600));
-        assert_eq!(span(Layout { second: Some(Second { w: 1024, h: 700, density: Density::One }), ..per }, 2, Placement::Left), (2304, 800));
+        assert_eq!(
+            span(
+                Layout {
+                    second: Some(Second {
+                        w: 1024,
+                        h: 700,
+                        density: Density::One
+                    }),
+                    ..per
+                },
+                2,
+                Placement::Left
+            ),
+            (2304, 800)
+        );
 
         // A position made on a display is offset to where that display starts, and
         // one past the edge between them lands on the other.
         let above = View::opened(2, per, (1280, 1600), Placement::Top);
         assert_eq!(above.desktop_point(0, 10, 20), (10, 820));
         assert_eq!(above.desktop_point(1, 10, 20), (10, 20));
-        assert_eq!(above.desktop_point(0, 10, -30), (10, 770), "up onto the second");
-        assert_eq!(above.desktop_point(1, 10, 830), (10, 830), "down onto the first");
+        assert_eq!(
+            above.desktop_point(0, 10, -30),
+            (10, 770),
+            "up onto the second"
+        );
+        assert_eq!(
+            above.desktop_point(1, 10, 830),
+            (10, 830),
+            "down onto the first"
+        );
         assert_eq!(above.desktop_point(0, -5, 5000), (0, 1599));
         let left = View::opened(2, per, (2560, 800), Placement::Left);
-        assert_eq!(left.desktop_point(0, -100, 20), (1180, 20), "onto the second");
-        assert_eq!(left.desktop_point(1, 1300, 20), (1300, 20), "onto the first");
+        assert_eq!(
+            left.desktop_point(0, -100, 20),
+            (1180, 20),
+            "onto the second"
+        );
+        assert_eq!(
+            left.desktop_point(1, 1300, 20),
+            (1300, 20),
+            "onto the first"
+        );
 
         // The host's own word for where each monitor is replaces the opening guess:
         // the second, its tab's size, to the left of the first.
         let moved = left.laid_out(
-            &[Placed { x: 1024, y: 0, w: 1600, h: 900 }, Placed { x: 0, y: 0, w: 1024, h: 700 }],
+            &[
+                Placed {
+                    x: 1024,
+                    y: 0,
+                    w: 1600,
+                    h: 900,
+                },
+                Placed {
+                    x: 0,
+                    y: 0,
+                    w: 1024,
+                    h: 700,
+                },
+            ],
             (2624, 900),
         );
         assert_eq!(moved.column_rect(0), rect(1024, 0, 2623, 899));
@@ -3489,7 +3981,16 @@ mod tests {
         assert_eq!(moved.desktop(), (2624, 900));
         assert_eq!(
             moved.current(Densities::even(Density::One)),
-            Layout { w: 1600, h: 900, density: Density::One, second: Some(Second { w: 1024, h: 700, density: Density::One }) }
+            Layout {
+                w: 1600,
+                h: 900,
+                density: Density::One,
+                second: Some(Second {
+                    w: 1024,
+                    h: 700,
+                    density: Density::One
+                })
+            }
         );
     }
 
@@ -3497,33 +3998,65 @@ mod tests {
     /// their union, one when the host gave one, and the list that goes with each.
     #[test]
     fn the_view_is_what_the_host_laid_out() {
-        let per = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let per = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let two = View::opened(2, per, (2560, 800), Placement::Right);
         assert_eq!((two.columns, two.active), (2, 0));
         assert_eq!(two.size(), (1280, 800));
         assert_eq!(two.rect(), rect(0, 0, 1279, 799));
         // A host that opened one desktop, or something else entirely, is one display.
-        assert_eq!(View::opened(2, per, (1280, 800), Placement::Right).columns, 1);
-        assert_eq!(View::opened(2, per, (1024, 768), Placement::Right).columns, 1);
-        assert_eq!(View::opened(1, per, (1280, 800), Placement::Right).columns, 1);
-        assert_eq!(View::opened(1, per, (1280, 800), Placement::Right).size(), (1280, 800));
+        assert_eq!(
+            View::opened(2, per, (1280, 800), Placement::Right).columns,
+            1
+        );
+        assert_eq!(
+            View::opened(2, per, (1024, 768), Placement::Right).columns,
+            1
+        );
+        assert_eq!(
+            View::opened(1, per, (1280, 800), Placement::Right).columns,
+            1
+        );
+        assert_eq!(
+            View::opened(1, per, (1280, 800), Placement::Right).size(),
+            (1280, 800)
+        );
 
         let mut view = two;
-        let msg = view.displays(Densities::even(Density::One)).expect("two displays are a list");
-        let ServerMsg::Displays { active, displays } = msg else { panic!("not a list") };
-        assert_eq!(active, ALL_DISPLAYS, "two displays open shown beside each other");
+        let msg = view
+            .displays(Densities::even(Density::One))
+            .expect("two displays are a list");
+        let ServerMsg::Displays { active, displays } = msg else {
+            panic!("not a list")
+        };
         assert_eq!(
-            displays.iter().map(|d| (d.id, d.label.as_str(), d.detail.as_str(), d.main)).collect::<Vec<_>>(),
+            active, ALL_DISPLAYS,
+            "two displays open shown beside each other"
+        );
+        assert_eq!(
+            displays
+                .iter()
+                .map(|d| (d.id, d.label.as_str(), d.detail.as_str(), d.main))
+                .collect::<Vec<_>>(),
             vec![
                 (0, "Display 1", "1280×800 at 1x", true),
                 (1, "Display 2", "1280×800 at 1x", false),
                 (ALL_DISPLAYS, "All Displays", "One browser tab each", false),
             ]
         );
-        assert_eq!(displays.iter().map(|d| d.tab).collect::<Vec<_>>(), vec![None, Some(2), None]);
+        assert_eq!(
+            displays.iter().map(|d| d.tab).collect::<Vec<_>>(),
+            vec![None, Some(2), None]
+        );
         // At 2x the detail is in points.
         let mut dense = view.laid_out(&row(&[(2560, 1600), (2560, 1600)]), (5120, 1600));
-        let ServerMsg::Displays { displays, .. } = dense.displays(Densities::even(Density::Two)).unwrap() else {
+        let ServerMsg::Displays { displays, .. } =
+            dense.displays(Densities::even(Density::Two)).unwrap()
+        else {
             panic!("not a list")
         };
         assert_eq!(displays[1].detail, "1280×800 at 2x");
@@ -3536,7 +4069,9 @@ mod tests {
         assert_eq!(view.select(1), Some(false));
         assert_eq!(view.select(2), None);
         assert_eq!(view.active, 1);
-        let ServerMsg::Displays { active, .. } = view.displays(Densities::even(Density::One)).unwrap() else {
+        let ServerMsg::Displays { active, .. } =
+            view.displays(Densities::even(Density::One)).unwrap()
+        else {
             panic!("not a list")
         };
         assert_eq!(active, 1);
@@ -3546,14 +4081,23 @@ mod tests {
         assert_eq!(view.select(ALL_DISPLAYS), Some(true));
         assert_eq!((view.active, view.all), (0, true));
         assert_eq!(view.tab_column(2), Some(1));
-        assert_eq!(view.tab_column(1), None, "the first display is the canvas, not a tab");
+        assert_eq!(
+            view.tab_column(1),
+            None,
+            "the first display is the canvas, not a tab"
+        );
         assert_eq!(view.tab_column(3), None);
         assert_eq!(view.column_rect(1), rect(1280, 0, 2559, 799));
-        let ServerMsg::Displays { active, displays } = view.displays(Densities::even(Density::One)).unwrap() else {
+        let ServerMsg::Displays { active, displays } =
+            view.displays(Densities::even(Density::One)).unwrap()
+        else {
             panic!("not a list")
         };
         assert_eq!(active, ALL_DISPLAYS);
-        assert_eq!(displays.iter().map(|d| d.tab).collect::<Vec<_>>(), vec![None, Some(2), None]);
+        assert_eq!(
+            displays.iter().map(|d| d.tab).collect::<Vec<_>>(),
+            vec![None, Some(2), None]
+        );
         assert_eq!(view.select(ALL_DISPLAYS), Some(false));
 
         // A row whose monitors differ, the second following its tab's window:
@@ -3565,11 +4109,27 @@ mod tests {
         assert_eq!(unequal.column_rect(1), rect(1600, 0, 2623, 699));
         assert_eq!(
             unequal.current(Densities::even(Density::One)),
-            Layout { w: 1600, h: 900, density: Density::One, second: Some(Second { w: 1024, h: 700, density: Density::One }) }
+            Layout {
+                w: 1600,
+                h: 900,
+                density: Density::One,
+                second: Some(Second {
+                    w: 1024,
+                    h: 700,
+                    density: Density::One
+                })
+            }
         );
-        assert_eq!(two.current(Densities::even(Density::One)), per, "an even row has no second size");
+        assert_eq!(
+            two.current(Densities::even(Density::One)),
+            per,
+            "an even row has no second size"
+        );
 
-        assert!(!view.laid_out(&row(&[(1280, 800)]), (1280, 800)).all, "one monitor has nothing to show beside it");
+        assert!(
+            !view.laid_out(&row(&[(1280, 800)]), (1280, 800)).all,
+            "one monitor has nothing to show beside it"
+        );
         assert_eq!(view.select(1), Some(true));
         assert_eq!(view.tab_column(2), None);
 
@@ -3579,7 +4139,9 @@ mod tests {
         let one = view.laid_out(&row(&[(1280, 800)]), (1280, 800));
         assert_eq!((one.columns, one.active), (1, 0));
         let mut one = one;
-        let ServerMsg::Displays { displays, .. } = one.displays(Densities::even(Density::One)).unwrap() else {
+        let ServerMsg::Displays { displays, .. } =
+            one.displays(Densities::even(Density::One)).unwrap()
+        else {
             panic!("a list once sent is sent again")
         };
         assert_eq!(displays.len(), 1, "and one display offers no All Displays");
@@ -3596,15 +4158,32 @@ mod tests {
         let mut one_view = View::opened(1, per, (1280, 800), Placement::Right);
         assert_eq!(one_view.select(ALL_DISPLAYS), None);
         // One that never had a list has none to send.
-        assert!(View::opened(1, per, (1280, 800), Placement::Right).displays(Densities::even(Density::One)).is_none());
+        assert!(
+            View::opened(1, per, (1280, 800), Placement::Right)
+                .displays(Densities::even(Density::One))
+                .is_none()
+        );
         // A reset over two monitors confirms a layout against its row.
         let pending = PendingLayout::new(per);
         assert!(confirms(&pending, &row(&[(1280, 800), (1280, 800)])));
         assert!(!confirms(&pending, &row(&[(640, 800), (640, 800)])));
-        assert!(confirms(&pending, &row(&[(1280, 800)])), "a host that laid out one of them");
-        let unequal = PendingLayout::new(Layout { second: Some(Second { w: 1024, h: 700, density: Density::One }), ..per });
+        assert!(
+            confirms(&pending, &row(&[(1280, 800)])),
+            "a host that laid out one of them"
+        );
+        let unequal = PendingLayout::new(Layout {
+            second: Some(Second {
+                w: 1024,
+                h: 700,
+                density: Density::One,
+            }),
+            ..per
+        });
         assert!(confirms(&unequal, &row(&[(1280, 800), (1024, 700)])));
-        assert!(!confirms(&unequal, &row(&[(1280, 800), (1280, 800)])), "the second's own size is what was asked");
+        assert!(
+            !confirms(&unequal, &row(&[(1280, 800), (1280, 800)])),
+            "the second's own size is what was asked"
+        );
         assert_eq!(unequal.layout.row(2), vec![(1280, 800), (1024, 700)]);
         assert_eq!(per.row(2), vec![(1280, 800), (1280, 800)]);
     }
@@ -3631,21 +4210,39 @@ mod tests {
     fn button_press_uses_last_pos_and_down_flag() {
         let mut last = (7, 9);
         let events = translate(
-            ClientMsg::MouseButton { button: MouseButton::Right, pressed: true, clicks: 1 },
+            ClientMsg::MouseButton {
+                button: MouseButton::Right,
+                pressed: true,
+                clicks: 1,
+            },
             &mut last,
         );
         assert_eq!(
             events,
-            vec![RemoteInput::Button { button: RdpButton::Right, down: true, x: 7, y: 9 }]
+            vec![RemoteInput::Button {
+                button: RdpButton::Right,
+                down: true,
+                x: 7,
+                y: 9
+            }]
         );
 
         let events = translate(
-            ClientMsg::MouseButton { button: MouseButton::Right, pressed: false, clicks: 1 },
+            ClientMsg::MouseButton {
+                button: MouseButton::Right,
+                pressed: false,
+                clicks: 1,
+            },
             &mut last,
         );
         assert_eq!(
             events,
-            vec![RemoteInput::Button { button: RdpButton::Right, down: false, x: 7, y: 9 }]
+            vec![RemoteInput::Button {
+                button: RdpButton::Right,
+                down: false,
+                x: 7,
+                y: 9
+            }]
         );
     }
 
@@ -3655,16 +4252,26 @@ mod tests {
     #[test]
     fn the_side_buttons_reach_the_remote() {
         let mut last = (3, 4);
-        for (button, expected) in
-            [(MouseButton::Back, RdpButton::X1), (MouseButton::Forward, RdpButton::X2)]
-        {
+        for (button, expected) in [
+            (MouseButton::Back, RdpButton::X1),
+            (MouseButton::Forward, RdpButton::X2),
+        ] {
             let events = translate(
-                ClientMsg::MouseButton { button, pressed: true, clicks: 1 },
+                ClientMsg::MouseButton {
+                    button,
+                    pressed: true,
+                    clicks: 1,
+                },
                 &mut last,
             );
             assert_eq!(
                 events,
-                vec![RemoteInput::Button { button: expected, down: true, x: 3, y: 4 }],
+                vec![RemoteInput::Button {
+                    button: expected,
+                    down: true,
+                    x: 3,
+                    y: 4
+                }],
                 "{button:?}"
             );
         }
@@ -3672,7 +4279,17 @@ mod tests {
 
     /// One display, the whole desktop.
     fn one() -> View {
-        View::opened(1, Layout { w: 1280, h: 800, density: Density::One, second: None }, (1280, 800), Placement::Right)
+        View::opened(
+            1,
+            Layout {
+                w: 1280,
+                h: 800,
+                density: Density::One,
+                second: None,
+            },
+            (1280, 800),
+            Placement::Right,
+        )
     }
 
     /// Input that carries no scroll, translated with a wheel that has none pending.
@@ -3681,11 +4298,22 @@ mod tests {
     }
 
     fn scroll(wheel: &mut WheelRotation, dx: f32, dy: f32, unit: WheelUnit) -> Vec<RemoteInput> {
-        translate_input(ClientMsg::Wheel { dx, dy, unit }, &mut (1, 2), wheel, one(), 0)
+        translate_input(
+            ClientMsg::Wheel { dx, dy, unit },
+            &mut (1, 2),
+            wheel,
+            one(),
+            0,
+        )
     }
 
     fn vertical(delta: i16) -> RemoteInput {
-        RemoteInput::Wheel { delta, horizontal: false, x: 1, y: 2 }
+        RemoteInput::Wheel {
+            delta,
+            horizontal: false,
+            x: 1,
+            y: 2,
+        }
     }
 
     /// The sign convention, which is the easiest thing here to get backwards: the
@@ -3693,8 +4321,14 @@ mod tests {
     #[test]
     fn wheel_down_is_negative_vertical() {
         let wheel = &mut WheelRotation::default();
-        assert_eq!(scroll(wheel, 0.0, 100.0, WheelUnit::Pixel), vec![vertical(-WHEEL_NOTCH)]);
-        assert_eq!(scroll(wheel, 0.0, -100.0, WheelUnit::Pixel), vec![vertical(WHEEL_NOTCH)]);
+        assert_eq!(
+            scroll(wheel, 0.0, 100.0, WheelUnit::Pixel),
+            vec![vertical(-WHEEL_NOTCH)]
+        );
+        assert_eq!(
+            scroll(wheel, 0.0, -100.0, WheelUnit::Pixel),
+            vec![vertical(WHEEL_NOTCH)]
+        );
 
         // Horizontal is its own event, and both axes at once are two.
         let events = scroll(wheel, 100.0, 100.0, WheelUnit::Pixel);
@@ -3702,7 +4336,12 @@ mod tests {
             events,
             vec![
                 vertical(-WHEEL_NOTCH),
-                RemoteInput::Wheel { delta: WHEEL_NOTCH, horizontal: true, x: 1, y: 2 },
+                RemoteInput::Wheel {
+                    delta: WHEEL_NOTCH,
+                    horizontal: true,
+                    x: 1,
+                    y: 2
+                },
             ]
         );
 
@@ -3713,11 +4352,18 @@ mod tests {
     /// A mouse notch is one notch whichever unit the browser counts it in.
     #[test]
     fn a_mouse_notch_is_one_notch_in_every_unit() {
-        for (delta, unit) in
-            [(100.0, WheelUnit::Pixel), (3.0, WheelUnit::Line), (1.0, WheelUnit::Page), (1.0, WheelUnit::Notch)]
-        {
+        for (delta, unit) in [
+            (100.0, WheelUnit::Pixel),
+            (3.0, WheelUnit::Line),
+            (1.0, WheelUnit::Page),
+            (1.0, WheelUnit::Notch),
+        ] {
             let wheel = &mut WheelRotation::default();
-            assert_eq!(scroll(wheel, 0.0, delta, unit), vec![vertical(-WHEEL_NOTCH)], "{unit:?}");
+            assert_eq!(
+                scroll(wheel, 0.0, delta, unit),
+                vec![vertical(-WHEEL_NOTCH)],
+                "{unit:?}"
+            );
         }
     }
 
@@ -3727,9 +4373,15 @@ mod tests {
     #[test]
     fn a_touchpad_glide_scrolls_the_distance_it_travelled() {
         let wheel = &mut WheelRotation::default();
-        assert_eq!(scroll(wheel, 0.0, 5.0, WheelUnit::Pixel), vec![vertical(-6)]);
+        assert_eq!(
+            scroll(wheel, 0.0, 5.0, WheelUnit::Pixel),
+            vec![vertical(-6)]
+        );
         assert!(scroll(wheel, 0.0, 0.5, WheelUnit::Pixel).is_empty());
-        assert_eq!(scroll(wheel, 0.0, 0.5, WheelUnit::Pixel), vec![vertical(-1)]);
+        assert_eq!(
+            scroll(wheel, 0.0, 0.5, WheelUnit::Pixel),
+            vec![vertical(-1)]
+        );
 
         let wheel = &mut WheelRotation::default();
         let total: i32 = (0..50)
@@ -3739,7 +4391,11 @@ mod tests {
                 other => panic!("not a wheel event: {other:?}"),
             })
             .sum();
-        assert_eq!(total, -i32::from(WHEEL_NOTCH), "100px of glide is one notch");
+        assert_eq!(
+            total,
+            -i32::from(WHEEL_NOTCH),
+            "100px of glide is one notch"
+        );
     }
 
     /// A reversal does not first pay off the remainder of the direction left.
@@ -3747,7 +4403,10 @@ mod tests {
     fn a_reversal_drops_the_remainder() {
         let wheel = &mut WheelRotation::default();
         assert!(scroll(wheel, 0.0, 0.5, WheelUnit::Pixel).is_empty());
-        assert_eq!(scroll(wheel, 0.0, -1.0, WheelUnit::Pixel), vec![vertical(1)]);
+        assert_eq!(
+            scroll(wheel, 0.0, -1.0, WheelUnit::Pixel),
+            vec![vertical(1)]
+        );
     }
 
     /// More than the rotation field carries is split on notch boundaries rather
@@ -3764,7 +4423,10 @@ mod tests {
             vec![vertical(-240), vertical(-240), vertical(-120)]
         );
         // The surplus is dropped, not carried into the next event.
-        assert_eq!(scroll(wheel, 0.0, 1.0, WheelUnit::Pixel), vec![vertical(-1)]);
+        assert_eq!(
+            scroll(wheel, 0.0, 1.0, WheelUnit::Pixel),
+            vec![vertical(-1)]
+        );
         assert!(scroll(wheel, 0.0, f32::NAN, WheelUnit::Pixel).is_empty());
     }
 
@@ -3772,27 +4434,47 @@ mod tests {
     fn key_maps_scancode_release_and_extended() {
         let mut last = (0, 0);
         let events = translate(
-            ClientMsg::Key { code: "KeyA".into(), pressed: true, caps: false },
+            ClientMsg::Key {
+                code: "KeyA".into(),
+                pressed: true,
+                caps: false,
+            },
             &mut last,
         );
         assert_eq!(
             events,
-            vec![RemoteInput::Key { scancode: 0x1E, extended: false, down: true }]
+            vec![RemoteInput::Key {
+                scancode: 0x1E,
+                extended: false,
+                down: true
+            }]
         );
 
         let events = translate(
-            ClientMsg::Key { code: "KeyA".into(), pressed: false, caps: false },
+            ClientMsg::Key {
+                code: "KeyA".into(),
+                pressed: false,
+                caps: false,
+            },
             &mut last,
         );
         assert_eq!(
             events,
-            vec![RemoteInput::Key { scancode: 0x1E, extended: false, down: false }]
+            vec![RemoteInput::Key {
+                scancode: 0x1E,
+                extended: false,
+                down: false
+            }]
         );
 
         // An extended key carries the E0 prefix, which the RDP client sends as
         // the fast-path EXTENDED flag.
         let events = translate(
-            ClientMsg::Key { code: "ArrowUp".into(), pressed: true, caps: false },
+            ClientMsg::Key {
+                code: "ArrowUp".into(),
+                pressed: true,
+                caps: false,
+            },
             &mut last,
         );
         assert_eq!(events.len(), 1);
@@ -3804,7 +4486,11 @@ mod tests {
         let mut last = (0, 0);
         assert!(
             translate(
-                ClientMsg::Key { code: "NoSuchKey".into(), pressed: true, caps: false },
+                ClientMsg::Key {
+                    code: "NoSuchKey".into(),
+                    pressed: true,
+                    caps: false
+                },
                 &mut last,
             )
             .is_empty()
@@ -3816,7 +4502,10 @@ mod tests {
             "[[targets]]\nname = \"win\"\n\
              protocol = \"rdp\"\nhost = \"10.0.0.5\"\nusername = \"u\"\npassword_ref = \"p\"\n{extra}\n"
         );
-        crate::config::ConfigFile::parse_fixture(&text).unwrap().targets.remove(0)
+        crate::config::ConfigFile::parse_fixture(&text)
+            .unwrap()
+            .targets
+            .remove(0)
     }
 
     /// A session opens at the layout it will stay at: a phone's 3x screen is the
@@ -3825,48 +4514,111 @@ mod tests {
     /// At a kept size too, whoever the client is, as on a High Performance Mac.
     #[test]
     fn a_session_opens_at_the_clients_density() {
-        let phone = HostDisplay { w: 430, h: 932, scale: 300, fit: true };
+        let phone = HostDisplay {
+            w: 430,
+            h: 932,
+            scale: 300,
+            fit: true,
+        };
         let (w, h) = crate::config::DEFAULT_SIZE;
         let (w, h) = (u32::from(w), u32::from(h));
 
         let target = rdp_target("");
         assert_eq!(
             opening_layout(&target, Sizing::Window, Some(phone)),
-            Layout { w: w * 2, h: h * 2, density: Density::Two, second: None }
+            Layout {
+                w: w * 2,
+                h: h * 2,
+                density: Density::Two,
+                second: None
+            }
         );
-        let retina = HostDisplay { w: 1728, h: 1117, scale: 200, fit: false };
+        let retina = HostDisplay {
+            w: 1728,
+            h: 1117,
+            scale: 200,
+            fit: false,
+        };
         assert_eq!(
             opening_layout(&target, Sizing::Window, Some(retina)),
-            Layout { w: 3456, h: 2234, density: Density::Two, second: None }
+            Layout {
+                w: 3456,
+                h: 2234,
+                density: Density::Two,
+                second: None
+            }
         );
-        assert_eq!(opening_layout(&target, Sizing::Window, None), Layout { w, h, density: Density::One, second: None });
+        assert_eq!(
+            opening_layout(&target, Sizing::Window, None),
+            Layout {
+                w,
+                h,
+                density: Density::One,
+                second: None
+            }
+        );
 
         assert_eq!(
             opening_layout(&target, Sizing::Target, Some(retina)),
-            Layout { w: w * 2, h: h * 2, density: Density::Two, second: None }
+            Layout {
+                w: w * 2,
+                h: h * 2,
+                density: Density::Two,
+                second: None
+            }
         );
         assert_eq!(
             opening_layout(&target, Sizing::Target, Some(phone)),
-            Layout { w: w * 2, h: h * 2, density: Density::Two, second: None }
+            Layout {
+                w: w * 2,
+                h: h * 2,
+                density: Density::Two,
+                second: None
+            }
         );
-        let tablet_1x = HostDisplay { w: 1280, h: 800, scale: 100, fit: true };
+        let tablet_1x = HostDisplay {
+            w: 1280,
+            h: 800,
+            scale: 100,
+            fit: true,
+        };
         assert_eq!(
             opening_layout(&target, Sizing::Target, Some(tablet_1x)),
-            Layout { w, h, density: Density::One, second: None }
+            Layout {
+                w,
+                h,
+                density: Density::One,
+                second: None
+            }
         );
         // A configured size is what a kept session opens at, and a window ignores.
         let sized = rdp_target("size = \"1920x1080\"");
         assert_eq!(
             opening_layout(&sized, Sizing::Target, Some(retina)),
-            Layout { w: 3840, h: 2160, density: Density::Two, second: None }
+            Layout {
+                w: 3840,
+                h: 2160,
+                density: Density::Two,
+                second: None
+            }
         );
         assert_eq!(
             opening_layout(&sized, Sizing::BuiltIn, Some(retina)),
-            Layout { w: w * 2, h: h * 2, density: Density::Two, second: None }
+            Layout {
+                w: w * 2,
+                h: h * 2,
+                density: Density::Two,
+                second: None
+            }
         );
         assert_eq!(
             opening_layout(&sized, Sizing::Window, Some(retina)),
-            Layout { w: 3456, h: 2234, density: Density::Two, second: None }
+            Layout {
+                w: 3456,
+                h: 2234,
+                density: Density::Two,
+                second: None
+            }
         );
     }
 
@@ -3900,14 +4652,30 @@ mod tests {
 
     #[test]
     fn a_layouts_density_is_part_of_what_makes_it_a_new_request() {
-        let one = Layout { w: 1280, h: 800, density: Density::One, second: None };
-        let two = Layout { w: 1280, h: 800, density: Density::Two, second: None };
-        assert_ne!(one, two, "the same pixels at another density is a new request");
+        let one = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
+        let two = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::Two,
+            second: None,
+        };
+        assert_ne!(
+            one, two,
+            "the same pixels at another density is a new request"
+        );
 
         let mut pending = None;
         let mut retry_at = None;
         install_layout(two, one, &mut pending, &mut retry_at);
-        assert!(pending.is_some(), "a density change alone is worth asking for");
+        assert!(
+            pending.is_some(),
+            "a density change alone is worth asking for"
+        );
         assert!(retry_at.is_some());
     }
 
@@ -3915,20 +4683,41 @@ mod tests {
     /// may ignore it in silence, so it is asked again — and not forever.
     #[test]
     fn a_layout_is_asked_for_more_than_once_and_not_forever() {
-        let mut pending = PendingLayout::new(Layout { w: 1280, h: 800, density: Density::One, second: None });
+        let mut pending = PendingLayout::new(Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        });
         let mut delays = Vec::new();
         while let Some(delay) = pending.wait_again() {
             delays.push(delay);
         }
         assert_eq!(delays, LAYOUT_RETRY_DELAYS.to_vec());
-        assert!(pending.wait_again().is_none(), "the schedule is exhausted, not restarted");
+        assert!(
+            pending.wait_again().is_none(),
+            "the schedule is exhausted, not restarted"
+        );
     }
 
     #[test]
     fn a_size_carried_to_another_density_keeps_its_points() {
-        let one = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let one = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let two = one.at_density(Density::Two);
-        assert_eq!(two, Layout { w: 2560, h: 1600, density: Density::Two, second: None });
+        assert_eq!(
+            two,
+            Layout {
+                w: 2560,
+                h: 1600,
+                density: Density::Two,
+                second: None
+            }
+        );
         // And back again, exactly — the two densities are integral multiples.
         assert_eq!(two.at_density(Density::One), one);
         // A no-op conversion is the identity, not a rounding of itself.
@@ -3940,36 +4729,100 @@ mod tests {
     /// leaves it alone while the tab is open.
     #[test]
     fn a_second_monitor_keeps_the_density_of_its_tabs_screen() {
-        let even = Layout { w: 2560, h: 1600, density: Density::Two, second: None };
+        let even = Layout {
+            w: 2560,
+            h: 1600,
+            density: Density::Two,
+            second: None,
+        };
         assert_eq!(even.scales(2), [200, 200]);
         // The tab's screen is 1x: the same points, in half the pixels.
         let mixed = even.with_second(Some(even.second().at_density(Density::One)));
-        assert_eq!(mixed.second, Some(Second { w: 1280, h: 800, density: Density::One }));
-        assert_eq!((mixed.row(2), mixed.scales(2)), (vec![(2560, 1600), (1280, 800)], vec![200, 100]));
-        assert_eq!(mixed.densities(), Densities { first: Density::Two, second: Density::One });
+        assert_eq!(
+            mixed.second,
+            Some(Second {
+                w: 1280,
+                h: 800,
+                density: Density::One
+            })
+        );
+        assert_eq!(
+            (mixed.row(2), mixed.scales(2)),
+            (vec![(2560, 1600), (1280, 800)], vec![200, 100])
+        );
+        assert_eq!(
+            mixed.densities(),
+            Densities {
+                first: Density::Two,
+                second: Density::One
+            }
+        );
         // The first moves to a 1x screen too, and they are one layout again.
         assert_eq!(
             mixed.at_density(Density::One),
-            Layout { w: 1280, h: 800, density: Density::One, second: None }
+            Layout {
+                w: 1280,
+                h: 800,
+                density: Density::One,
+                second: None
+            }
         );
         // A window past the ceiling at 2x is held under it, and fits whole at 1x
         // when re-expressed from its points rather than from the held pixels.
-        let wide = even.with_second(Some(Second::points(2560, 1440).at_density(Density::Two))).held(true);
-        assert_eq!(wide.second, Some(Second { w: 3840, h: 2400, density: Density::Two }));
+        let wide = even
+            .with_second(Some(Second::points(2560, 1440).at_density(Density::Two)))
+            .held(true);
         assert_eq!(
-            even.with_second(Some(Second::points(2560, 1440).at_density(Density::One))).held(true).second,
-            Some(Second { w: 2560, h: 1440, density: Density::One })
+            wide.second,
+            Some(Second {
+                w: 3840,
+                h: 2400,
+                density: Density::Two
+            })
+        );
+        assert_eq!(
+            even.with_second(Some(Second::points(2560, 1440).at_density(Density::One)))
+                .held(true)
+                .second,
+            Some(Second {
+                w: 2560,
+                h: 1440,
+                density: Density::One
+            })
         );
         // Open, the tab's monitor stays what it was while the first changes;
         // with no tab it is the first over again.
-        let one = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let one = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let moved = one.at_density(Density::Two);
-        assert_eq!(moved.with_second(one.tab_second(true)), Layout { second: Some(one.second()), ..moved });
+        assert_eq!(
+            moved.with_second(one.tab_second(true)),
+            Layout {
+                second: Some(one.second()),
+                ..moved
+            }
+        );
         assert_eq!(moved.with_second(one.tab_second(false)), moved);
         // What the host laid out reads back as the same layout.
-        let view = View::opened(2, even, (5120, 1600), Placement::Right)
-            .laid_out(
-            &[Placed { x: 0, y: 0, w: 2560, h: 1600 }, Placed { x: 2560, y: 0, w: 1280, h: 800 }],
+        let view = View::opened(2, even, (5120, 1600), Placement::Right).laid_out(
+            &[
+                Placed {
+                    x: 0,
+                    y: 0,
+                    w: 2560,
+                    h: 1600,
+                },
+                Placed {
+                    x: 2560,
+                    y: 0,
+                    w: 1280,
+                    h: 800,
+                },
+            ],
             (3840, 1600),
         );
         assert_eq!(view.current(mixed.densities()), mixed);
@@ -3980,12 +4833,40 @@ mod tests {
     /// bitmap path, whose tiles have no ceiling, it is asked for as it is.
     #[test]
     fn a_layout_is_held_under_the_video_ceiling_only_with_the_pipeline() {
-        let retina = Layout { w: 2560, h: 1440, density: Density::One, second: None }.at_density(Density::Two);
-        assert_eq!(retina.held(true), Layout { w: 3840, h: 2400, density: Density::Two, second: None });
-        assert_eq!(retina.held(false), retina, "the bitmap path asks for the screen whole");
+        let retina = Layout {
+            w: 2560,
+            h: 1440,
+            density: Density::One,
+            second: None,
+        }
+        .at_density(Density::Two);
+        assert_eq!(
+            retina.held(true),
+            Layout {
+                w: 3840,
+                h: 2400,
+                density: Density::Two,
+                second: None
+            }
+        );
+        assert_eq!(
+            retina.held(false),
+            retina,
+            "the bitmap path asks for the screen whole"
+        );
         // A 16:10 4K panel — 1920×1200 at 2x — is a picture the stream takes.
-        let inside = Layout { w: 1920, h: 1200, density: Density::One, second: None }.at_density(Density::Two);
-        assert_eq!(inside.held(true), inside, "a desktop the stream takes is untouched");
+        let inside = Layout {
+            w: 1920,
+            h: 1200,
+            density: Density::One,
+            second: None,
+        }
+        .at_density(Density::Two);
+        assert_eq!(
+            inside.held(true),
+            inside,
+            "a desktop the stream takes is untouched"
+        );
         // And the held layout is what the server's answer is checked against, so the
         // retry ladder recognises the desktop it asked for.
         let pending = PendingLayout::new(retina.held(true));
@@ -3994,30 +4875,68 @@ mod tests {
         let pending = PendingLayout::new(retina.held(false));
         assert!(confirms(&pending, &row(&[(5120, 2880)])));
         // The opening layout follows the same rule.
-        let five_k = HostDisplay { w: 2560, h: 1440, scale: 200, fit: false };
+        let five_k = HostDisplay {
+            w: 2560,
+            h: 1440,
+            scale: 200,
+            fit: false,
+        };
         assert_eq!(
             opening_layout(&rdp_target(""), Sizing::Window, Some(five_k)),
-            Layout { w: 3840, h: 2400, density: Density::Two, second: None }
+            Layout {
+                w: 3840,
+                h: 2400,
+                density: Density::Two,
+                second: None
+            }
         );
         assert_eq!(
             opening_layout(&rdp_target("egfx = false"), Sizing::Window, Some(five_k)),
-            Layout { w: 5120, h: 2880, density: Density::Two, second: None }
+            Layout {
+                w: 5120,
+                h: 2880,
+                density: Density::Two,
+                second: None
+            }
         );
     }
 
     #[test]
     fn a_layout_is_scheduled_only_when_it_is_new() {
-        let current = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let current = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
         let mut pending = None;
         let mut retry_at = None;
 
         // The desktop already agrees — including after the size adjustment, which
         // is what stops an odd viewport width asking forever.
-        install_layout(Layout { w: 1281, h: 800, density: Density::One, second: None }, current, &mut pending, &mut retry_at);
-        assert!(pending.is_none(), "1281 adjusts to the 1280 already on screen");
+        install_layout(
+            Layout {
+                w: 1281,
+                h: 800,
+                density: Density::One,
+                second: None,
+            },
+            current,
+            &mut pending,
+            &mut retry_at,
+        );
+        assert!(
+            pending.is_none(),
+            "1281 adjusts to the 1280 already on screen"
+        );
 
         // A real change schedules.
-        let wanted = Layout { w: 1600, h: 900, density: Density::One, second: None };
+        let wanted = Layout {
+            w: 1600,
+            h: 900,
+            density: Density::One,
+            second: None,
+        };
         install_layout(wanted, current, &mut pending, &mut retry_at);
         assert_eq!(pending.as_ref().map(|p| p.layout), Some(wanted));
 
@@ -4025,7 +4944,11 @@ mod tests {
         pending.as_mut().unwrap().wait_again();
         let attempts = pending.as_ref().unwrap().attempts;
         install_layout(wanted, current, &mut pending, &mut retry_at);
-        assert_eq!(pending.as_ref().unwrap().attempts, attempts, "the count survives a repeat");
+        assert_eq!(
+            pending.as_ref().unwrap().attempts,
+            attempts,
+            "the count survives a repeat"
+        );
 
         // And a request that matches the desktop again clears it.
         install_layout(current, current, &mut pending, &mut retry_at);
@@ -4038,8 +4961,19 @@ mod tests {
     /// change on every report and ask forever.
     #[test]
     fn the_adjusted_layout_is_what_the_rdp_client_would_send() {
-        for (w, h) in [(1281u32, 800u32), (1u32, 1u32), (10_000, 10_000), (1280, 800)] {
-            let layout = Layout { w, h, density: Density::Two, second: None }.adjusted();
+        for (w, h) in [
+            (1281u32, 800u32),
+            (1u32, 1u32),
+            (10_000, 10_000),
+            (1280, 800),
+        ] {
+            let layout = Layout {
+                w,
+                h,
+                density: Density::Two,
+                second: None,
+            }
+            .adjusted();
             assert_eq!((layout.w, layout.h), client::sanitise_size(w, h));
             assert_eq!(layout.w % 2, 0, "the width must be even");
             assert!((200..=8192).contains(&layout.w) && (200..=8192).contains(&layout.h));
@@ -4055,25 +4989,66 @@ mod tests {
         // An input with no session behind it: the queue takes commands whether or
         // not anything is draining it.
         let input = &Input::detached();
-        let current = Layout { w: 1280, h: 800, density: Density::One, second: None };
+        let current = Layout {
+            w: 1280,
+            h: 800,
+            density: Density::One,
+            second: None,
+        };
 
         // Before the remote offers the channel, nothing can go out — and this is
         // the one outcome worth asking again on.
         assert_eq!(
-            request_layout(input, false, current, Layout { w: 1600, h: 900, density: Density::One, second: None }, 1),
+            request_layout(
+                input,
+                false,
+                current,
+                Layout {
+                    w: 1600,
+                    h: 900,
+                    density: Density::One,
+                    second: None
+                },
+                1
+            ),
             Asked::NotReady
         );
         // With the channel up, a real change is sent.
         assert_eq!(
-            request_layout(input, true, current, Layout { w: 1600, h: 900, density: Density::One, second: None }, 1),
+            request_layout(
+                input,
+                true,
+                current,
+                Layout {
+                    w: 1600,
+                    h: 900,
+                    density: Density::One,
+                    second: None
+                },
+                1
+            ),
             Asked::Sent
         );
         // And the desktop it already has is not asked for at all, because the
         // answer would be a full renegotiation of the session.
-        assert_eq!(request_layout(input, true, current, current, 1), Asked::Redundant);
+        assert_eq!(
+            request_layout(input, true, current, current, 1),
+            Asked::Redundant
+        );
         // Including through the size adjustment.
         assert_eq!(
-            request_layout(input, true, current, Layout { w: 1281, h: 800, density: Density::One, second: None }, 1),
+            request_layout(
+                input,
+                true,
+                current,
+                Layout {
+                    w: 1281,
+                    h: 800,
+                    density: Density::One,
+                    second: None
+                },
+                1
+            ),
             Asked::Redundant
         );
     }
@@ -4084,21 +5059,49 @@ mod tests {
     #[test]
     fn a_kept_size_says_its_density() {
         let points = (1920, 980);
-        assert_eq!(kept_densities(points, true, &row(&[(1920, 980)])), Some(Densities::even(Density::One)));
-        assert_eq!(kept_densities(points, true, &row(&[(3840, 1960)])), Some(Densities::even(Density::Two)));
-        assert_eq!(kept_densities(points, true, &row(&[(960, 490)])), None, "not a size the session asks for");
+        assert_eq!(
+            kept_densities(points, true, &row(&[(1920, 980)])),
+            Some(Densities::even(Density::One))
+        );
+        assert_eq!(
+            kept_densities(points, true, &row(&[(3840, 1960)])),
+            Some(Densities::even(Density::Two))
+        );
+        assert_eq!(
+            kept_densities(points, true, &row(&[(960, 490)])),
+            None,
+            "not a size the session asks for"
+        );
         assert_eq!(
             kept_densities(points, true, &row(&[(1920, 980), (3840, 1960)])),
-            Some(Densities { first: Density::One, second: Density::Two }),
+            Some(Densities {
+                first: Density::One,
+                second: Density::Two
+            }),
         );
-        assert_eq!(kept_densities(points, true, &row(&[(1920, 980), (1280, 800)])), None);
+        assert_eq!(
+            kept_densities(points, true, &row(&[(1920, 980), (1280, 800)])),
+            None
+        );
         // Held under the ceiling, 2x is still not 1x's size.
-        assert_eq!(kept_densities((2560, 1440), true, &row(&[(3840, 2400)])), Some(Densities::even(Density::Two)));
+        assert_eq!(
+            kept_densities((2560, 1440), true, &row(&[(3840, 2400)])),
+            Some(Densities::even(Density::Two))
+        );
         // Where both are held to one size, the size says nothing.
-        assert_eq!(kept_densities((3840, 2400), true, &row(&[(3840, 2400)])), None);
+        assert_eq!(
+            kept_densities((3840, 2400), true, &row(&[(3840, 2400)])),
+            None
+        );
         // The bitmap path holds nothing: 2x is the points doubled, whatever they are.
-        assert_eq!(kept_densities((3840, 2400), false, &row(&[(7680, 4800)])), Some(Densities::even(Density::Two)));
-        assert_eq!(kept_densities((2560, 1440), false, &row(&[(3840, 2400)])), None);
+        assert_eq!(
+            kept_densities((3840, 2400), false, &row(&[(7680, 4800)])),
+            Some(Densities::even(Density::Two))
+        );
+        assert_eq!(
+            kept_densities((2560, 1440), false, &row(&[(3840, 2400)])),
+            None
+        );
     }
 
     /// A resize is the only acknowledgment a layout gets, and the same event
@@ -4107,17 +5110,39 @@ mod tests {
     /// never applied — the fault `applied` carries a paragraph about.
     #[test]
     fn only_the_size_that_was_asked_for_confirms_a_layout() {
-        let pending = PendingLayout::new(Layout { w: 1600, h: 900, density: Density::Two, second: None });
-        assert!(confirms(&pending, &row(&[(1600, 900)])), "the size that went out came back");
-        assert!(!confirms(&pending, &row(&[(1280, 800)])), "a desktop the server chose for itself");
-        assert!(!confirms(&pending, &row(&[(1600, 1000)])), "one axis is not enough");
+        let pending = PendingLayout::new(Layout {
+            w: 1600,
+            h: 900,
+            density: Density::Two,
+            second: None,
+        });
+        assert!(
+            confirms(&pending, &row(&[(1600, 900)])),
+            "the size that went out came back"
+        );
+        assert!(
+            !confirms(&pending, &row(&[(1280, 800)])),
+            "a desktop the server chose for itself"
+        );
+        assert!(
+            !confirms(&pending, &row(&[(1600, 1000)])),
+            "one axis is not enough"
+        );
 
         // Through the adjustment, because an odd width is not what was sent: a
         // server answering 1600 has answered the request, and a comparison
         // against the 1601 asked for would retry until the ladder ran out.
-        let odd = PendingLayout::new(Layout { w: 1601, h: 900, density: Density::One, second: None });
+        let odd = PendingLayout::new(Layout {
+            w: 1601,
+            h: 900,
+            density: Density::One,
+            second: None,
+        });
         assert!(confirms(&odd, &row(&[(1600, 900)])));
-        assert!(!confirms(&odd, &row(&[(1601, 900)])), "1601 is not a size this can be sent as");
+        assert!(
+            !confirms(&odd, &row(&[(1601, 900)])),
+            "1601 is not a size this can be sent as"
+        );
     }
 
     /// The pack drops the fourth byte and keeps the order. Its own test because

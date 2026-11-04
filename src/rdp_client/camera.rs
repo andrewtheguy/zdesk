@@ -118,7 +118,11 @@ impl CameraFeed {
     pub(super) fn new() -> (Self, CameraQueues) {
         let (commands_tx, commands) = mpsc::unbounded_channel();
         let (samples_tx, samples) = mpsc::channel(SAMPLE_QUEUE);
-        let feed = Self { commands: commands_tx, samples: samples_tx, gap: Arc::new(AtomicBool::new(false)) };
+        let feed = Self {
+            commands: commands_tx,
+            samples: samples_tx,
+            gap: Arc::new(AtomicBool::new(false)),
+        };
         (feed, CameraQueues { commands, samples })
     }
 
@@ -151,7 +155,10 @@ impl CameraFeed {
         if !keyframe && self.gap.load(Ordering::Relaxed) {
             return Fed::Skipped;
         }
-        match self.samples.try_send(Sample { data: data.to_vec(), keyframe }) {
+        match self.samples.try_send(Sample {
+            data: data.to_vec(),
+            keyframe,
+        }) {
             Ok(()) => {
                 self.gap.store(false, Ordering::Relaxed);
                 Fed::Queued
@@ -171,7 +178,12 @@ impl CameraFeed {
 mod tests {
     use super::*;
 
-    const VGA: Format = Format { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 };
+    const VGA: Format = Format {
+        width: 640,
+        height: 480,
+        fps_numerator: 30,
+        fps_denominator: 1,
+    };
 
     /// A full queue opens a gap, reported once; deltas inside it are skipped; a keyframe
     /// that finds room closes it, and one that does not is owed again.
@@ -183,9 +195,17 @@ mod tests {
         }
         assert_eq!(feed.sample(&[2], false), Fed::Dropped);
         assert_eq!(feed.sample(&[3], false), Fed::Skipped);
-        assert_eq!(feed.sample(&[4], true), Fed::Dropped, "a keyframe lost to the queue is owed again");
+        assert_eq!(
+            feed.sample(&[4], true),
+            Fed::Dropped,
+            "a keyframe lost to the queue is owed again"
+        );
         assert!(queues.samples.try_recv().is_ok());
-        assert_eq!(feed.sample(&[5], false), Fed::Skipped, "room is not a keyframe");
+        assert_eq!(
+            feed.sample(&[5], false),
+            Fed::Skipped,
+            "room is not a keyframe"
+        );
         assert_eq!(feed.sample(&[6], true), Fed::Queued);
         assert!(queues.samples.try_recv().is_ok());
         assert_eq!(feed.sample(&[7], false), Fed::Queued, "the gap closed");
@@ -197,8 +217,14 @@ mod tests {
         let (feed, mut queues) = CameraFeed::new();
         assert_eq!(feed.sample(&[1], true), Fed::Queued);
         feed.plug(VGA);
-        assert!(matches!(queues.next().await, Some(CameraInput::Command(CameraCommand::Plug(VGA)))));
-        assert!(matches!(queues.next().await, Some(CameraInput::Sample(Sample { keyframe: true, .. }))));
+        assert!(matches!(
+            queues.next().await,
+            Some(CameraInput::Command(CameraCommand::Plug(VGA)))
+        ));
+        assert!(matches!(
+            queues.next().await,
+            Some(CameraInput::Sample(Sample { keyframe: true, .. }))
+        ));
         drop(feed);
         assert!(queues.next().await.is_none());
 

@@ -44,9 +44,16 @@ impl OpusStream {
     /// Fails if libopus will not encode this shape — in practice only a channel
     /// count other than 1 or 2, which the single advertised format rules out.
     pub fn new(format: PcmFormat, bitrate_bps: i32) -> Result<(Self, Vec<u8>), anyhow::Error> {
-        anyhow::ensure!((1..=2).contains(&format.channels), "opus carries 1 or 2 channels, not {}", format.channels);
+        anyhow::ensure!(
+            (1..=2).contains(&format.channels),
+            "opus carries 1 or 2 channels, not {}",
+            format.channels
+        );
         let channel_count = usize::from(format.channels);
-        let coded = Stream { rate: SAMPLE_RATE, channels: format.channels as u8 };
+        let coded = Stream {
+            rate: SAMPLE_RATE,
+            channels: format.channels as u8,
+        };
         let bitrate = u32::try_from(bitrate_bps).context("an opus bitrate is positive")?;
         let mut encoder = Encoder::new(coded, bitrate).context("create the opus encoder")?;
 
@@ -58,7 +65,10 @@ impl OpusStream {
         let pre_skip = u16::try_from(lookahead + pcm.output_delay())
             .expect("a lookahead and a resampler transient are a few hundred samples");
         // The rate the audio arrived at is what the header records.
-        let head = coded.head(pre_skip, format.sample_rate).context("build OpusHead")?.to_vec();
+        let head = coded
+            .head(pre_skip, format.sample_rate)
+            .context("build OpusHead")?
+            .to_vec();
 
         let stream = Self {
             encoder,
@@ -98,7 +108,9 @@ impl OpusStream {
     /// rate from the next `opus_encode` call.
     pub fn set_bitrate(&mut self, bitrate_bps: i32) -> Result<(), anyhow::Error> {
         let bitrate = u32::try_from(bitrate_bps).context("an opus bitrate is positive")?;
-        self.encoder.set_bitrate(bitrate).context("move the opus bitrate")
+        self.encoder
+            .set_bitrate(bitrate)
+            .context("move the opus bitrate")
     }
 
     /// Frames encoded so far.
@@ -152,7 +164,10 @@ mod tests {
         assert_eq!(head[8], 1, "version");
         assert_eq!(head[9], 2, "stereo");
         let pre_skip = u16::from_le_bytes(head[10..12].try_into().unwrap());
-        assert!(pre_skip > 0, "the encoder's lookahead, not a hardcoded zero");
+        assert!(
+            pre_skip > 0,
+            "the encoder's lookahead, not a hardcoded zero"
+        );
         assert_eq!(
             u32::from_le_bytes(head[12..16].try_into().unwrap()),
             44_100,
@@ -264,12 +279,25 @@ mod tests {
             decoder.decode(packet, &mut decoded, false).expect("decode");
         }
         let energy = |samples: &[i16]| -> f64 {
-            samples.iter().map(|s| f64::from(*s) * f64::from(*s)).sum::<f64>()
+            samples
+                .iter()
+                .map(|s| f64::from(*s) * f64::from(*s))
+                .sum::<f64>()
                 / samples.len() as f64
         };
         let left = energy(&decoded.iter().copied().step_by(2).collect::<Vec<_>>());
-        let right = energy(&decoded.iter().copied().skip(1).step_by(2).collect::<Vec<_>>());
-        assert!(left > 1_000_000.0, "the left channel should carry the tone: {left}");
+        let right = energy(
+            &decoded
+                .iter()
+                .copied()
+                .skip(1)
+                .step_by(2)
+                .collect::<Vec<_>>(),
+        );
+        assert!(
+            left > 1_000_000.0,
+            "the left channel should carry the tone: {left}"
+        );
         assert!(
             right * 10.0 < left,
             "the right channel should be far quieter than the left, got {right} against {left}"
@@ -304,7 +332,9 @@ mod tests {
         let mut decoder = opus::Decoder::new(SAMPLE_RATE, Channels::Stereo).expect("decoder");
         let mut decoded = vec![0i16; FRAME_FRAMES * 2];
         for packet in before.iter().chain(&after) {
-            decoder.decode(packet, &mut decoded, false).expect("decode across the change");
+            decoder
+                .decode(packet, &mut decoded, false)
+                .expect("decode across the change");
         }
         assert!(
             average(&after) * 2 < average(&before),

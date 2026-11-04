@@ -95,7 +95,10 @@ impl Fit {
 
 fn check(w: u16, h: u16, unit: &[u8], fit: Fit) -> anyhow::Result<Region> {
     let nals = nal_units(unit);
-    anyhow::ensure!(!nals.is_empty(), "the server's H.264 frame is not an Annex B access unit");
+    anyhow::ensure!(
+        !nals.is_empty(),
+        "the server's H.264 frame is not an Annex B access unit"
+    );
     check_picture((w, h))?;
     let mut decode = None;
     let mut pps = false;
@@ -113,7 +116,10 @@ fn check(w: u16, h: u16, unit: &[u8], fit: Fit) -> anyhow::Result<Region> {
             }
             8 => pps = true,
             5 => {
-                anyhow::ensure!(decode.is_some() && pps, "the server's H.264 frame holds an IDR picture without both parameter sets ahead of it");
+                anyhow::ensure!(
+                    decode.is_some() && pps,
+                    "the server's H.264 frame holds an IDR picture without both parameter sets ahead of it"
+                );
                 keyframe = true;
             }
             _ => {}
@@ -138,7 +144,10 @@ impl Whole {
     /// macroblocks with no cropping: a Windows host codes a 1280×900 surface as a
     /// 1280×912 picture, whose last rows the page clips.
     pub fn macroblocks() -> Self {
-        Self { stream: None, fit: Fit::Macroblocks }
+        Self {
+            stream: None,
+            fit: Fit::Macroblocks,
+        }
     }
 
     /// Check a `w`×`h` frame of wlshare's video, as [`pass`] checks a region's,
@@ -160,7 +169,9 @@ impl Whole {
             self.stream = Some(stream);
         }
         let Some((decode, size)) = &self.stream else {
-            anyhow::bail!("the server's video stream does not start at an IDR picture with its parameter sets");
+            anyhow::bail!(
+                "the server's video stream does not start at an IDR picture with its parameter sets"
+            );
         };
         anyhow::ensure!(
             *size == (w, h),
@@ -168,7 +179,11 @@ impl Whole {
             size.0,
             size.1
         );
-        Ok(Passed { decode: decode.clone(), keyframe: frame.keyframe, strip: None })
+        Ok(Passed {
+            decode: decode.clone(),
+            keyframe: frame.keyframe,
+            strip: None,
+        })
     }
 }
 
@@ -178,9 +193,12 @@ impl Whole {
 #[cfg(test)]
 pub mod sample {
     pub const KEYFRAME: &[u8] = &[
-        0, 0, 0, 1, 0x67, 0x64, 0x00, 0x0d, 0xac, 0xb4, 0x0a, 0x0c, 0xd8, 0x08, 0x80, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x07, 0x8a, 0x15, 0x50, 0, 0, 0, 1, 0x68, 0xef, 0x04, 0x4b, 0x22,
-        0xc0, 0, 0, 0, 1, 0x65, 0x88, 0x84, 0x3f, 0xfe, 0xb5, 0xce, 0xee, 0x93, 0x79, 0x85, 0x56, 0x58, 0x76, 0x4e, 0x18, 0xef, 0xbd, 0x09, 0xa0, 0x00, 0x03, 0x98, 0xb2, 0xb3, 0x5f, 0xc7, 0x16,
-        0x72, 0x48, 0x02, 0x02, 0x00, 0x02, 0x1c, 0x3e, 0xf8, 0xd2, 0x1a, 0x53, 0x88, 0xc9, 0x5e, 0x81,
+        0, 0, 0, 1, 0x67, 0x64, 0x00, 0x0d, 0xac, 0xb4, 0x0a, 0x0c, 0xd8, 0x08, 0x80, 0x00, 0x00,
+        0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x07, 0x8a, 0x15, 0x50, 0, 0, 0, 1, 0x68, 0xef, 0x04,
+        0x4b, 0x22, 0xc0, 0, 0, 0, 1, 0x65, 0x88, 0x84, 0x3f, 0xfe, 0xb5, 0xce, 0xee, 0x93, 0x79,
+        0x85, 0x56, 0x58, 0x76, 0x4e, 0x18, 0xef, 0xbd, 0x09, 0xa0, 0x00, 0x03, 0x98, 0xb2, 0xb3,
+        0x5f, 0xc7, 0x16, 0x72, 0x48, 0x02, 0x02, 0x00, 0x02, 0x1c, 0x3e, 0xf8, 0xd2, 0x1a, 0x53,
+        0x88, 0xc9, 0x5e, 0x81,
     ];
     pub const FRAME: &[u8] = &[0, 0, 0, 1, 0x41, 0x9a, 0x26, 0x3f, 0x00, 0x01, 0xc7];
 
@@ -188,22 +206,28 @@ pub mod sample {
     /// `zerolatency`: Constrained Baseline, level 1.2, its IDR and the P frame after it each
     /// in three slices, one a thread; x264's version SEI taken out.
     pub const BASELINE_KEYFRAME: &[u8] = &[
-        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0c, 0xda, 0x05, 0x06, 0x6c, 0x05, 0xa8, 0x10, 0x10, 0x32, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00,
-        0x03, 0x00, 0x65, 0x1e, 0x28, 0x55, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x02, 0x3c, 0x80, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x3a, 0x26,
-        0x28, 0x00, 0x11, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0xae, 0xba,
-        0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba,
-        0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xc0, 0x00, 0x00, 0x01, 0x65,
-        0x02, 0x88, 0x88, 0x43, 0xa2, 0x62, 0x80, 0x01, 0x19, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39,
-        0x39, 0x39, 0x39, 0x3a, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
-        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
-        0xbc, 0x00, 0x00, 0x01, 0x65, 0x01, 0x42, 0x22, 0x10, 0xe8, 0x98, 0xa0, 0x00, 0x46, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e,
-        0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
-        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
-        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xaf,
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0c, 0xda, 0x05, 0x06, 0x6c, 0x05, 0xa8, 0x10,
+        0x10, 0x32, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x65, 0x1e, 0x28, 0x55,
+        0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x02, 0x3c, 0x80, 0x00, 0x00, 0x01, 0x65, 0x88,
+        0x84, 0x3a, 0x26, 0x28, 0x00, 0x11, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93,
+        0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0x93, 0xae, 0xba, 0xeb, 0xae, 0xba,
+        0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba,
+        0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba,
+        0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xc0, 0x00, 0x00, 0x01, 0x65,
+        0x02, 0x88, 0x88, 0x43, 0xa2, 0x62, 0x80, 0x01, 0x19, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39,
+        0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x39, 0x3a, 0xeb, 0xae,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xbc, 0x00, 0x00,
+        0x01, 0x65, 0x01, 0x42, 0x22, 0x10, 0xe8, 0x98, 0xa0, 0x00, 0x46, 0x4e, 0x4e, 0x4e, 0x4e,
+        0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae,
+        0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xae, 0xba, 0xeb, 0xaf,
     ];
     pub const BASELINE_FRAME: &[u8] = &[
-        0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x80, 0xa3, 0x00, 0x00, 0x01, 0x41, 0x02, 0x89, 0xa2, 0x28, 0x0a, 0x30, 0x00, 0x00, 0x01, 0x41, 0x01,
-        0x42, 0x68, 0x8a, 0x02, 0x8c,
+        0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x80, 0xa3, 0x00, 0x00, 0x01, 0x41, 0x02, 0x89,
+        0xa2, 0x28, 0x0a, 0x30, 0x00, 0x00, 0x01, 0x41, 0x01, 0x42, 0x68, 0x8a, 0x02, 0x8c,
     ];
 }
 
@@ -215,18 +239,46 @@ mod tests {
     #[test]
     fn nal_units_are_cut_at_their_start_codes() {
         let units = nal_units(KEYFRAME);
-        assert_eq!(units.iter().map(|nal| nal[0] & 0x1f).collect::<Vec<_>>(), [7, 8, 5]);
-        assert_eq!(units[0].len(), 23, "the SPS runs up to the next start code, its zero byte excluded");
+        assert_eq!(
+            units.iter().map(|nal| nal[0] & 0x1f).collect::<Vec<_>>(),
+            [7, 8, 5]
+        );
+        assert_eq!(
+            units[0].len(),
+            23,
+            "the SPS runs up to the next start code, its zero byte excluded"
+        );
         assert_eq!(nal_units(FRAME).len(), 1);
-        assert!(nal_units(&[0, 0, 0, 1]).is_empty(), "a start code with nothing after it");
-        assert!(nal_units(&[0x80, 0x12]).is_empty(), "bytes with no start code are no access unit");
+        assert!(
+            nal_units(&[0, 0, 0, 1]).is_empty(),
+            "a start code with nothing after it"
+        );
+        assert!(
+            nal_units(&[0x80, 0x12]).is_empty(),
+            "bytes with no start code are no access unit"
+        );
     }
 
     #[test]
     fn a_keyframe_names_its_decoder_and_a_frame_names_none() {
-        assert_eq!(pass(320, 192, KEYFRAME).unwrap(), Region { decode: Some("avc1.64000D".to_owned()), keyframe: true });
-        assert!(pass(319, 191, KEYFRAME).unwrap().keyframe, "a region a pixel smaller than the coded picture");
-        assert_eq!(pass(320, 192, FRAME).unwrap(), Region { decode: None, keyframe: false });
+        assert_eq!(
+            pass(320, 192, KEYFRAME).unwrap(),
+            Region {
+                decode: Some("avc1.64000D".to_owned()),
+                keyframe: true
+            }
+        );
+        assert!(
+            pass(319, 191, KEYFRAME).unwrap().keyframe,
+            "a region a pixel smaller than the coded picture"
+        );
+        assert_eq!(
+            pass(320, 192, FRAME).unwrap(),
+            Region {
+                decode: None,
+                keyframe: false
+            }
+        );
     }
 
     /// A Constrained Baseline stream, sliced among its encoder's threads,
@@ -234,10 +286,31 @@ mod tests {
     #[test]
     fn a_sliced_constrained_baseline_keyframe_names_its_decoder() {
         use super::sample::{BASELINE_FRAME, BASELINE_KEYFRAME};
-        assert_eq!(nal_units(BASELINE_KEYFRAME).iter().map(|nal| nal[0] & 0x1f).collect::<Vec<_>>(), [7, 8, 5, 5, 5]);
-        assert_eq!(pass(320, 192, BASELINE_KEYFRAME).unwrap(), Region { decode: Some("avc1.42C00C".to_owned()), keyframe: true });
-        assert_eq!(pass(320, 192, BASELINE_FRAME).unwrap(), Region { decode: None, keyframe: false });
-        assert!(pass(640, 192, BASELINE_KEYFRAME).is_err(), "a picture of another size");
+        assert_eq!(
+            nal_units(BASELINE_KEYFRAME)
+                .iter()
+                .map(|nal| nal[0] & 0x1f)
+                .collect::<Vec<_>>(),
+            [7, 8, 5, 5, 5]
+        );
+        assert_eq!(
+            pass(320, 192, BASELINE_KEYFRAME).unwrap(),
+            Region {
+                decode: Some("avc1.42C00C".to_owned()),
+                keyframe: true
+            }
+        );
+        assert_eq!(
+            pass(320, 192, BASELINE_FRAME).unwrap(),
+            Region {
+                decode: None,
+                keyframe: false
+            }
+        );
+        assert!(
+            pass(640, 192, BASELINE_KEYFRAME).is_err(),
+            "a picture of another size"
+        );
     }
 
     /// The whole desktop's frames are each passed with the decoder they need:
@@ -246,11 +319,28 @@ mod tests {
     fn the_whole_desktops_frames_name_the_last_parameter_sets_decoder() {
         use super::sample::{BASELINE_FRAME, BASELINE_KEYFRAME};
         let mut whole = Whole::default();
-        let passed = |decode: &str, keyframe| Passed { decode: decode.to_owned(), keyframe, strip: None };
-        assert_eq!(whole.pass(320, 192, KEYFRAME).unwrap(), passed("avc1.64000D", true));
-        assert_eq!(whole.pass(320, 192, FRAME).unwrap(), passed("avc1.64000D", false));
-        assert_eq!(whole.pass(319, 191, BASELINE_KEYFRAME).unwrap(), passed("avc1.42C00C", true), "a desktop of odd sides");
-        assert_eq!(whole.pass(319, 191, BASELINE_FRAME).unwrap(), passed("avc1.42C00C", false));
+        let passed = |decode: &str, keyframe| Passed {
+            decode: decode.to_owned(),
+            keyframe,
+            strip: None,
+        };
+        assert_eq!(
+            whole.pass(320, 192, KEYFRAME).unwrap(),
+            passed("avc1.64000D", true)
+        );
+        assert_eq!(
+            whole.pass(320, 192, FRAME).unwrap(),
+            passed("avc1.64000D", false)
+        );
+        assert_eq!(
+            whole.pass(319, 191, BASELINE_KEYFRAME).unwrap(),
+            passed("avc1.42C00C", true),
+            "a desktop of odd sides"
+        );
+        assert_eq!(
+            whole.pass(319, 191, BASELINE_FRAME).unwrap(),
+            passed("avc1.42C00C", false)
+        );
     }
 
     /// A stream that starts on a frame no decoder can start at, and a frame of a
@@ -258,7 +348,10 @@ mod tests {
     #[test]
     fn the_whole_desktops_stream_starts_at_an_idr_and_restarts_at_a_new_size() {
         let refused = Whole::default().pass(320, 192, FRAME).unwrap_err();
-        assert_eq!(refused.to_string(), "the server's video stream does not start at an IDR picture with its parameter sets");
+        assert_eq!(
+            refused.to_string(),
+            "the server's video stream does not start at an IDR picture with its parameter sets"
+        );
         let mut whole = Whole::default();
         whole.pass(320, 192, KEYFRAME).unwrap();
         let resized = whole.pass(640, 384, FRAME).unwrap_err();
@@ -266,8 +359,14 @@ mod tests {
             resized.to_string(),
             "the server sent a 640x384 video frame without the parameter sets of a new size, where its stream is 320x192"
         );
-        assert!(whole.pass(640, 384, KEYFRAME).is_err(), "a keyframe of another picture than the rectangle");
-        assert!(Whole::default().pass(5376, 2288, KEYFRAME).is_err(), "past the ceiling");
+        assert!(
+            whole.pass(640, 384, KEYFRAME).is_err(),
+            "a keyframe of another picture than the rectangle"
+        );
+        assert!(
+            Whole::default().pass(5376, 2288, KEYFRAME).is_err(),
+            "past the ceiling"
+        );
     }
 
     /// Parameter sets ahead of a P frame start no stream and change none: the
@@ -276,18 +375,38 @@ mod tests {
     #[test]
     fn the_whole_desktops_parameter_sets_change_only_at_an_idr() {
         use super::sample::{BASELINE_FRAME, BASELINE_KEYFRAME};
-        let idr = KEYFRAME.windows(5).position(|w| w == [0, 0, 0, 1, 0x65]).unwrap();
+        let idr = KEYFRAME
+            .windows(5)
+            .position(|w| w == [0, 0, 0, 1, 0x65])
+            .unwrap();
         let p_with_params = [&KEYFRAME[..idr], FRAME].concat();
         let refused = Whole::default().pass(320, 192, &p_with_params).unwrap_err();
-        assert_eq!(refused.to_string(), "the server's video frame changes its parameter sets without an IDR picture");
+        assert_eq!(
+            refused.to_string(),
+            "the server's video frame changes its parameter sets without an IDR picture"
+        );
         let mut whole = Whole::default();
         whole.pass(320, 192, KEYFRAME).unwrap();
         let repeated = whole.pass(320, 192, &p_with_params).unwrap();
-        assert_eq!(repeated, Passed { decode: "avc1.64000D".to_owned(), keyframe: false, strip: None });
+        assert_eq!(
+            repeated,
+            Passed {
+                decode: "avc1.64000D".to_owned(),
+                keyframe: false,
+                strip: None
+            }
+        );
         let mut baseline = Whole::default();
         baseline.pass(320, 192, BASELINE_KEYFRAME).unwrap();
-        assert!(baseline.pass(320, 192, &p_with_params).is_err(), "another stream's parameter sets");
-        assert_eq!(baseline.pass(320, 192, BASELINE_FRAME).unwrap().decode, "avc1.42C00C", "the stream it had is kept");
+        assert!(
+            baseline.pass(320, 192, &p_with_params).is_err(),
+            "another stream's parameter sets"
+        );
+        assert_eq!(
+            baseline.pass(320, 192, BASELINE_FRAME).unwrap().decode,
+            "avc1.42C00C",
+            "the stream it had is kept"
+        );
     }
 
     /// An RDP host's surface is coded in whole macroblocks, uncropped: its stream
@@ -297,15 +416,30 @@ mod tests {
         let mut whole = Whole::macroblocks();
         assert!(whole.pass(320, 180, KEYFRAME).is_ok(), "192 rows for 180");
         assert!(whole.pass(320, 180, FRAME).is_ok());
-        assert!(Whole::macroblocks().pass(320, 176, KEYFRAME).is_err(), "a macroblock's rows more");
-        assert!(Whole::default().pass(320, 180, KEYFRAME).is_err(), "wlshare crops its own");
+        assert!(
+            Whole::macroblocks().pass(320, 176, KEYFRAME).is_err(),
+            "a macroblock's rows more"
+        );
+        assert!(
+            Whole::default().pass(320, 180, KEYFRAME).is_err(),
+            "wlshare crops its own"
+        );
     }
 
     #[test]
     fn a_frame_that_is_not_what_wlshare_promised_is_refused() {
-        assert!(pass(320, 192, &[0x80, 0, 0, 0]).is_err(), "bytes with no start code");
-        assert!(pass(640, 192, KEYFRAME).is_err(), "a picture of another size");
-        assert!(pass(318, 192, KEYFRAME).is_err(), "two pixels narrower is another picture");
+        assert!(
+            pass(320, 192, &[0x80, 0, 0, 0]).is_err(),
+            "bytes with no start code"
+        );
+        assert!(
+            pass(640, 192, KEYFRAME).is_err(),
+            "a picture of another size"
+        );
+        assert!(
+            pass(318, 192, KEYFRAME).is_err(),
+            "two pixels narrower is another picture"
+        );
         assert!(pass(5376, 2288, KEYFRAME).is_err(), "past the ceiling");
     }
 
@@ -314,13 +448,37 @@ mod tests {
     /// as a keyframe a decoder cannot start at, or as a frame of another.
     #[test]
     fn an_idr_without_both_parameter_sets_ahead_of_it_is_refused() {
-        let [sps, pps, idr] = nal_units(KEYFRAME)[..] else { panic!("the sample is SPS, PPS, IDR") };
-        let unit = |nals: &[&[u8]]| nals.iter().flat_map(|nal| [&[0, 0, 0, 1][..], nal]).flatten().copied().collect::<Vec<u8>>();
-        assert_eq!(pass(320, 192, &unit(&[sps, pps, idr])).unwrap(), Region { decode: Some("avc1.64000D".to_owned()), keyframe: true });
+        let [sps, pps, idr] = nal_units(KEYFRAME)[..] else {
+            panic!("the sample is SPS, PPS, IDR")
+        };
+        let unit = |nals: &[&[u8]]| {
+            nals.iter()
+                .flat_map(|nal| [&[0, 0, 0, 1][..], nal])
+                .flatten()
+                .copied()
+                .collect::<Vec<u8>>()
+        };
+        assert_eq!(
+            pass(320, 192, &unit(&[sps, pps, idr])).unwrap(),
+            Region {
+                decode: Some("avc1.64000D".to_owned()),
+                keyframe: true
+            }
+        );
         assert!(pass(320, 192, &unit(&[idr])).is_err(), "an IDR alone");
         assert!(pass(320, 192, &unit(&[sps, idr])).is_err(), "no PPS");
         assert!(pass(320, 192, &unit(&[pps, idr])).is_err(), "no SPS");
-        assert!(pass(320, 192, &unit(&[idr, sps, pps])).is_err(), "the parameter sets behind the picture");
-        assert_eq!(pass(320, 192, &unit(&[sps, pps])).unwrap(), Region { decode: Some("avc1.64000D".to_owned()), keyframe: false }, "parameter sets with no picture pass as no keyframe");
+        assert!(
+            pass(320, 192, &unit(&[idr, sps, pps])).is_err(),
+            "the parameter sets behind the picture"
+        );
+        assert_eq!(
+            pass(320, 192, &unit(&[sps, pps])).unwrap(),
+            Region {
+                decode: Some("avc1.64000D".to_owned()),
+                keyframe: false
+            },
+            "parameter sets with no picture pass as no keyframe"
+        );
     }
 }

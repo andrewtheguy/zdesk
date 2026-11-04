@@ -17,7 +17,11 @@ use super::wire::{Malformed, Reader};
 const WHAT: &str = "an NSCodec bitmap";
 
 fn refuse(field: &'static str, value: impl Into<u64>) -> Malformed {
-    Malformed::Refused { what: WHAT, field, value: value.into() }
+    Malformed::Refused {
+        what: WHAT,
+        field,
+        value: value.into(),
+    }
 }
 
 /// The decoder's plane buffers, reused across bitmaps.
@@ -116,7 +120,11 @@ fn rle_decode(coded: &[u8], out: &mut [u8]) -> Result<(), Malformed> {
             at += 1;
             continue;
         }
-        let next = r.rest().first().copied().ok_or_else(|| refuse("a run-length plane cut short at", at as u64))?;
+        let next = r
+            .rest()
+            .first()
+            .copied()
+            .ok_or_else(|| refuse("a run-length plane cut short at", at as u64))?;
         if next != value {
             out[at] = value;
             at += 1;
@@ -124,7 +132,11 @@ fn rle_decode(coded: &[u8], out: &mut [u8]) -> Result<(), Malformed> {
         }
         r.u8()?;
         let short = r.u8()?;
-        let run = if short < 0xFF { usize::from(short) + 2 } else { r.u32_le()? as usize };
+        let run = if short < 0xFF {
+            usize::from(short) + 2
+        } else {
+            r.u32_le()? as usize
+        };
         if run > end - at - 4 {
             return Err(refuse("a run past its plane", run as u64));
         }
@@ -150,7 +162,9 @@ mod tests {
 
     fn decode(src: &[u8], w: usize, h: usize) -> Vec<[u8; 3]> {
         let mut out = vec![[0; 3]; w * h];
-        Nsc::default().decode(src, w, h, |x, y, bgr| out[y * w + x] = bgr).unwrap();
+        Nsc::default()
+            .decode(src, w, h, |x, y, bgr| out[y * w + x] = bgr)
+            .unwrap();
         out
     }
 
@@ -192,7 +206,10 @@ mod tests {
         src.extend_from_slice(&[0, 0, 0, 0]); // Cg
         src.extend_from_slice(&[0xFF; 4]);
         let out = decode(&src, 2, 2);
-        assert_eq!(out, vec![[30, 50, 70], [40, 60, 80], [50, 70, 90], [60, 80, 100]]);
+        assert_eq!(
+            out,
+            vec![[30, 50, 70], [40, 60, 80], [50, 70, 90], [60, 80, 100]]
+        );
     }
 
     /// A colour loss level outside 1..=7 and a run past its plane are each refused.

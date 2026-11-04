@@ -171,7 +171,11 @@ impl CameraBridge {
     }
 
     fn control(&self) -> Option<Arc<dyn CameraControl>> {
-        self.upstream.lock().expect("camera control lock").control.clone()
+        self.upstream
+            .lock()
+            .expect("camera control lock")
+            .control
+            .clone()
     }
 }
 
@@ -201,8 +205,12 @@ mod tests {
         }
     }
 
-    const FORMAT: CameraFormat =
-        CameraFormat { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 };
+    const FORMAT: CameraFormat = CameraFormat {
+        width: 640,
+        height: 480,
+        fps_numerator: 30,
+        fps_denominator: 1,
+    };
 
     /// A bridge with no engine refuses samples rather than losing them silently
     /// mid-claim: the socket sees the refusal and can tell the browser.

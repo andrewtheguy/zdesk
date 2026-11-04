@@ -77,7 +77,10 @@ impl Rdpdr {
             debug!("rdp: ignoring a device redirection PDU for component {component:#06x}");
             return Ok(Vec::new());
         }
-        debug!("rdp: device redirection PDU {packet:#06x}, {} bytes", pdu.len());
+        debug!(
+            "rdp: device redirection PDU {packet:#06x}, {} bytes",
+            pdu.len()
+        );
         match packet {
             SERVER_ANNOUNCE => {
                 let major = r.u16_le()?;
@@ -85,7 +88,10 @@ impl Rdpdr {
                 self.client_id = r.u32_le()?;
                 let version = (major.min(VERSION_MAJOR), minor.min(VERSION_MINOR));
                 self.version = Some(version);
-                debug!("rdp: the host announces device redirection {major}.{minor}; answering as {}.{}", version.0, version.1);
+                debug!(
+                    "rdp: the host announces device redirection {major}.{minor}; answering as {}.{}",
+                    version.0, version.1
+                );
                 Ok(vec![self.clientid_confirm(version), client_name()])
             }
             SERVER_CAPABILITY => {
@@ -97,7 +103,11 @@ impl Rdpdr {
                     let length = r.u16_le()?;
                     let version = r.u32_le()?;
                     let Some(body) = length.checked_sub(8) else {
-                        return Err(Malformed::Refused { what: WHAT, field: "a capability length", value: u64::from(length) });
+                        return Err(Malformed::Refused {
+                            what: WHAT,
+                            field: "a capability length",
+                            value: u64::from(length),
+                        });
                     };
                     let mut body = Reader::new(WHAT, r.bytes(usize::from(body))?);
                     if kind == CAP_GENERAL {
@@ -143,7 +153,11 @@ impl Rdpdr {
 
 /// Client Name Request: this end's name, UTF-16 with its terminator.
 fn client_name() -> Vec<u8> {
-    let name: Vec<u8> = COMPUTER_NAME.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    let name: Vec<u8> = COMPUTER_NAME
+        .encode_utf16()
+        .chain([0])
+        .flat_map(u16::to_le_bytes)
+        .collect();
     let mut w = Writer::with_capacity(16 + name.len());
     w.u16_le(CORE);
     w.u16_le(CLIENT_NAME);
@@ -209,11 +223,18 @@ mod tests {
         body.extend_from_slice(&0x0000_0007u32.to_le_bytes());
         let replies = rdpdr.push(&server(SERVER_ANNOUNCE, &body)).unwrap();
         assert_eq!(replies.len(), 2);
-        assert_eq!(replies[0], [0x72, 0x44, 0x43, 0x43, 1, 0, 0x0C, 0, 7, 0, 0, 0]);
+        assert_eq!(
+            replies[0],
+            [0x72, 0x44, 0x43, 0x43, 1, 0, 0x0C, 0, 7, 0, 0, 0]
+        );
         let name = &replies[1];
         assert_eq!(&name[..4], &[0x72, 0x44, 0x4E, 0x43]);
         assert_eq!(&name[4..8], &1u32.to_le_bytes(), "Unicode");
-        assert_eq!(&name[12..16], &12u32.to_le_bytes(), "five characters and a terminator");
+        assert_eq!(
+            &name[12..16],
+            &12u32.to_le_bytes(),
+            "five characters and a terminator"
+        );
         assert_eq!(&name[16..18], b"z\0");
         assert_eq!(&name[24..26], b"k\0");
         assert_eq!(&name[26..], &[0, 0], "the terminator");
@@ -242,11 +263,21 @@ mod tests {
         let caps = &replies[0];
         assert_eq!(&caps[..8], &[0x72, 0x44, 0x50, 0x43, 1, 0, 0, 0]);
         assert_eq!(&caps[8..16], &[1, 0, 44, 0, 2, 0, 0, 0]);
-        assert_eq!(&caps[28..32], &0x0000_FFFCu32.to_le_bytes(), "the server's codes and ours");
+        assert_eq!(
+            &caps[28..32],
+            &0x0000_FFFCu32.to_le_bytes(),
+            "the server's codes and ours"
+        );
         assert_eq!(caps.len(), 8 + 44);
 
-        let confirm = rdpdr.push(&server(CLIENTID_CONFIRM, &[1, 0, 0x0D, 0, 9, 0, 0, 0])).unwrap();
-        assert_eq!(confirm, vec![vec![0x72, 0x44, 0x41, 0x44, 0, 0, 0, 0]], "a list of no devices");
+        let confirm = rdpdr
+            .push(&server(CLIENTID_CONFIRM, &[1, 0, 0x0D, 0, 9, 0, 0, 0]))
+            .unwrap();
+        assert_eq!(
+            confirm,
+            vec![vec![0x72, 0x44, 0x41, 0x44, 0, 0, 0, 0]],
+            "a list of no devices"
+        );
         assert_eq!(rdpdr.client_id, 9);
         let logged_on = rdpdr.push(&server(USER_LOGGEDON, &[])).unwrap();
         assert_eq!(logged_on, confirm, "the same list of no devices");
@@ -257,8 +288,17 @@ mod tests {
     #[test]
     fn what_is_not_the_handshake_is_left_alone() {
         let mut rdpdr = Rdpdr::new();
-        assert!(rdpdr.push(&[0x52, 0x50, 0x01, 0x00, 1, 2]).unwrap().is_empty(), "the printer component");
-        assert!(rdpdr.push(&server(0x4952, &[0; 8])).unwrap().is_empty(), "an I/O request nobody asked for");
+        assert!(
+            rdpdr
+                .push(&[0x52, 0x50, 0x01, 0x00, 1, 2])
+                .unwrap()
+                .is_empty(),
+            "the printer component"
+        );
+        assert!(
+            rdpdr.push(&server(0x4952, &[0; 8])).unwrap().is_empty(),
+            "an I/O request nobody asked for"
+        );
         assert!(rdpdr.push(&server(SERVER_ANNOUNCE, &[1, 0])).is_err());
     }
 }

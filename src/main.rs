@@ -35,12 +35,20 @@ async fn main() -> anyhow::Result<()> {
             // environment but no argv to edit. Everything else comes from the
             // TOML file, credentials included (see src/config.rs for why). Every
             // target is served; the browser picks one after login.
-            info!("zdesk {}, features: {}", env!("CARGO_PKG_VERSION"), zdesk::cli::features_line());
+            info!(
+                "zdesk {}, features: {}",
+                env!("CARGO_PKG_VERSION"),
+                zdesk::cli::features_line()
+            );
             let (mut file, path) = zdesk::config::load(config.as_deref())?;
             info!("config: {}", path.display());
             let key = if file.needs_master() {
-                let master = file.served_master(path.parent().unwrap_or(std::path::Path::new("")))?;
-                Some(file.key(&master).with_context(|| format!("in config file {}", path.display()))?)
+                let master =
+                    file.served_master(path.parent().unwrap_or(std::path::Path::new("")))?;
+                Some(
+                    file.key(&master)
+                        .with_context(|| format!("in config file {}", path.display()))?,
+                )
             } else {
                 None
             };
@@ -54,15 +62,19 @@ async fn main() -> anyhow::Result<()> {
             serve(config).await?;
         }
         #[cfg(feature = "tui")]
-        Commands::Tui { port, instances_dir } => {
+        Commands::Tui {
+            port,
+            instances_dir,
+        } => {
             anyhow::ensure!(port != 0, "--port must be between 1 and 65535");
             zdesk::worker::run_tui(zdesk::worker::TuiOptions {
                 port,
                 // Absolute, so the header names it in full and a file manager
                 // handed it does not read it against its own directory.
                 instances_dir: match instances_dir {
-                    Some(dir) => std::path::absolute(&dir)
-                        .with_context(|| format!("cannot resolve --instances-dir {}", dir.display()))?,
+                    Some(dir) => std::path::absolute(&dir).with_context(|| {
+                        format!("cannot resolve --instances-dir {}", dir.display())
+                    })?,
                     None => zdesk::worker::default_instances_dir()?,
                 },
             })
@@ -139,8 +151,13 @@ fn password(action: PasswordAction) -> anyhow::Result<()> {
         } => {
             // The installed config when there is one, as `encrypt` takes, so both
             // use the master password the gateway will; a first config can come later.
-            let path = config.or_else(|| zdesk::config::installed_config_path().filter(|path| path.exists()));
-            let file = path.as_deref().map(zdesk::vault::master_file_of).transpose()?.flatten();
+            let path = config
+                .or_else(|| zdesk::config::installed_config_path().filter(|path| path.exists()));
+            let file = path
+                .as_deref()
+                .map(zdesk::vault::master_file_of)
+                .transpose()?
+                .flatten();
             if let Some(file) = &file {
                 anyhow::ensure!(
                     force || !master_file_exists(file)?,
@@ -151,7 +168,8 @@ fn password(action: PasswordAction) -> anyhow::Result<()> {
                 );
             }
             // Asked twice: a new [master] block has nothing to check a typing mistake by.
-            let master = zdesk::vault::MasterPassword::new(read_secret("New master password", true)?)?;
+            let master =
+                zdesk::vault::MasterPassword::new(read_secret("New master password", true)?)?;
             match &file {
                 Some(file) => {
                     master.write_file(file, force)?;
@@ -206,7 +224,10 @@ fn config_key(config: Option<&std::path::Path>) -> anyhow::Result<zdesk::vault::
 /// Print a new `[master]` block under `master`, with a salt of its own.
 fn print_master_block(master: &zdesk::vault::MasterPassword) -> anyhow::Result<()> {
     let (section, _) = zdesk::vault::Key::create(master)?;
-    println!("[master]\nsalt = \"{}\"\ncheck = \"{}\"", section.salt, section.check);
+    println!(
+        "[master]\nsalt = \"{}\"\ncheck = \"{}\"",
+        section.salt, section.check
+    );
     Ok(())
 }
 
@@ -225,8 +246,12 @@ fn existing_master_file(path: &std::path::Path) -> anyhow::Result<std::path::Pat
 }
 
 fn master_file_exists(file: &std::path::Path) -> anyhow::Result<bool> {
-    file.try_exists()
-        .with_context(|| format!("cannot look for the master password file {}", file.display()))
+    file.try_exists().with_context(|| {
+        format!(
+            "cannot look for the master password file {}",
+            file.display()
+        )
+    })
 }
 
 /// Run a TUI worker, and stop when its parent does.
@@ -280,13 +305,20 @@ fn load_hevc_decoder(config: &AppConfig) -> anyhow::Result<Option<zdesk::hevc_wa
 
 async fn serve(config: AppConfig) -> anyhow::Result<()> {
     if let Some(recording) = &config.meter {
-        info!("recording websocket throughput to {}", recording.database.display());
+        info!(
+            "recording websocket throughput to {}",
+            recording.database.display()
+        );
     }
     let throughput = zdesk::throughput::start(
         config.meter.as_ref(),
-        config.targets.iter().map(|target| target.name.clone()).collect(),
+        config
+            .targets
+            .iter()
+            .map(|target| target.name.clone())
+            .collect(),
     )
-        .context("cannot record websocket throughput ([meter].database)")?;
+    .context("cannot record websocket throughput ([meter].database)")?;
     let hevc_decoder = load_hevc_decoder(&config)?;
     let app = server::router(config.clone(), throughput, hevc_decoder);
 
@@ -368,7 +400,10 @@ async fn serve(config: AppConfig) -> anyhow::Result<()> {
         ListenAddr::Pipe(name) => anyhow::bail!("{name} is a worker's private pipe"),
     }
 
-    info!("{} target(s) available in the post-login picker:", config.targets.len());
+    info!(
+        "{} target(s) available in the post-login picker:",
+        config.targets.len()
+    );
     for target in &config.targets {
         info!(
             "  target {:?}: {}:{} ({:?})",
@@ -583,7 +618,10 @@ mod tests {
         let err = bind_unix(&path).expect_err("something is already serving it");
         let text = format!("{err:#}");
         assert!(text.contains("already being served"), "{text}");
-        assert!(text.contains("gateway.sock"), "it must name the socket: {text}");
+        assert!(
+            text.contains("gateway.sock"),
+            "it must name the socket: {text}"
+        );
 
         // And the live one still answers: the refusal took nothing away.
         assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());

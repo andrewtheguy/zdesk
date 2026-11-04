@@ -93,7 +93,10 @@ fn wait_until_ready(socket: &Path) {
         match UnixStream::connect(socket) {
             Ok(_) => return,
             Err(e) if Instant::now() >= deadline => {
-                panic!("nothing was listening on {} after {READY_TIMEOUT:?}: {e}", socket.display())
+                panic!(
+                    "nothing was listening on {} after {READY_TIMEOUT:?}: {e}",
+                    socket.display()
+                )
             }
             Err(_) => std::thread::sleep(Duration::from_millis(25)),
         }
@@ -132,7 +135,10 @@ fn a_gateway_on_a_unix_socket_answers_and_cleans_up_after_itself() {
     wait_until_ready(&socket);
     let response = request(&socket, "/api/health");
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.ends_with("ok"), "the health handler's own answer: {response}");
+    assert!(
+        response.ends_with("ok"),
+        "the health handler's own answer: {response}"
+    );
 
     // The point of being on a socket at all: the filesystem decides who may connect.
     let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
@@ -161,7 +167,10 @@ fn a_gateway_on_a_unix_socket_answers_and_cleans_up_after_itself() {
     // socket would then still be there for a reason that is not the one under test.
     // Once this returns, the guard has run or it never will.
     let status = gateway.0.wait().expect("the gateway exits");
-    assert!(status.success(), "a signalled gateway stops cleanly: {status}");
+    assert!(
+        status.success(),
+        "a signalled gateway stops cleanly: {status}"
+    );
     assert!(
         !socket.exists(),
         "a stopped gateway must leave no socket behind: {} is still there",

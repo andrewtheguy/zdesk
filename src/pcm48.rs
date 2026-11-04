@@ -91,7 +91,10 @@ impl Pcm48 {
     /// Starts resampling `format` to [`SAMPLE_RATE`].
     pub fn new(format: PcmFormat) -> Result<Self, anyhow::Error> {
         let channels = usize::from(format.channels);
-        anyhow::ensure!(channels > 0, "a pcm format with no channels cannot be encoded");
+        anyhow::ensure!(
+            channels > 0,
+            "a pcm format with no channels cannot be encoded"
+        );
 
         let (resampler, frames_per_group) = if format.sample_rate == SAMPLE_RATE {
             (None, GROUP_FRAMES)
@@ -324,9 +327,17 @@ mod tests {
 
         // One group needs 882 input frames at 44.1 kHz.
         pcm.push(&silence(881)).expect("push");
-        assert_eq!(pcm.ready_frames(), 0, "one frame short of a group produces nothing");
+        assert_eq!(
+            pcm.ready_frames(),
+            0,
+            "one frame short of a group produces nothing"
+        );
         pcm.push(&silence(1)).expect("push");
-        assert_eq!(pcm.ready_frames(), GROUP_FRAMES, "the 882nd frame completes a group");
+        assert_eq!(
+            pcm.ready_frames(),
+            GROUP_FRAMES,
+            "the 882nd frame completes a group"
+        );
 
         // 32768 bytes is what the tested Windows host sends: 8192 frames, which is
         // nine whole groups (7938 frames) with 254 left over.
@@ -344,7 +355,11 @@ mod tests {
         pcm.push(&[0, 0, 0]).expect("push");
         assert_eq!(pcm.odd_byte, Some(0), "the third byte is half a sample");
         assert_eq!(pcm.pending[0].len(), 1, "left got one sample");
-        assert_eq!(pcm.pending[1].len(), 0, "right is waiting for its other half");
+        assert_eq!(
+            pcm.pending[1].len(),
+            0,
+            "right is waiting for its other half"
+        );
         pcm.push(&[0]).expect("push");
         assert_eq!(pcm.odd_byte, None);
         assert_eq!(pcm.pending[1].len(), 1);
@@ -432,7 +447,11 @@ mod tests {
 
         let mut out = vec![0.0f32; GROUP_FRAMES * 2];
         pcm.take_f32(GROUP_FRAMES, &mut out);
-        assert!(out[0] < 1.0 && out[0] > 0.9999, "left, just under +1: {}", out[0]);
+        assert!(
+            out[0] < 1.0 && out[0] > 0.9999,
+            "left, just under +1: {}",
+            out[0]
+        );
         assert_eq!(out[1], -1.0, "right came back exactly full negative");
         assert_eq!(pcm.ready_frames(), 0, "taking consumes");
     }

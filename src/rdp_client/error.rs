@@ -16,7 +16,9 @@ pub struct Error {
 
 impl Error {
     pub(super) fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -31,7 +33,9 @@ impl fmt::Debug for Error {
 impl From<anyhow::Error> for Error {
     fn from(err: anyhow::Error) -> Self {
         // `{:#}` is anyhow's own chain, `outer: inner: innermost`.
-        Self { message: format!("{err:#}") }
+        Self {
+            message: format!("{err:#}"),
+        }
     }
 }
 
@@ -45,7 +49,10 @@ mod tests {
     #[test]
     fn the_whole_chain_is_kept() {
         let inner: anyhow::Result<()> = Err(anyhow::anyhow!("the logon attempt failed"));
-        let err = inner.context("CredSSP").context("RDP negotiation").unwrap_err();
+        let err = inner
+            .context("CredSSP")
+            .context("RDP negotiation")
+            .unwrap_err();
         assert_eq!(
             Error::from(err).to_string(),
             "RDP negotiation: CredSSP: the logon attempt failed"

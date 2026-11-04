@@ -6,9 +6,9 @@ mod common;
 
 use std::net::Ipv4Addr;
 
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use zdesk::worker::access::{Access, PinState};
 use zdesk::worker::manager::{SharedPort, Supervisor};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 #[tokio::test]
 async fn instances_start_stop_and_share_the_master_port() {
@@ -24,18 +24,25 @@ async fn instances_start_stop_and_share_the_master_port() {
         .unwrap();
     }
 
-    let mut supervisor =
-        Supervisor::open(root.path().to_path_buf(), env!("CARGO_BIN_EXE_zdesk").into())
-            .await
-            .unwrap();
+    let mut supervisor = Supervisor::open(
+        root.path().to_path_buf(),
+        env!("CARGO_BIN_EXE_zdesk").into(),
+    )
+    .await
+    .unwrap();
     let port = free_port();
     let access = Access::open(port);
-    let router = SharedPort::bind(port, supervisor.routes(), access.clone()).await.unwrap();
+    let router = SharedPort::bind(port, supervisor.routes(), access.clone())
+        .await
+        .unwrap();
     supervisor.start("one", None).await.unwrap();
     supervisor.start("two", None).await.unwrap();
 
     let refused = request(router.port(), "one", "/api/targets", None).await;
-    assert!(refused.starts_with("HTTP/1.1 401 Unauthorized"), "{refused}");
+    assert!(
+        refused.starts_with("HTTP/1.1 401 Unauthorized"),
+        "{refused}"
+    );
     let PinState::Open { digits, .. } = access.pin() else {
         panic!("a new control plane has an open PIN");
     };
@@ -60,9 +67,15 @@ async fn instances_start_stop_and_share_the_master_port() {
 
     supervisor.stop("one").await.unwrap();
     let stopped = request(router.port(), "one", "/api/config", Some(&login)).await;
-    assert!(stopped.starts_with("HTTP/1.1 503 Service Unavailable"), "{stopped}");
+    assert!(
+        stopped.starts_with("HTTP/1.1 503 Service Unavailable"),
+        "{stopped}"
+    );
     let still_running = request(router.port(), "two", "/api/config", Some(&login)).await;
-    assert!(still_running.contains("\"branding\":\"two\""), "{still_running}");
+    assert!(
+        still_running.contains("\"branding\":\"two\""),
+        "{still_running}"
+    );
     #[cfg(unix)]
     assert!(!root.path().join("one/gateway.sock").exists());
 
@@ -70,7 +83,10 @@ async fn instances_start_stop_and_share_the_master_port() {
     #[cfg(unix)]
     assert!(!root.path().join("two/gateway.sock").exists());
     let gone = request(router.port(), "two", "/api/config", Some(&login)).await;
-    assert!(gone.starts_with("HTTP/1.1 503 Service Unavailable"), "{gone}");
+    assert!(
+        gone.starts_with("HTTP/1.1 503 Service Unavailable"),
+        "{gone}"
+    );
 }
 
 /// A port nothing is listening on, found by taking one and letting it go. The

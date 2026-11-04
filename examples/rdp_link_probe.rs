@@ -92,15 +92,27 @@ const WINDOW: Duration = Duration::from_secs(5);
 /// A relay to `host:port` that is a slow link: what the host sends is read at
 /// `kbps`, or as it comes without one, through a small receive buffer, and what
 /// is sent to the host is held for `delay`. Returns the local port it listens on, for one connection.
-async fn throttle(host: &str, port: u16, kbps: Option<u64>, delay: Duration, buffer_kb: u32, lift: Option<Duration>) -> u16 {
+async fn throttle(
+    host: &str,
+    port: u16,
+    kbps: Option<u64>,
+    delay: Duration,
+    buffer_kb: u32,
+    lift: Option<Duration>,
+) -> u16 {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let bare = host.trim_start_matches('[').trim_end_matches(']').to_owned();
+    let bare = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
     let address = tokio::net::lookup_host((bare, port))
         .await
         .expect("resolving the host")
         .next()
         .expect("an address for the host");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("binding the relay");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binding the relay");
     let local = listener.local_addr().expect("the relay's address").port();
     tokio::spawn(async move {
         let (client, _) = listener.accept().await.expect("accepting the probe");
@@ -110,18 +122,27 @@ async fn throttle(host: &str, port: u16, kbps: Option<u64>, delay: Duration, buf
         }
         .expect("a socket");
         // Small, so a host that sends faster than this reads finds its own socket full.
-        socket.set_recv_buffer_size(buffer_kb * 1024).expect("a small receive buffer");
+        socket
+            .set_recv_buffer_size(buffer_kb * 1024)
+            .expect("a small receive buffer");
         let opened = tokio::time::Instant::now();
-        let upstream = socket.connect(address).await.expect("connecting to the host");
+        let upstream = socket
+            .connect(address)
+            .await
+            .expect("connecting to the host");
         client.set_nodelay(true).expect("nodelay");
         upstream.set_nodelay(true).expect("nodelay");
         let (mut from_client, mut to_client) = client.into_split();
         let (mut from_host, mut to_host) = upstream.into_split();
-        let (held, mut due) = tokio::sync::mpsc::unbounded_channel::<(tokio::time::Instant, Vec<u8>)>();
+        let (held, mut due) =
+            tokio::sync::mpsc::unbounded_channel::<(tokio::time::Instant, Vec<u8>)>();
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 16 * 1024];
             while let Ok(n @ 1..) = from_client.read(&mut buffer).await {
-                if held.send((tokio::time::Instant::now() + delay, buffer[..n].to_vec())).is_err() {
+                if held
+                    .send((tokio::time::Instant::now() + delay, buffer[..n].to_vec()))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -156,7 +177,9 @@ async fn throttle(host: &str, port: u16, kbps: Option<u64>, delay: Duration, buf
 
 /// Run the motion script, if one was named.
 fn motion(action: &str) {
-    let Ok(script) = std::env::var(MOTION_ENV) else { return };
+    let Ok(script) = std::env::var(MOTION_ENV) else {
+        return;
+    };
     let status = Command::new("pwsh")
         .args(["-NoLogo", "-NoProfile", "-File", &script, action])
         .status()
@@ -261,7 +284,10 @@ impl Avc {
     }
 
     fn line(&self) -> String {
-        format!("h264 qp {:?}; quality {:?}; avc444 views {:?}", self.quantizers, self.qualities, self.views)
+        format!(
+            "h264 qp {:?}; quality {:?}; avc444 views {:?}",
+            self.quantizers, self.qualities, self.views
+        )
     }
 
     fn merge(&mut self, other: &Avc) {
@@ -297,8 +323,15 @@ impl Progressive {
             region.u16_le()?; // numTiles
             region.u32_le()?; // tileDataSize
             region.skip(rects * 8)?;
-            *self.quants.entry(region.bytes(quants * 5)?.to_vec()).or_default() += 1;
-            let stages: Vec<u8> = region.bytes(stages * 16)?.chunks(16).map(|stage| stage[0]).collect();
+            *self
+                .quants
+                .entry(region.bytes(quants * 5)?.to_vec())
+                .or_default() += 1;
+            let stages: Vec<u8> = region
+                .bytes(stages * 16)?
+                .chunks(16)
+                .map(|stage| stage[0])
+                .collect();
             while !region.is_empty() {
                 let kind = region.u16_le()?;
                 let length = usize::try_from(region.u32_le()?).unwrap_or(usize::MAX);
@@ -320,7 +353,9 @@ impl Progressive {
                     }
                     _ => continue,
                 };
-                let quality = stage.map_or(255, |index| stages.get(usize::from(*index)).copied().unwrap_or(255));
+                let quality = stage.map_or(255, |index| {
+                    stages.get(usize::from(*index)).copied().unwrap_or(255)
+                });
                 *self.qualities.entry(quality).or_default() += 1;
             }
         }
@@ -331,7 +366,12 @@ impl Progressive {
         let quants: Vec<String> = self
             .quants
             .iter()
-            .map(|(table, regions)| format!("{}x{regions}", table.iter().map(|b| format!("{b:02x}")).collect::<String>()))
+            .map(|(table, regions)| {
+                format!(
+                    "{}x{regions}",
+                    table.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                )
+            })
             .collect();
         format!(
             "tiles {} whole, {} first, {} upgrade; stage qualities {:?}; quantVals {}",
@@ -368,20 +408,26 @@ impl Tally {
                     self.began = time_of_day(timestamp);
                     continue;
                 }
-                Message::WireToSurface1 { codec, data, .. } | Message::WireToSurface2 { codec, data, .. } => {
-                    (codec, data)
-                }
+                Message::WireToSurface1 { codec, data, .. }
+                | Message::WireToSurface2 { codec, data, .. } => (codec, data),
                 _ => continue,
             };
             *self.codecs.entry(codec).or_default() += data.len() as u64;
-            if matches!(codec, gfx::CODEC_CAPROGRESSIVE | gfx::CODEC_CAPROGRESSIVE_V2) {
-                self.progressive.add(data).expect("the Progressive blocks parse");
+            if matches!(
+                codec,
+                gfx::CODEC_CAPROGRESSIVE | gfx::CODEC_CAPROGRESSIVE_V2
+            ) {
+                self.progressive
+                    .add(data)
+                    .expect("the Progressive blocks parse");
             }
             if codec == gfx::CODEC_AVC420 {
                 self.avc.add(data).expect("the AVC420 metablock parses");
             }
             if matches!(codec, gfx::CODEC_AVC444 | gfx::CODEC_AVC444_V2) {
-                self.avc.add_444(data).expect("the AVC444 bitmap stream parses");
+                self.avc
+                    .add_444(data)
+                    .expect("the AVC444 bitmap stream parses");
             }
         }
     }
@@ -391,7 +437,13 @@ impl Tally {
         let codecs: Vec<String> = self
             .codecs
             .iter()
-            .map(|(codec, bytes)| format!("{} {:.0}", gfx::codec_name(*codec), *bytes as f64 * 8.0 / 1000.0 / secs))
+            .map(|(codec, bytes)| {
+                format!(
+                    "{} {:.0}",
+                    gfx::codec_name(*codec),
+                    *bytes as f64 * 8.0 / 1000.0 / secs
+                )
+            })
             .collect();
         format!(
             "{:5.1} frames/s, {:6.0} kbit/s, {:6.0} bytes/frame  [{} kbit/s]",
@@ -416,8 +468,9 @@ impl Tally {
 /// A case: Drives a real RDP host named in tmp/test_uat.toml, with a moving picture on its desktop.
 async fn a_real_host_draws_for_a_slow_client() {
     common::init_logging();
-    let name = std::env::var(TARGET_ENV)
-        .unwrap_or_else(|_| panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml"));
+    let name = std::env::var(TARGET_ENV).unwrap_or_else(|_| {
+        panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
+    });
     let target = common::uat_target(&name);
     let h264 = match std::env::var(H264_ENV).as_deref() {
         Err(_) | Ok("" | "0" | "false") => H264::Refused,
@@ -425,21 +478,42 @@ async fn a_real_host_draws_for_a_slow_client() {
         Ok(_) => H264::ByRegion,
     };
     let autodetect = matches!(std::env::var(AUTODETECT_ENV).as_deref(), Ok(v) if !matches!(v, "" | "0" | "false"));
-    let multitransport =
-        matches!(std::env::var(MULTITRANSPORT_ENV).as_deref(), Ok(v) if !matches!(v, "" | "0" | "false"));
+    let multitransport = matches!(std::env::var(MULTITRANSPORT_ENV).as_deref(), Ok(v) if !matches!(v, "" | "0" | "false"));
     let paced = !matches!(std::env::var(PACED_ENV).as_deref(), Ok("0" | "false"));
     let size = std::env::var(SIZE_ENV).ok().map_or(SIZE, |said| {
         let (width, height) = said.split_once('x').expect("a size as WIDTHxHEIGHT");
-        (width.parse().expect("a width"), height.parse().expect("a height"))
+        (
+            width.parse().expect("a width"),
+            height.parse().expect("a height"),
+        )
     });
-    let run = Duration::from_secs(std::env::var(RUN_ENV).ok().and_then(|v| v.parse().ok()).unwrap_or(60));
-    let ack_delay = Duration::from_millis(std::env::var(ACK_DELAY_ENV).ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+    let run = Duration::from_secs(
+        std::env::var(RUN_ENV)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60),
+    );
+    let ack_delay = Duration::from_millis(
+        std::env::var(ACK_DELAY_ENV)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+    );
     let throttled = std::env::var(THROTTLE_ENV).ok().map(|said| {
         let mut parts = said.split(':');
-        let mut number = |otherwise: u64| parts.next().map_or(otherwise, |part| part.parse::<u64>().expect("a number"));
+        let mut number = |otherwise: u64| {
+            parts
+                .next()
+                .map_or(otherwise, |part| part.parse::<u64>().expect("a number"))
+        };
         let (kbps, delay, buffer_kb, lift) = (number(0), number(0), number(16), number(0));
         let kbps = (kbps > 0).then_some(kbps);
-        (kbps, Duration::from_millis(delay), buffer_kb as u32, (lift > 0).then(|| Duration::from_secs(lift)))
+        (
+            kbps,
+            Duration::from_millis(delay),
+            buffer_kb as u32,
+            (lift > 0).then(|| Duration::from_secs(lift)),
+        )
     });
     println!(
         "rdp_link_probe: {name}, {}x{}, h264 {h264:?}, autodetect {autodetect}, udp offered {multitransport}, paced {paced}, throttle {throttled:?}, acks held {ack_delay:?}, {}s",
@@ -448,9 +522,10 @@ async fn a_real_host_draws_for_a_slow_client() {
         run.as_secs()
     );
     let (host, port) = match throttled {
-        Some((kbps, delay, buffer_kb, lift)) => {
-            ("127.0.0.1".to_owned(), throttle(&target.host, target.port, kbps, delay, buffer_kb, lift).await)
-        }
+        Some((kbps, delay, buffer_kb, lift)) => (
+            "127.0.0.1".to_owned(),
+            throttle(&target.host, target.port, kbps, delay, buffer_kb, lift).await,
+        ),
         None => (target.host.clone(), target.port),
     };
     // Acknowledgements, each sent once it has been held.
@@ -487,8 +562,10 @@ async fn a_real_host_draws_for_a_slow_client() {
     });
     // When the page's link is free of everything passed so far. A rate of 0 is no
     // link to wait for.
-    let page_kbps: Option<u64> =
-        std::env::var(PAGE_ENV).ok().map(|said| said.parse().expect("kbit/s")).filter(|&kbps| kbps > 0);
+    let page_kbps: Option<u64> = std::env::var(PAGE_ENV)
+        .ok()
+        .map(|said| said.parse().expect("kbit/s"))
+        .filter(|&kbps| kbps > 0);
     let mut link_free = tokio::time::Instant::now();
     let epoch = tokio::time::Instant::now();
     // Returns the page's clock, in milliseconds, when it composes the frame.
@@ -526,9 +603,13 @@ async fn a_real_host_draws_for_a_slow_client() {
     while let Ok(event) = tokio::time::timeout_at(settled.into(), events.recv()).await {
         match event.expect("the event channel closed without an Ended") {
             Event::Graphics { wrapped, frame } => {
-                let commands = unwrapper.unwrap(&wrapped).expect("the passed message unwraps");
+                let commands = unwrapper
+                    .unwrap(&wrapped)
+                    .expect("the passed message unwraps");
                 opening.add(&commands, wrapped.len(), frame.is_some());
-                if let (Some(composed), Some(began)) = (acknowledge(frame, wrapped.len()), opening.began) {
+                if let (Some(composed), Some(began)) =
+                    (acknowledge(frame, wrapped.len()), opening.began)
+                {
                     nearest = nearest.min(composed - began);
                 }
             }
@@ -554,9 +635,13 @@ async fn a_real_host_draws_for_a_slow_client() {
         match tokio::time::timeout_at(due.into(), events.recv()).await {
             Ok(event) => match event.expect("the event channel closed without an Ended") {
                 Event::Graphics { wrapped, frame } => {
-                    let commands = unwrapper.unwrap(&wrapped).expect("the passed message unwraps");
+                    let commands = unwrapper
+                        .unwrap(&wrapped)
+                        .expect("the passed message unwraps");
                     window.add(&commands, wrapped.len(), frame.is_some());
-                    if let (Some(composed), Some(began)) = (acknowledge(frame, wrapped.len()), window.began) {
+                    if let (Some(composed), Some(began)) =
+                        (acknowledge(frame, wrapped.len()), window.began)
+                    {
                         nearest = nearest.min(composed - began);
                         window.behind.push(composed - began);
                     }
@@ -565,10 +650,18 @@ async fn a_real_host_draws_for_a_slow_client() {
                 _ => {}
             },
             Err(_) => {
-                println!("  {:5.1}s {}", started.elapsed().as_secs_f32(), window.line(window_started.elapsed()));
+                println!(
+                    "  {:5.1}s {}",
+                    started.elapsed().as_secs_f32(),
+                    window.line(window_started.elapsed())
+                );
                 println!("         {}", window.progressive.line());
                 println!("         {}", window.avc.line());
-                let mut behind: Vec<i64> = window.behind.iter().map(|&offset| lag(offset, nearest)).collect();
+                let mut behind: Vec<i64> = window
+                    .behind
+                    .iter()
+                    .map(|&offset| lag(offset, nearest))
+                    .collect();
                 behind.sort_unstable();
                 if let (Some(median), Some(most)) = (behind.get(behind.len() / 2), behind.last()) {
                     println!("         behind the desktop: median {median} ms, most {most} ms");
@@ -585,8 +678,15 @@ async fn a_real_host_draws_for_a_slow_client() {
         }
     }
     motion("stop");
-    println!("  after the first {}s: {}", WINDOW.as_secs(), total.line(covered));
-    assert!(total.frames > 0, "the host drew nothing once the picture was moving");
+    println!(
+        "  after the first {}s: {}",
+        WINDOW.as_secs(),
+        total.line(covered)
+    );
+    assert!(
+        total.frames > 0,
+        "the host drew nothing once the picture was moving"
+    );
     drop(session);
 }
 
@@ -603,8 +703,15 @@ fn a_frame_with_no_timestamp_gives_no_sample() {
 
 #[test]
 fn a_timestamp_reads_as_milliseconds_of_the_day() {
-    assert_eq!(time_of_day(packed(13, 45, 7, 250)), Some(((13 * 60 + 45) * 60 + 7) * 1000 + 250));
-    assert_eq!(time_of_day(packed(0, 0, 0, 1)), Some(1), "a millisecond past midnight is a time");
+    assert_eq!(
+        time_of_day(packed(13, 45, 7, 250)),
+        Some(((13 * 60 + 45) * 60 + 7) * 1000 + 250)
+    );
+    assert_eq!(
+        time_of_day(packed(0, 0, 0, 1)),
+        Some(1),
+        "a millisecond past midnight is a time"
+    );
 }
 
 /// Two frames composed 20 ms apart on the page's clock, the host beginning the
@@ -619,7 +726,11 @@ fn the_lag_is_taken_around_the_hosts_midnight() {
     let nearest = first.min(second);
     assert_eq!(lag(first, nearest), 0);
     assert_eq!(lag(second, nearest), 0);
-    assert_eq!(lag(first + 30, nearest), 30, "a later composition is behind by what it waited");
+    assert_eq!(
+        lag(first + 30, nearest),
+        30,
+        "a later composition is behind by what it waited"
+    );
 }
 
 /// The cases this runs, named on its command line, in the order named.
@@ -629,7 +740,10 @@ const CASES: &[&str] = &["a_real_host_draws_for_a_slow_client"];
 async fn main() {
     let named: Vec<String> = std::env::args().skip(1).collect();
     if named.is_empty() || named.iter().any(|case| !CASES.contains(&case.as_str())) {
-        eprintln!("usage: cargo run --example rdp_link_probe -- CASE...\ncases: {}", CASES.join(", "));
+        eprintln!(
+            "usage: cargo run --example rdp_link_probe -- CASE...\ncases: {}",
+            CASES.join(", ")
+        );
         std::process::exit(2);
     }
     for case in named {

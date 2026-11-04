@@ -38,9 +38,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use zdesk::server;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
+use zdesk::server;
 
 /// How many repaints to drive.
 ///
@@ -61,15 +61,18 @@ async fn spawn_app() -> (SocketAddr, String, (u16, u16)) {
         .expect("set ZDESK_PROBE_CONFIG to a config file holding a real RDP target");
     let target = std::env::var("ZDESK_PROBE_TARGET")
         .expect("set ZDESK_PROBE_TARGET to the name of the target to measure");
-    let (mut file, path_buf) = zdesk::config::load(Some(Path::new(&path))).expect("read the probe config");
+    let (mut file, path_buf) =
+        zdesk::config::load(Some(Path::new(&path))).expect("read the probe config");
     // Its passwords open as a served gateway's would: [server].master_password_file.
     let key = file.needs_master().then(|| {
         let master = file
             .served_master(path_buf.parent().unwrap_or(Path::new("")))
             .unwrap_or_else(|e| panic!("the probe config's master password: {e:#}"));
-        file.key(&master).unwrap_or_else(|e| panic!("{path}: {e:#}"))
+        file.key(&master)
+            .unwrap_or_else(|e| panic!("{path}: {e:#}"))
     });
-    file.unlock(key.as_ref()).unwrap_or_else(|e| panic!("{path}: {e:#}"));
+    file.unlock(key.as_ref())
+        .unwrap_or_else(|e| panic!("{path}: {e:#}"));
     let mut config = file.resolve().expect("resolve the probe config");
     config.targets.retain(|t| t.name == target);
     let profile = config
@@ -116,7 +119,9 @@ async fn full_desktop_repaints_against_a_real_host() {
     let mut bytes = 0u64;
     let mut records = 0usize;
     for _ in 0..REPAINTS {
-        ws.send(Message::Text(r#"{"type":"refresh"}"#.into())).await.unwrap();
+        ws.send(Message::Text(r#"{"type":"refresh"}"#.into()))
+            .await
+            .unwrap();
         let started = tokio::time::Instant::now();
         let mut last = started;
         loop {
@@ -138,7 +143,9 @@ async fn full_desktop_repaints_against_a_real_host() {
 
     // Back to the picker, which ends the engine — and an engine that ends is what
     // logs `encode totals`, the other half of the reading.
-    ws.send(Message::Text(r#"{"type":"disconnect"}"#.into())).await.unwrap();
+    ws.send(Message::Text(r#"{"type":"disconnect"}"#.into()))
+        .await
+        .unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(2), ws.next()).await;
 
     // Median and p90, not mean: a real desktop draws its own clock between repaints,
@@ -164,13 +171,18 @@ const CASES: &[&str] = &["full_desktop_repaints_against_a_real_host"];
 async fn main() {
     let named: Vec<String> = std::env::args().skip(1).collect();
     if named.is_empty() || named.iter().any(|case| !CASES.contains(&case.as_str())) {
-        eprintln!("usage: cargo run --example rdp_repaint_probe -- CASE...\ncases: {}", CASES.join(", "));
+        eprintln!(
+            "usage: cargo run --example rdp_repaint_probe -- CASE...\ncases: {}",
+            CASES.join(", ")
+        );
         std::process::exit(2);
     }
     for case in named {
         println!("== {case}");
         match case.as_str() {
-            "full_desktop_repaints_against_a_real_host" => full_desktop_repaints_against_a_real_host().await,
+            "full_desktop_repaints_against_a_real_host" => {
+                full_desktop_repaints_against_a_real_host().await
+            }
             _ => unreachable!("checked above"),
         }
     }

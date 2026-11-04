@@ -9,7 +9,6 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-
 /// Ceiling on one clipboard transfer, in bytes, in either direction.
 ///
 /// Text over this is refused, not truncated: a truncated paste looks exactly
@@ -485,7 +484,6 @@ pub mod batch {
     /// (`wlshare_proto::tiles`).
     pub const TILE_STILL: u8 = 0x05;
 
-
     /// Bytes a `REGION` record costs besides its payload.
     pub const REGION_HEADER_LEN: usize = 15;
     /// A `REGION` record's flag: its stream's decoder can start here.
@@ -553,8 +551,8 @@ pub mod audio {
         let mut frame = Vec::with_capacity(HEADER_LEN + len);
         frame.push(FRAME_KIND);
         frame.push(0); // flags
-        let count = u16::try_from(packets.len())
-            .expect("an audio frame carries at most u16::MAX packets");
+        let count =
+            u16::try_from(packets.len()).expect("an audio frame carries at most u16::MAX packets");
         frame.extend_from_slice(&count.to_le_bytes());
         for packet in packets {
             let size = u16::try_from(packet.len())
@@ -653,26 +651,46 @@ struct Share {
 
 impl Held {
     /// Take `bytes` of `budget`, waiting for room.
-    pub async fn take(budget: &std::sync::Arc<tokio::sync::Semaphore>, bytes: usize, limit: u32) -> Self {
+    pub async fn take(
+        budget: &std::sync::Arc<tokio::sync::Semaphore>,
+        bytes: usize,
+        limit: u32,
+    ) -> Self {
         let bytes = u32::try_from(bytes).unwrap_or(u32::MAX).min(limit);
         match budget.acquire_many(bytes).await {
             Ok(permit) => permit.forget(),
             // Only a closed semaphore refuses, and nothing closes this one.
             Err(_) => return Self::default(),
         }
-        Self { share: Some(Share { budget: std::sync::Arc::clone(budget), bytes, limit }) }
+        Self {
+            share: Some(Share {
+                budget: std::sync::Arc::clone(budget),
+                bytes,
+                limit,
+            }),
+        }
     }
 
     /// Take `bytes` of `budget` if it has them now, and nothing otherwise — a share
     /// a test can build without an executor.
     #[cfg(test)]
-    pub(crate) fn take_now(budget: &std::sync::Arc<tokio::sync::Semaphore>, bytes: usize, limit: u32) -> Self {
+    pub(crate) fn take_now(
+        budget: &std::sync::Arc<tokio::sync::Semaphore>,
+        bytes: usize,
+        limit: u32,
+    ) -> Self {
         let bytes = u32::try_from(bytes).unwrap_or(u32::MAX).min(limit);
         match budget.try_acquire_many(bytes) {
             Ok(permit) => permit.forget(),
             Err(_) => return Self::default(),
         }
-        Self { share: Some(Share { budget: std::sync::Arc::clone(budget), bytes, limit }) }
+        Self {
+            share: Some(Share {
+                budget: std::sync::Arc::clone(budget),
+                bytes,
+                limit,
+            }),
+        }
     }
 
     /// Move up to `bytes` of this share into a share of its own, for one payload of
@@ -684,7 +702,11 @@ impl Held {
         let bytes = u32::try_from(bytes).unwrap_or(u32::MAX).min(share.bytes);
         share.bytes -= bytes;
         Self {
-            share: Some(Share { budget: std::sync::Arc::clone(&share.budget), bytes, limit: share.limit }),
+            share: Some(Share {
+                budget: std::sync::Arc::clone(&share.budget),
+                bytes,
+                limit: share.limit,
+            }),
         }
     }
 
@@ -739,7 +761,9 @@ pub struct Painted {
 impl Painted {
     /// `then` runs once, wherever this is dropped, so it must not wait on anything.
     pub fn new(then: impl FnOnce() + Send + Sync + 'static) -> Self {
-        Self { then: Some(Box::new(then)) }
+        Self {
+            then: Some(Box::new(then)),
+        }
     }
 
     /// Whether anything is owed.
@@ -764,7 +788,9 @@ impl Clone for Painted {
 
 impl std::fmt::Debug for Painted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Painted").field("owed", &self.then.is_some()).finish()
+        f.debug_struct("Painted")
+            .field("owed", &self.then.is_some())
+            .finish()
     }
 }
 
@@ -805,7 +831,12 @@ impl VideoColour {
     /// desktop's own sRGB transfer. The host's stream says it is full range and
     /// names no colour space, which browsers read variously: Chrome's software
     /// decoder as BT.601, and its hardware decoder as limited range.
-    pub const RDP: Self = Self { primaries: "bt709", transfer: "iec61966-2-1", matrix: "bt709", full_range: true };
+    pub const RDP: Self = Self {
+        primaries: "bt709",
+        transfer: "iec61966-2-1",
+        matrix: "bt709",
+        full_range: true,
+    };
 }
 
 /// One video access unit, carried as a `VIDEO` record inside a [`batch`] frame.
@@ -862,9 +893,19 @@ impl VideoUnit {
         let strip = self.strip.map_or(0, |strip| {
             batch::VIDEO_STRIP
                 | ((strip.index << batch::VIDEO_STRIP_SHIFT) & batch::VIDEO_STRIP_INDEX)
-                | if strip.ends { batch::VIDEO_STRIP_ENDS } else { 0 }
+                | if strip.ends {
+                    batch::VIDEO_STRIP_ENDS
+                } else {
+                    0
+                }
         });
-        out.push(if self.keyframe { batch::VIDEO_KEYFRAME } else { 0 } | strip);
+        out.push(
+            if self.keyframe {
+                batch::VIDEO_KEYFRAME
+            } else {
+                0
+            } | strip,
+        );
         out.extend_from_slice(&self.w.to_le_bytes());
         out.extend_from_slice(&self.h.to_le_bytes());
         // A keyframe of a 4K desktop runs to hundreds of kilobytes, and a length field
@@ -1063,7 +1104,11 @@ impl RegionUnit {
     pub fn write_record(&self, out: &mut Vec<u8>) {
         out.push(batch::OP_REGION);
         out.push(self.stream);
-        out.push(if self.keyframe { batch::REGION_KEYFRAME } else { 0 });
+        out.push(if self.keyframe {
+            batch::REGION_KEYFRAME
+        } else {
+            0
+        });
         for value in [self.x, self.y, self.w, self.h] {
             out.extend_from_slice(&value.to_le_bytes());
         }
@@ -1125,7 +1170,11 @@ pub struct CacheUnit {
 impl CacheUnit {
     /// Append this as a `STORE` or a `CACHED` record, [`batch::CACHE_LEN`] bytes.
     pub fn write_record(&self, out: &mut Vec<u8>) {
-        out.push(if self.store { batch::OP_STORE } else { batch::OP_CACHED });
+        out.push(if self.store {
+            batch::OP_STORE
+        } else {
+            batch::OP_CACHED
+        });
         for value in [self.slot, self.x, self.y] {
             out.extend_from_slice(&value.to_le_bytes());
         }
@@ -1196,7 +1245,14 @@ impl CursorShape {
             rgba.len()
         );
         let png = encode_png(w, h, png::ColorType::Rgba, rgba)?;
-        Ok(Self { w, h, hx, hy, point_sized: unit == CursorUnit::Points, png })
+        Ok(Self {
+            w,
+            h,
+            hx,
+            hy,
+            point_sized: unit == CursorUnit::Points,
+            png,
+        })
     }
 }
 
@@ -1351,12 +1407,19 @@ pub enum ServerMsg {
     /// ([`batch::FLAG_CONTINUED`]): the browser holds them and shows the update
     /// whole with its last batch, so a moving picture is never shown part this
     /// frame and part the last.
-    Run { records: Vec<ServerMsg>, continued: bool },
+    Run {
+        records: Vec<ServerMsg>,
+        continued: bool,
+    },
     /// Build the decoder for moving region `stream` of wlshare's tiles with this
     /// configuration: ahead of the stream's first [`ServerMsg::Region`], and of the
     /// first of a new stream on an id that was ended. `engine` is the engine that
     /// sent it ([`ServerMsg::stamped`]).
-    RegionFormat { stream: u8, decode: String, engine: u64 },
+    RegionFormat {
+        stream: u8,
+        decode: String,
+        engine: u64,
+    },
     /// Moving region `stream` has stopped: no [`ServerMsg::Region`] follows on its id
     /// until a [`ServerMsg::RegionFormat`] starts another, and what it last drew stays
     /// until the tiles sent after this draw over it. `engine` is the engine that sent
@@ -1468,7 +1531,10 @@ pub enum ServerMsg {
     /// the layout changed around the same framebuffer, which is recomposed at
     /// once. Empty ends the composition; a framebuffer is then presented whole
     /// at its `Resize.scale` again.
-    Mosaic { regions: Vec<MosaicRegion>, resize: bool },
+    Mosaic {
+        regions: Vec<MosaicRegion>,
+        resize: bool,
+    },
     /// Whether the remote runs macOS, discovered by the engine as it connects
     /// and sent once, next to the first [`ServerMsg::Resize`].
     ///
@@ -1483,7 +1549,10 @@ pub enum ServerMsg {
     /// ([`crate::rdp_client::Event::Drawn`]). Sent whenever the host draws with
     /// something it had not, and again on every repaint of a session that keeps
     /// its engine; never for a picture of bitmap updates.
-    HostPicture { lossless: bool, codecs: Vec<&'static str> },
+    HostPicture {
+        lossless: bool,
+        codecs: Vec<&'static str>,
+    },
     /// The part of an RDP host's passed graphics pipeline this display shows, in
     /// the pixels of the picture the page composes from it: the column of the
     /// host's desktop the display is, `w` by `h` from `x`, `y`. Sent only in a
@@ -1619,7 +1688,12 @@ pub enum ServerMsg {
     /// the stream's colour where its own is not to be read from it, an RDP host's
     /// ([`VideoColour::RDP`]). `engine` is the engine that sent it
     /// ([`ServerMsg::stamped`]).
-    VideoFormat { decode: String, strips: u8, colour: Option<VideoColour>, engine: u64 },
+    VideoFormat {
+        decode: String,
+        strips: u8,
+        colour: Option<VideoColour>,
+        engine: u64,
+    },
     /// The remote started consuming the camera — an application on it opened
     /// the device — and the browser should encode and send from now on,
     /// starting at a keyframe. Camera-socket traffic only, like the two below:
@@ -1663,7 +1737,12 @@ pub enum WireFrame {
     ///
     /// `painted` is what the batch's payloads are owed once the browser has
     /// acknowledged it ([`Painted`]), which the socket keeps until then.
-    Batch { sequence: u32, bytes: Vec<u8>, held: Vec<Held>, painted: Vec<Painted> },
+    Batch {
+        sequence: u32,
+        bytes: Vec<u8>,
+        held: Vec<Held>,
+        painted: Vec<Painted>,
+    },
     /// One audio frame. Audio has its own socket and no paint acknowledgment.
     Audio(Vec<u8>),
 }
@@ -1688,14 +1767,36 @@ enum ControlMsg<'a> {
         #[serde(rename = "pointSized")]
         point_sized: bool,
     },
-    Error { message: &'a str },
-    Picker { engines: u64 },
-    GraphicsStart { engine: u64 },
-    GraphicsView { x: u16, y: u16, w: u16, h: u16 },
-    StandardStart { engine: u64 },
-    TilesStart { engine: u64 },
-    RegionFormat { stream: u8, decode: &'a str, engine: u64 },
-    RegionEnd { stream: u8, engine: u64 },
+    Error {
+        message: &'a str,
+    },
+    Picker {
+        engines: u64,
+    },
+    GraphicsStart {
+        engine: u64,
+    },
+    GraphicsView {
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+    },
+    StandardStart {
+        engine: u64,
+    },
+    TilesStart {
+        engine: u64,
+    },
+    RegionFormat {
+        stream: u8,
+        decode: &'a str,
+        engine: u64,
+    },
+    RegionEnd {
+        stream: u8,
+        engine: u64,
+    },
     Connected {
         name: &'a str,
         protocol: &'a str,
@@ -1707,12 +1808,26 @@ enum ControlMsg<'a> {
         microphone: bool,
         render: &'a str,
     },
-    RemoteOs { macos: bool },
-    HostPicture { lossless: bool, codecs: &'a [&'static str] },
-    Resizing { active: bool },
-    ScreenUnavailable { active: bool },
-    PictureWithheld { active: bool, hevc: bool },
-    Oversize { cause: Option<HoldCause> },
+    RemoteOs {
+        macos: bool,
+    },
+    HostPicture {
+        lossless: bool,
+        codecs: &'a [&'static str],
+    },
+    Resizing {
+        active: bool,
+    },
+    ScreenUnavailable {
+        active: bool,
+    },
+    PictureWithheld {
+        active: bool,
+        hevc: bool,
+    },
+    Oversize {
+        cause: Option<HoldCause>,
+    },
     Clipboard {
         text: &'a str,
         #[serde(rename = "changedAtMs")]
@@ -1850,18 +1965,34 @@ impl ServerMsg {
             | ServerMsg::AudioGap => {
                 return None;
             }
-            ServerMsg::GraphicsStart { engine } => control(&ControlMsg::GraphicsStart { engine: *engine }),
+            ServerMsg::GraphicsStart { engine } => {
+                control(&ControlMsg::GraphicsStart { engine: *engine })
+            }
             ServerMsg::StandardStart { engine } => {
                 control(&ControlMsg::StandardStart { engine: *engine })
             }
-            ServerMsg::TilesStart { engine } => control(&ControlMsg::TilesStart { engine: *engine }),
-            ServerMsg::RegionFormat { stream, decode, engine } => {
-                control(&ControlMsg::RegionFormat { stream: *stream, decode, engine: *engine })
+            ServerMsg::TilesStart { engine } => {
+                control(&ControlMsg::TilesStart { engine: *engine })
             }
-            ServerMsg::RegionEnd { stream, engine } => control(&ControlMsg::RegionEnd { stream: *stream, engine: *engine }),
-            ServerMsg::GraphicsView { x, y, w, h } => {
-                control(&ControlMsg::GraphicsView { x: *x, y: *y, w: *w, h: *h })
-            }
+            ServerMsg::RegionFormat {
+                stream,
+                decode,
+                engine,
+            } => control(&ControlMsg::RegionFormat {
+                stream: *stream,
+                decode,
+                engine: *engine,
+            }),
+            ServerMsg::RegionEnd { stream, engine } => control(&ControlMsg::RegionEnd {
+                stream: *stream,
+                engine: *engine,
+            }),
+            ServerMsg::GraphicsView { x, y, w, h } => control(&ControlMsg::GraphicsView {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            }),
             ServerMsg::Resize { w, h, scale } => control(&ControlMsg::Resize {
                 w: *w,
                 h: *h,
@@ -1923,18 +2054,30 @@ impl ServerMsg {
             ServerMsg::CameraKeyframe => control(&ControlMsg::CameraKeyframe),
             ServerMsg::MicOpen => control(&ControlMsg::MicOpen),
             ServerMsg::MicClose => control(&ControlMsg::MicClose),
-            ServerMsg::VideoFormat { decode, strips, colour, engine } => {
-                control(&ControlMsg::VideoFormat { decode, strips: *strips, colour: *colour, engine: *engine })
-            }
+            ServerMsg::VideoFormat {
+                decode,
+                strips,
+                colour,
+                engine,
+            } => control(&ControlMsg::VideoFormat {
+                decode,
+                strips: *strips,
+                colour: *colour,
+                engine: *engine,
+            }),
             ServerMsg::RemoteOs { macos } => control(&ControlMsg::RemoteOs { macos: *macos }),
-            ServerMsg::HostPicture { lossless, codecs } => {
-                control(&ControlMsg::HostPicture { lossless: *lossless, codecs })
-            }
+            ServerMsg::HostPicture { lossless, codecs } => control(&ControlMsg::HostPicture {
+                lossless: *lossless,
+                codecs,
+            }),
             ServerMsg::Resizing { active } => control(&ControlMsg::Resizing { active: *active }),
-            ServerMsg::ScreenUnavailable { active } => control(&ControlMsg::ScreenUnavailable { active: *active }),
-            ServerMsg::PictureWithheld { active, hevc } => {
-                control(&ControlMsg::PictureWithheld { active: *active, hevc: *hevc })
+            ServerMsg::ScreenUnavailable { active } => {
+                control(&ControlMsg::ScreenUnavailable { active: *active })
             }
+            ServerMsg::PictureWithheld { active, hevc } => control(&ControlMsg::PictureWithheld {
+                active: *active,
+                hevc: *hevc,
+            }),
             ServerMsg::Oversize { cause } => control(&ControlMsg::Oversize { cause: *cause }),
             ServerMsg::AudioFormat {
                 codec,
@@ -1951,9 +2094,10 @@ impl ServerMsg {
                 head: base64::engine::general_purpose::STANDARD.encode(head),
                 passthrough: *passthrough,
             }),
-            ServerMsg::Mosaic { regions, resize } => {
-                control(&ControlMsg::Mosaic { regions, resize: *resize })
-            }
+            ServerMsg::Mosaic { regions, resize } => control(&ControlMsg::Mosaic {
+                regions,
+                resize: *resize,
+            }),
             ServerMsg::Displays { active, displays } => control(&ControlMsg::Displays {
                 active: *active,
                 displays: displays
@@ -2059,7 +2203,9 @@ mod tests {
         ));
         // Viewport dimensions beyond the protocol's u16 range are rejected at
         // the deserialization boundary, not clamped.
-        assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"viewport","w":70000,"h":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<ClientMsg>(r#"{"type":"viewport","w":70000,"h":1}"#).is_err()
+        );
         assert!(matches!(
             serde_json::from_str::<ClientMsg>(r#"{"type":"refresh"}"#).unwrap(),
             ClientMsg::Refresh
@@ -2070,13 +2216,41 @@ mod tests {
                 r#"{"type":"hostDisplay","w":1728,"h":1117,"scale":200}"#
             )
             .unwrap(),
-            ClientMsg::HostDisplay(HostDisplay { w: 1728, h: 1117, scale: 200, fit: false })
+            ClientMsg::HostDisplay(HostDisplay {
+                w: 1728,
+                h: 1117,
+                scale: 200,
+                fit: false
+            })
         ));
         // A zero dimension still parses — u16 has no floor — and stops at the
         // boundary that would spend it instead ([`HostDisplay::checked`]).
-        assert_eq!(HostDisplay { w: 0, h: 1117, scale: 200, fit: false }.checked(), None);
-        assert_eq!(HostDisplay { w: 1728, h: 0, scale: 200, fit: false }.checked(), None);
-        let screen = HostDisplay { w: 1728, h: 1117, scale: 200, fit: false };
+        assert_eq!(
+            HostDisplay {
+                w: 0,
+                h: 1117,
+                scale: 200,
+                fit: false
+            }
+            .checked(),
+            None
+        );
+        assert_eq!(
+            HostDisplay {
+                w: 1728,
+                h: 0,
+                scale: 200,
+                fit: false
+            }
+            .checked(),
+            None
+        );
+        let screen = HostDisplay {
+            w: 1728,
+            h: 1117,
+            scale: 200,
+            fit: false,
+        };
         assert_eq!(screen.checked(), Some(screen));
         // A connect names the screen it is made from, and a probe without one
         // still connects.
@@ -2132,7 +2306,10 @@ mod tests {
             r#"{"type":"connect","target":"mac","choices":{}}"#,
             r#"{"type":"connect","target":"mac","choices":{"audio":true}}"#,
         ] {
-            assert!(serde_json::from_str::<ClientMsg>(unsized_connect).is_err(), "{unsized_connect}");
+            assert!(
+                serde_json::from_str::<ClientMsg>(unsized_connect).is_err(),
+                "{unsized_connect}"
+            );
         }
         // A pinch-zoom client says so beside its screen; a client that says
         // nothing is a pointer client.
@@ -2161,7 +2338,8 @@ mod tests {
             serde_json::from_str::<ClientMsg>(r#"{"type":"clipboardRequest"}"#).unwrap(),
             ClientMsg::ClipboardRequest
         ));
-        match serde_json::from_str::<ClientMsg>(r#"{"type":"clipboard","text":"héllo"}"#).unwrap() {
+        match serde_json::from_str::<ClientMsg>(r#"{"type":"clipboard","text":"héllo"}"#).unwrap()
+        {
             ClientMsg::Clipboard { text } => assert_eq!(text, "héllo"),
             other => panic!("unexpected: {other:?}"),
         }
@@ -2197,7 +2375,13 @@ mod tests {
     /// a client that received them in the other order would decode nothing.
     #[test]
     fn the_audio_format_is_text_and_the_packets_are_not() {
-        let head = sound_opus::Stream { rate: 48_000, channels: 2 }.head(312, 44_100).unwrap().to_vec();
+        let head = sound_opus::Stream {
+            rate: 48_000,
+            channels: 2,
+        }
+        .head(312, 44_100)
+        .unwrap()
+        .to_vec();
         let json = (ServerMsg::AudioFormat {
             codec: "opus",
             sample_rate: 48_000,
@@ -2226,7 +2410,10 @@ mod tests {
                 .is_none(),
             "packets are a binary frame, like an access unit"
         );
-        assert!(ServerMsg::AudioGap.text_frame().is_none(), "and so is the gap between them");
+        assert!(
+            ServerMsg::AudioGap.text_frame().is_none(),
+            "and so is the gap between them"
+        );
     }
 
     /// The camera frame parser: the one binary the gateway *receives*. The
@@ -2235,12 +2422,27 @@ mod tests {
     /// frame gets in the other direction.
     #[test]
     fn a_camera_frame_is_kind_flags_then_the_unit() {
-        assert_eq!(camera::parse(&[0x04, 0x01, 9, 8]), Some((true, &[9u8, 8][..])));
+        assert_eq!(
+            camera::parse(&[0x04, 0x01, 9, 8]),
+            Some((true, &[9u8, 8][..]))
+        );
         assert_eq!(camera::parse(&[0x04, 0x00, 7]), Some((false, &[7u8][..])));
         // Malformed frames are dropped whole: wrong kind, unknown flags, no unit.
-        assert_eq!(camera::parse(&[0x03, 0x00, 7]), None, "an audio kind is not a sample");
-        assert_eq!(camera::parse(&[0x04, 0x02, 7]), None, "an unknown flag is a newer gateway");
-        assert_eq!(camera::parse(&[0x04, 0x01]), None, "an empty unit is not a sample");
+        assert_eq!(
+            camera::parse(&[0x03, 0x00, 7]),
+            None,
+            "an audio kind is not a sample"
+        );
+        assert_eq!(
+            camera::parse(&[0x04, 0x02, 7]),
+            None,
+            "an unknown flag is a newer gateway"
+        );
+        assert_eq!(
+            camera::parse(&[0x04, 0x01]),
+            None,
+            "an empty unit is not a sample"
+        );
         assert_eq!(camera::parse(&[]), None);
     }
 
@@ -2276,10 +2478,20 @@ mod tests {
     fn a_mic_frame_is_kind_then_the_packet() {
         assert_eq!(mic::parse(&[0x05, 0xF8, 0xFF]), Some(&[0xF8u8, 0xFF][..]));
         assert_eq!(mic::parse(&[0x05]), None, "an empty packet");
-        assert_eq!(mic::parse(&[0x04, 0x00, 7]), None, "a camera sample is not a packet");
+        assert_eq!(
+            mic::parse(&[0x04, 0x00, 7]),
+            None,
+            "a camera sample is not a packet"
+        );
         assert_eq!(mic::parse(&[]), None);
-        assert_eq!(ServerMsg::MicOpen.text_frame().as_deref(), Some(r#"{"type":"micOpen"}"#));
-        assert_eq!(ServerMsg::MicClose.text_frame().as_deref(), Some(r#"{"type":"micClose"}"#));
+        assert_eq!(
+            ServerMsg::MicOpen.text_frame().as_deref(),
+            Some(r#"{"type":"micOpen"}"#)
+        );
+        assert_eq!(
+            ServerMsg::MicClose.text_frame().as_deref(),
+            Some(r#"{"type":"micClose"}"#)
+        );
     }
 
     /// The camera socket's one inbound text message parses with the field names
@@ -2291,7 +2503,12 @@ mod tests {
         )
         .expect("the camera format must parse");
         match msg {
-            ClientMsg::CameraFormat { width, height, fps_numerator, fps_denominator } => {
+            ClientMsg::CameraFormat {
+                width,
+                height,
+                fps_numerator,
+                fps_denominator,
+            } => {
                 assert_eq!((width, height), (640, 480));
                 assert_eq!((fps_numerator, fps_denominator), (2997, 100));
             }
@@ -2302,21 +2519,33 @@ mod tests {
     // Control messages keep the tagged, camelCase text shape `protocol.ts` expects.
     #[test]
     fn control_messages_encode_to_tagged_camelcase_text() {
-        match (ServerMsg::Resize { w: 1280, h: 800, scale: UNSCALED }).text_frame() {
+        match (ServerMsg::Resize {
+            w: 1280,
+            h: 800,
+            scale: UNSCALED,
+        })
+        .text_frame()
+        {
             Some(json) => {
-                assert_eq!(
-                    json,
-                    r#"{"type":"resize","w":1280,"h":800,"scale":1.0}"#
-                )
+                assert_eq!(json, r#"{"type":"resize","w":1280,"h":800,"scale":1.0}"#)
             }
             None => panic!("resize must be a text frame"),
         }
-        match (ServerMsg::Error { message: "boom".to_owned() }).text_frame() {
+        match (ServerMsg::Error {
+            message: "boom".to_owned(),
+        })
+        .text_frame()
+        {
             Some(json) => assert_eq!(json, r#"{"type":"error","message":"boom"}"#),
             None => panic!("error must be a text frame"),
         }
         // The second column of a passed pipeline's picture: a display's message.
-        let view = ServerMsg::GraphicsView { x: 1440, y: 0, w: 1440, h: 900 };
+        let view = ServerMsg::GraphicsView {
+            x: 1440,
+            y: 0,
+            w: 1440,
+            h: 900,
+        };
         assert!(view.is_display());
         assert_eq!(
             view.text_frame().as_deref(),
@@ -2369,9 +2598,14 @@ mod tests {
         // is a decoder that never gets configured.
         // The engine is what the session layer stamped in, which the page fences a
         // late start of an ended session on.
-        match (ServerMsg::VideoFormat { decode: "avc1.640033".to_owned(), strips: 1, colour: None, engine: 0 })
-            .stamped(7)
-            .text_frame()
+        match (ServerMsg::VideoFormat {
+            decode: "avc1.640033".to_owned(),
+            strips: 1,
+            colour: None,
+            engine: 0,
+        })
+        .stamped(7)
+        .text_frame()
         {
             Some(json) => assert_eq!(
                 json,
@@ -2395,11 +2629,17 @@ mod tests {
             )
         );
         assert_eq!(
-            ServerMsg::GraphicsStart { engine: 0 }.stamped(7).text_frame().as_deref(),
+            ServerMsg::GraphicsStart { engine: 0 }
+                .stamped(7)
+                .text_frame()
+                .as_deref(),
             Some(r#"{"type":"graphicsStart","engine":7}"#)
         );
         assert_eq!(
-            ServerMsg::TilesStart { engine: 0 }.stamped(7).text_frame().as_deref(),
+            ServerMsg::TilesStart { engine: 0 }
+                .stamped(7)
+                .text_frame()
+                .as_deref(),
             Some(r#"{"type":"tilesStart","engine":7}"#)
         );
         assert_eq!(
@@ -2424,7 +2664,12 @@ mod tests {
             ),
             None => panic!("mosaic must be a text frame"),
         }
-        match (ServerMsg::Mosaic { regions: Vec::new(), resize: false }).text_frame() {
+        match (ServerMsg::Mosaic {
+            regions: Vec::new(),
+            resize: false,
+        })
+        .text_frame()
+        {
             Some(json) => assert_eq!(json, r#"{"type":"mosaic","regions":[],"resize":false}"#),
             None => panic!("mosaic must be a text frame"),
         }
@@ -2473,19 +2718,15 @@ mod tests {
         }
         for macos in [false, true] {
             match (ServerMsg::RemoteOs { macos }).text_frame() {
-                Some(json) => assert_eq!(
-                    json,
-                    format!(r#"{{"type":"remoteOs","macos":{macos}}}"#)
-                ),
+                Some(json) => assert_eq!(json, format!(r#"{{"type":"remoteOs","macos":{macos}}}"#)),
                 None => panic!("remoteOs must be a text frame"),
             }
         }
         for active in [false, true] {
             match (ServerMsg::Resizing { active }).text_frame() {
-                Some(json) => assert_eq!(
-                    json,
-                    format!(r#"{{"type":"resizing","active":{active}}}"#)
-                ),
+                Some(json) => {
+                    assert_eq!(json, format!(r#"{{"type":"resizing","active":{active}}}"#))
+                }
                 None => panic!("resizing must be a text frame"),
             }
             match (ServerMsg::ScreenUnavailable { active }).text_frame() {
@@ -2495,10 +2736,18 @@ mod tests {
                 ),
                 None => panic!("screenUnavailable must be a text frame"),
             }
-            match (ServerMsg::PictureWithheld { active, hevc: !active }).text_frame() {
+            match (ServerMsg::PictureWithheld {
+                active,
+                hevc: !active,
+            })
+            .text_frame()
+            {
                 Some(json) => assert_eq!(
                     json,
-                    format!(r#"{{"type":"pictureWithheld","active":{active},"hevc":{}}}"#, !active)
+                    format!(
+                        r#"{{"type":"pictureWithheld","active":{active},"hevc":{}}}"#,
+                        !active
+                    )
                 ),
                 None => panic!("pictureWithheld must be a text frame"),
             }
@@ -2547,11 +2796,16 @@ mod tests {
 
     #[test]
     fn host_picture_names_its_codecs() {
-        let msg = ServerMsg::HostPicture { lossless: false, codecs: vec!["Planar", "RemoteFX Progressive"] };
+        let msg = ServerMsg::HostPicture {
+            lossless: false,
+            codecs: vec!["Planar", "RemoteFX Progressive"],
+        };
         assert!(msg.is_display());
         assert_eq!(
             msg.text_frame().as_deref(),
-            Some(r#"{"type":"hostPicture","lossless":false,"codecs":["Planar","RemoteFX Progressive"]}"#)
+            Some(
+                r#"{"type":"hostPicture","lossless":false,"codecs":["Planar","RemoteFX Progressive"]}"#
+            )
         );
     }
 
@@ -2611,7 +2865,10 @@ mod tests {
         let oversized = ClipboardSnapshot::oversized(209_715_200, None);
         assert!(oversized.text.is_empty());
         assert_eq!(oversized.oversized_bytes, Some(209_715_200));
-        assert!(oversized.changed_at_ms.is_some(), "still clipboard activity");
+        assert!(
+            oversized.changed_at_ms.is_some(),
+            "still clipboard activity"
+        );
 
         let unobserved = ClipboardSnapshot::unobserved();
         assert!(unobserved.text.is_empty());
@@ -2667,7 +2924,8 @@ mod tests {
     // null image for "the remote hid the pointer".
     #[test]
     fn cursor_control_message_carries_a_base64_png_or_null() {
-        let shape = CursorShape::from_rgba(1, 1, 3, 4, CursorUnit::Points, &[255, 0, 0, 255]).unwrap();
+        let shape =
+            CursorShape::from_rgba(1, 1, 3, 4, CursorUnit::Points, &[255, 0, 0, 255]).unwrap();
         let expected = base64::engine::general_purpose::STANDARD.encode(&shape.png);
         match (ServerMsg::Cursor(Some(shape))).text_frame() {
             Some(json) => assert_eq!(
@@ -2696,7 +2954,15 @@ mod tests {
     // says so, which is what keeps a caller from sending one on its own.
     #[test]
     fn an_access_unit_has_no_text_encoding() {
-        let unit = VideoUnit { w: 1, h: 1, strip: None, keyframe: true, data: vec![1], held: Held::default(), painted: Painted::default() };
+        let unit = VideoUnit {
+            w: 1,
+            h: 1,
+            strip: None,
+            keyframe: true,
+            data: vec![1],
+            held: Held::default(),
+            painted: Painted::default(),
+        };
         assert!((ServerMsg::Video(unit)).text_frame().is_none());
     }
 
@@ -2717,17 +2983,62 @@ mod tests {
         assert_eq!(out.len(), unit.record_len());
         assert_eq!(
             out,
-            [batch::OP_VIDEO, batch::VIDEO_KEYFRAME, 0x02, 0x01, 0x04, 0x03, 2, 0, 0, 0, 0xAA, 0xBB]
+            [
+                batch::OP_VIDEO,
+                batch::VIDEO_KEYFRAME,
+                0x02,
+                0x01,
+                0x04,
+                0x03,
+                2,
+                0,
+                0,
+                0,
+                0xAA,
+                0xBB
+            ]
         );
         // A strip's number and whether it ends a frame ride in the flags.
         let flags = |strip, keyframe| {
             let mut out = Vec::new();
-            VideoUnit { strip: Some(strip), keyframe, ..unit.clone() }.write_record(&mut out);
+            VideoUnit {
+                strip: Some(strip),
+                keyframe,
+                ..unit.clone()
+            }
+            .write_record(&mut out);
             out[1]
         };
-        assert_eq!(flags(Strip { index: 0, ends: true }, true), 0x13);
-        assert_eq!(flags(Strip { index: 3, ends: false }, false), 0x0E);
-        assert_eq!(flags(Strip { index: 2, ends: true }, false), 0x1A);
+        assert_eq!(
+            flags(
+                Strip {
+                    index: 0,
+                    ends: true
+                },
+                true
+            ),
+            0x13
+        );
+        assert_eq!(
+            flags(
+                Strip {
+                    index: 3,
+                    ends: false
+                },
+                false
+            ),
+            0x0E
+        );
+        assert_eq!(
+            flags(
+                Strip {
+                    index: 2,
+                    ends: true
+                },
+                false
+            ),
+            0x1A
+        );
     }
 
     // The tile record layout `protocol.ts` (decodeBatchFrame) parses.
@@ -2748,66 +3059,175 @@ mod tests {
         assert_eq!(out.len(), unit.record_len());
         assert_eq!(
             out,
-            [batch::OP_TILE, batch::TILE_PNG, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 2, 0, 0, 0, 0xAA, 0xBB]
+            [
+                batch::OP_TILE,
+                batch::TILE_PNG,
+                0x02,
+                0x01,
+                0x04,
+                0x03,
+                0x06,
+                0x05,
+                0x08,
+                0x07,
+                2,
+                0,
+                0,
+                0,
+                0xAA,
+                0xBB
+            ]
         );
         let mut jpeg = Vec::new();
-        TileUnit { format: crate::tiles::Format::Jpeg, ..unit.clone() }.write_record(&mut jpeg);
+        TileUnit {
+            format: crate::tiles::Format::Jpeg,
+            ..unit.clone()
+        }
+        .write_record(&mut jpeg);
         assert_eq!(jpeg[1], batch::TILE_JPEG);
-        assert!((ServerMsg::Tile(unit)).text_frame().is_none(), "a tile has no standalone frame");
+        assert!(
+            (ServerMsg::Tile(unit)).text_frame().is_none(),
+            "a tile has no standalone frame"
+        );
     }
 
     #[test]
     fn region_record_layout_is_op_stream_flags_le_rect_len_payload() {
-        let unit = RegionUnit { stream: 3, x: 0x0102, y: 0x0304, w: 0x0506, h: 0x0708, keyframe: true, data: vec![0xAA, 0xBB], held: Held::default() };
+        let unit = RegionUnit {
+            stream: 3,
+            x: 0x0102,
+            y: 0x0304,
+            w: 0x0506,
+            h: 0x0708,
+            keyframe: true,
+            data: vec![0xAA, 0xBB],
+            held: Held::default(),
+        };
         let mut out = Vec::new();
         unit.write_record(&mut out);
         assert_eq!(out.len(), unit.record_len());
         assert_eq!(
             out,
-            [batch::OP_REGION, 3, batch::REGION_KEYFRAME, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 2, 0, 0, 0, 0xAA, 0xBB]
+            [
+                batch::OP_REGION,
+                3,
+                batch::REGION_KEYFRAME,
+                0x02,
+                0x01,
+                0x04,
+                0x03,
+                0x06,
+                0x05,
+                0x08,
+                0x07,
+                2,
+                0,
+                0,
+                0,
+                0xAA,
+                0xBB
+            ]
         );
         let mut delta = Vec::new();
-        RegionUnit { keyframe: false, ..unit.clone() }.write_record(&mut delta);
+        RegionUnit {
+            keyframe: false,
+            ..unit.clone()
+        }
+        .write_record(&mut delta);
         assert_eq!(delta[2], 0);
-        assert!((ServerMsg::Region(unit)).text_frame().is_none(), "a region's unit has no standalone frame");
+        assert!(
+            (ServerMsg::Region(unit)).text_frame().is_none(),
+            "a region's unit has no standalone frame"
+        );
     }
 
     #[test]
     fn copy_record_layout_is_op_le_source_and_rect() {
-        let unit = CopyUnit { sx: 0x0102, sy: 0x0304, x: 0x0506, y: 0x0708, w: 0x090A, h: 0x0B0C };
+        let unit = CopyUnit {
+            sx: 0x0102,
+            sy: 0x0304,
+            x: 0x0506,
+            y: 0x0708,
+            w: 0x090A,
+            h: 0x0B0C,
+        };
         let mut out = Vec::new();
         unit.write_record(&mut out);
         assert_eq!(out.len(), batch::COPY_LEN);
-        assert_eq!(out, [batch::OP_COPY, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05, 0x08, 0x07, 0x0A, 0x09, 0x0C, 0x0B]);
-        assert!(ServerMsg::Copy(unit).is_display() && ServerMsg::Copy(unit).text_frame().is_none(), "a copy is a display's record and has no standalone frame");
+        assert_eq!(
+            out,
+            [
+                batch::OP_COPY,
+                0x02,
+                0x01,
+                0x04,
+                0x03,
+                0x06,
+                0x05,
+                0x08,
+                0x07,
+                0x0A,
+                0x09,
+                0x0C,
+                0x0B
+            ]
+        );
+        assert!(
+            ServerMsg::Copy(unit).is_display() && ServerMsg::Copy(unit).text_frame().is_none(),
+            "a copy is a display's record and has no standalone frame"
+        );
     }
 
     #[test]
     fn cache_record_layout_is_op_le_slot_and_place() {
-        let store = CacheUnit { store: true, slot: 0x0102, x: 0x0304, y: 0x0506 };
+        let store = CacheUnit {
+            store: true,
+            slot: 0x0102,
+            x: 0x0304,
+            y: 0x0506,
+        };
         let mut out = Vec::new();
         store.write_record(&mut out);
         assert_eq!(out.len(), batch::CACHE_LEN);
         assert_eq!(out, [batch::OP_STORE, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05]);
         let mut out = Vec::new();
-        CacheUnit { store: false, ..store }.write_record(&mut out);
+        CacheUnit {
+            store: false,
+            ..store
+        }
+        .write_record(&mut out);
         assert_eq!(out, [batch::OP_CACHED, 0x02, 0x01, 0x04, 0x03, 0x06, 0x05]);
-        assert!(ServerMsg::Cache(store).is_display() && ServerMsg::Cache(store).text_frame().is_none(), "a cache's record is a display's and has no standalone frame");
+        assert!(
+            ServerMsg::Cache(store).is_display() && ServerMsg::Cache(store).text_frame().is_none(),
+            "a cache's record is a display's and has no standalone frame"
+        );
     }
 
     /// A region's format and end name their stream and are stamped with their engine,
     /// as a picture's start is.
     #[test]
     fn a_regions_format_and_end_are_stamped_display_messages() {
-        let format = ServerMsg::RegionFormat { stream: 2, decode: "avc1.42C01F".to_owned(), engine: 0 }.stamped(7);
+        let format = ServerMsg::RegionFormat {
+            stream: 2,
+            decode: "avc1.42C01F".to_owned(),
+            engine: 0,
+        }
+        .stamped(7);
         assert!(format.is_display());
         assert_eq!(
             format.text_frame().as_deref(),
             Some(r#"{"type":"regionFormat","stream":2,"decode":"avc1.42C01F","engine":7}"#)
         );
-        let end = ServerMsg::RegionEnd { stream: 2, engine: 0 }.stamped(7);
+        let end = ServerMsg::RegionEnd {
+            stream: 2,
+            engine: 0,
+        }
+        .stamped(7);
         assert!(end.is_display());
-        assert_eq!(end.text_frame().as_deref(), Some(r#"{"type":"regionEnd","stream":2,"engine":7}"#));
+        assert_eq!(
+            end.text_frame().as_deref(),
+            Some(r#"{"type":"regionEnd","stream":2,"engine":7}"#)
+        );
     }
 
     /// What a payload is owed is said once, wherever the payload ends, and a copy of
@@ -2824,7 +3244,11 @@ mod tests {
         let said = || said.load(std::sync::atomic::Ordering::Relaxed);
         drop(painted.clone());
         assert_eq!(said(), 0, "a clone owes nothing");
-        let unit = GraphicsUnit { data: vec![0], frame: Some(painted), held: Held::default() };
+        let unit = GraphicsUnit {
+            data: vec![0],
+            frame: Some(painted),
+            held: Held::default(),
+        };
         assert_eq!(said(), 0, "still queued");
         drop(unit);
         assert_eq!(said(), 1);
@@ -2841,7 +3265,11 @@ mod tests {
         assert_eq!(budget.available_permits(), 65);
         let rest = whole.split(1000);
         drop(whole);
-        assert_eq!(budget.available_permits(), 65, "the remainder moved to the split");
+        assert_eq!(
+            budget.available_permits(),
+            65,
+            "the remainder moved to the split"
+        );
         drop(rest);
         assert_eq!(budget.available_permits(), 100);
     }

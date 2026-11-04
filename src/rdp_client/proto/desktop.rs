@@ -152,13 +152,24 @@ mod tests {
     #[test]
     fn a_server_that_suppresses_output_is_asked_that_way_and_in_that_order() {
         let pdus = repaint(1007, 0x0001_0021, 1920, 1080, true, true);
-        assert_eq!(pdus.len(), 2, "a server that offers both is asked the reliable way");
+        assert_eq!(
+            pdus.len(),
+            2,
+            "a server that offers both is asked the reliable way"
+        );
         let off = decoded(&pdus[0]);
         assert_eq!(off.kind, SUPPRESS_OUTPUT);
-        assert_eq!(off.body, &[0, 0, 0, 0], "no rectangle goes with a suppression");
+        assert_eq!(
+            off.body,
+            &[0, 0, 0, 0],
+            "no rectangle goes with a suppression"
+        );
         let on = decoded(&pdus[1]);
         assert_eq!(on.kind, SUPPRESS_OUTPUT);
-        assert_eq!(on.body, &[ALLOW, 0, 0, 0, 0, 0, 0, 0, 0x7F, 0x07, 0x37, 0x04]);
+        assert_eq!(
+            on.body,
+            &[ALLOW, 0, 0, 0, 0, 0, 0, 0, 0x7F, 0x07, 0x37, 0x04]
+        );
     }
 
     #[test]
@@ -167,7 +178,10 @@ mod tests {
         assert_eq!(pdus.len(), 1);
         let refresh = decoded(&pdus[0]);
         assert_eq!(refresh.kind, REFRESH_RECT);
-        assert_eq!(refresh.body, &[1, 0, 0, 0, 0, 0, 0, 0, 0x7F, 0x07, 0x37, 0x04]);
+        assert_eq!(
+            refresh.body,
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0x7F, 0x07, 0x37, 0x04]
+        );
     }
 
     /// A server that offers neither is asked for nothing rather than sent a PDU it

@@ -137,10 +137,12 @@ mod unix {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(error).with_context(|| format!("cannot remove stale socket {}", path.display()));
+                return Err(error)
+                    .with_context(|| format!("cannot remove stale socket {}", path.display()));
             }
         }
-        let listener = UnixListener::bind(path).with_context(|| format!("cannot bind {}", path.display()))?;
+        let listener =
+            UnixListener::bind(path).with_context(|| format!("cannot bind {}", path.display()))?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .with_context(|| format!("cannot make {} private", path.display()))?;
         Ok(listener)
@@ -154,7 +156,9 @@ mod windows {
     use std::time::{Duration, Instant};
 
     use anyhow::Context as _;
-    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions};
+    use tokio::net::windows::named_pipe::{
+        ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
+    };
     use tokio::sync::mpsc;
     use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
 
@@ -188,7 +192,9 @@ mod windows {
     pub fn check_endpoint(_dir: &Path, endpoint: &str) -> anyhow::Result<()> {
         let suffix = endpoint.strip_prefix(PIPE_PREFIX);
         anyhow::ensure!(
-            suffix.is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())),
+            suffix
+                .is_some_and(|suffix| !suffix.is_empty()
+                    && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())),
             "gateway returned a pipe name that is not a worker's: {endpoint:?}"
         );
         Ok(())
@@ -200,7 +206,8 @@ mod windows {
         loop {
             match ClientOptions::new().open(endpoint) {
                 Err(error)
-                    if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {}
+                    if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
+                        && Instant::now() < deadline => {}
                 result => return result,
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -224,7 +231,8 @@ mod windows {
     impl WorkerListener {
         pub fn bind(endpoint: &str, _claim: &Claim) -> anyhow::Result<Self> {
             let security = Arc::new(
-                SecurityDescriptor::pipe().context("cannot build the pipe's owner-only descriptor")?,
+                SecurityDescriptor::pipe()
+                    .context("cannot build the pipe's owner-only descriptor")?,
             );
             let (sender, accepted) = mpsc::channel(BACKLOG);
             let mut instances = tokio::task::JoinSet::new();
@@ -267,7 +275,11 @@ mod windows {
     ///
     /// `first` claims the name: creating the first instance of a pipe that already
     /// exists fails, where a later instance would join whoever made it.
-    fn create(name: &str, security: &SecurityDescriptor, first: bool) -> std::io::Result<NamedPipeServer> {
+    fn create(
+        name: &str,
+        security: &SecurityDescriptor,
+        first: bool,
+    ) -> std::io::Result<NamedPipeServer> {
         let mut attributes = security.attributes();
         // SAFETY: the attributes point at a descriptor that outlives the call, which
         // copies what it needs.

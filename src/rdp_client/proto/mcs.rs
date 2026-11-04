@@ -79,10 +79,18 @@ struct DomainParameters {
 }
 
 impl DomainParameters {
-    const TARGET: Self =
-        Self { max_channel_ids: 34, max_user_ids: 2, max_token_ids: 0, max_mcs_pdu_size: 0xFFFF };
-    const MINIMUM: Self =
-        Self { max_channel_ids: 1, max_user_ids: 1, max_token_ids: 1, max_mcs_pdu_size: 0x420 };
+    const TARGET: Self = Self {
+        max_channel_ids: 34,
+        max_user_ids: 2,
+        max_token_ids: 0,
+        max_mcs_pdu_size: 0xFFFF,
+    };
+    const MINIMUM: Self = Self {
+        max_channel_ids: 1,
+        max_user_ids: 1,
+        max_token_ids: 1,
+        max_mcs_pdu_size: 0x420,
+    };
     const MAXIMUM: Self = Self {
         max_channel_ids: 0xFFFF,
         max_user_ids: 0xFC17,
@@ -147,7 +155,10 @@ pub fn connect_response(frame: &[u8]) -> Result<&[u8], Malformed> {
         return Err(fields.refuse("an ASN.1 tag", tag));
     }
     if !r.is_empty() {
-        return Err(r.refuse("bytes past its own length, numbering", r.rest().len() as u64));
+        return Err(r.refuse(
+            "bytes past its own length, numbering",
+            r.rest().len() as u64,
+        ));
     }
     Ok(fields.rest())
 }
@@ -296,7 +307,10 @@ pub fn send_data_indication(frame: &[u8]) -> Result<Indication<'_>, Malformed> {
     let channel = per::read_integer16(&mut r, 0)?;
     r.u8()?; // dataPriority and segmentation, which RDP never splits
     let length = usize::from(per::read_length(&mut r)?);
-    Ok(Indication::Data(SendData { channel, payload: r.bytes(length)? }))
+    Ok(Indication::Data(SendData {
+        channel,
+        payload: r.bytes(length)?,
+    }))
 }
 
 /// A whole TPKT frame around a PDU whose size is known at compile time to fit one.
@@ -323,7 +337,11 @@ fn domain_pdu<'a>(
     }
     if let Some(reason) = ultimatum(what, payload)? {
         let field = "a Disconnect Provider Ultimatum instead, whose reason is";
-        return Err(Malformed::Refused { what, field, value: u64::from(reason.0) });
+        return Err(Malformed::Refused {
+            what,
+            field,
+            value: u64::from(reason.0),
+        });
     }
     Err(r.refuse("an MCS PDU type", found))
 }
@@ -374,15 +392,24 @@ mod tests {
         let mut fields = Reader::new("a test", der::expect_application(&mut r, 101).unwrap());
         assert!(r.is_empty());
 
-        assert_eq!(der::expect(&mut fields, der::OCTET_STRING).unwrap(), &DOMAIN_SELECTOR);
-        assert_eq!(der::expect(&mut fields, der::OCTET_STRING).unwrap(), &DOMAIN_SELECTOR);
+        assert_eq!(
+            der::expect(&mut fields, der::OCTET_STRING).unwrap(),
+            &DOMAIN_SELECTOR
+        );
+        assert_eq!(
+            der::expect(&mut fields, der::OCTET_STRING).unwrap(),
+            &DOMAIN_SELECTOR
+        );
         assert_eq!(der::expect(&mut fields, der::BOOLEAN).unwrap(), &[0xFF]);
         for expected in [34_u32, 1, 0xFFFF] {
             let mut parameters =
                 Reader::new("a test", der::expect(&mut fields, der::SEQUENCE).unwrap());
             assert_eq!(der::read_integer(&mut parameters).unwrap(), expected);
         }
-        assert_eq!(der::expect(&mut fields, der::OCTET_STRING).unwrap(), conference);
+        assert_eq!(
+            der::expect(&mut fields, der::OCTET_STRING).unwrap(),
+            conference
+        );
         assert!(fields.is_empty());
     }
 
@@ -426,17 +453,24 @@ mod tests {
     /// whole test.
     #[test]
     fn the_pdus_that_never_change_are_the_bytes_the_specification_gives() {
-        assert_eq!(payload(&erect_domain_request()), &[0x04, 0x01, 0x00, 0x01, 0x00]);
+        assert_eq!(
+            payload(&erect_domain_request()),
+            &[0x04, 0x01, 0x00, 0x01, 0x00]
+        );
         assert_eq!(payload(&attach_user_request()), &[0x28]);
         // User 1007 is six above the base; channel 1003 is not counted from anything.
-        assert_eq!(payload(&channel_join_request(1007, 1003)), &[
-            0x38, 0x00, 0x06, 0x03, 0xEB
-        ]);
+        assert_eq!(
+            payload(&channel_join_request(1007, 1003)),
+            &[0x38, 0x00, 0x06, 0x03, 0xEB]
+        );
     }
 
     #[test]
     fn a_confirm_yields_the_identifier_it_was_asked_for() {
-        assert_eq!(attach_user_confirm(&server(&[0x2E, 0x00, 0x00, 0x06])).unwrap(), 1007);
+        assert_eq!(
+            attach_user_confirm(&server(&[0x2E, 0x00, 0x00, 0x06])).unwrap(),
+            1007
+        );
         assert_eq!(
             channel_join_confirm(&server(&[0x3E, 0x00, 0x00, 0x06, 0x03, 0xEB, 0x03, 0xEB]))
                 .unwrap(),
@@ -451,9 +485,29 @@ mod tests {
     fn an_unsuccessful_confirm_is_an_error_rather_than_a_channel_number() {
         let err = channel_join_confirm(&server(&[0x3E, 0x20, 0x00, 0x06, 0x03, 0xEB, 0x00, 0x00]))
             .unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an unsuccessful MCS result", value: 1, .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "an unsuccessful MCS result",
+                    value: 1,
+                    ..
+                }
+            ),
+            "{err}"
+        );
         let err = attach_user_confirm(&server(&[0x2F, 0x00, 0x00, 0x06])).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an unsuccessful MCS result", value: 8, .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "an unsuccessful MCS result",
+                    value: 8,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     /// The `userData` length is not read: the conference is everything from the field's
@@ -479,7 +533,17 @@ mod tests {
         let mut trailing = response;
         trailing.extend_from_slice(&[9, 9]);
         let err = connect_response(&server(&trailing)).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "bytes past its own length, numbering", value: 2, .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                Malformed::Refused {
+                    field: "bytes past its own length, numbering",
+                    value: 2,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     /// The answer a server that has decided to end the connection sends instead of
@@ -495,15 +559,25 @@ mod tests {
         );
 
         let err = attach_user_confirm(&server(&[0x38, 0x00])).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an MCS PDU type", value: 14, .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "an MCS PDU type",
+                value: 14,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn send_data_goes_out_and_comes_back_on_the_channel_it_names() {
         let bytes = send_data_request(1007, 1003, b"hello").unwrap();
-        assert_eq!(payload(&bytes), &[
-            0x64, 0x00, 0x06, 0x03, 0xEB, 0x70, 0x05, b'h', b'e', b'l', b'l', b'o'
-        ]);
+        assert_eq!(
+            payload(&bytes),
+            &[
+                0x64, 0x00, 0x06, 0x03, 0xEB, 0x70, 0x05, b'h', b'e', b'l', b'l', b'o'
+            ]
+        );
 
         // A payload past 127 bytes needs PER's two-byte length, and the reader takes
         // either form.
@@ -515,7 +589,13 @@ mod tests {
         indication[0] = SEND_DATA_INDICATION << 2;
         let indication = server(&indication);
         let decoded = send_data_indication(&indication).unwrap();
-        assert_eq!(decoded, Indication::Data(SendData { channel: 1003, payload: b"hello" }));
+        assert_eq!(
+            decoded,
+            Indication::Data(SendData {
+                channel: 1003,
+                payload: b"hello"
+            })
+        );
     }
 
     /// The same two bytes each way, and the straddle is the whole of it: the reason
@@ -524,7 +604,10 @@ mod tests {
     fn leaving_the_conference_is_written_and_read_the_same_way() {
         let bytes = disconnect_provider_ultimatum(Reason::USER_REQUESTED);
         assert_eq!(payload(&bytes), &[0x21, 0x80]);
-        assert_eq!(ultimatum("a test", &[0x21, 0x80]).unwrap(), Some(Reason::USER_REQUESTED));
+        assert_eq!(
+            ultimatum("a test", &[0x21, 0x80]).unwrap(),
+            Some(Reason::USER_REQUESTED)
+        );
         for reason in 0..=4_u8 {
             let written = [
                 (DISCONNECT_PROVIDER_ULTIMATUM << 2) | ((reason >> 1) & 0x03),
@@ -542,11 +625,22 @@ mod tests {
         let frame = server(&[0x21, 0x80]);
         let decoded = send_data_indication(&frame).unwrap();
         assert_eq!(decoded, Indication::Disconnect(Reason(3)));
-        let Indication::Disconnect(reason) = decoded else { panic!("a disconnect") };
+        let Indication::Disconnect(reason) = decoded else {
+            panic!("a disconnect")
+        };
         assert!(reason.is_orderly());
-        assert_eq!(reason.to_string(), "the session was disconnected at the user's request (3)");
-        assert!(!Reason(0).is_orderly(), "a domain that went away is not an orderly end");
-        assert!(Reason(1).is_orderly(), "and a host that hung up on purpose is");
+        assert_eq!(
+            reason.to_string(),
+            "the session was disconnected at the user's request (3)"
+        );
+        assert!(
+            !Reason(0).is_orderly(),
+            "a domain that went away is not an orderly end"
+        );
+        assert!(
+            Reason(1).is_orderly(),
+            "and a host that hung up on purpose is"
+        );
     }
 
     #[test]

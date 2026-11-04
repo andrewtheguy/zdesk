@@ -57,9 +57,7 @@ pub fn header(raw: &[u8; 15]) -> Header {
         uncompressed: u32::from_be_bytes(
             raw[7..11].try_into().expect("four-byte uncompressed size"),
         ),
-        compressed: u32::from_be_bytes(
-            raw[11..15].try_into().expect("four-byte compressed size"),
-        ),
+        compressed: u32::from_be_bytes(raw[11..15].try_into().expect("four-byte compressed size")),
     }
 }
 
@@ -102,7 +100,11 @@ impl Receiver {
             header.compressed,
             header.uncompressed
         );
-        Ok(Self { decoder: Decompress::new(true), declared: header.uncompressed, archive: Archive::default() })
+        Ok(Self {
+            decoder: Decompress::new(true),
+            declared: header.uncompressed,
+            archive: Archive::default(),
+        })
     }
 
     /// Inflate the next compressed bytes of the archive.
@@ -150,13 +152,23 @@ impl Receiver {
                 self.archive.at_item_boundary(),
                 "Apple pasteboard archive ends inside an item"
             );
-            return Ok(if self.declared == 0 { Incoming::Text(String::new()) } else { Incoming::NoText });
+            return Ok(if self.declared == 0 {
+                Incoming::Text(String::new())
+            } else {
+                Incoming::NoText
+            });
         };
         let text = match text {
-            Found::Text(bytes) => String::from_utf8(bytes).context("Apple pasteboard text is not UTF-8")?,
+            Found::Text(bytes) => {
+                String::from_utf8(bytes).context("Apple pasteboard text is not UTF-8")?
+            }
             Found::Oversized(size) => return Ok(Incoming::Oversized(size)),
         };
-        Ok(if clipboard_fits(&text) { Incoming::Text(text) } else { Incoming::Oversized(text.len() as u64) })
+        Ok(if clipboard_fits(&text) {
+            Incoming::Text(text)
+        } else {
+            Incoming::Oversized(text.len() as u64)
+        })
     }
 }
 
@@ -263,7 +275,10 @@ impl Archive {
 
     fn counted(&mut self, field: Field, max: usize, keep: bool) -> anyhow::Result<()> {
         let len = self.number() as usize;
-        anyhow::ensure!(len <= max, "Apple pasteboard field is {len} bytes, over its {max}-byte limit");
+        anyhow::ensure!(
+            len <= max,
+            "Apple pasteboard field is {len} bytes, over its {max}-byte limit"
+        );
         self.expect(field, len, keep);
         Ok(())
     }
@@ -293,7 +308,11 @@ impl Archive {
             Field::Reserved => self.expect(Field::TagCount, 4, true),
             Field::TagCount => {
                 self.tags_left = self.number();
-                anyhow::ensure!(self.tags_left <= 64, "Apple pasteboard flavor declares {} tags", self.tags_left);
+                anyhow::ensure!(
+                    self.tags_left <= 64,
+                    "Apple pasteboard flavor declares {} tags",
+                    self.tags_left
+                );
                 if self.tags_left == 0 {
                     self.expect(Field::DataLength, 4, true);
                 } else {
@@ -342,7 +361,10 @@ fn deflate(input: &[u8]) -> anyhow::Result<Vec<u8>> {
     // A Vec's spare capacity is the entire output buffer `compress_vec` gets: it
     // never reallocates. This is a generous single-pass bound, while the loop is
     // still required because Sync output may exceed ordinary deflate bounds.
-    let bound = input.len().saturating_add(input.len() / 16).saturating_add(256);
+    let bound = input
+        .len()
+        .saturating_add(input.len() / 16)
+        .saturating_add(256);
     let mut out = Vec::with_capacity(bound);
     let flush_status = loop {
         if out.spare_capacity_mut().len() < 32 * 1024 {
@@ -430,7 +452,11 @@ mod tests {
     fn an_empty_remote_pasteboard_is_empty_text() {
         assert_eq!(
             parse(
-                Header { session_id: 0, uncompressed: 0, compressed: 0 },
+                Header {
+                    session_id: 0,
+                    uncompressed: 0,
+                    compressed: 0
+                },
                 &[]
             )
             .unwrap(),
@@ -485,11 +511,26 @@ mod tests {
     fn text_is_found_among_large_and_many_flavors() {
         let image = vec![0x5au8; 3 * 1024 * 1024];
         let mut bytes = 40u32.to_be_bytes().to_vec();
-        flavor(&mut bytes, b"public.tiff", &[(b"NSPboardType", b"NSTIFFPboardType")], &image);
+        flavor(
+            &mut bytes,
+            b"public.tiff",
+            &[(b"NSPboardType", b"NSTIFFPboardType")],
+            &image,
+        );
         for i in 0..38 {
-            flavor(&mut bytes, format!("com.example.flavor{i}").as_bytes(), &[], b"x");
+            flavor(
+                &mut bytes,
+                format!("com.example.flavor{i}").as_bytes(),
+                &[],
+                b"x",
+            );
         }
-        flavor(&mut bytes, UTF8_TEXT, &[(b"MIME", b"text/plain")], "copied ✓".as_bytes());
+        flavor(
+            &mut bytes,
+            UTF8_TEXT,
+            &[(b"MIME", b"text/plain")],
+            "copied ✓".as_bytes(),
+        );
         let (header, compressed) = from_mac(&bytes);
 
         // Fed in the pieces a socket would deliver.
@@ -497,7 +538,10 @@ mod tests {
         for piece in compressed.chunks(1000) {
             receiver.feed(piece).unwrap();
         }
-        assert_eq!(receiver.finish().unwrap(), Incoming::Text("copied ✓".to_owned()));
+        assert_eq!(
+            receiver.finish().unwrap(),
+            Incoming::Text("copied ✓".to_owned())
+        );
     }
 
     /// The last compressed bytes can inflate to more than one buffer's worth, all
@@ -508,21 +552,31 @@ mod tests {
         let mut bytes = 1u32.to_be_bytes().to_vec();
         flavor(&mut bytes, b"public.tiff", &[], &filler);
         let (header, compressed) = from_mac(&bytes);
-        assert!(compressed.len() < INFLATE_CHUNK, "inflates well past one buffer");
+        assert!(
+            compressed.len() < INFLATE_CHUNK,
+            "inflates well past one buffer"
+        );
         assert_eq!(parse(header, &compressed).unwrap(), Incoming::NoText);
         for size in [1, 7, 100, 1000] {
             let mut receiver = Receiver::new(header).unwrap();
             for piece in compressed.chunks(size) {
                 receiver.feed(piece).unwrap();
             }
-            assert_eq!(receiver.finish().unwrap(), Incoming::NoText, "pieces of {size}");
+            assert_eq!(
+                receiver.finish().unwrap(),
+                Incoming::NoText,
+                "pieces of {size}"
+            );
         }
 
         let mut bytes = 2u32.to_be_bytes().to_vec();
         flavor(&mut bytes, b"public.tiff", &[], &filler);
         flavor(&mut bytes, UTF8_TEXT, &[], b"after");
         let (header, compressed) = from_mac(&bytes);
-        assert_eq!(parse(header, &compressed).unwrap(), Incoming::Text("after".to_owned()));
+        assert_eq!(
+            parse(header, &compressed).unwrap(),
+            Incoming::Text("after".to_owned())
+        );
     }
 
     /// The text may be in a later item than the first.
@@ -534,7 +588,10 @@ mod tests {
         bytes.extend_from_slice(&1u32.to_be_bytes());
         flavor(&mut bytes, UTF8_TEXT, &[], b"second");
         let (header, compressed) = from_mac(&bytes);
-        assert_eq!(parse(header, &compressed).unwrap(), Incoming::Text("second".to_owned()));
+        assert_eq!(
+            parse(header, &compressed).unwrap(),
+            Incoming::Text("second".to_owned())
+        );
     }
 
     #[test]

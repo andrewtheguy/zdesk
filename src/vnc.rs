@@ -34,10 +34,10 @@ use anyhow::Context as _;
 use des::Des;
 use des::cipher::generic_array::GenericArray;
 use des::cipher::{BlockEncrypt as _, KeyInit as _};
+use log::{debug, info, warn};
 use md5::{Digest as _, Md5};
 use num_bigint::BigUint;
 use rand::Rng as _;
-use log::{debug, info, warn};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, mpsc};
@@ -54,11 +54,15 @@ use wlshare_proto::tiles::TileHeader;
 #[cfg(feature = "wlshare")]
 use wlshare_proto::{ENCODING_DENSITY, ENCODING_OUTPUTS, ENCODING_TILES, ENCODING_VIDEO, density};
 
+#[cfg(feature = "wlshare")]
+use crate::camera::CameraSignal;
 use crate::combined::{Composition, Compositor};
 use crate::config::{Choices, Passthrough, RenderPlan, StandardQuality, Subtype, TargetConfig};
 use crate::encode::{Oversize, VideoSink};
 use crate::engine::{self, clamp_u16, host_port};
 use crate::keymap;
+#[cfg(feature = "wlshare")]
+use crate::mic::MicSignal;
 use crate::protocol::{
     ClientMsg, ClipboardSnapshot, CursorShape, CursorUnit, DisplayInfo, HostDisplay,
     MAX_CLIPBOARD_BYTES, MAX_CURSOR_DIM, MouseButton, ServerMsg, UNSCALED, WheelUnit,
@@ -66,22 +70,23 @@ use crate::protocol::{
 };
 use crate::shadow::{Rect, Shadow};
 use crate::vnc_apple::{self, CursorCache};
+use crate::vnc_apple_clipboard;
 use crate::vnc_apple_media::{self, MediaStream, PassedUnit, PassedUnits};
 #[cfg(feature = "wlshare")]
 use crate::vnc_audio;
-use crate::vnc_encodings::{Decoders, Payload};
-use crate::vnc_apple_clipboard;
-#[cfg(feature = "wlshare")]
-use crate::camera::CameraSignal;
 #[cfg(feature = "wlshare")]
 use crate::vnc_camera::{self, Input as CameraInput, Link as CameraLink, Queues as CameraQueues};
+use crate::vnc_encodings::{Decoders, Payload};
 #[cfg(feature = "wlshare")]
-use crate::mic::MicSignal;
-#[cfg(feature = "wlshare")]
-use crate::vnc_mic::{self, Input as MicrophoneInput, Link as MicrophoneLink, Queues as MicrophoneQueues};
+use crate::vnc_mic::{
+    self, Input as MicrophoneInput, Link as MicrophoneLink, Queues as MicrophoneQueues,
+};
 // A gateway built without the `wlshare` feature lends no camera or microphone
 // over VNC: wlshare's extensions are the one way it does. What the engine holds in
 // their place can never be made, so the loop's branches for them never resolve.
+use crate::vnc_clipboard;
+use crate::vnc_record::{self, Keys, RecordReader, RecordWriter};
+use crate::vnc_rsa_aes::{self, FrameReader, Sealer, Strength};
 #[cfg(not(feature = "wlshare"))]
 use std::convert::Infallible as CameraInput;
 #[cfg(not(feature = "wlshare"))]
@@ -94,9 +99,6 @@ use std::convert::Infallible as MicrophoneInput;
 use std::convert::Infallible as MicrophoneLink;
 #[cfg(not(feature = "wlshare"))]
 use std::convert::Infallible as MicrophoneQueues;
-use crate::vnc_clipboard;
-use crate::vnc_record::{self, Keys, RecordReader, RecordWriter};
-use crate::vnc_rsa_aes::{self, FrameReader, Sealer, Strength};
 
 const SECURITY_NONE: u8 = 1;
 const SECURITY_VNC_AUTH: u8 = 2;
@@ -415,7 +417,11 @@ impl HeldMotion {
                 let add = |held: f32, delta: f32, room: f32| {
                     let max = (Wheel::MAX_PX - room).max(0.0) / px;
                     let sum = held + delta * scale;
-                    if sum.is_finite() { sum.clamp(-max, max) } else { held }
+                    if sum.is_finite() {
+                        sum.clamp(-max, max)
+                    } else {
+                        held
+                    }
                 };
                 let held = &mut self.wheel[slot];
                 *held = (add(held.0, dx, room.0), add(held.1, dy, room.1));
@@ -448,8 +454,12 @@ async fn write_queued(
 ) -> anyhow::Result<()> {
     use anyhow::Context as _;
     while let Some(bytes) = queue.recv().await {
-        sock.write_all(&bytes).await.context("write to the VNC server")?;
-        backlog.bytes.fetch_sub(bytes.len(), std::sync::atomic::Ordering::Relaxed);
+        sock.write_all(&bytes)
+            .await
+            .context("write to the VNC server")?;
+        backlog
+            .bytes
+            .fetch_sub(bytes.len(), std::sync::atomic::Ordering::Relaxed);
         backlog.written.notify_waiters();
     }
     Ok(())
@@ -502,7 +512,13 @@ impl Uplink {
     ///
     /// Returns the uplink to share, what is queued behind it, and the writer to run
     /// for as long as the session does.
-    fn queued(self) -> (Self, Arc<Backlog>, impl Future<Output = anyhow::Result<()>> + Send + 'static) {
+    fn queued(
+        self,
+    ) -> (
+        Self,
+        Arc<Backlog>,
+        impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) {
         let Self { out, framing } = self;
         let Out::Socket(sock) = out else {
             unreachable!("an uplink is handed to its writer once, by the session that built it");
@@ -510,7 +526,14 @@ impl Uplink {
         let (tx, queue) = mpsc::unbounded_channel();
         let backlog = Arc::new(Backlog::default());
         let writer = write_queued(sock, queue, Arc::clone(&backlog));
-        (Self { out: Out::Queue(tx, Arc::clone(&backlog)), framing }, backlog, writer)
+        (
+            Self {
+                out: Out::Queue(tx, Arc::clone(&backlog)),
+                framing,
+            },
+            backlog,
+            writer,
+        )
     }
 
     async fn send(&mut self, msg: &[u8]) -> anyhow::Result<()> {
@@ -524,12 +547,14 @@ impl Uplink {
             Out::Socket(sock) => sock.write_all(&framed).await?,
             Out::Queue(queue, backlog) => {
                 let framed = framed.into_owned();
-                backlog.bytes.fetch_add(framed.len(), std::sync::atomic::Ordering::Relaxed);
+                backlog
+                    .bytes
+                    .fetch_add(framed.len(), std::sync::atomic::Ordering::Relaxed);
                 // Closed only once the writer has returned, and its error is the
                 // one the session reports.
-                queue
-                    .send(framed)
-                    .map_err(|_| anyhow::anyhow!("the VNC server's connection is closed for writing"))?;
+                queue.send(framed).map_err(|_| {
+                    anyhow::anyhow!("the VNC server's connection is closed for writing")
+                })?;
             }
         }
         Ok(())
@@ -785,7 +810,6 @@ const HP_DENSITY_JOIN: Duration = Duration::from_millis(400);
 /// the answering layout, which arrives inside an update.
 const HP_HOLD_REQUEST: (u16, u16) = (1, 1);
 
-
 /// One of a High Performance session's virtual displays, as the Mac's layout
 /// places it: its backing pixels and density, and where it starts in the
 /// framebuffer the Mac spans over all of them, which is the space pointer
@@ -812,7 +836,10 @@ struct HpView {
 
 impl HpView {
     /// *All Displays*, which two virtual displays start on.
-    const BESIDE: Self = Self { active: 0, all: true };
+    const BESIDE: Self = Self {
+        active: 0,
+        all: true,
+    };
 
     /// The view a picker `id` names, among `count` displays: a display's index,
     /// or [`DisplayState::COMBINED`] for all of them.
@@ -826,7 +853,11 @@ impl HpView {
 
     /// The picker's id for this view.
     fn id(self) -> u32 {
-        if self.all { DisplayState::COMBINED } else { self.active as u32 }
+        if self.all {
+            DisplayState::COMBINED
+        } else {
+            self.active as u32
+        }
     }
 
     /// The display shown in tab `display`, as the display sockets number them:
@@ -947,7 +978,13 @@ impl HpResize {
     /// `want` has settled. With a `media` stream that request also waits for
     /// [`Self::media_answered`].
     fn opening(want: (u16, u16), media: bool) -> Self {
-        Self { want: Some(want), shown: true, opening: HpOpening::Layout, media, ..Self::default() }
+        Self {
+            want: Some(want),
+            shown: true,
+            opening: HpOpening::Layout,
+            media,
+            ..Self::default()
+        }
     }
 
     /// The Mac answered a media-stream offer. `true` when that releases the
@@ -1000,7 +1037,11 @@ impl HpResize {
     /// the second after a request may already have gone — and that answers nothing.
     fn layout(&mut self, changed: bool) {
         if self.opening == HpOpening::Layout {
-            self.opening = if self.media { HpOpening::Media } else { HpOpening::Ready };
+            self.opening = if self.media {
+                HpOpening::Media
+            } else {
+                HpOpening::Ready
+            };
         }
         if changed && matches!(self.phase, HpPhase::InFlight(_)) {
             self.phase = HpPhase::Idle;
@@ -1025,7 +1066,10 @@ impl HpResize {
     /// Whether nothing is pending, out or covered — the Mac is not about to change
     /// the display, so a media-stream offer made now is not torn down by one.
     fn settled(&self) -> bool {
-        !self.shown && self.opening == HpOpening::Done && self.phase == HpPhase::Idle && self.want.is_none()
+        !self.shown
+            && self.opening == HpOpening::Done
+            && self.phase == HpPhase::Idle
+            && self.want.is_none()
     }
 
     /// The points due to go out, taken at an update boundary; the request is in
@@ -1066,7 +1110,10 @@ impl HpResize {
             return Some(HpStep::Show);
         }
         if self.phase != HpPhase::Idle {
-            if self.since.is_some_and(|since| now < since + HP_RESIZE_STUCK) {
+            if self
+                .since
+                .is_some_and(|since| now < since + HP_RESIZE_STUCK)
+            {
                 return None;
             }
             warn!(
@@ -1205,7 +1252,11 @@ impl DesktopState {
     /// The pixels a window of `points` is at `scale`, under the video stream's
     /// picture ceiling.
     fn pixels_at(&self, points: (u16, u16), scale: f32) -> (u16, u16) {
-        let px = |v: u16| (f32::from(v) * scale).round().clamp(1.0, f32::from(u16::MAX)) as u16;
+        let px = |v: u16| {
+            (f32::from(v) * scale)
+                .round()
+                .clamp(1.0, f32::from(u16::MAX)) as u16
+        };
         held_under_ceiling((px(points.0), px(points.1)))
     }
 
@@ -1235,8 +1286,15 @@ impl DesktopState {
             self.virtuals.iter().map(|display| display.scale).collect()
         };
         asked.len() == sizes.len()
-            && asked.iter().zip(&sizes).all(|(mode, size)| mode.pixels == *size)
-            && self.hp_densities().iter().zip(&scales).all(|(asked, scale)| (scale - asked).abs() < 0.005)
+            && asked
+                .iter()
+                .zip(&sizes)
+                .all(|(mode, size)| mode.pixels == *size)
+            && self
+                .hp_densities()
+                .iter()
+                .zip(&scales)
+                .all(|(asked, scale)| (scale - asked).abs() < 0.005)
     }
 
     /// The density each virtual display is asked for at: the first the session's
@@ -1258,9 +1316,17 @@ impl DesktopState {
             .into_iter()
             .enumerate()
             .map(|(leg, density)| {
-                let points = if leg == 0 { points } else { self.second_points.unwrap_or(points) };
+                let points = if leg == 0 {
+                    points
+                } else {
+                    self.second_points.unwrap_or(points)
+                };
                 let mode = vnc_apple::virtual_display_mode(points, density);
-                if self.even_sides { mode.even_sided(density) } else { mode }
+                if self.even_sides {
+                    mode.even_sided(density)
+                } else {
+                    mode
+                }
             })
             .collect()
     }
@@ -1283,7 +1349,10 @@ impl DesktopState {
         if let Some(points) = self.hp_points {
             return points;
         }
-        let (size, scale) = self.virtuals.first().map_or((self.size, self.scale), |v| (v.size, v.scale));
+        let (size, scale) = self
+            .virtuals
+            .first()
+            .map_or((self.size, self.scale), |v| (v.size, v.scale));
         let point = |v: u16| (f32::from(v) / scale).round().max(1.0) as u16;
         (point(size.0), point(size.1))
     }
@@ -1291,7 +1360,9 @@ impl DesktopState {
     /// Where display `leg` starts in the framebuffer the Mac spans over its
     /// virtual displays, which a pointer position made on it is offset by.
     fn hp_origin(&self, leg: usize) -> (i32, i32) {
-        self.virtuals.get(leg).map_or((0, 0), |display| display.origin)
+        self.virtuals
+            .get(leg)
+            .map_or((0, 0), |display| display.origin)
     }
 
     /// A pointer position made on display `leg`, in the framebuffer the Mac
@@ -1337,16 +1408,27 @@ impl DesktopState {
             // its dynamic resolution, but changes no display: no changed layout
             // need answer it, so nothing is held for one. The Mac restarts the
             // media stream for it all the same, announcing its ports again.
-            debug!("vnc: turning on dynamic resolution at the {}x{} points showing", want.0, want.1);
+            debug!(
+                "vnc: turning on dynamic resolution at the {}x{} points showing",
+                want.0, want.1
+            );
             self.hp.drop_due();
             let msg = vnc_apple::set_display_configuration(&self.hp_modes(want), true);
-            return Some(HpRequest { msg, changes: false });
+            return Some(HpRequest {
+                msg,
+                changes: false,
+            });
         }
         debug!(
             "vnc: requesting Apple virtual-display resize to {}x{} points at {:?}x",
-            want.0, want.1, self.hp_densities(),
+            want.0,
+            want.1,
+            self.hp_densities(),
         );
-        Some(HpRequest { msg: vnc_apple::set_display_configuration(&self.hp_modes(want), true), changes: true })
+        Some(HpRequest {
+            msg: vnc_apple::set_display_configuration(&self.hp_modes(want), true),
+            changes: true,
+        })
     }
 
     /// The framebuffer the Mac's rectangles are addressed in: the desktop, or the
@@ -1369,7 +1451,11 @@ impl DesktopState {
     /// [`HP_HOLD_REQUEST`] while [`Self::holds_region`] and while a Standard session
     /// is [opening](Self::opening).
     fn poll_size(&self) -> (u16, u16) {
-        if self.holds_region() || self.opening { HP_HOLD_REQUEST } else { self.framebuffer() }
+        if self.holds_region() || self.opening {
+            HP_HOLD_REQUEST
+        } else {
+            self.framebuffer()
+        }
     }
 
     /// Whether the media stream may be offered for the current display: one
@@ -1388,7 +1474,11 @@ impl DesktopState {
                 "vnc: holding a {}x{} point desktop resize until the server {}",
                 points.0,
                 points.1,
-                if self.following { "has answered the declared density" } else { "reports its scale" }
+                if self.following {
+                    "has answered the declared density"
+                } else {
+                    "reports its scale"
+                }
             );
             self.pending = Some(points);
             return None;
@@ -1556,7 +1646,10 @@ async fn send_microphone_decided(
 /// The mic socket's next command for the loop to send; never, on a session without a
 /// microphone. Held while the uplink is behind, like [`camera_input`].
 #[cfg(feature = "wlshare")]
-async fn microphone_input(queues: &mut Option<MicrophoneQueues>, backlog: &Backlog) -> MicrophoneInput {
+async fn microphone_input(
+    queues: &mut Option<MicrophoneQueues>,
+    backlog: &Backlog,
+) -> MicrophoneInput {
     let next = match queues {
         Some(queues) => {
             backlog.room_for_media().await;
@@ -1596,7 +1689,11 @@ async fn camera_input(queues: &mut Option<CameraQueues>, backlog: &Backlog) -> C
 /// The camera socket's command, sent as the device decides: what reaches the wire
 /// is the device's decision.
 #[cfg(feature = "wlshare")]
-async fn send_camera_input(uplink: &SharedUplink, link: Option<&CameraLink>, input: CameraInput) -> anyhow::Result<()> {
+async fn send_camera_input(
+    uplink: &SharedUplink,
+    link: Option<&CameraLink>,
+    input: CameraInput,
+) -> anyhow::Result<()> {
     let Some(link) = link else { return Ok(()) };
     send_camera_decided(uplink, link, |device| match input {
         vnc_camera::Input::Plug(format) => device.plug(format),
@@ -1608,12 +1705,19 @@ async fn send_camera_input(uplink: &SharedUplink, link: Option<&CameraLink>, inp
 
 /// The mic socket's command, the same way.
 #[cfg(feature = "wlshare")]
-async fn send_microphone_input(uplink: &SharedUplink, link: Option<&MicrophoneLink>, input: MicrophoneInput) -> anyhow::Result<()> {
+async fn send_microphone_input(
+    uplink: &SharedUplink,
+    link: Option<&MicrophoneLink>,
+    input: MicrophoneInput,
+) -> anyhow::Result<()> {
     let Some(link) = link else { return Ok(()) };
     send_microphone_decided(uplink, link, |device| match input {
         vnc_mic::Input::Plug => device.plug(),
         vnc_mic::Input::Unplug => device.unplug(),
-        vnc_mic::Input::Sample(pcm) => vnc_mic::Decision { message: device.sample(&pcm), closed: false },
+        vnc_mic::Input::Sample(pcm) => vnc_mic::Decision {
+            message: device.sample(&pcm),
+            closed: false,
+        },
     })
     .await
 }
@@ -1621,8 +1725,16 @@ async fn send_microphone_input(uplink: &SharedUplink, link: Option<&MicrophoneLi
 /// A session's camera and microphone where nothing lends them ([`CameraInput`]):
 /// no `vnc` target is offered either without wlshare, so neither ever arrives.
 #[cfg(not(feature = "wlshare"))]
-fn lent<B>(bridge: Option<B>) -> (Option<Arc<std::convert::Infallible>>, Option<std::convert::Infallible>) {
-    debug_assert!(bridge.is_none(), "a VNC target lends a device over wlshare's extensions alone");
+fn lent<B>(
+    bridge: Option<B>,
+) -> (
+    Option<Arc<std::convert::Infallible>>,
+    Option<std::convert::Infallible>,
+) {
+    debug_assert!(
+        bridge.is_none(),
+        "a VNC target lends a device over wlshare's extensions alone"
+    );
     (None, None)
 }
 
@@ -1643,12 +1755,20 @@ async fn microphone_input(queues: &mut Option<MicrophoneQueues>, _: &Backlog) ->
 }
 
 #[cfg(not(feature = "wlshare"))]
-async fn send_camera_input(_: &SharedUplink, _: Option<&CameraLink>, input: CameraInput) -> anyhow::Result<()> {
+async fn send_camera_input(
+    _: &SharedUplink,
+    _: Option<&CameraLink>,
+    input: CameraInput,
+) -> anyhow::Result<()> {
     match input {}
 }
 
 #[cfg(not(feature = "wlshare"))]
-async fn send_microphone_input(_: &SharedUplink, _: Option<&MicrophoneLink>, input: MicrophoneInput) -> anyhow::Result<()> {
+async fn send_microphone_input(
+    _: &SharedUplink,
+    _: Option<&MicrophoneLink>,
+    input: MicrophoneInput,
+) -> anyhow::Result<()> {
     match input {}
 }
 
@@ -1758,7 +1878,11 @@ impl DisplayState {
     fn wlshare_list(&mut self) -> bool {
         let two = self.wlshare_outputs.len() == 2;
         self.wlshare_all &= two;
-        let all = self.wlshare_all && self.wlshare_outputs.first().is_some_and(|first| first.id == self.wlshare_shared);
+        let all = self.wlshare_all
+            && self
+                .wlshare_outputs
+                .first()
+                .is_some_and(|first| first.id == self.wlshare_shared);
         let mut displays = self.wlshare_outputs.clone();
         if two {
             if all {
@@ -1773,7 +1897,11 @@ impl DisplayState {
                 tab: None,
             });
         }
-        let active = if all { Self::COMBINED } else { self.wlshare_shared };
+        let active = if all {
+            Self::COMBINED
+        } else {
+            self.wlshare_shared
+        };
         let changed = self.displays != displays || self.active != active;
         self.displays = displays;
         self.active = active;
@@ -1783,7 +1911,9 @@ impl DisplayState {
 
     /// Whether a wlshare target's second output is shown in a tab of its own.
     fn wlshare_tab(&self) -> bool {
-        self.displays.iter().any(|display| display.tab == Some(BESIDE_DISPLAY))
+        self.displays
+            .iter()
+            .any(|display| display.tab == Some(BESIDE_DISPLAY))
     }
 
     /// List a High Performance session's two virtual displays as `view` shows
@@ -1845,7 +1975,11 @@ impl DisplayState {
     /// of the layout the browser was last resized to. High Performance keeps no
     /// Standard layout and passes through unchanged.
     fn apple_pointer(&self, x: i32, y: i32) -> (i32, i32) {
-        let Some(scale) = self.apple_layout.as_ref().map(vnc_apple::Layout::viewer_scale) else {
+        let Some(scale) = self
+            .apple_layout
+            .as_ref()
+            .map(vnc_apple::Layout::viewer_scale)
+        else {
             return (x, y);
         };
         let native = |v: i32| (f64::from(v) / f64::from(scale)).round() as i32;
@@ -2000,22 +2134,38 @@ impl BesidePlan {
         ended: mpsc::UnboundedSender<u64>,
     ) -> Beside {
         let (input, input_rx) = mpsc::unbounded_channel();
-        let BesidePlan { config, choices, display: screen } = self.clone();
-        let oversize = if choices.resize() { Oversize::Refuse } else { Oversize::Hold };
+        let BesidePlan {
+            config,
+            choices,
+            display: screen,
+        } = self.clone();
+        let oversize = if choices.resize() {
+            Oversize::Refuse
+        } else {
+            Oversize::Hold
+        };
         // On a thread and a runtime of its own, as the session's engine is on
         // its: a session's future is not one a runtime may move between threads.
         let over = ended.clone();
-        let spawned = std::thread::Builder::new().name("vnc-display".into()).spawn(move || {
-            match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                Ok(runtime) => runtime.block_on(async {
-                    let sink = VideoSink::new("vnc", feed.frames, feed.feedback, oversize);
-                    session(config, choices, screen, plan, input_rx, None, None, None, true, &sink).await;
-                    sink.finish().await;
-                }),
-                Err(e) => warn!("vnc: no runtime for display {display}'s connection: {e}"),
-            }
-            let _ = over.send(id);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("vnc-display".into())
+            .spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(async {
+                        let sink = VideoSink::new("vnc", feed.frames, feed.feedback, oversize);
+                        session(
+                            config, choices, screen, plan, input_rx, None, None, None, true, &sink,
+                        )
+                        .await;
+                        sink.finish().await;
+                    }),
+                    Err(e) => warn!("vnc: no runtime for display {display}'s connection: {e}"),
+                }
+                let _ = over.send(id);
+            });
         if let Err(e) = spawned {
             warn!("vnc: no thread for display {display}'s connection: {e}");
             let _ = ended.send(id);
@@ -2070,7 +2220,11 @@ async fn tell_withheld(
     };
     let (told, size, hevc) = {
         let mut d = desktop.lock().unwrap();
-        (std::mem::replace(&mut d.withheld, canvas) != canvas, d.size, d.hevc_instead)
+        (
+            std::mem::replace(&mut d.withheld, canvas) != canvas,
+            d.size,
+            d.hevc_instead,
+        )
     };
     if told {
         if canvas {
@@ -2080,7 +2234,11 @@ async fn tell_withheld(
                 size.0, size.1
             );
         }
-        sink.msg(ServerMsg::PictureWithheld { active: canvas, hevc }).await?;
+        sink.msg(ServerMsg::PictureWithheld {
+            active: canvas,
+            hevc,
+        })
+        .await?;
     }
     let told = tab
         .lock()
@@ -2094,7 +2252,15 @@ async fn tell_withheld(
                  report says it has sent none"
             );
         }
-        tab_send(tab, Some(media), vec![ServerMsg::PictureWithheld { active: second, hevc }]).await;
+        tab_send(
+            tab,
+            Some(media),
+            vec![ServerMsg::PictureWithheld {
+                active: second,
+                hevc,
+            }],
+        )
+        .await;
     }
     Ok(())
 }
@@ -2110,7 +2276,12 @@ async fn tab_cover(tab: &SharedTab, media: Option<&SharedMedia>) {
         })
     };
     if cover {
-        tab_send(tab, media, vec![ServerMsg::ScreenUnavailable { active: true }]).await;
+        tab_send(
+            tab,
+            media,
+            vec![ServerMsg::ScreenUnavailable { active: true }],
+        )
+        .await;
     }
 }
 
@@ -2265,7 +2436,10 @@ pub async fn run(
     // encoded here from ZRLE. A High Performance session is sent the Mac's HEVC or
     // H.264, and a Standard one the Mac's own picture, each passed.
     let sink = VideoSink::new("vnc", frame_tx, feedback, oversize);
-    session(config, choices, display, plan, input_rx, audio, camera, microphone, false, &sink).await;
+    session(
+        config, choices, display, plan, input_rx, audio, camera, microphone, false, &sink,
+    )
+    .await;
     sink.finish().await;
 }
 
@@ -2289,20 +2463,30 @@ async fn session(
     // reported as what it is rather than as a handshake that ran long.
     //
     // A target behind a relay is connected to through it ([`connect`]).
-    let dest = config.relay.clone().unwrap_or_else(|| host_port(&config.host, config.port));
-    let Some(connected) = engine::connect_and_handshake(
-        "vnc",
-        &dest,
-        engine::HANDSHAKE_TIMEOUT,
-        sink,
-        |stream| connect(&config, choices, plan, beside, stream),
-    )
-    .await
+    let dest = config
+        .relay
+        .clone()
+        .unwrap_or_else(|| host_port(&config.host, config.port));
+    let Some(connected) =
+        engine::connect_and_handshake("vnc", &dest, engine::HANDSHAKE_TIMEOUT, sink, |stream| {
+            connect(&config, choices, plan, beside, stream)
+        })
+        .await
     else {
         return;
     };
 
-    let Connected { downlink, uplink, width, height, macos, apple, poll, media, passthrough } = connected;
+    let Connected {
+        downlink,
+        uplink,
+        width,
+        height,
+        macos,
+        apple,
+        poll,
+        media,
+        passthrough,
+    } = connected;
     info!("vnc: connected, desktop {width}x{height} px (macos={macos})");
     if sink
         .msg(ServerMsg::Resize {
@@ -2319,7 +2503,9 @@ async fn session(
         return; // browser already gone
     }
     // Ahead of the Mac's first rectangle, which nothing has been asked for yet.
-    if plan.apple_standard == Some(StandardQuality::Adaptive) && sink.standard_start().await.is_err() {
+    if plan.apple_standard == Some(StandardQuality::Adaptive)
+        && sink.standard_start().await.is_err()
+    {
         return; // browser already gone
     }
 
@@ -2350,10 +2536,21 @@ async fn session(
             microphone,
             host_density: display.map_or(UNSCALED, |d| crate::protocol::render_density(d.scale)),
             poll,
-            hp_displays: if virtual_display { usize::from(config.virtual_displays) } else { 1 },
-            wlshare_displays: if config.wlshare() { config.virtual_displays } else { 1 },
-            beside: (config.wlshare() && !beside)
-                .then(|| BesidePlan { config: config.clone(), choices, display }),
+            hp_displays: if virtual_display {
+                usize::from(config.virtual_displays)
+            } else {
+                1
+            },
+            wlshare_displays: if config.wlshare() {
+                config.virtual_displays
+            } else {
+                1
+            },
+            beside: (config.wlshare() && !beside).then(|| BesidePlan {
+                config: config.clone(),
+                choices,
+                display,
+            }),
             plan,
             media,
             passthrough,
@@ -2516,7 +2713,10 @@ async fn connect(
     if plan.apple_standard == Some(StandardQuality::Adaptive) {
         socket2::SockRef::from(&stream)
             .set_recv_buffer_size(STANDARD_RECEIVE_BUFFER)
-            .map_err(|e| anyhow::Error::new(e).context("setting the receive buffer of the connection to the Mac"))?;
+            .map_err(|e| {
+                anyhow::Error::new(e)
+                    .context("setting the receive buffer of the connection to the Mac")
+            })?;
     }
     // Where the connection runs, for High Performance's media stream: the Mac
     // sends it from its own address to this side's, on UDP. Through a relay,
@@ -2530,7 +2730,9 @@ async fn connect(
             info!("vnc: reached {mac} through the relay at {relay}");
             let link = zdesk_relay::MediaLink::connect(relay, &token)
                 .await
-                .with_context(|| format!("opening the media stream's connection to the relay at {relay}"))?;
+                .with_context(|| {
+                    format!("opening the media stream's connection to the relay at {relay}")
+                })?;
             vnc_apple_media::Route::Relayed(link)
         }
         None => vnc_apple_media::Route::direct(stream.peer_addr()?, stream.local_addr()?),
@@ -2579,16 +2781,25 @@ async fn connect(
             };
             read_security_result(&mut downlink).await?;
             #[cfg(feature = "wlshare")]
-            let init = if beside { wlshare_proto::CLIENT_INIT_BESIDE } else { dialect.client_init() };
+            let init = if beside {
+                wlshare_proto::CLIENT_INIT_BESIDE
+            } else {
+                dialect.client_init()
+            };
             #[cfg(not(feature = "wlshare"))]
             let init = dialect.client_init();
             uplink.send(&[init]).await?;
             // wlshare closes a connection it has no other output to show.
             let server = match read_server_init(&mut downlink).await {
-                Err(e) if beside => return Err(e.context("the server has no second display to show")),
+                Err(e) if beside => {
+                    return Err(e.context("the server has no second display to show"));
+                }
                 server => server?,
             };
-            rfb38_preface(downlink, uplink, server, macos, config, choices, plan, beside).await
+            rfb38_preface(
+                downlink, uplink, server, macos, config, choices, plan, beside,
+            )
+            .await
         }
         Dialect::Apple889 => {
             let Secured::Apple(wrap_key) = secured else {
@@ -2607,7 +2818,9 @@ async fn connect(
             // frame on a still screen. A High Performance session passes one or
             // the other: the gateway decodes neither.
             let receive = match plan.passthrough() {
-                Some(Passthrough::AppleMedia) => Some(vnc_apple_media::Receive::Hevc { strips: !choices.whole }),
+                Some(Passthrough::AppleMedia) => Some(vnc_apple_media::Receive::Hevc {
+                    strips: !choices.whole,
+                }),
                 Some(Passthrough::AppleH264) => Some(vnc_apple_media::Receive::H264),
                 _ => None,
             };
@@ -2621,8 +2834,18 @@ async fn connect(
                 "a Standard session asks the Mac for one of its qualities, Adaptive or Full, \
                  and a High Performance session's picture is its media stream"
             );
-            apple_preface(reader, sock, server, macos, wrap_key, config, route, receive, plan.apple_standard)
-                .await
+            apple_preface(
+                reader,
+                sock,
+                server,
+                macos,
+                wrap_key,
+                config,
+                route,
+                receive,
+                plan.apple_standard,
+            )
+            .await
         }
     }
 }
@@ -2632,8 +2855,8 @@ async fn connect(
 async fn read_version<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::Result<u32> {
     let mut greeting = [0u8; 12];
     reader.read_exact(&mut greeting).await?;
-    let (major, minor) =
-        parse_version(&greeting).ok_or_else(|| anyhow::anyhow!("not an RFB server: {greeting:?}"))?;
+    let (major, minor) = parse_version(&greeting)
+        .ok_or_else(|| anyhow::anyhow!("not an RFB server: {greeting:?}"))?;
     anyhow::ensure!(
         major > 3 || (major == 3 && minor >= 8),
         "unsupported RFB version {major}.{minor} (this client requires 3.8+)"
@@ -2689,9 +2912,14 @@ async fn authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         }
         rsa_aes if Strength::of(rsa_aes).is_some() => {
             let strength = Strength::of(rsa_aes).expect("guarded");
-            let session =
-                vnc_rsa_aes::authenticate(reader, sock, strength, &config.username, &config.password)
-                    .await?;
+            let session = vnc_rsa_aes::authenticate(
+                reader,
+                sock,
+                strength,
+                &config.username,
+                &config.password,
+            )
+            .await?;
             Ok(Secured::Frames(session))
         }
         _ => Ok(Secured::Plain),
@@ -2701,10 +2929,7 @@ async fn authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 /// SecurityResult, which RFB 3.8 sends for every type including None.
 async fn read_security_result<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::Result<()> {
     if reader.read_u32().await? != 0 {
-        anyhow::bail!(
-            "VNC authentication failed: {}",
-            read_string(reader).await?
-        );
+        anyhow::bail!("VNC authentication failed: {}", read_string(reader).await?);
     }
     Ok(())
 }
@@ -2734,10 +2959,18 @@ async fn read_server_init<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::Resul
     // it misaligned.
     let name = read_bytes(reader).await?;
     debug!("vnc: server desktop {}", describe_desktop(&name));
-    anyhow::ensure!(width > 0 && height > 0, "server reported a {width}x{height} desktop");
+    anyhow::ensure!(
+        width > 0 && height > 0,
+        "server reported a {width}x{height} desktop"
+    );
     let apple_virtual_displays = is_enhanced_desktop(&name)
         .then(|| u32::from_be_bytes(name[2..6].try_into().expect("four bytes of flags")) >> 5);
-    Ok(ServerInit { width, height, apple_commands: apple_commands(&name), apple_virtual_displays })
+    Ok(ServerInit {
+        width,
+        height,
+        apple_commands: apple_commands(&name),
+        apple_virtual_displays,
+    })
 }
 
 /// Describe ServerInit's name field, which on Apple's revision is not a name.
@@ -2791,7 +3024,11 @@ fn apple_commands(field: &[u8]) -> Option<[u8; 16]> {
 /// negative, is only ever written in decimal, and would read as two's complement in
 /// hex.
 fn encoding_label(encoding: i32) -> String {
-    if encoding > 0 { format!("{encoding} ({encoding:#x})") } else { encoding.to_string() }
+    if encoding > 0 {
+        format!("{encoding} ({encoding:#x})")
+    } else {
+        encoding.to_string()
+    }
 }
 
 /// The RFB 3.8 tail: force our pixel format and the encoding set. A `wlshare`
@@ -2800,7 +3037,10 @@ fn encoding_label(encoding: i32) -> String {
 /// of them, so a wlshare server reached as one serves it as it serves any VNC
 /// client: ZRLE, coded here as tiles.
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(feature = "wlshare"), expect(unused_variables, reason = "they decide what of wlshare's is listed"))]
+#[cfg_attr(
+    not(feature = "wlshare"),
+    expect(unused_variables, reason = "they decide what of wlshare's is listed")
+)]
 async fn rfb38_preface(
     downlink: Downlink,
     mut uplink: Uplink,
@@ -2824,7 +3064,9 @@ async fn rfb38_preface(
             wlshare_encoding_list(audio, choices.camera, choices.microphone)
         };
         let lists = Listing::new(encodings, plan);
-        uplink.send(&set_encodings(lists.listed((server.width, server.height)))).await?;
+        uplink
+            .send(&set_encodings(lists.listed((server.width, server.height))))
+            .await?;
         read_wlshare_version(&mut downlink).await?;
         Some(Arc::new(lists))
     } else {
@@ -2885,7 +3127,11 @@ impl Listing {
 
     /// The list for a desktop of this size.
     fn listed(&self, size: (u16, u16)) -> &[i32] {
-        if self.lists(size) { &self.wlshare } else { &self.plain }
+        if self.lists(size) {
+            &self.wlshare
+        } else {
+            &self.plain
+        }
     }
 
     /// Whether `encoding` is the wlshare picture this session lists, its video or its
@@ -3010,7 +3256,9 @@ fn wlshare_encoding_list(audio: Option<bool>, camera: bool, microphone: bool) ->
     encodings.push(ENCODING_OUTPUTS);
     // The protocol version all of these are in, which wlshare answers first
     // ([`read_wlshare_version`]).
-    encodings.push(wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION));
+    encodings.push(wlshare_proto::version::encoding(
+        wlshare_proto::PROTOCOL_VERSION,
+    ));
     encodings
 }
 
@@ -3025,7 +3273,9 @@ fn wlshare_beside_encoding_list() -> Vec<i32> {
     let mut encodings = rfb38_encoding_list();
     encodings.retain(|encoding| *encoding != vnc_clipboard::ENCODING);
     encodings.push(ENCODING_DENSITY);
-    encodings.push(wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION));
+    encodings.push(wlshare_proto::version::encoding(
+        wlshare_proto::PROTOCOL_VERSION,
+    ));
     encodings
 }
 
@@ -3042,9 +3292,15 @@ async fn read_wlshare_version<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::R
     let mut answer = [0u8; version::ANSWER_LEN];
     // The type first: anything but an update is no answer, and is not waited
     // out to the answer's length.
-    reader.read_exact(&mut answer[..1]).await.context("reading wlshare's protocol version")?;
+    reader
+        .read_exact(&mut answer[..1])
+        .await
+        .context("reading wlshare's protocol version")?;
     if answer[0] == 0 {
-        reader.read_exact(&mut answer[1..]).await.context("reading wlshare's protocol version")?;
+        reader
+            .read_exact(&mut answer[1..])
+            .await
+            .context("reading wlshare's protocol version")?;
     }
     let theirs = version::parse_answer(&answer).with_context(|| {
         format!(
@@ -3102,7 +3358,10 @@ async fn apple_preface(
     // mode needs the same message, so it is refused the same way.
     anyhow::ensure!(
         !virtual_display
-            || server.apple_commands.as_ref().is_some_and(vnc_apple::holds_high_performance),
+            || server
+                .apple_commands
+                .as_ref()
+                .is_some_and(vnc_apple::holds_high_performance),
         "this Mac does not offer High Performance Screen Sharing: its ServerInit does not \
          list SetDisplayConfiguration, without which there is no virtual display. Apple's \
          viewer connects it in Standard mode; use subtype = \"ard\" without virtual_display"
@@ -3111,7 +3370,10 @@ async fn apple_preface(
     // Mac that does not list it would be connected with a scroll that does
     // nothing. Apple's viewer scrolls such a Mac by the wheel bits.
     anyhow::ensure!(
-        server.apple_commands.as_ref().is_some_and(vnc_apple::takes_scroll),
+        server
+            .apple_commands
+            .as_ref()
+            .is_some_and(vnc_apple::takes_scroll),
         "this Mac does not take Screen Sharing's scroll message: its ServerInit does not \
          list the second event message (0x17), which is how a scroll is sent to a Mac. \
          Connect it as a plain VNC server, without a subtype"
@@ -3147,9 +3409,11 @@ async fn apple_preface(
     // data.
     sock.write_all(&vnc_apple::viewer_info()).await?;
     sock.write_all(&vnc_apple::set_mode_control()).await?;
-    sock.write_all(&vnc_apple_clipboard::auto_pasteboard(true)).await?;
+    sock.write_all(&vnc_apple_clipboard::auto_pasteboard(true))
+        .await?;
     sock.write_all(&vnc_apple::set_encryption_start()).await?;
-    sock.write_all(&vnc_apple::enable_inbound_record_decryption()).await?;
+    sock.write_all(&vnc_apple::enable_inbound_record_decryption())
+        .await?;
 
     let keys = await_rekey(&mut reader, &wrap_key).await?;
     info!("vnc: Apple record layer active");
@@ -3190,7 +3454,11 @@ async fn apple_preface(
         uplink
             .send(&vnc_apple::auto_framebuffer_update(
                 push_interval_us(media_stream),
-                if media_stream { HP_HOLD_REQUEST } else { server.size() },
+                if media_stream {
+                    HP_HOLD_REQUEST
+                } else {
+                    server.size()
+                },
             ))
             .await?;
     }
@@ -3312,7 +3580,11 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
     let (beside_ended, mut beside_over) = mpsc::unbounded_channel::<u64>();
     // Only a `wlshare` target has a listing, and it is the one sent a scroll as
     // a distance.
-    let mut wheel = if passthrough.is_some() { Wheel::wlshare() } else { Wheel::new(apple) };
+    let mut wheel = if passthrough.is_some() {
+        Wheel::wlshare()
+    } else {
+        Wheel::new(apple)
+    };
     let (media, pictures) = match media {
         Some((media, pictures)) => (Some(Arc::new(std::sync::Mutex::new(media))), pictures),
         None => (None, Vec::new()),
@@ -3324,7 +3596,10 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
     let mut write_task = tokio::spawn(writer);
     let uplink: SharedUplink = Arc::new(Mutex::new(uplink));
     let hp = if virtual_display {
-        HpResize::opening(hp_opening.expect("a virtual-display session has an opening size"), media.is_some())
+        HpResize::opening(
+            hp_opening.expect("a virtual-display session has an opening size"),
+            media.is_some(),
+        )
     } else {
         HpResize::default()
     };
@@ -3344,7 +3619,11 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
         viewport: None,
         // Only a wlshare target listed the density request, and it is the one
         // whose listing came back from the preface.
-        density: if passthrough.is_some() { Density::Asked } else { Density::Off },
+        density: if passthrough.is_some() {
+            Density::Asked
+        } else {
+            Density::Off
+        },
         wire_scale: None,
         following: false,
         declared: None,
@@ -3437,7 +3716,8 @@ async fn active_loop<R: AsyncRead + Unpin + Send + 'static>(
         (d.hp.shown, d.covered)
     };
     if covered {
-        sink.msg(ServerMsg::ScreenUnavailable { active: true }).await?;
+        sink.msg(ServerMsg::ScreenUnavailable { active: true })
+            .await?;
     }
     if resizing {
         sink.msg(ServerMsg::Resizing { active: true }).await?;
@@ -4138,7 +4418,15 @@ fn held_messages(
 ) -> Vec<Vec<u8>> {
     held.take()
         .flat_map(|motion| {
-            translate_input(motion, buttons, button_mask, last_pos, pressed_keys, wheel, macos)
+            translate_input(
+                motion,
+                buttons,
+                button_mask,
+                last_pos,
+                pressed_keys,
+                wheel,
+                macos,
+            )
         })
         .collect()
 }
@@ -4263,7 +4551,9 @@ async fn hp_resize_step(
                 if desktop.lock().unwrap().media_stream {
                     hp_send_due(uplink, desktop, media, tab).await?;
                 } else {
-                    debug!("vnc: a virtual-display resize is due; prompting the update it goes out after");
+                    debug!(
+                        "vnc: a virtual-display resize is due; prompting the update it goes out after"
+                    );
                     send(uplink, &update_request(false, HP_HOLD_REQUEST)).await?;
                 }
             }
@@ -4285,7 +4575,10 @@ async fn hp_resize_step(
                 };
                 send_all(
                     uplink,
-                    &[vnc_apple::auto_framebuffer_update(interval, size), update_request(false, size).to_vec()],
+                    &[
+                        vnc_apple::auto_framebuffer_update(interval, size),
+                        update_request(false, size).to_vec(),
+                    ],
                 )
                 .await?;
             }
@@ -4312,7 +4605,11 @@ async fn hp_send_due(
         let draining = matches!(d.hp.phase, HpPhase::Draining(_));
         let offer_out = media.is_some_and(|m| m.lock().unwrap().pending());
         let held = offer_out || d.in_update;
-        let request = if held { None } else { d.hp_take_request(tokio::time::Instant::now()) };
+        let request = if held {
+            None
+        } else {
+            d.hp_take_request(tokio::time::Instant::now())
+        };
         if request.as_ref().is_some_and(|request| request.changes) {
             stream_stopped(&mut d, tab);
             if let Some(media) = media {
@@ -4324,9 +4621,19 @@ async fn hp_send_due(
     };
     match request {
         Some(HpRequest { msg, changes: true }) => {
-            send_all(uplink, &[vnc_apple::auto_framebuffer_update(interval, HP_HOLD_REQUEST), msg]).await?;
+            send_all(
+                uplink,
+                &[
+                    vnc_apple::auto_framebuffer_update(interval, HP_HOLD_REQUEST),
+                    msg,
+                ],
+            )
+            .await?;
         }
-        Some(HpRequest { msg, changes: false }) => send(uplink, &msg).await?,
+        Some(HpRequest {
+            msg,
+            changes: false,
+        }) => send(uplink, &msg).await?,
         None => {}
     }
     Ok(drained)
@@ -4364,7 +4671,10 @@ async fn offer_media(
     };
     if let Some(configuration) = offer {
         let sizes: Vec<String> = sizes.iter().map(|(w, h)| format!("{w}x{h}")).collect();
-        info!("vnc: offering the Mac's media stream for its {} display", sizes.join(" and "));
+        info!(
+            "vnc: offering the Mac's media stream for its {} display",
+            sizes.join(" and ")
+        );
         uplink.send(&configuration).await?;
     }
     Ok(())
@@ -4381,7 +4691,8 @@ async fn cover(desktop: &SharedDesktop, sink: &VideoSink) -> anyhow::Result<()> 
     // A notice still owed its lifting is the stopped stream's, and stays up.
     sink.cover();
     if cover {
-        sink.msg(ServerMsg::ScreenUnavailable { active: true }).await?;
+        sink.msg(ServerMsg::ScreenUnavailable { active: true })
+            .await?;
     }
     Ok(())
 }
@@ -4407,7 +4718,12 @@ fn uncover(shared: &Shared, sink: &VideoSink) {
 async fn stream_carries(shared: &Shared) -> anyhow::Result<()> {
     let carried = {
         let mut d = shared.desktop.lock().unwrap();
-        let tab_live = shared.tab.lock().unwrap().as_ref().is_none_or(|tab| tab.live);
+        let tab_live = shared
+            .tab
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(|tab| tab.live);
         d.canvas_live && tab_live && !std::mem::replace(&mut d.media_live, true)
     };
     if carried {
@@ -4459,14 +4775,21 @@ async fn pass_unit(
         shows_display(&unit) && !std::mem::replace(&mut d.canvas_live, true)
     };
     if first {
-        info!("vnc: the picture is now the Mac's media stream, passed to the browser as {}", unit.decode);
+        info!(
+            "vnc: the picture is now the Mac's media stream, passed to the browser as {}",
+            unit.decode
+        );
     }
     if shows_display(&unit) {
         stream_carries(shared).await?;
         uncover(shared, sink);
     }
     let (w, h) = unit.size;
-    let passed = crate::video::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
+    let passed = crate::video::Passed {
+        decode: unit.decode,
+        keyframe: unit.keyframe,
+        strip: unit.strip,
+    };
     if !sink.pass_media(w, h, unit.data, passed).await? {
         media.lock().unwrap().want_keyframe(leg);
     }
@@ -4485,7 +4808,10 @@ fn shows_display(unit: &PassedUnit) -> bool {
 /// layout, and nothing is shown while a resize holds the displays.
 fn tab_takes(shared: &Shared, leg: usize, size: (u16, u16)) -> bool {
     let d = shared.desktop.lock().unwrap();
-    d.virtuals.get(leg).is_some_and(|display| display.size == size) && !d.hp.holds_pixels()
+    d.virtuals
+        .get(leg)
+        .is_some_and(|display| display.size == size)
+        && !d.hp.holds_pixels()
 }
 
 /// Pass the tab a unit of its display's stream, as [`pass_unit`] passes the
@@ -4503,7 +4829,11 @@ async fn tab_unit(shared: &Shared, leg: usize, unit: PassedUnit, media: &SharedM
         tab_uncover(&shared.tab, &shared.desktop);
     }
     let (w, h) = unit.size;
-    let passed = crate::video::Passed { decode: unit.decode, keyframe: unit.keyframe, strip: unit.strip };
+    let passed = crate::video::Passed {
+        decode: unit.decode,
+        keyframe: unit.keyframe,
+        strip: unit.strip,
+    };
     match sink.pass_media(w, h, unit.data, passed).await {
         Ok(true) => {}
         Ok(false) => media.lock().unwrap().want_keyframe(leg),
@@ -4589,7 +4919,9 @@ async fn send_rate(uplink: &SharedUplink, rate: i32) -> anyhow::Result<()> {
 /// No rate is ever asked of a server where nothing is built to name it to: only
 /// wlshare's sound has a walk to follow.
 #[cfg(not(feature = "wlshare"))]
-async fn asked_audio_rate(_: &mut Option<tokio::sync::watch::Receiver<Option<i32>>>) -> std::convert::Infallible {
+async fn asked_audio_rate(
+    _: &mut Option<tokio::sync::watch::Receiver<Option<i32>>>,
+) -> std::convert::Infallible {
     std::future::pending().await
 }
 
@@ -4600,7 +4932,11 @@ async fn send_rate(_: &SharedUplink, rate: std::convert::Infallible) -> anyhow::
 
 async fn hp_resize_due(desktop: &SharedDesktop, wake: &tokio::sync::Notify) {
     loop {
-        let at = desktop.lock().unwrap().hp.deadline(tokio::time::Instant::now());
+        let at = desktop
+            .lock()
+            .unwrap()
+            .hp
+            .deadline(tokio::time::Instant::now());
         let due = async {
             match at {
                 Some(at) => tokio::time::sleep_until(at).await,
@@ -4620,7 +4956,10 @@ async fn hp_resize_due(desktop: &SharedDesktop, wake: &tokio::sync::Notify) {
 fn held_under_ceiling(want: (u16, u16)) -> (u16, u16) {
     let (w, h) = crate::video::fit_ceiling((u32::from(want.0), u32::from(want.1)));
     // Lossless: the ceiling only ever shrinks what a `u16` already held.
-    let held = (u16::try_from(w).unwrap_or(u16::MAX), u16::try_from(h).unwrap_or(u16::MAX));
+    let held = (
+        u16::try_from(w).unwrap_or(u16::MAX),
+        u16::try_from(h).unwrap_or(u16::MAX),
+    );
     if held != want {
         info!(
             "vnc: holding a {}x{} resize under the video stream's {}x{} picture ceiling",
@@ -4717,22 +5056,40 @@ async fn read_loop<R: AsyncRead + Unpin>(
     mut apple: Option<Apple>,
     sink: VideoSink,
 ) -> anyhow::Result<()> {
-    let Shared { uplink, desktop, clipboard, display, hp_wake, audio, media, passthrough, .. } = &shared;
+    let Shared {
+        uplink,
+        desktop,
+        clipboard,
+        display,
+        hp_wake,
+        audio,
+        media,
+        passthrough,
+        ..
+    } = &shared;
     #[cfg(feature = "wlshare")]
-    let Shared { audio_rate, camera, microphone, .. } = &shared;
+    let Shared {
+        audio_rate,
+        camera,
+        microphone,
+        ..
+    } = &shared;
     // Where the audio extension stands here. `Off` on a session with no bridge
     // to feed, which is also a session that never listed the encoding, so
     // neither the announcement nor a frame can arrive.
-    let mut audio_state = if audio.is_some() { Audio::Asked } else { Audio::Off };
+    let mut audio_state = if audio.is_some() {
+        Audio::Asked
+    } else {
+        Audio::Off
+    };
     // Whether a stream is running, from a begin to its end.
     #[cfg(feature = "wlshare")]
     let mut streaming = false;
     let mut full_repaint: Option<FullRepaint> = None;
     let mut apple_poll_paused = false;
     let mut apple_poll_deadline: Option<tokio::time::Instant> = None;
-    let apple_fetch_active = |apple: &Option<Apple>| {
-        apple.is_some() && clipboard.lock().unwrap().apple_fetch_pending
-    };
+    let apple_fetch_active =
+        |apple: &Option<Apple>| apple.is_some() && clipboard.lock().unwrap().apple_fetch_pending;
     // The connection's decoder state: the deflate streams and whatever else an
     // encoding carries from one rectangle to the next.
     let mut decoders = Decoders::default();
@@ -4748,7 +5105,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
     let offers = media.as_ref().map(|m| m.lock().unwrap().offered());
     // Whether wlshare's picture is on the list the server holds: as the preface
     // listed it, and then by [`Listing::lists`] at the end of each update.
-    let mut picture_listed = passthrough.as_ref().is_some_and(|lists| lists.lists(desktop.lock().unwrap().size));
+    let mut picture_listed = passthrough
+        .as_ref()
+        .is_some_and(|lists| lists.lists(desktop.lock().unwrap().size));
     // The fences owed an echo, in order, while the picture is wlshare's. Each
     // is held for what the browser's link makes of a frame beyond its distance
     // ([`VideoSink::fence_hold`]): wlshare holds one frame in flight and walks its
@@ -4811,7 +5170,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
         };
         let fence_due_at = held_fences.front().map(|(due, ..)| *due);
         // Only the last fence held can be BlockAfter: nothing is read behind one.
-        let blocked = held_fences.back().is_some_and(|(_, block_after, _)| *block_after);
+        let blocked = held_fences
+            .back()
+            .is_some_and(|(_, block_after, _)| *block_after);
         let fence_due = async {
             if let Some(due) = fence_due_at.filter(|_| sink.passing()) {
                 tokio::time::sleep_until(due).await;
@@ -4949,14 +5310,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 let mut audio_announced = false;
                 let mut painted = false;
                 for _ in 0..rects {
-                    let effect = read_rect(
-                        &mut reader,
-                        &shared,
-                        &mut apple,
-                        &mut decoders,
-                        &sink,
-                    )
-                    .await?;
+                    let effect =
+                        read_rect(&mut reader, &shared, &mut apple, &mut decoders, &sink).await?;
                     resized |= effect.resized;
                     full_repaint_owed |= effect.full_repaint_owed;
                     audio_announced |= effect.audio_announced;
@@ -4978,7 +5333,13 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 if audio_announced && audio_state != Audio::Announced {
                     audio_state = Audio::Announced;
                     #[cfg(feature = "wlshare")]
-                    answer_audio(uplink, &shared.audio_announced, audio.as_deref(), *audio_rate).await?;
+                    answer_audio(
+                        uplink,
+                        &shared.audio_announced,
+                        audio.as_deref(),
+                        *audio_rate,
+                    )
+                    .await?;
                 } else if audio_state == Audio::Asked && painted {
                     // The announcement comes in an update of its own before any
                     // pixels, so pixels without one would be a wlshare out of
@@ -5073,9 +5434,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                         if poll {
                             if apple_fetch_active(&apple) {
                                 apple_poll_paused = true;
-                                apple_poll_deadline = Some(
-                                    tokio::time::Instant::now() + APPLE_CLIPBOARD_IDLE_GAP,
-                                );
+                                apple_poll_deadline =
+                                    Some(tokio::time::Instant::now() + APPLE_CLIPBOARD_IDLE_GAP);
                             } else {
                                 send(uplink, &update_request(true, size)).await?;
                             }
@@ -5085,9 +5445,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                     } else if poll || resized {
                         if poll && !resized && apple_fetch_active(&apple) {
                             apple_poll_paused = true;
-                            apple_poll_deadline = Some(
-                                tokio::time::Instant::now() + APPLE_CLIPBOARD_IDLE_GAP,
-                            );
+                            apple_poll_deadline =
+                                Some(tokio::time::Instant::now() + APPLE_CLIPBOARD_IDLE_GAP);
                         } else {
                             // A passed wlshare stream is owed no repaint by a resize: wlshare
                             // starts it again at the new size with a keyframe of the
@@ -5224,7 +5583,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 // skipped: the QEMU submessages share no length field, so one it
                 // does not know leaves the stream at an offset nothing recovers
                 // from.
-                let (operation, _) = audio::parse_server(&msg).context("wlshare's audio message")?.expect("read whole");
+                let (operation, _) = audio::parse_server(&msg)
+                    .context("wlshare's audio message")?
+                    .expect("read whole");
                 match operation {
                     ServerAudio::Begin => {
                         info!("vnc: the server started the desktop's audio stream");
@@ -5254,7 +5615,10 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 match audio::frame_len(&header) {
                     Err(AudioParseError::FrameTooLong(length)) => {
                         discard(&mut reader, length as u64).await?;
-                        warn!("vnc: dropped a {length}-byte audio frame, over the {} byte limit", audio::MAX_AUDIO_FRAME);
+                        warn!(
+                            "vnc: dropped a {length}-byte audio frame, over the {} byte limit",
+                            audio::MAX_AUDIO_FRAME
+                        );
                     }
                     Err(e) => return Err(e.into()),
                     Ok(length) => {
@@ -5266,7 +5630,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
                         // ([`crate::protocol::audio`]), sixteen times a frame of
                         // this format at its largest.
                         } else if frame.is_empty() || frame.len() > usize::from(u16::MAX) {
-                            warn!("vnc: dropped a {length}-byte audio frame, which is not one to pass");
+                            warn!(
+                                "vnc: dropped a {length}-byte audio frame, which is not one to pass"
+                            );
                         } else if let Some(bridge) = audio {
                             bridge.unit(frame);
                         }
@@ -5284,9 +5650,14 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 // share no length field, so one that cannot be measured leaves the
                 // stream at an offset nothing recovers from.
                 let mut msg = [camera::MSG_CAMERA; camera::CAMERA_FORMAT_LEN];
-                reader.read_exact(&mut msg[1..camera::CAMERA_BARE_LEN]).await?;
-                let len = camera::server_len(msg.first_chunk().expect("the header")).context("wlshare's camera message")?;
-                reader.read_exact(&mut msg[camera::CAMERA_BARE_LEN..len]).await?;
+                reader
+                    .read_exact(&mut msg[1..camera::CAMERA_BARE_LEN])
+                    .await?;
+                let len = camera::server_len(msg.first_chunk().expect("the header"))
+                    .context("wlshare's camera message")?;
+                reader
+                    .read_exact(&mut msg[camera::CAMERA_BARE_LEN..len])
+                    .await?;
                 let (signal, _) = camera::parse_server(&msg[..len])?.expect("read whole");
                 match signal {
                     ServerCamera::Available => {
@@ -5297,7 +5668,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                             "vnc: an application on the desktop opened the camera ({}x{})",
                             format.width, format.height
                         );
-                        link.bridge.signal(CameraSignal::Start(vnc_camera::bridge_format(format)));
+                        link.bridge
+                            .signal(CameraSignal::Start(vnc_camera::bridge_format(format)));
                     }
                     ServerCamera::Stop => {
                         info!("vnc: the camera is no longer open on the desktop");
@@ -5314,9 +5686,14 @@ async fn read_loop<R: AsyncRead + Unpin>(
             microphone::MSG_MICROPHONE if let Some(link) = microphone => {
                 // Measured as the camera's are, and fatal where it cannot be.
                 let mut msg = [microphone::MSG_MICROPHONE; microphone::MICROPHONE_START_LEN];
-                reader.read_exact(&mut msg[1..microphone::MICROPHONE_BARE_LEN]).await?;
-                let len = microphone::server_len(msg.first_chunk().expect("the header")).context("wlshare's microphone message")?;
-                reader.read_exact(&mut msg[microphone::MICROPHONE_BARE_LEN..len]).await?;
+                reader
+                    .read_exact(&mut msg[1..microphone::MICROPHONE_BARE_LEN])
+                    .await?;
+                let len = microphone::server_len(msg.first_chunk().expect("the header"))
+                    .context("wlshare's microphone message")?;
+                reader
+                    .read_exact(&mut msg[microphone::MICROPHONE_BARE_LEN..len])
+                    .await?;
                 let (signal, _) = microphone::parse_server(&msg[..len])?.expect("read whole");
                 match signal {
                     ServerMicrophone::Available => {
@@ -5334,7 +5711,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
                         // The bridge sizes its resampler from the rate, so a format it
                         // cannot produce is refused before anything opens.
                         if let Err(e) = format.producible() {
-                            warn!("vnc: the desktop records the microphone in a format the gateway cannot produce: {e:#}");
+                            warn!(
+                                "vnc: the desktop records the microphone in a format the gateway cannot produce: {e:#}"
+                            );
                         } else if device.start() {
                             info!(
                                 "vnc: an application on the desktop is recording the microphone ({} ch, {} Hz)",
@@ -5437,11 +5816,15 @@ async fn read_loop<R: AsyncRead + Unpin>(
                         if let Some((session_id, text)) = local {
                             match vnc_apple_clipboard::send(session_id, &text) {
                                 Ok(msg) => send(uplink, &msg).await?,
-                                Err(e) => warn!("vnc: could not answer Apple pasteboard request: {e:#}"),
+                                Err(e) => {
+                                    warn!("vnc: could not answer Apple pasteboard request: {e:#}")
+                                }
                             }
                         }
                     }
-                    17 => info!("vnc: the Mac's user session changed: a login or a logout at the Mac"),
+                    17 => {
+                        info!("vnc: the Mac's user session changed: a login or a logout at the Mac")
+                    }
                     _ => debug!("vnc: Apple status command {command}"),
                 }
             }
@@ -5523,7 +5906,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
                     Ok(vnc_apple_clipboard::Incoming::Oversized(bytes)) => {
                         let snapshot = {
                             let mut state = clipboard.lock().unwrap();
-                            let snapshot = ClipboardSnapshot::oversized(bytes, state.remote.as_ref());
+                            let snapshot =
+                                ClipboardSnapshot::oversized(bytes, state.remote.as_ref());
                             state.remote = Some(snapshot.clone());
                             snapshot
                         };
@@ -5695,7 +6079,10 @@ async fn extended_cut_text(
         // carry — the size it would have been. Both are clipboard activity the
         // panel reports; only one of them has text in it.
         vnc_clipboard::Incoming::Provide(Some(text)) => {
-            debug!("vnc: remote clipboard updated, {} bytes (utf-8)", text.len());
+            debug!(
+                "vnc: remote clipboard updated, {} bytes (utf-8)",
+                text.len()
+            );
             let snapshot = {
                 let mut state = clipboard.lock().unwrap();
                 let snapshot = ClipboardSnapshot::changed(text, state.remote.as_ref());
@@ -5987,8 +6374,14 @@ impl RectEffect {
     };
 
     #[cfg(feature = "wlshare")]
-    const AUDIO_ANNOUNCED: Self = Self { audio_announced: true, ..Self::NOTHING };
-    const LAST: Self = Self { last: true, ..Self::NOTHING };
+    const AUDIO_ANNOUNCED: Self = Self {
+        audio_announced: true,
+        ..Self::NOTHING
+    };
+    const LAST: Self = Self {
+        last: true,
+        ..Self::NOTHING
+    };
 
     const FULL_REPAINT: Self = Self {
         resized: false,
@@ -5999,11 +6392,17 @@ impl RectEffect {
     };
 
     const fn resized(resized: bool) -> Self {
-        Self { resized, ..Self::NOTHING }
+        Self {
+            resized,
+            ..Self::NOTHING
+        }
     }
 
     const fn pixels(rect: Rect) -> Self {
-        Self { pixels: Some(rect), ..Self::NOTHING }
+        Self {
+            pixels: Some(rect),
+            ..Self::NOTHING
+        }
     }
 }
 
@@ -6017,7 +6416,13 @@ async fn read_rect<R: AsyncRead + Unpin>(
     decoders: &mut Decoders,
     sink: &VideoSink,
 ) -> anyhow::Result<RectEffect> {
-    let Shared { uplink, desktop, cursor, shadow, .. } = shared;
+    let Shared {
+        uplink,
+        desktop,
+        cursor,
+        shadow,
+        ..
+    } = shared;
     let x = reader.read_u16().await?;
     let y = reader.read_u16().await?;
     let w = reader.read_u16().await?;
@@ -6056,7 +6461,9 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 return Ok(RectEffect::NOTHING);
             }
             let scale = desktop.lock().unwrap().generic_scale();
-            return apply_resize(desktop, shadow, (w, h), scale, sink).await.map(RectEffect::resized);
+            return apply_resize(desktop, shadow, (w, h), scale, sink)
+                .await
+                .map(RectEffect::resized);
         }
         ENCODING_EXTENDED_DESKTOP_SIZE if apple.is_none() => {
             return read_extended_desktop_size(reader, uplink, desktop, shadow, (x, y, w, h), sink)
@@ -6075,13 +6482,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
         }
         vnc_apple::ENCODING_DISPLAY_LAYOUT if apple.is_some() => {
             let virtual_display = apple.as_ref().is_some_and(|a| a.virtual_display);
-            read_display_layout(
-                reader,
-                shared,
-                virtual_display,
-                sink,
-            )
-            .await?;
+            read_display_layout(reader, shared, virtual_display, sink).await?;
             // Finish consuming this FramebufferUpdate before asking for the full
             // repaint. If the layout handler asks here, the poll loop queues its
             // normal incremental request directly behind it. macOS keeps only the
@@ -6155,7 +6556,11 @@ async fn read_rect<R: AsyncRead + Unpin>(
             // answer. Ahead of any resize the answer releases, which waits for
             // this update's end.
             if replied.answered {
-                send(uplink, &set_encodings(&vnc_apple_media::encodings_preferring_media_stream())).await?;
+                send(
+                    uplink,
+                    &set_encodings(&vnc_apple_media::encodings_preferring_media_stream()),
+                )
+                .await?;
             }
             if replied.answered && desktop.lock().unwrap().hp.media_answered() {
                 debug!("vnc: the media stream is up; the session-ready resize may go out");
@@ -6178,7 +6583,9 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // how much follows, then its body, passed to the browser as it came, for
         // the page to decode on what the rectangles before it drew. Never dropped:
         // the next is drawn on this one.
-        vnc_apple::ENCODING_ADAPTIVE if desktop.lock().unwrap().standard == Some(StandardQuality::Adaptive) => {
+        vnc_apple::ENCODING_ADAPTIVE
+            if desktop.lock().unwrap().standard == Some(StandardQuality::Adaptive) =>
+        {
             let len = reader.read_u32().await?;
             anyhow::ensure!(
                 len <= MAX_STANDARD_BODY,
@@ -6201,17 +6608,25 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // passing Adaptive is asked for and inflates here, on one screen at a time
         // or on Combined Display, to be coded as the tiles like any VNC server's
         // picture.
-        vnc_apple::ENCODING_ZLIB if desktop.lock().unwrap().standard == Some(StandardQuality::Full) => {
+        vnc_apple::ENCODING_ZLIB
+            if desktop.lock().unwrap().standard == Some(StandardQuality::Full) =>
+        {
             payload = Payload::Zlib
         }
         // A frame of wlshare's video, which is the whole desktop: passed to the browser
         // untouched, or dropped while the desktop is past the ceiling, until the list
         // the read loop sends without the encoding brings the desktop again as ZRLE.
         #[cfg(feature = "wlshare")]
-        ENCODING_VIDEO if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_VIDEO)) => {
+        ENCODING_VIDEO
+            if shared
+                .passthrough
+                .as_ref()
+                .is_some_and(|l| l.picture(ENCODING_VIDEO)) =>
+        {
             let mut header = [0u8; wlshare_proto::video::FRAME_HEADER_LEN];
             reader.read_exact(&mut header).await?;
-            let len = wlshare_proto::video::parse_frame_header(&header).context("the server's video rectangle")?;
+            let len = wlshare_proto::video::parse_frame_header(&header)
+                .context("the server's video rectangle")?;
             let mut frame = vec![0u8; len];
             reader.read_exact(&mut frame).await?;
             let size = desktop.lock().unwrap().size;
@@ -6237,10 +6652,18 @@ async fn read_rect<R: AsyncRead + Unpin>(
         // are, and refused in a session that sized the remote; the list it answers
         // brings the whole desktop again as ZRLE.
         #[cfg(feature = "wlshare")]
-        ENCODING_TILES if shared.passthrough.as_ref().is_some_and(|l| l.picture(ENCODING_TILES)) => {
+        ENCODING_TILES
+            if shared
+                .passthrough
+                .as_ref()
+                .is_some_and(|l| l.picture(ENCODING_TILES)) =>
+        {
             let size = desktop.lock().unwrap().size;
             anyhow::ensure!(
-                w > 0 && h > 0 && u32::from(x) + u32::from(w) <= u32::from(size.0) && u32::from(y) + u32::from(h) <= u32::from(size.1),
+                w > 0
+                    && h > 0
+                    && u32::from(x) + u32::from(w) <= u32::from(size.0)
+                    && u32::from(y) + u32::from(h) <= u32::from(size.1),
                 "server sent a tiles rectangle of {w}x{h}+{x}+{y}, not inside the {}x{} desktop",
                 size.0,
                 size.1
@@ -6250,10 +6673,20 @@ async fn read_rect<R: AsyncRead + Unpin>(
             let mut header = [reader.read_u8().await?; 6];
             let used = TileHeader::len_of(header[0]).context("the server's tiles rectangle")?;
             reader.read_exact(&mut header[1..used]).await?;
-            let (header, _) = TileHeader::parse(&header[..used]).context("the server's tiles rectangle")?.expect("read whole");
+            let (header, _) = TileHeader::parse(&header[..used])
+                .context("the server's tiles rectangle")?
+                .expect("read whole");
             let len = match header {
-                TileHeader::Png { len } | TileHeader::Start { len, .. } | TileHeader::Frame { len, .. } | TileHeader::Progressive { len } | TileHeader::Planar { len } | TileHeader::Still { len } => len,
-                TileHeader::End { .. } | TileHeader::Copy { .. } | TileHeader::Cached { .. } | TileHeader::Store { .. } => 0,
+                TileHeader::Png { len }
+                | TileHeader::Start { len, .. }
+                | TileHeader::Frame { len, .. }
+                | TileHeader::Progressive { len }
+                | TileHeader::Planar { len }
+                | TileHeader::Still { len } => len,
+                TileHeader::End { .. }
+                | TileHeader::Copy { .. }
+                | TileHeader::Cached { .. }
+                | TileHeader::Store { .. } => 0,
             };
             let mut body = vec![0u8; len];
             reader.read_exact(&mut body).await?;
@@ -6267,19 +6700,30 @@ async fn read_rect<R: AsyncRead + Unpin>(
                     sink.pass_region_end(stream).await?;
                     return Ok(RectEffect::NOTHING);
                 }
-                TileHeader::Png { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body).await?,
+                TileHeader::Png { .. } => {
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body)
+                        .await?
+                }
                 // The rectangle's pixels, whatever its size inside the desktop: the
                 // page decodes it there alone.
-                TileHeader::Planar { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Planar, body).await?,
+                TileHeader::Planar { .. } => {
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Planar, body)
+                        .await?
+                }
                 // The same, in the still stream, which the page reads in order.
-                TileHeader::Still { .. } => sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body).await?,
+                TileHeader::Still { .. } => {
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body)
+                        .await?
+                }
                 // One tile on the grid, cut by the desktop's edge, and the block's own
                 // tile the rectangle's: the page decodes it there against what it holds.
                 TileHeader::Progressive { .. } => {
                     let tile = wlshare_proto::tiles::TILE;
                     let whole = |at: u16, side: u16| tile.min(side - at);
                     anyhow::ensure!(
-                        x % tile == 0 && y % tile == 0 && (w, h) == (whole(x, size.0), whole(y, size.1)),
+                        x % tile == 0
+                            && y % tile == 0
+                            && (w, h) == (whole(x, size.0), whole(y, size.1)),
                         "server sent a progressive tile of {w}x{h}+{x}+{y}, not one {tile}x{tile} tile on the grid"
                     );
                     let cell = wlshare_proto::progressive::tile_of(&body);
@@ -6287,13 +6731,19 @@ async fn read_rect<R: AsyncRead + Unpin>(
                         cell == Some((x / tile, y / tile)),
                         "server sent a progressive tile at {x},{y} whose block is {cell:?}, not that tile"
                     );
-                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Progressive, body).await?
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Progressive, body)
+                        .await?
                 }
-                TileHeader::Start { stream, .. } => sink.pass_region(stream, x, y, w, h, true, body).await?,
-                TileHeader::Frame { stream, .. } => sink.pass_region(stream, x, y, w, h, false, body).await?,
+                TileHeader::Start { stream, .. } => {
+                    sink.pass_region(stream, x, y, w, h, true, body).await?
+                }
+                TileHeader::Frame { stream, .. } => {
+                    sink.pass_region(stream, x, y, w, h, false, body).await?
+                }
                 TileHeader::Copy { x: sx, y: sy } => {
                     anyhow::ensure!(
-                        u32::from(sx) + u32::from(w) <= u32::from(size.0) && u32::from(sy) + u32::from(h) <= u32::from(size.1),
+                        u32::from(sx) + u32::from(w) <= u32::from(size.0)
+                            && u32::from(sy) + u32::from(h) <= u32::from(size.1),
                         "server sent a tiles copy of {w}x{h} from {sx},{sy}, not inside the {}x{} desktop",
                         size.0,
                         size.1
@@ -6393,7 +6843,11 @@ async fn compose(
     rgb: &[u8],
     sink: &VideoSink,
 ) -> anyhow::Result<()> {
-    if !apple.compositor.as_ref().is_some_and(|compositor| compositor.draws(&composition, framebuffer)) {
+    if !apple
+        .compositor
+        .as_ref()
+        .is_some_and(|compositor| compositor.draws(&composition, framebuffer))
+    {
         for gap in composition.gaps() {
             let fill = crate::combined::GAP.repeat(usize::from(gap.w()) * usize::from(gap.h()));
             sink.damage(gap, &fill).await?;
@@ -6448,8 +6902,14 @@ async fn read_cursor<R: AsyncRead + Unpin>(
                 CursorUnit::Pixels,
                 &masked_bgrx_to_rgba(&pixels, &mask, w),
             )?;
-            debug!("vnc: cursor {w}x{h} hotspot ({hx},{hy}), {} bytes", shape.png.len());
-            (CursorState::Shape(shape.clone()), ServerMsg::Cursor(Some(shape)))
+            debug!(
+                "vnc: cursor {w}x{h} hotspot ({hx},{hy}), {} bytes",
+                shape.png.len()
+            );
+            (
+                CursorState::Shape(shape.clone()),
+                ServerMsg::Cursor(Some(shape)),
+            )
         }
     };
     *cursor.lock().unwrap() = state;
@@ -6495,8 +6955,14 @@ async fn read_alpha_cursor<R: AsyncRead + Unpin>(
         reader.read_exact(&mut rgba).await?;
         unpremultiply(&mut rgba);
         let shape = CursorShape::from_rgba(w, h, hx, hy, CursorUnit::Pixels, &rgba)?;
-        debug!("vnc: alpha cursor {w}x{h} hotspot ({hx},{hy}), {} bytes", shape.png.len());
-        (CursorState::Shape(shape.clone()), ServerMsg::Cursor(Some(shape)))
+        debug!(
+            "vnc: alpha cursor {w}x{h} hotspot ({hx},{hy}), {} bytes",
+            shape.png.len()
+        );
+        (
+            CursorState::Shape(shape.clone()),
+            ServerMsg::Cursor(Some(shape)),
+        )
     };
     *cursor.lock().unwrap() = state;
     sink.msg(msg).await
@@ -6509,7 +6975,9 @@ fn unpremultiply(rgba: &mut [u8]) {
     for px in rgba.as_chunks_mut::<BPP>().0 {
         let a = u32::from(px[3]);
         for c in &mut px[..3] {
-            *c = (u32::from(*c) * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255) as u8);
+            *c = (u32::from(*c) * 255 + a / 2)
+                .checked_div(a)
+                .map_or(0, |v| v.min(255) as u8);
         }
     }
 }
@@ -6550,9 +7018,7 @@ async fn read_extended_desktop_size<R: AsyncRead + Unpin>(
         }
     }
 
-    debug!(
-        "vnc: ExtendedDesktopSize reason={reason} status={status} {w}x{h}, {screens} screen(s)"
-    );
+    debug!("vnc: ExtendedDesktopSize reason={reason} status={status} {w}x{h}, {screens} screen(s)");
     if first.is_some() {
         let mut d = desktop.lock().unwrap();
         if d.screen.is_none() {
@@ -6600,7 +7066,10 @@ async fn read_extended_desktop_size<R: AsyncRead + Unpin>(
         let want = d.pending.take()?;
         let msg = d.generic_resize(want);
         if msg.is_some() {
-            debug!("vnc: desktop resize to {}x{} points replayed", want.0, want.1);
+            debug!(
+                "vnc: desktop resize to {}x{} points replayed",
+                want.0, want.1
+            );
         }
         msg
     })
@@ -6662,9 +7131,10 @@ async fn read_output_scale<R: AsyncRead + Unpin>(
             // just answered is no longer the browser's density: a change that
             // arrived while the server was busy waited its turn here, and so did
             // a switch of output, which leaves nothing declared.
-            let moved_on =
-                answered && d.declared.is_none_or(|was| (was - declared).abs() > 0.005);
-            let declare = (first || moved_on).then(|| d.declare_density(declared)).flatten();
+            let moved_on = answered && d.declared.is_none_or(|was| (was - declared).abs() > 0.005);
+            let declare = (first || moved_on)
+                .then(|| d.declare_density(declared))
+                .flatten();
             // Not while a declaration is out: the report answering it re-asks in
             // the pixels the server settles on.
             let reask = (changed || first || answered) && !d.following;
@@ -6748,7 +7218,11 @@ async fn read_output_list<R: AsyncRead + Unpin>(
 ) -> anyhow::Result<()> {
     let mut header = [outputs::MSG_OUTPUTS; outputs::LIST_HEADER_LEN];
     reader.read_exact(&mut header[1..]).await?;
-    let ListHeader { virtual_displays: most, count, active } = ListHeader::parse(&header);
+    let ListHeader {
+        virtual_displays: most,
+        count,
+        active,
+    } = ListHeader::parse(&header);
     // A count no desk reaches. The entries are self-describing, so an
     // implausible one is a server that has lost its place in the stream rather
     // than a session to keep reading.
@@ -6784,7 +7258,9 @@ async fn read_output_list<R: AsyncRead + Unpin>(
         if state.wlshare_most != Some(most) {
             state.wlshare_most = Some(most);
             if asked > most {
-                warn!("vnc: the target asks for {asked} virtual displays and the server makes up to {most}; its outputs are what they are");
+                warn!(
+                    "vnc: the target asks for {asked} virtual displays and the server makes up to {most}; its outputs are what they are"
+                );
             }
         }
         // How many outputs the desk is to have, as an RDP client's monitor
@@ -6792,16 +7268,24 @@ async fn read_output_list<R: AsyncRead + Unpin>(
         // makes as many: answered with the list, and acted on by a wlshare on
         // sway, each output it makes or unplugs a list of its own. See
         // docs/wlshare-outputs.md.
-        let request = (!std::mem::replace(&mut state.wlshare_asked, true) && asked <= most).then_some(asked);
+        let request =
+            (!std::mem::replace(&mut state.wlshare_asked, true) && asked <= most).then_some(asked);
         // The shared output moved to another: not the session's first list, and
         // not to nothing at all.
         let switched = state.listed && state.wlshare_shared != active && active != 0;
         // A desk that has just become two outputs starts on *All Displays*, as
         // two virtual displays do, unless one output alone was picked: the
         // canvas is asked onto the first when wlshare put it on the other.
-        let ask = if displays.len() == 2 && state.wlshare_outputs.len() != 2 && !state.wlshare_picked && !provisional {
+        let ask = if displays.len() == 2
+            && state.wlshare_outputs.len() != 2
+            && !state.wlshare_picked
+            && !provisional
+        {
             state.wlshare_all = true;
-            displays.first().map(|first| first.id).filter(|first| *first != active)
+            displays
+                .first()
+                .map(|first| first.id)
+                .filter(|first| *first != active)
         } else {
             None
         };
@@ -6811,7 +7295,12 @@ async fn read_output_list<R: AsyncRead + Unpin>(
         // Sent only on a change, as the Apple path sends its own: every
         // `SetEncodings` is answered with a list, and a reconnecting browser is
         // told the current one by the reattach path.
-        (changed.then(|| state.displays_msg()).flatten(), switched, ask, request)
+        (
+            changed.then(|| state.displays_msg()).flatten(),
+            switched,
+            ask,
+            request,
+        )
     };
     if let Some(msg) = msg {
         sink.msg(msg).await?;
@@ -6823,7 +7312,14 @@ async fn read_output_list<R: AsyncRead + Unpin>(
     if let Some(id) = ask {
         debug!("vnc: asking the server for output {id}, the first of two");
         let size = desktop.lock().unwrap().size;
-        send_all(uplink, &[outputs::select_output(id).to_vec(), update_request(false, size).to_vec()]).await?;
+        send_all(
+            uplink,
+            &[
+                outputs::select_output(id).to_vec(),
+                update_request(false, size).to_vec(),
+            ],
+        )
+        .await?;
     }
     if switched {
         send_decided(uplink, desktop, DesktopState::output_switched).await?;
@@ -6844,7 +7340,11 @@ fn output_info(entry: &EntryHeader, name: &[u8]) -> DisplayInfo {
     let fixed = entry.fixed;
     // A zero scale would divide the size away; the label falls back to the
     // pixels, which is what an unscaled output's label is anyway.
-    let scale = if fixed > 0 { fixed as f32 / 65536.0 } else { UNSCALED };
+    let scale = if fixed > 0 {
+        fixed as f32 / 65536.0
+    } else {
+        UNSCALED
+    };
     let logical = (
         (f32::from(pixels.0) / scale).round() as u32,
         (f32::from(pixels.1) / scale).round() as u32,
@@ -6951,7 +7451,9 @@ async fn read_cursor_image<R: AsyncRead + Unpin>(
     let mut deflated = vec![0u8; len as usize];
     reader.read_exact(&mut deflated).await?;
 
-    let apple = apple.as_mut().expect("cursor images are the Apple dialect's alone");
+    let apple = apple
+        .as_mut()
+        .expect("cursor images are the Apple dialect's alone");
     let shape = match apple.cursors.accept(id, hotspot, size, &deflated) {
         Err(error) => {
             // Cursor stores are individually compressed, so this body has been
@@ -6973,7 +7475,11 @@ async fn read_cursor_image<R: AsyncRead + Unpin>(
 /// session asked for, which is the whole framebuffer, or the two, each where its
 /// record places it in the framebuffer spanning both. Empty on a session without
 /// a virtual display.
-fn hp_virtuals(desktop: &SharedDesktop, layout: &vnc_apple::Layout, virtual_display: bool) -> Vec<Virtual> {
+fn hp_virtuals(
+    desktop: &SharedDesktop,
+    layout: &vnc_apple::Layout,
+    virtual_display: bool,
+) -> Vec<Virtual> {
     if !virtual_display {
         return Vec::new();
     }
@@ -6986,11 +7492,18 @@ fn hp_virtuals(desktop: &SharedDesktop, layout: &vnc_apple::Layout, virtual_disp
             .map(|display| Virtual {
                 size: display.backing,
                 scale: display.effective_density(),
-                origin: (i32::from(display.backing_at.0), i32::from(display.backing_at.1)),
+                origin: (
+                    i32::from(display.backing_at.0),
+                    i32::from(display.backing_at.1),
+                ),
             })
             .collect();
     }
-    vec![Virtual { size: layout.backing, scale: layout.scale(), origin: (0, 0) }]
+    vec![Virtual {
+        size: layout.backing,
+        scale: layout.scale(),
+        origin: (0, 0),
+    }]
 }
 
 /// The Mac laid its virtual displays out again: the tab is told its display's new
@@ -7007,7 +7520,11 @@ async fn tab_laid_out(shared: &Shared, virtuals: &[Virtual]) {
     tab_send(
         &shared.tab,
         media,
-        vec![ServerMsg::Resize { w: shown.size.0, h: shown.size.1, scale: shown.scale }],
+        vec![ServerMsg::Resize {
+            w: shown.size.0,
+            h: shown.size.1,
+            scale: shown.scale,
+        }],
     )
     .await;
     tab_cover(&shared.tab, media).await;
@@ -7022,7 +7539,9 @@ async fn tab_repaint(shared: &Shared, macos: bool) {
     };
     let shown = {
         let d = shared.desktop.lock().unwrap();
-        d.view.tab_leg(HP_TAB_DISPLAY, d.virtuals.len()).and_then(|leg| Some((leg, *d.virtuals.get(leg)?)))
+        d.view
+            .tab_leg(HP_TAB_DISPLAY, d.virtuals.len())
+            .and_then(|leg| Some((leg, *d.virtuals.get(leg)?)))
     };
     let Some((leg, shown)) = shown else {
         return;
@@ -7034,7 +7553,11 @@ async fn tab_repaint(shared: &Shared, macos: bool) {
     }
     let media = shared.media.as_ref();
     let mut msgs = vec![
-        ServerMsg::Resize { w: shown.size.0, h: shown.size.1, scale: shown.scale },
+        ServerMsg::Resize {
+            w: shown.size.0,
+            h: shown.size.1,
+            scale: shown.scale,
+        },
         ServerMsg::RemoteOs { macos },
     ];
     msgs.extend(cursor_msg(&shared.cursor));
@@ -7051,7 +7574,10 @@ async fn tab_repaint(shared: &Shared, macos: bool) {
         .is_some_and(|tab| std::mem::replace(&mut tab.withheld, withheld) != withheld);
     if told {
         let hevc = shared.desktop.lock().unwrap().hevc_instead;
-        msgs.push(ServerMsg::PictureWithheld { active: withheld, hevc });
+        msgs.push(ServerMsg::PictureWithheld {
+            active: withheld,
+            hevc,
+        });
     }
     // A resize in progress covers the tab as it covers the canvas.
     if shared.desktop.lock().unwrap().hp.shown {
@@ -7081,7 +7607,11 @@ async fn hp_tab_shown(
     let Some(feed) = feed else {
         let gone = {
             let mut tab = shared.tab.lock().unwrap();
-            if tab.as_ref().is_some_and(|tab| tab.display == display) { tab.take() } else { None }
+            if tab.as_ref().is_some_and(|tab| tab.display == display) {
+                tab.take()
+            } else {
+                None
+            }
         };
         if gone.is_some()
             && let Some(media) = media
@@ -7092,7 +7622,9 @@ async fn hp_tab_shown(
     };
     let shown = {
         let d = shared.desktop.lock().unwrap();
-        d.view.tab_leg(display, d.virtuals.len()).is_some_and(|leg| leg < d.virtuals.len())
+        d.view
+            .tab_leg(display, d.virtuals.len())
+            .is_some_and(|leg| leg < d.virtuals.len())
     };
     if !shown {
         debug!("vnc: display {display} is not shown in a tab");
@@ -7115,7 +7647,15 @@ async fn hp_tab_shown(
 /// so it is asked for nothing but the keyframe a display coming into view starts
 /// at; the canvas is told its screen is not available until that picture.
 async fn hp_select(shared: &Shared, id: u32, sink: &VideoSink) -> anyhow::Result<()> {
-    let Shared { uplink, desktop, shadow, display, tab, hp_wake, .. } = shared;
+    let Shared {
+        uplink,
+        desktop,
+        shadow,
+        display,
+        tab,
+        hp_wake,
+        ..
+    } = shared;
     let media = shared.media.as_ref();
     let _switch = shared.switch.lock().await;
     let (was, now, shown) = {
@@ -7135,7 +7675,14 @@ async fn hp_select(shared: &Shared, id: u32, sink: &VideoSink) -> anyhow::Result
         }
         (was, now, d.virtuals[now.active])
     };
-    debug!("vnc: showing {}", if now.all { "all displays".to_owned() } else { format!("display {}", now.active + 1) });
+    debug!(
+        "vnc: showing {}",
+        if now.all {
+            "all displays".to_owned()
+        } else {
+            format!("display {}", now.active + 1)
+        }
+    );
     if !now.all {
         // The list below no longer names the tab, and the session closes its socket.
         tab.lock().unwrap().take();
@@ -7201,7 +7748,14 @@ async fn read_display_layout<R: AsyncRead + Unpin>(
     virtual_display: bool,
     sink: &VideoSink,
 ) -> anyhow::Result<bool> {
-    let Shared { uplink, desktop, shadow, display, hp_wake, .. } = shared;
+    let Shared {
+        uplink,
+        desktop,
+        shadow,
+        display,
+        hp_wake,
+        ..
+    } = shared;
     // The length counts the bytes after itself — see [`vnc_apple::parse_layout`].
     let declared = reader.read_u16().await?;
     let mut payload = vec![0u8; usize::from(declared)];
@@ -7230,10 +7784,17 @@ async fn read_display_layout<R: AsyncRead + Unpin>(
         let pick = if combined {
             None
         } else {
-            let main = layout.displays.iter().find(|display| display.info.main).unwrap_or(&layout.displays[0]);
+            let main = layout
+                .displays
+                .iter()
+                .find(|display| display.info.main)
+                .unwrap_or(&layout.displays[0]);
             Some(main.info.id)
         };
-        debug!("vnc: asking the Mac for display {pick:?}, the view this session shows, over {:?}", layout.current);
+        debug!(
+            "vnc: asking the Mac for display {pick:?}, the view this session shows, over {:?}",
+            layout.current
+        );
         let mut out = uplink.lock().await;
         let scaling = {
             let mut state = display.lock().unwrap();
@@ -7356,10 +7917,17 @@ async fn read_display_layout<R: AsyncRead + Unpin>(
             .into_iter()
             .take(virtuals.len())
             .enumerate()
-            .map(|(index, info)| DisplayInfo { id: index as u32, main: index == 0, ..info })
+            .map(|(index, info)| DisplayInfo {
+                id: index as u32,
+                main: index == 0,
+                ..info
+            })
             .collect();
         state.repaint_pixels = layout.repaint_pixels();
-        (state.hp_list(view).then(|| state.displays_msg()).flatten(), None)
+        (
+            state.hp_list(view).then(|| state.displays_msg()).flatten(),
+            None,
+        )
     } else {
         let mut state = display.lock().unwrap();
         state.hp_infos.clear();
@@ -7387,7 +7955,10 @@ async fn read_display_layout<R: AsyncRead + Unpin>(
             // own and the checkmark is the only thing telling it what it is looking
             // at. Most layouts change neither half — one arrives at every login and
             // lock — and say nothing new.
-            (changed.then(|| state.displays_msg()).flatten(), server_scaling)
+            (
+                changed.then(|| state.displays_msg()).flatten(),
+                server_scaling,
+            )
         }
     };
     if let Some(scale) = server_scaling {
@@ -7425,7 +7996,9 @@ async fn present(
     virtual_display: bool,
     sink: &VideoSink,
 ) -> anyhow::Result<Option<Composition>> {
-    let Shared { desktop, display, .. } = shared;
+    let Shared {
+        desktop, display, ..
+    } = shared;
     // Combined Display over screens of different densities is composed here
     // where the browser's density is no finer than any screen's, so a denser
     // screen is resampled down to it, and is otherwise composed by the page from
@@ -7435,8 +8008,15 @@ async fn present(
         let d = desktop.lock().unwrap();
         (d.combined, d.host_density)
     };
-    let regions = if virtual_display { None } else { layout.mosaic() };
-    let composed = regions.as_deref().filter(|_| combined).and_then(|regions| Composition::of(regions, host_density));
+    let regions = if virtual_display {
+        None
+    } else {
+        layout.mosaic()
+    };
+    let composed = regions
+        .as_deref()
+        .filter(|_| combined)
+        .and_then(|regions| Composition::of(regions, host_density));
     let mosaic = if composed.is_some() { None } else { regions };
     // The composition goes first: it says how the framebuffer the resize names
     // is presented, and a browser must not present one layout's pixels through
@@ -7450,7 +8030,10 @@ async fn present(
         let mut state = display.lock().unwrap();
         (state.mosaic != mosaic).then(|| {
             state.mosaic.clone_from(&mosaic);
-            ServerMsg::Mosaic { regions: mosaic.unwrap_or_default(), resize }
+            ServerMsg::Mosaic {
+                regions: mosaic.unwrap_or_default(),
+                resize,
+            }
         })
     };
     if let Some(msg) = mosaic_msg {
@@ -7463,7 +8046,11 @@ async fn present(
 /// here or by the page from `layout`, the last the Mac sent. A changed composition
 /// is a resize of the browser's desktop, which the Mac is asked to repaint whole,
 /// as the pixels composed from what it last sent are gone with the old one.
-async fn recompose(shared: &Shared, layout: &vnc_apple::Layout, sink: &VideoSink) -> anyhow::Result<()> {
+async fn recompose(
+    shared: &Shared,
+    layout: &vnc_apple::Layout,
+    sink: &VideoSink,
+) -> anyhow::Result<()> {
     let composed = present(shared, layout, false, sink).await?;
     let (size, scale) = {
         let d = shared.desktop.lock().unwrap();
@@ -7493,10 +8080,16 @@ async fn rearm_after_layout(
     let mut uplink = uplink.lock().await;
     let (armed, interval, pixel_format) = {
         let d = desktop.lock().unwrap();
-        (d.poll_size(), d.push_interval_us, d.media_stream && !d.hp.holds_pixels() && !d.moved_off)
+        (
+            d.poll_size(),
+            d.push_interval_us,
+            d.media_stream && !d.hp.holds_pixels() && !d.moved_off,
+        )
     };
     if pasteboard {
-        uplink.send(&vnc_apple_clipboard::auto_pasteboard(true)).await?;
+        uplink
+            .send(&vnc_apple_clipboard::auto_pasteboard(true))
+            .await?;
     }
     if pixel_format {
         uplink.send(&apple_media_pixel_format()).await?;
@@ -7505,7 +8098,9 @@ async fn rearm_after_layout(
         "vnc: arming auto framebuffer updates for {}x{}",
         armed.0, armed.1
     );
-    uplink.send(&vnc_apple::auto_framebuffer_update(interval, armed)).await
+    uplink
+        .send(&vnc_apple::auto_framebuffer_update(interval, armed))
+        .await
 }
 
 /// Whether `layout` has the Mac's session off the virtual display it had, which
@@ -7516,7 +8111,11 @@ async fn rearm_after_layout(
 /// screen is not available until the stream delivers for it; the virtual display
 /// the Mac then makes is a display change like any other
 /// ([`MediaStream::moved_back`]).
-async fn hp_moved_off(shared: &Shared, layout: &vnc_apple::Layout, sink: &VideoSink) -> anyhow::Result<bool> {
+async fn hp_moved_off(
+    shared: &Shared,
+    layout: &vnc_apple::Layout,
+    sink: &VideoSink,
+) -> anyhow::Result<bool> {
     let asked = {
         let mut d = shared.desktop.lock().unwrap();
         let was = std::mem::replace(&mut d.on_virtual, layout.on_virtual_display);
@@ -7582,7 +8181,10 @@ enum Wheel {
     /// notches as pulses for one that is not, holding the remainder of each per
     /// axis between events. The two remainders are apart: a reversal starts
     /// over only the one its own unit spends, and the other's fraction stays.
-    Wlshare { pending: (f32, f32), notches: (f32, f32) },
+    Wlshare {
+        pending: (f32, f32),
+        notches: (f32, f32),
+    },
 }
 
 impl Wheel {
@@ -7610,7 +8212,9 @@ impl Wheel {
     /// is read through the RFB baseline.
     fn new(apple: bool) -> Self {
         if apple {
-            Self::Apple { pending: (0.0, 0.0) }
+            Self::Apple {
+                pending: (0.0, 0.0),
+            }
         } else {
             Self::Notch
         }
@@ -7619,7 +8223,10 @@ impl Wheel {
     /// A `wlshare` target's: not merely a wlshare server, since one reached as
     /// plain `vnc` is read through the RFB baseline.
     fn wlshare() -> Self {
-        Self::Wlshare { pending: (0.0, 0.0), notches: (0.0, 0.0) }
+        Self::Wlshare {
+            pending: (0.0, 0.0),
+            notches: (0.0, 0.0),
+        }
     }
 
     /// A delta in the pixels it stands for, whatever unit it was reported in.
@@ -7654,16 +8261,18 @@ impl Wheel {
                 Self::spend(&mut pending.0, px(dx), Self::MAX_PX),
                 Self::spend(&mut pending.1, px(dy), Self::MAX_PX),
             ),
-            Self::Wlshare { pending, notches } => match (Self::notches(dx, unit), Self::notches(dy, unit)) {
-                (Some(x), Some(y)) => (
-                    Self::spend(&mut notches.0, x, Self::MAX_NOTCHES),
-                    Self::spend(&mut notches.1, y, Self::MAX_NOTCHES),
-                ),
-                _ => (
-                    Self::spend(&mut pending.0, px(dx), Self::MAX_PX),
-                    Self::spend(&mut pending.1, px(dy), Self::MAX_PX),
-                ),
-            },
+            Self::Wlshare { pending, notches } => {
+                match (Self::notches(dx, unit), Self::notches(dy, unit)) {
+                    (Some(x), Some(y)) => (
+                        Self::spend(&mut notches.0, x, Self::MAX_NOTCHES),
+                        Self::spend(&mut notches.1, y, Self::MAX_NOTCHES),
+                    ),
+                    _ => (
+                        Self::spend(&mut pending.0, px(dx), Self::MAX_PX),
+                        Self::spend(&mut pending.1, px(dy), Self::MAX_PX),
+                    ),
+                }
+            }
         }
     }
 
@@ -7716,11 +8325,7 @@ enum Buttons {
 
 impl Buttons {
     fn new(apple: bool) -> Self {
-        if apple {
-            Self::Apple
-        } else {
-            Self::Rfb
-        }
+        if apple { Self::Apple } else { Self::Rfb }
     }
 
     /// The mask bit this button sets, or `None` for a button no server reads.
@@ -7772,7 +8377,11 @@ fn translate_input(
 ) -> Vec<Vec<u8>> {
     // A Mac reads the modifier keysyms by its own table (see
     // [`keymap::apple_keysym`]); every other server takes the X11 ones.
-    let keysym = if macos { keymap::apple_keysym } else { keymap::keysym };
+    let keysym = if macos {
+        keymap::apple_keysym
+    } else {
+        keymap::keysym
+    };
     match input {
         ClientMsg::MouseMove { x, y } => {
             *last_pos = (clamp_u16(x), clamp_u16(y));
@@ -7780,7 +8389,9 @@ fn translate_input(
         }
         // `clicks` goes nowhere: RFB carries a button mask alone, and the guest
         // counts the clicks itself from the events it receives.
-        ClientMsg::MouseButton { button, pressed, .. } => {
+        ClientMsg::MouseButton {
+            button, pressed, ..
+        } => {
             let Some(bit) = buttons.bit(button) else {
                 return Vec::new();
             };
@@ -7823,7 +8434,11 @@ fn translate_input(
             }
             let mut out = Vec::new();
             for (pulses, negative_bit, positive_bit) in [(py, 0x08, 0x10), (px, 0x20, 0x40)] {
-                let bit = if pulses > 0 { positive_bit } else { negative_bit };
+                let bit = if pulses > 0 {
+                    positive_bit
+                } else {
+                    negative_bit
+                };
                 for _ in 0..pulses.abs() {
                     out.push(pointer_event(*button_mask | bit, *last_pos).to_vec());
                     out.push(pointer_event(*button_mask, *last_pos).to_vec());
@@ -7851,10 +8466,14 @@ fn translate_input(
                 let shift_down = held(["ShiftLeft", "ShiftRight"]);
                 // A Mac adds Shift for an uppercase keysym, and Caps Lock leaves its
                 // shortcuts alone: Command-Z under Caps Lock is still Undo.
-                let shortcut =
-                    macos && (held(["MetaLeft", "MetaRight"]) || held(["ControlLeft", "ControlRight"]));
+                let shortcut = macos
+                    && (held(["MetaLeft", "MetaRight"]) || held(["ControlLeft", "ControlRight"]));
                 let is_letter = matches!(code.as_bytes(), [b'K', b'e', b'y', b'A'..=b'Z']);
-                let shift = if is_letter && !shortcut { shift_down ^ caps } else { shift_down };
+                let shift = if is_letter && !shortcut {
+                    shift_down ^ caps
+                } else {
+                    shift_down
+                };
                 match keysym(&code, shift) {
                     Some(sym) => {
                         pressed_keys.insert(code, sym);
@@ -7868,10 +8487,7 @@ fn translate_input(
             } else {
                 // Release exactly what was pressed; fall back to the unshifted
                 // keysym for a release with no matching press.
-                match pressed_keys
-                    .remove(&code)
-                    .or_else(|| keysym(&code, false))
-                {
+                match pressed_keys.remove(&code).or_else(|| keysym(&code, false)) {
                     Some(sym) => vec![key_event(false, sym).to_vec()],
                     None => {
                         debug!("vnc: unmapped key code {code}");
@@ -7961,7 +8577,11 @@ fn set_encodings(encodings: &[i32]) -> Vec<u8> {
 /// Performance's, whose pixels are never shown, or Standard's, whose own picture
 /// is pushed back to back.
 fn push_interval_us(media_stream: bool) -> u32 {
-    if media_stream { vnc_apple::PUSH_INTERVAL_MEDIA_US } else { vnc_apple::PUSH_INTERVAL_STANDARD_US }
+    if media_stream {
+        vnc_apple::PUSH_INTERVAL_MEDIA_US
+    } else {
+        vnc_apple::PUSH_INTERVAL_STANDARD_US
+    }
 }
 
 /// FramebufferUpdateRequest for the whole desktop.
@@ -8060,8 +8680,18 @@ impl OutputScale {
     /// Decode the report. The scale is 16.16 unsigned fixed point; a zero is a
     /// server bug rather than a density, and is refused as such.
     fn parse(msg: &[u8; density::DENSITY_LEN]) -> anyhow::Result<Self> {
-        let (density::Density { width, height, fixed }, _) = density::Density::parse(msg).expect("a whole report");
-        anyhow::ensure!(fixed > 0, "the server reported a scale of zero for its {width}x{height} framebuffer");
+        let (
+            density::Density {
+                width,
+                height,
+                fixed,
+            },
+            _,
+        ) = density::Density::parse(msg).expect("a whole report");
+        anyhow::ensure!(
+            fixed > 0,
+            "the server reported a scale of zero for its {width}x{height} framebuffer"
+        );
         Ok(Self {
             size: (width, height),
             scale: fixed as f32 / 65536.0,
@@ -8076,8 +8706,15 @@ impl OutputScale {
 /// switch of output.
 #[cfg(feature = "wlshare")]
 fn client_density(pixels: (u16, u16), scale: f32) -> [u8; density::DENSITY_LEN] {
-    let fixed = (f64::from(scale) * 65536.0).round().clamp(1.0, f64::from(u32::MAX)) as u32;
-    density::Density { width: pixels.0, height: pixels.1, fixed }.to_bytes()
+    let fixed = (f64::from(scale) * 65536.0)
+        .round()
+        .clamp(1.0, f64::from(u32::MAX)) as u32;
+    density::Density {
+        width: pixels.0,
+        height: pixels.1,
+        fixed,
+    }
+    .to_bytes()
 }
 
 /// KeyEvent.
@@ -8210,9 +8847,7 @@ fn choose_security(
     ]
     .into_iter()
     .find(|t| types.contains(t));
-    if has_account
-        && let Some(rsa_aes) = rsa_aes
-    {
+    if has_account && let Some(rsa_aes) = rsa_aes {
         return Ok(rsa_aes);
     }
     if has_vnc_password && types.contains(&SECURITY_VNC_AUTH) {
@@ -8294,7 +8929,10 @@ async fn ard_authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         peer > BigUint::from(1u8) && peer < modulus - 1u8,
         "VNC server offered a degenerate DH public key"
     );
-    debug!("vnc: Apple DH authentication as {username:?}, {}-bit prime", key_len * 8);
+    debug!(
+        "vnc: Apple DH authentication as {username:?}, {}-bit prime",
+        key_len * 8
+    );
 
     // Twice the key length, as Apple's viewer draws it.
     let mut rng = rand::rng();
@@ -8439,7 +9077,11 @@ fn masked_bgrx_to_rgba(bgrx: &[u8], mask: &[u8], w: u16) -> Vec<u8> {
 /// Read a u32-length-prefixed latin-1 string (a failure reason), truncated to
 /// [`MAX_STRING`] with the excess drained off the stream.
 async fn read_string<R: AsyncRead + Unpin>(reader: &mut R) -> anyhow::Result<String> {
-    Ok(read_bytes(reader).await?.iter().map(|&b| char::from(b)).collect())
+    Ok(read_bytes(reader)
+        .await?
+        .iter()
+        .map(|&b| char::from(b))
+        .collect())
 }
 
 /// The same field, undecoded. ServerInit's is not latin-1 and not always a string
@@ -8513,12 +9155,23 @@ mod tests {
         // The very same server, answered anonymously, because that is what a
         // target without the subtype asked for — and it is what costs you the
         // Mac's own screen.
-        assert_eq!(choose_security(&MACOS_TYPES, None, false, true).unwrap(), SECURITY_VNC_AUTH);
+        assert_eq!(
+            choose_security(&MACOS_TYPES, None, false, true).unwrap(),
+            SECURITY_VNC_AUTH
+        );
         // A subtype the server cannot answer is a configuration error, not a
         // reason to authenticate as nobody.
-        let err = choose_security(&[SECURITY_VNC_AUTH, SECURITY_NONE], Some(Subtype::Ard), true, false)
-            .unwrap_err();
-        assert!(format!("{err:#}").contains("not macOS Screen Sharing"), "{err:#}");
+        let err = choose_security(
+            &[SECURITY_VNC_AUTH, SECURITY_NONE],
+            Some(Subtype::Ard),
+            true,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not macOS Screen Sharing"),
+            "{err:#}"
+        );
 
         // The high-performance subtype authenticates identically — the dialect
         // above it differs, the security type does not — and names itself when the
@@ -8527,9 +9180,17 @@ mod tests {
             choose_security(&MACOS_TYPES, Some(Subtype::ArdHighPerformance), true, false).unwrap(),
             SECURITY_ARD
         );
-        let err = choose_security(&[SECURITY_NONE], Some(Subtype::ArdHighPerformance), true, false)
-            .unwrap_err();
-        assert!(format!("{err:#}").contains("\"ard-high-performance\""), "{err:#}");
+        let err = choose_security(
+            &[SECURITY_NONE],
+            Some(Subtype::ArdHighPerformance),
+            true,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("\"ard-high-performance\""),
+            "{err:#}"
+        );
     }
 
     /// Both Apple subtypes speak Apple's revision, as Apple's viewer does to every
@@ -8588,10 +9249,16 @@ mod tests {
 
     #[test]
     fn security_falls_back_the_way_it_always_did() {
-        assert_eq!(choose_security(&[SECURITY_NONE], None, false, false).unwrap(), SECURITY_NONE);
+        assert_eq!(
+            choose_security(&[SECURITY_NONE], None, false, false).unwrap(),
+            SECURITY_NONE
+        );
         // A password with no VncAuth on offer is not a failure: an open server
         // is still an open server.
-        assert_eq!(choose_security(&[SECURITY_NONE], None, false, true).unwrap(), SECURITY_NONE);
+        assert_eq!(
+            choose_security(&[SECURITY_NONE], None, false, true).unwrap(),
+            SECURITY_NONE
+        );
         // A named password is answered even when it is a placeholder's empty one,
         // never traded for None.
         assert_eq!(
@@ -8599,9 +9266,15 @@ mod tests {
             SECURITY_VNC_AUTH
         );
         let err = choose_security(&[SECURITY_VNC_AUTH], None, false, false).unwrap_err();
-        assert!(format!("{err:#}").contains("requires a password"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("requires a password"),
+            "{err:#}"
+        );
         let err = choose_security(&[19], None, false, true).unwrap_err();
-        assert!(format!("{err:#}").contains("no supported VNC security type"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no supported VNC security type"),
+            "{err:#}"
+        );
     }
 
     /// wayvnc's offer with `enable_auth`: VeNCrypt, RSA-AES-256, RSA-AES-128.
@@ -8615,7 +9288,13 @@ mod tests {
             SECURITY_RSA_AES_256
         );
         assert_eq!(
-            choose_security(&[SECURITY_RSA_AES_128, SECURITY_VNC_AUTH], None, true, false).unwrap(),
+            choose_security(
+                &[SECURITY_RSA_AES_128, SECURITY_VNC_AUTH],
+                None,
+                true,
+                false
+            )
+            .unwrap(),
             SECURITY_RSA_AES_128
         );
         // Encrypted beats the classic challenge when the target could do either;
@@ -8625,22 +9304,46 @@ mod tests {
             SECURITY_RSA_AES_128
         );
         assert_eq!(
-            choose_security(&[SECURITY_VNC_AUTH, SECURITY_RSA_AES_128], None, false, true).unwrap(),
+            choose_security(
+                &[SECURITY_VNC_AUTH, SECURITY_RSA_AES_128],
+                None,
+                false,
+                true
+            )
+            .unwrap(),
             SECURITY_VNC_AUTH
         );
         // The Apple subtype still wants Apple's type, whatever else is offered.
         let err = choose_security(&WAYVNC_TYPES, Some(Subtype::Ard), true, false).unwrap_err();
-        assert!(format!("{err:#}").contains("not macOS Screen Sharing"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("not macOS Screen Sharing"),
+            "{err:#}"
+        );
         // wlshare offers RSA-AES at both widths and nothing else; an account
         // takes the widest.
         assert_eq!(
-            choose_security(&[SECURITY_RSA_AES_256, SECURITY_RSA_AES_128], None, true, false).unwrap(),
+            choose_security(
+                &[SECURITY_RSA_AES_256, SECURITY_RSA_AES_128],
+                None,
+                true,
+                false
+            )
+            .unwrap(),
             SECURITY_RSA_AES_256
         );
         // And the refusal says which credential is missing.
         let err = choose_security(&WAYVNC_TYPES, None, false, true).unwrap_err();
-        assert!(format!("{err:#}").contains("username and password"), "{err:#}");
-        let err = choose_security(&[SECURITY_VNC_AUTH, SECURITY_RSA_AES_128], None, false, false).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("username and password"),
+            "{err:#}"
+        );
+        let err = choose_security(
+            &[SECURITY_VNC_AUTH, SECURITY_RSA_AES_128],
+            None,
+            false,
+            false,
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("nor vnc_password"), "{err:#}");
     }
 
@@ -8671,7 +9374,11 @@ mod tests {
         let out = ard_encrypt(&ard_wrap_key(b"shared secret"), &credentials);
         assert_eq!(out.len(), ARD_CREDENTIALS_LEN);
         assert_eq!(out[..16], out[16..32]);
-        assert_ne!(out[..16], credentials[..16], "the blob is not sent in clear");
+        assert_ne!(
+            out[..16],
+            credentials[..16],
+            "the blob is not sent in clear"
+        );
     }
 
     /// A worked Diffie-Hellman exchange, small enough to check by hand: the two
@@ -8793,7 +9500,10 @@ mod tests {
             vec![0xff; MIN_ARD_KEY_BYTES], // p itself, whose secret is always 0
         ] {
             let msg = authenticate(offer_with(MIN_ARD_KEY_BYTES, 0xff, &peer)).await;
-            assert!(msg.contains("degenerate DH public key"), "peer {peer:02x?}: {msg}");
+            assert!(
+                msg.contains("degenerate DH public key"),
+                "peer {peer:02x?}: {msg}"
+            );
         }
         // The neighbours of those values are accepted: the check is a floor and
         // a ceiling, not a filter on anything that looks unusual.
@@ -8929,7 +9639,11 @@ mod tests {
         #[cfg(feature = "wlshare")]
         {
             let mut wlshare = generic;
-            wlshare.extend([ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION)]);
+            wlshare.extend([
+                ENCODING_DENSITY,
+                ENCODING_OUTPUTS,
+                wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION),
+            ]);
             assert_eq!(wlshare_encoding_list(None, false, false), wlshare);
         }
 
@@ -8960,7 +9674,9 @@ mod tests {
         );
         #[cfg(not(feature = "wlshare"))]
         let (listed, requests) = (rfb38_encoding_list(), Vec::new());
-        let pixel_encodings = listed.into_iter().filter(|encoding| *encoding >= 0 && !requests.contains(encoding));
+        let pixel_encodings = listed
+            .into_iter()
+            .filter(|encoding| *encoding >= 0 && !requests.contains(encoding));
         for encoding in pixel_encodings {
             let mut wire = vec![0u8, 0];
             wire.extend_from_slice(&1u16.to_be_bytes());
@@ -8974,15 +9690,9 @@ mod tests {
                 shared_desktop((2, 2), None, None),
                 test_shadow((2, 2)),
             );
-            let err = read_loop(
-                std::io::Cursor::new(wire),
-                shared,
-                false,
-                None,
-                sink,
-            )
-            .await
-            .unwrap_err();
+            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+                .await
+                .unwrap_err();
             assert!(
                 !format!("{err:#}").contains("not advertised"),
                 "encoding {encoding} is advertised but not decoded: {err:#}"
@@ -9020,7 +9730,9 @@ mod tests {
     fn cursor_mask_becomes_alpha_and_masked_out_pixels_are_cleared() {
         // 3x2 cursor: mask rows are padded to a whole byte, MSB first.
         // Row 0: 101xxxxx, row 1: 010xxxxx.
-        let bgrx: Vec<u8> = (0..6).flat_map(|i| [i * 3, i * 3 + 1, i * 3 + 2, 0]).collect();
+        let bgrx: Vec<u8> = (0..6)
+            .flat_map(|i| [i * 3, i * 3 + 1, i * 3 + 2, 0])
+            .collect();
         let rgba = masked_bgrx_to_rgba(&bgrx, &[0b1010_0000, 0b0100_0000], 3);
         assert_eq!(
             rgba,
@@ -9055,14 +9767,19 @@ mod tests {
         payload.push(0b1000_0000); // mask row
         let mut reader = payload.as_slice();
 
-        read_cursor(&mut reader, &cursor, (1, 2, 2, 1), &sink).await.unwrap();
+        read_cursor(&mut reader, &cursor, (1, 2, 2, 1), &sink)
+            .await
+            .unwrap();
 
         let shape = match forwarded(&sink, &mut rx).await.unwrap() {
             ServerMsg::Cursor(Some(shape)) => shape,
             other => panic!("unexpected: {other:?}"),
         };
         assert_eq!((shape.w, shape.h, shape.hx, shape.hy), (2, 1, 1, 2));
-        assert_eq!(decode_rgba(&shape.png), (2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0]));
+        assert_eq!(
+            decode_rgba(&shape.png),
+            (2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0])
+        );
         // Cached for replay to a browser that attaches later.
         match cursor_msg(&cursor) {
             Some(ServerMsg::Cursor(Some(cached))) => assert_eq!(cached, shape),
@@ -9075,8 +9792,13 @@ mod tests {
         let cursor: SharedCursor = Arc::new(std::sync::Mutex::new(CursorState::default()));
         let (sink, mut rx) = test_sink();
         // No payload at all for a 0x0 rect.
-        read_cursor(&mut [].as_slice(), &cursor, (0, 0, 0, 0), &sink).await.unwrap();
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(None))));
+        read_cursor(&mut [].as_slice(), &cursor, (0, 0, 0, 0), &sink)
+            .await
+            .unwrap();
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(None))
+        ));
         // Hidden is still browser-drawn state, so it replays on reattach —
         // unlike ServerDrawn, which must stay silent.
         assert!(matches!(cursor_msg(&cursor), Some(ServerMsg::Cursor(None))));
@@ -9092,11 +9814,16 @@ mod tests {
         payload.push(0xAB);
         let mut reader = payload.as_slice();
 
-        read_cursor(&mut reader, &cursor, (0, 0, w, h), &sink).await.unwrap();
+        read_cursor(&mut reader, &cursor, (0, 0, w, h), &sink)
+            .await
+            .unwrap();
         assert_eq!(reader, &[0xAB]);
         // The shape is dropped, but the server still isn't drawing the pointer,
         // so the browser is told to fall back rather than left with nothing.
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(None))));
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(None))
+        ));
         assert!(matches!(cursor_msg(&cursor), Some(ServerMsg::Cursor(None))));
     }
 
@@ -9112,7 +9839,9 @@ mod tests {
         payload.extend_from_slice(&[255, 0, 0, 255, 128, 128, 128, 128, 7, 7, 7, 0]);
         let mut reader = payload.as_slice();
 
-        read_alpha_cursor(&mut reader, &cursor, (2, 0, 3, 1), &sink).await.unwrap();
+        read_alpha_cursor(&mut reader, &cursor, (2, 0, 3, 1), &sink)
+            .await
+            .unwrap();
 
         let shape = match forwarded(&sink, &mut rx).await.unwrap() {
             ServerMsg::Cursor(Some(shape)) => shape,
@@ -9139,9 +9868,14 @@ mod tests {
         let mut payload = ENCODING_RAW.to_be_bytes().to_vec();
         payload.push(0xAB);
         let mut reader = payload.as_slice();
-        read_alpha_cursor(&mut reader, &cursor, (0, 0, 0, 0), &sink).await.unwrap();
+        read_alpha_cursor(&mut reader, &cursor, (0, 0, 0, 0), &sink)
+            .await
+            .unwrap();
         assert_eq!(reader, &[0xAB]);
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(None))));
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(None))
+        ));
         assert!(matches!(cursor_msg(&cursor), Some(ServerMsg::Cursor(None))));
     }
 
@@ -9154,9 +9888,14 @@ mod tests {
         payload.extend(std::iter::repeat_n(0u8, usize::from(w) * BPP));
         payload.push(0xAB);
         let mut reader = payload.as_slice();
-        read_alpha_cursor(&mut reader, &cursor, (0, 0, w, h), &sink).await.unwrap();
+        read_alpha_cursor(&mut reader, &cursor, (0, 0, w, h), &sink)
+            .await
+            .unwrap();
         assert_eq!(reader, &[0xAB]);
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(None))));
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(None))
+        ));
     }
 
     /// An encoding other than Raw has no length this end can skip by, so it is
@@ -9196,24 +9935,51 @@ mod tests {
         // 1x1 BGRX plus its separate alpha byte, each in a complete cursor-local
         // zlib stream.
         let first = store(1000, &[0, 0, 255, 0, 255]);
-        read_cursor_image(&mut first.as_slice(), &mut apple, &cursor, (0, 0), (1, 1), &sink)
-            .await
-            .unwrap();
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(Some(_)))));
+        read_cursor_image(
+            &mut first.as_slice(),
+            &mut apple,
+            &cursor,
+            (0, 0),
+            (1, 1),
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(Some(_)))
+        ));
 
         let mut bad = 1001u32.to_be_bytes().to_vec();
         bad.extend_from_slice(&3u32.to_be_bytes());
         bad.extend_from_slice(&[1, 2, 3]);
-        read_cursor_image(&mut bad.as_slice(), &mut apple, &cursor, (0, 0), (1, 1), &sink)
-            .await
-            .expect("one malformed cursor is not a session error");
+        read_cursor_image(
+            &mut bad.as_slice(),
+            &mut apple,
+            &cursor,
+            (0, 0),
+            (1, 1),
+            &sink,
+        )
+        .await
+        .expect("one malformed cursor is not a session error");
         assert!(forwarded(&sink, &mut rx).await.is_none());
 
         let after = store(1002, &[255, 0, 0, 0, 255]);
-        read_cursor_image(&mut after.as_slice(), &mut apple, &cursor, (0, 0), (1, 1), &sink)
-            .await
-            .expect("the next independent cursor stream still decodes");
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Cursor(Some(_)))));
+        read_cursor_image(
+            &mut after.as_slice(),
+            &mut apple,
+            &cursor,
+            (0, 0),
+            (1, 1),
+            &sink,
+        )
+        .await
+        .expect("the next independent cursor stream still decodes");
+        assert!(matches!(
+            forwarded(&sink, &mut rx).await,
+            Some(ServerMsg::Cursor(Some(_)))
+        ));
     }
 
     /// A rectangle of a Mac's Adaptive picture reaches the browser as it came, where
@@ -9240,8 +10006,20 @@ mod tests {
         let mut apple = Some(Apple::default());
         let mut decoders = Decoders::default();
 
-        let wire = rect((8, 0, 16, 24), vnc_apple::ENCODING_ADAPTIVE, &[0, 3, 5, 0, 6]);
-        let effect = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap();
+        let wire = rect(
+            (8, 0, 16, 24),
+            vnc_apple::ENCODING_ADAPTIVE,
+            &[0, 3, 5, 0, 6],
+        );
+        let effect = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(effect.pixels, Rect::from_size(8, 0, 16, 24));
         match forwarded(&sink, &mut rx).await {
             Some(ServerMsg::Standard(unit)) => {
@@ -9253,18 +10031,47 @@ mod tests {
 
         // The quantization tables come as a rectangle of no area.
         let wire = rect((0, 0, 0, 0), vnc_apple::ENCODING_ADAPTIVE, &[2; 129]);
-        let effect = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap();
+        let effect = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(effect.pixels, None);
-        assert!(matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Standard(unit)) if unit.data.len() == 129));
+        assert!(
+            matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Standard(unit)) if unit.data.len() == 129)
+        );
 
         let wire = rect((56, 0, 16, 8), vnc_apple::ENCODING_ADAPTIVE, &[0]);
-        let err = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap_err();
+        let err = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("exceeds"), "{err:#}");
 
         let wire = rect((0, 0, 8, 8), ENCODING_ZRLE, &[0; 4]);
-        let err = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap_err();
+        let err = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("Adaptive picture"), "{err:#}");
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "nothing was encoded here");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "nothing was encoded here"
+        );
     }
 
     /// A rectangle of a Mac's Full quality, its zlib, is inflated here and reaches
@@ -9294,22 +10101,52 @@ mod tests {
 
         // 16×8 pixels of one colour, blue, green, red and a pad byte each, deflated
         // as the Mac deflates a rectangle: flushed, the stream left open.
-        let mut deflate = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        deflate.write_all(&[0x30, 0x20, 0x10, 0x00].repeat(16 * 8)).unwrap();
+        let mut deflate =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        deflate
+            .write_all(&[0x30, 0x20, 0x10, 0x00].repeat(16 * 8))
+            .unwrap();
         deflate.flush().unwrap();
         let body = std::mem::take(deflate.get_mut());
         let wire = rect((8, 4, 16, 8), vnc_apple::ENCODING_ZLIB, &body);
-        let effect = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap();
+        let effect = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(effect.pixels, Rect::from_size(8, 4, 16, 8));
-        let pixels = shadow.lock().unwrap().copy_out(Rect::from_size(8, 4, 16, 8).unwrap()).unwrap();
-        assert_eq!(pixels, [0x10, 0x20, 0x30].repeat(16 * 8), "inflated here, in R, G, B");
+        let pixels = shadow
+            .lock()
+            .unwrap()
+            .copy_out(Rect::from_size(8, 4, 16, 8).unwrap())
+            .unwrap();
+        assert_eq!(
+            pixels,
+            [0x10, 0x20, 0x30].repeat(16 * 8),
+            "inflated here, in R, G, B"
+        );
         assert!(
-            !matches!(forwarded(&sink, &mut rx).await, Some(ServerMsg::Standard(_) | ServerMsg::StandardStart { .. })),
+            !matches!(
+                forwarded(&sink, &mut rx).await,
+                Some(ServerMsg::Standard(_) | ServerMsg::StandardStart { .. })
+            ),
             "nothing of the Mac's is passed"
         );
 
         let wire = rect((0, 0, 8, 8), vnc_apple::ENCODING_ADAPTIVE, &[0; 4]);
-        let err = read_rect(&mut wire.as_slice(), &shared, &mut apple, &mut decoders, &sink).await.unwrap_err();
+        let err = read_rect(
+            &mut wire.as_slice(),
+            &shared,
+            &mut apple,
+            &mut decoders,
+            &sink,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err:#}").contains("not advertised"), "{err:#}");
     }
 
@@ -9321,7 +10158,13 @@ mod tests {
 
     #[test]
     fn set_desktop_size_encodes_a_single_screen() {
-        let msg = set_desktop_size((1920, 1200), Screen { id: 0x0A0B0C0D, flags: 1 });
+        let msg = set_desktop_size(
+            (1920, 1200),
+            Screen {
+                id: 0x0A0B0C0D,
+                flags: 1,
+            },
+        );
         assert_eq!(msg[0], 251); // message type
         assert_eq!(msg[1], 0); // padding
         assert_eq!(&msg[2..6], &[0x07, 0x80, 0x04, 0xB0]); // 1920, 1200
@@ -9342,7 +10185,10 @@ mod tests {
     fn the_wlshare_extensions_are_asked_of_a_wlshare_target() {
         assert_eq!(ENCODING_DENSITY, i32::from_be_bytes(*b"WLSH"));
         assert_eq!(ENCODING_OUTPUTS, i32::from_be_bytes(*b"WLSO"));
-        assert_eq!(WLSHARE_REQUESTS[2], i32::from_be_bytes([b'W', b'L', b'V', wlshare_proto::PROTOCOL_VERSION]));
+        assert_eq!(
+            WLSHARE_REQUESTS[2],
+            i32::from_be_bytes([b'W', b'L', b'V', wlshare_proto::PROTOCOL_VERSION])
+        );
         let wlshare = wlshare_encoding_list(None, false, false);
         assert_eq!(&wlshare[wlshare.len() - 3..], &WLSHARE_REQUESTS);
     }
@@ -9350,8 +10196,11 @@ mod tests {
     /// What a `wlshare` target's list ends with: the density and outputs
     /// requests, and the protocol version.
     #[cfg(feature = "wlshare")]
-    const WLSHARE_REQUESTS: [i32; 3] =
-        [ENCODING_DENSITY, ENCODING_OUTPUTS, wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION)];
+    const WLSHARE_REQUESTS: [i32; 3] = [
+        ENCODING_DENSITY,
+        ENCODING_OUTPUTS,
+        wlshare_proto::version::encoding(wlshare_proto::PROTOCOL_VERSION),
+    ];
 
     /// A plain target lists nothing of wlshare's, so a wlshare server reached as
     /// one is read as any VNC server is: no stream of its own, no density, no
@@ -9379,7 +10228,10 @@ mod tests {
     #[test]
     fn the_video_asked_of_wlshare_is_its_encoding_alone() {
         assert_eq!(ENCODING_VIDEO, i32::from_be_bytes(*b"WLSV"));
-        assert_eq!(with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY]), [ENCODING_VIDEO, ENCODING_ZRLE, ENCODING_DENSITY]);
+        assert_eq!(
+            with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY]),
+            [ENCODING_VIDEO, ENCODING_ZRLE, ENCODING_DENSITY]
+        );
     }
 
     /// A plan that asks for wlshare's tiles lists them in place of its video, with
@@ -9394,19 +10246,69 @@ mod tests {
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
         assert_eq!(wlshare_proto::ENCODING_HELD, i32::from_be_bytes(*b"WLSD"));
         use crate::config::WlshareTiles;
-        let tiles = RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, rdp_small_cache: false, wlshare: true, wlshare_tiles: Some(WlshareTiles::Motion) };
+        let tiles = RenderPlan {
+            apple_media: false,
+            apple_h264: false,
+            hevc_instead: false,
+            apple_standard: None,
+            apple_combined: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            rdp_small_cache: false,
+            wlshare: true,
+            wlshare_tiles: Some(WlshareTiles::Motion),
+        };
         let lists = Listing::new(rest.clone(), tiles);
-        assert_eq!(lists.listed((1280, 800)), [ENCODING_TILES, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY], "with motion: WLSD beside it");
-        assert_eq!(lists.listed((7680, 4320)), rest, "the tiles past the ceiling");
-        let progressive = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: Some(WlshareTiles::Progressive), ..tiles });
-        assert_eq!(progressive.listed((1280, 800)), [ENCODING_TILES, ENCODING_ZRLE, ENCODING_DENSITY], "progressive: no WLSD");
-        let lossless = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: Some(WlshareTiles::Lossless), ..tiles });
-        assert_eq!(lossless.listed((1280, 800)), [ENCODING_TILES, 0x574c_534c, ENCODING_ZRLE, ENCODING_DENSITY], "lossless: WLSL beside it");
+        assert_eq!(
+            lists.listed((1280, 800)),
+            [ENCODING_TILES, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY],
+            "with motion: WLSD beside it"
+        );
+        assert_eq!(
+            lists.listed((7680, 4320)),
+            rest,
+            "the tiles past the ceiling"
+        );
+        let progressive = Listing::new(
+            rest.clone(),
+            RenderPlan {
+                wlshare_tiles: Some(WlshareTiles::Progressive),
+                ..tiles
+            },
+        );
+        assert_eq!(
+            progressive.listed((1280, 800)),
+            [ENCODING_TILES, ENCODING_ZRLE, ENCODING_DENSITY],
+            "progressive: no WLSD"
+        );
+        let lossless = Listing::new(
+            rest.clone(),
+            RenderPlan {
+                wlshare_tiles: Some(WlshareTiles::Lossless),
+                ..tiles
+            },
+        );
+        assert_eq!(
+            lossless.listed((1280, 800)),
+            [ENCODING_TILES, 0x574c_534c, ENCODING_ZRLE, ENCODING_DENSITY],
+            "lossless: WLSL beside it"
+        );
         assert!(lossless.picture(ENCODING_TILES));
 
-        let video = Listing::new(rest.clone(), RenderPlan { wlshare_tiles: None, ..tiles });
+        let video = Listing::new(
+            rest.clone(),
+            RenderPlan {
+                wlshare_tiles: None,
+                ..tiles
+            },
+        );
         assert_eq!(video.listed((1280, 800))[0], ENCODING_VIDEO);
-        assert_eq!(video.listed((7680, 4320)), rest, "the video past the ceiling");
+        assert_eq!(
+            video.listed((7680, 4320)),
+            rest,
+            "the video past the ceiling"
+        );
     }
 
     // ── The outputs extension ───────────────────────────────────────────────
@@ -9460,15 +10362,29 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         let outputs = [
-            Listed { id: 3, name: "DP-2", size: (1920, 1080), scale: 1.0, headless: false },
-            Listed { id: 7, name: "HEADLESS-1", size: (3456, 1766), scale: 2.0, headless: true },
+            Listed {
+                id: 3,
+                name: "DP-2",
+                size: (1920, 1080),
+                scale: 1.0,
+                headless: false,
+            },
+            Listed {
+                id: 7,
+                name: "HEADLESS-1",
+                size: (3456, 1766),
+                scale: 2.0,
+                headless: true,
+            },
         ];
 
         let mut wire = output_list_body(7, &outputs);
         // A trailing byte stands in for the next message: it must survive.
         wire.push(0xAB);
         let mut reader = wire.as_slice();
-        read_output_list(&mut reader, &uplink, &desktop, &display, &sink).await.unwrap();
+        read_output_list(&mut reader, &uplink, &desktop, &display, &sink)
+            .await
+            .unwrap();
         assert_eq!(reader, &[0xAB]);
 
         let Some(ServerMsg::Displays { active, displays }) = forwarded(&sink, &mut rx).await else {
@@ -9482,27 +10398,48 @@ mod tests {
         assert_eq!(displays[0].detail, "1920×1080", "1x states no density");
         assert!(!displays[0].virtual_display);
         assert_eq!(displays[1].label, "HEADLESS-1");
-        assert_eq!(displays[1].detail, "1728×883 at 2x", "points, then the density");
-        assert!(displays[1].virtual_display, "the headless flag is what marks it");
+        assert_eq!(
+            displays[1].detail, "1728×883 at 2x",
+            "points, then the density"
+        );
+        assert!(
+            displays[1].virtual_display,
+            "the headless flag is what marks it"
+        );
         assert_eq!(display.lock().unwrap().active, 7);
         // A desk of two starts on All Displays, so the canvas is asked onto the first.
         assert!(written(&sent).starts_with(&outputs::select_output(3)));
         let asked = written(&sent).len();
 
         // The same list again: nothing new to say, and nothing asked again.
-        read_output_list(&mut output_list_body(7, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(7, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(forwarded(&sink, &mut rx).await.is_none());
         assert_eq!(written(&sent).len(), asked);
 
         // The server switched: the same list, a new checkmark.
-        read_output_list(&mut output_list_body(3, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(3, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             forwarded(&sink, &mut rx).await,
-            Some(ServerMsg::Displays { active: DisplayState::COMBINED, .. })
+            Some(ServerMsg::Displays {
+                active: DisplayState::COMBINED,
+                ..
+            })
         ));
     }
 
@@ -9518,12 +10455,24 @@ mod tests {
         let desktop = shared_desktop((1920, 1080), None, None);
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
-        let listed = |id, name| Listed { id, name, size: (1280, 800), scale: 1.0, headless: true };
+        let listed = |id, name| Listed {
+            id,
+            name,
+            size: (1280, 800),
+            scale: 1.0,
+            headless: true,
+        };
         let two = [listed(3, "HEADLESS-1"), listed(7, "HEADLESS-2")];
         let mut list = async |active: u32, outputs: &[Listed]| {
-            read_output_list(&mut output_list_body(active, outputs).as_slice(), &uplink, &desktop, &display, &sink)
-                .await
-                .unwrap();
+            read_output_list(
+                &mut output_list_body(active, outputs).as_slice(),
+                &uplink,
+                &desktop,
+                &display,
+                &sink,
+            )
+            .await
+            .unwrap();
             forwarded(&sink, &mut rx).await
         };
 
@@ -9537,20 +10486,35 @@ mod tests {
             panic!("the switch was not forwarded");
         };
         assert_eq!(active, DisplayState::COMBINED);
-        assert_eq!(displays.iter().map(|d| d.tab).collect::<Vec<_>>(), [None, Some(BESIDE_DISPLAY), None]);
+        assert_eq!(
+            displays.iter().map(|d| d.tab).collect::<Vec<_>>(),
+            [None, Some(BESIDE_DISPLAY), None]
+        );
         assert!(display.lock().unwrap().wlshare_tab());
 
         // A third output: one tab cannot show two more, so the entry goes, and
         // the choice with it.
-        let three = [listed(3, "HEADLESS-1"), listed(7, "HEADLESS-2"), listed(9, "HEADLESS-3")];
+        let three = [
+            listed(3, "HEADLESS-1"),
+            listed(7, "HEADLESS-2"),
+            listed(9, "HEADLESS-3"),
+        ];
         let Some(ServerMsg::Displays { active, displays }) = list(3, &three).await else {
             panic!("the longer list was not forwarded");
         };
         assert_eq!(active, 3);
         assert_eq!(displays.len(), 3);
-        assert!(displays.iter().all(|d| d.tab.is_none() && d.id != DisplayState::COMBINED));
+        assert!(
+            displays
+                .iter()
+                .all(|d| d.tab.is_none() && d.id != DisplayState::COMBINED)
+        );
         // Two again starts on it again.
-        let Some(ServerMsg::Displays { active: DisplayState::COMBINED, displays }) = list(3, &two).await else {
+        let Some(ServerMsg::Displays {
+            active: DisplayState::COMBINED,
+            displays,
+        }) = list(3, &two).await
+        else {
             panic!("the shorter list was not forwarded");
         };
         assert_eq!(displays[1].tab, Some(BESIDE_DISPLAY));
@@ -9586,21 +10550,45 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         let outputs = [
-            Listed { id: 3, name: "DP-2", size: (1920, 1080), scale: 1.0, headless: false },
-            Listed { id: 7, name: "HDMI-A-1", size: (1280, 800), scale: 1.0, headless: false },
+            Listed {
+                id: 3,
+                name: "DP-2",
+                size: (1920, 1080),
+                scale: 1.0,
+                headless: false,
+            },
+            Listed {
+                id: 7,
+                name: "HDMI-A-1",
+                size: (1280, 800),
+                scale: 1.0,
+                headless: false,
+            },
         ];
-        read_output_list(&mut output_list_body(3, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(3, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             forwarded(&sink, &mut rx).await,
             Some(ServerMsg::Displays { active: DisplayState::COMBINED, ref displays }) if displays.len() == 3
         ));
 
         // Every output went away: nothing listed, nothing shared.
-        read_output_list(&mut output_list_body(0, &[]).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(0, &[]).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         let Some(ServerMsg::Displays { active, displays }) = forwarded(&sink, &mut rx).await else {
             panic!("the emptied list was not forwarded");
         };
@@ -9609,9 +10597,15 @@ mod tests {
         assert!(display.lock().unwrap().displays.is_empty());
 
         // Empty again: nothing new to say.
-        read_output_list(&mut output_list_body(0, &[]).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(0, &[]).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(forwarded(&sink, &mut rx).await.is_none());
 
         // A browser attaching now — or reattaching with the old list still in
@@ -9649,22 +10643,50 @@ mod tests {
         let (sink, _rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         let outputs = [
-            Listed { id: 3, name: "HEADLESS-1", size: (3456, 1766), scale: 2.0, headless: true },
-            Listed { id: 7, name: "HEADLESS-2", size: (1920, 1080), scale: 1.0, headless: true },
+            Listed {
+                id: 3,
+                name: "HEADLESS-1",
+                size: (3456, 1766),
+                scale: 2.0,
+                headless: true,
+            },
+            Listed {
+                id: 7,
+                name: "HEADLESS-2",
+                size: (1920, 1080),
+                scale: 1.0,
+                headless: true,
+            },
         ];
 
-        read_output_list(&mut output_list_body(3, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(3, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(written(&wire).is_empty(), "the first list is no switch");
 
         // wlshare reports the new output's 1x before the list that moves the
         // checkmark; the browser is still 2x.
         desktop.lock().unwrap().wire_scale = Some(1.0);
-        read_output_list(&mut output_list_body(7, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
-        assert_eq!(written(&wire), client_density((3456, 1766), 2.0), "the window at the browser's density");
+        read_output_list(
+            &mut output_list_body(7, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            written(&wire),
+            client_density((3456, 1766), 2.0),
+            "the window at the browser's density"
+        );
         {
             let d = desktop.lock().unwrap();
             assert!(d.following, "the new output is asked to follow");
@@ -9673,13 +10695,27 @@ mod tests {
 
         // What the run loop does with the browser's re-sent, unchanged report:
         // already declared, so nothing more.
-        assert!(!send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0)).await.unwrap());
+        assert!(
+            !send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0))
+                .await
+                .unwrap()
+        );
 
         desktop.lock().unwrap().following = false;
-        read_output_list(&mut output_list_body(0, &[]).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
-        assert_eq!(written(&wire), client_density((3456, 1766), 2.0), "no output left to declare to");
+        read_output_list(
+            &mut output_list_body(0, &[]).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            written(&wire),
+            client_density((3456, 1766), 2.0),
+            "no output left to declare to"
+        );
     }
 
     /// A switch while a declaration is out waits its turn, as a density change
@@ -9700,29 +10736,67 @@ mod tests {
         }
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         let outputs = [
-            Listed { id: 3, name: "HEADLESS-1", size: (1920, 1080), scale: 1.0, headless: true },
-            Listed { id: 7, name: "HEADLESS-2", size: (1920, 1080), scale: 1.0, headless: true },
+            Listed {
+                id: 3,
+                name: "HEADLESS-1",
+                size: (1920, 1080),
+                scale: 1.0,
+                headless: true,
+            },
+            Listed {
+                id: 7,
+                name: "HEADLESS-2",
+                size: (1920, 1080),
+                scale: 1.0,
+                headless: true,
+            },
         ];
-        read_output_list(&mut output_list_body(3, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(3, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
 
         // The browser moved to a 2x screen: declared, and the server is busy.
-        assert!(send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0)).await.unwrap());
+        assert!(
+            send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0))
+                .await
+                .unwrap()
+        );
         let declared = client_density((1920, 1080), 2.0).to_vec();
         assert_eq!(written(&wire), declared);
 
         // The switch lands before the answer: nothing more goes out yet.
-        read_output_list(&mut output_list_body(7, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
-        assert_eq!(written(&wire), declared, "one declaration in flight at a time");
+        read_output_list(
+            &mut output_list_body(7, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            written(&wire),
+            declared,
+            "one declaration in flight at a time"
+        );
 
         // The answer is the new output at its own 1x: the browser's 2x goes to it.
         let body = output_scale_body((1920, 1080), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), [declared.clone(), declared].concat());
         let d = desktop.lock().unwrap();
         assert!(d.following);
@@ -9752,27 +10826,60 @@ mod tests {
         }
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
         let outputs = [
-            Listed { id: 3, name: "HEADLESS-1", size: (1600, 1200), scale: 2.0, headless: true },
-            Listed { id: 7, name: "HEADLESS-2", size: (1280, 800), scale: 2.0, headless: true },
+            Listed {
+                id: 3,
+                name: "HEADLESS-1",
+                size: (1600, 1200),
+                scale: 2.0,
+                headless: true,
+            },
+            Listed {
+                id: 7,
+                name: "HEADLESS-2",
+                size: (1280, 800),
+                scale: 2.0,
+                headless: true,
+            },
         ];
-        read_output_list(&mut output_list_body(3, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(3, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
 
-        read_output_list(&mut output_list_body(7, &outputs).as_slice(), &uplink, &desktop, &display, &sink)
-            .await
-            .unwrap();
+        read_output_list(
+            &mut output_list_body(7, &outputs).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         let declared = client_density((1600, 1200), 2.0);
         assert_eq!(written(&wire), declared);
-        assert!(desktop.lock().unwrap().following, "the declaration is out whatever its scale");
+        assert!(
+            desktop.lock().unwrap().following,
+            "the declaration is out whatever its scale"
+        );
 
         // The new output's own size arrives, then the answer: the window's
         // pixels at the same 2x, so nothing more is asked.
         desktop.lock().unwrap().size = (1280, 800);
         let body = output_scale_body((1600, 1200), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1280, 800)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1280, 800)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), declared);
         assert!(!desktop.lock().unwrap().following);
     }
@@ -9790,7 +10897,11 @@ mod tests {
         let mut body = vec![0u8];
         body.extend_from_slice(&(MAX_OUTPUTS + 1).to_be_bytes());
         body.extend_from_slice(&0u32.to_be_bytes());
-        assert!(read_output_list(&mut body.as_slice(), &uplink, &desktop, &display, &sink).await.is_err());
+        assert!(
+            read_output_list(&mut body.as_slice(), &uplink, &desktop, &display, &sink)
+                .await
+                .is_err()
+        );
     }
 
     /// The target's virtual displays are asked of a server that makes them, on
@@ -9800,7 +10911,13 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[tokio::test]
     async fn virtual_displays_are_asked_on_the_first_list_and_all_displays_waits_for_the_count() {
-        let listed = |id, name| Listed { id, name, size: (1280, 800), scale: 1.0, headless: true };
+        let listed = |id, name| Listed {
+            id,
+            name,
+            size: (1280, 800),
+            scale: 1.0,
+            headless: true,
+        };
         let one = [listed(3, "HEADLESS-1")];
         let two = [listed(3, "HEADLESS-1"), listed(7, "HEADLESS-2")];
 
@@ -9811,15 +10928,39 @@ mod tests {
         desktop.lock().unwrap().wlshare_displays = 2;
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
-        read_output_list(&mut output_list_body_making(2, 3, &one).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
+        read_output_list(
+            &mut output_list_body_making(2, 3, &one).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&sent), outputs::virtual_displays(2));
-        let Some(ServerMsg::Displays { active: 3, displays }) = forwarded(&sink, &mut rx).await else {
+        let Some(ServerMsg::Displays {
+            active: 3,
+            displays,
+        }) = forwarded(&sink, &mut rx).await
+        else {
             panic!("the one output was not listed as it is");
         };
         assert_eq!(displays.len(), 1);
         // The second arrives: All Displays, and nothing asked again.
-        read_output_list(&mut output_list_body_making(2, 3, &two).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
-        assert_eq!(written(&sent), outputs::virtual_displays(2), "the request went once");
+        read_output_list(
+            &mut output_list_body_making(2, 3, &two).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            written(&sent),
+            outputs::virtual_displays(2),
+            "the request went once"
+        );
         let Some(ServerMsg::Displays { active, .. }) = forwarded(&sink, &mut rx).await else {
             panic!("the two outputs were not listed");
         };
@@ -9830,7 +10971,15 @@ mod tests {
         let desktop = shared_desktop((1280, 800), None, None);
         let (sink, mut rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
-        read_output_list(&mut output_list_body_making(2, 3, &two).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
+        read_output_list(
+            &mut output_list_body_making(2, 3, &two).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&sent), outputs::virtual_displays(1));
         let Some(ServerMsg::Displays { active: 3, .. }) = forwarded(&sink, &mut rx).await else {
             panic!("the canvas's output was not listed as the shared one");
@@ -9843,7 +10992,15 @@ mod tests {
         desktop.lock().unwrap().wlshare_displays = 2;
         let (sink, _rx) = test_sink();
         let display: SharedDisplay = Arc::new(std::sync::Mutex::new(DisplayState::default()));
-        read_output_list(&mut output_list_body(3, &one).as_slice(), &uplink, &desktop, &display, &sink).await.unwrap();
+        read_output_list(
+            &mut output_list_body(3, &one).as_slice(),
+            &uplink,
+            &desktop,
+            &display,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(written(&sent).is_empty());
     }
 
@@ -9853,7 +11010,10 @@ mod tests {
     #[test]
     fn a_selected_output_is_asked_for_by_id_and_virtual_displays_by_count() {
         assert_eq!(outputs::select_output(7), [0xE1, 0, 0, 0, 0, 0, 0, 7]);
-        assert_eq!(outputs::select_output(u32::MAX), [0xE1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            outputs::select_output(u32::MAX),
+            [0xE1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
         assert_eq!(outputs::virtual_displays(1), [0xE1, 1, 0, 0, 0, 0, 0, 1]);
         assert_eq!(outputs::virtual_displays(2), [0xE1, 1, 0, 0, 0, 0, 0, 2]);
     }
@@ -9907,7 +11067,9 @@ mod tests {
     /// What a client answers the announcement with, byte for byte: set-format
     /// for S16, two channels, 48 000 Hz; set-bitrate, 96 000 bit/s; enable.
     #[cfg(feature = "wlshare")]
-    const AUDIO_ANSWER: [u8; 22] = [255, 1, 0, 2, 3, 2, 0, 0, 0xBB, 0x80, 255, 1, 0, 3, 0, 1, 0x77, 0, 255, 1, 0, 0];
+    const AUDIO_ANSWER: [u8; 22] = [
+        255, 1, 0, 2, 3, 2, 0, 0, 0xBB, 0x80, 255, 1, 0, 3, 0, 1, 0x77, 0, 255, 1, 0, 0,
+    ];
 
     /// Run one wire through the read loop with a bridge attached, and hand back
     /// what was sent, the bridge, and a listener taken *before* the loop ran —
@@ -9915,25 +11077,26 @@ mod tests {
     /// whatever arrived.
     async fn run_audio_wire(
         wire: Vec<u8>,
-    ) -> (Vec<u8>, Arc<crate::audio::AudioBridge>, crate::audio::AudioListener) {
+    ) -> (
+        Vec<u8>,
+        Arc<crate::audio::AudioBridge>,
+        crate::audio::AudioListener,
+    ) {
         let (uplink, sent) = test_uplink();
         let (sink, _rx) = test_sink();
         let bridge = Arc::new(crate::audio::AudioBridge::new());
         let listener = bridge.take_listener();
         let shared = test_shared_with_audio(
-            test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2))),
+            test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            ),
             &bridge,
         );
         // The wire always ends, and the loop reports that as the server hanging
         // up; what it did before then is what these tests are about.
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            false,
-            None,
-            sink,
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await;
         (written(&sent), bridge, listener)
     }
 
@@ -9947,7 +11110,11 @@ mod tests {
         for lossless in [false, true] {
             let asked = wlshare_encoding_list(Some(lossless), false, false);
             assert!(asked.contains(&wlshare_proto::ENCODING_AUDIO));
-            assert_eq!(asked.contains(&wlshare_proto::ENCODING_AUDIO_OPUS), !lossless, "FLAC is a list without Opus");
+            assert_eq!(
+                asked.contains(&wlshare_proto::ENCODING_AUDIO_OPUS),
+                !lossless,
+                "FLAC is a list without Opus"
+            );
             assert!(!asked.contains(&-259), "QEMU's raw samples are not taken");
             assert_eq!(
                 &asked[asked.len() - 3..],
@@ -9957,7 +11124,8 @@ mod tests {
         }
         let silent = wlshare_encoding_list(None, false, false);
         assert!(
-            !silent.contains(&wlshare_proto::ENCODING_AUDIO) && !silent.contains(&wlshare_proto::ENCODING_AUDIO_OPUS),
+            !silent.contains(&wlshare_proto::ENCODING_AUDIO)
+                && !silent.contains(&wlshare_proto::ENCODING_AUDIO_OPUS),
             "a target without audio does not ask"
         );
     }
@@ -9972,7 +11140,10 @@ mod tests {
         let asked = wlshare_encoding_list(Some(false), true, false);
         assert!(asked.contains(&wlshare_proto::ENCODING_CAMERA));
         assert_eq!(&asked[asked.len() - 3..], &WLSHARE_REQUESTS);
-        assert!(!wlshare_encoding_list(Some(false), false, false).contains(&wlshare_proto::ENCODING_CAMERA));
+        assert!(
+            !wlshare_encoding_list(Some(false), false, false)
+                .contains(&wlshare_proto::ENCODING_CAMERA)
+        );
     }
 
     /// The microphone extension on the same terms: asked of a wlshare target exactly
@@ -9984,7 +11155,10 @@ mod tests {
         let asked = wlshare_encoding_list(Some(false), true, true);
         assert!(asked.contains(&wlshare_proto::ENCODING_MICROPHONE));
         assert_eq!(&asked[asked.len() - 3..], &WLSHARE_REQUESTS);
-        assert!(!wlshare_encoding_list(Some(false), true, false).contains(&wlshare_proto::ENCODING_MICROPHONE));
+        assert!(
+            !wlshare_encoding_list(Some(false), true, false)
+                .contains(&wlshare_proto::ENCODING_MICROPHONE)
+        );
     }
 
     /// The announcement rectangle is answered with the format this client
@@ -10010,7 +11184,10 @@ mod tests {
         .concat();
         let (written, _bridge, mut listener) = run_audio_wire(wire).await;
         assert_eq!(written, AUDIO_ANSWER);
-        assert_eq!(listener.queued_wave().as_deref(), Some(&[0xFC, 9, 8, 7][..]));
+        assert_eq!(
+            listener.queued_wave().as_deref(),
+            Some(&[0xFC, 9, 8, 7][..])
+        );
         assert_eq!(listener.queued_wave().as_deref(), Some(&[0xAB; 16][..]));
         assert!(listener.queued_wave().is_none(), "one message, one unit");
     }
@@ -10025,7 +11202,11 @@ mod tests {
         let bridge = Arc::new(crate::audio::AudioBridge::new());
         bridge.ask_rate(64_000);
         let shared = test_shared_with_audio(
-            test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2))),
+            test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            ),
             &bridge,
         );
         let announced = Arc::clone(&shared.audio_announced);
@@ -10038,7 +11219,10 @@ mod tests {
         )
         .await;
         assert_eq!(written(&sent)[10..18], [255, 1, 0, 3, 0, 0, 0xFA, 0]);
-        assert!(announced.load(Ordering::Relaxed), "a later rate may be named to this server");
+        assert!(
+            announced.load(Ordering::Relaxed),
+            "a later rate may be named to this server"
+        );
     }
 
     /// A rate asked for while the announcement's answer waits for the uplink is
@@ -10074,7 +11258,8 @@ mod tests {
         assert_eq!(asked_audio_rate(&mut rates).await, 64_000);
         bridge.ask_rate(42_000);
         assert_eq!(asked_audio_rate(&mut rates).await, 42_000);
-        let none = tokio::time::timeout(Duration::from_millis(20), asked_audio_rate(&mut None)).await;
+        let none =
+            tokio::time::timeout(Duration::from_millis(20), asked_audio_rate(&mut None)).await;
         assert!(none.is_err(), "nothing to name");
     }
 
@@ -10105,19 +11290,22 @@ mod tests {
         let (sink, _rx) = test_sink();
         let bridge = Arc::new(crate::audio::AudioBridge::new());
         let shared = test_shared_with_audio(
-            test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2))),
+            test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            ),
             &bridge,
         );
-        let wire = [audio_announcement(), server_audio(1), vec![255, 1, 0, 2, 0, 0, 0, 4, 1, 2, 3, 4]].concat();
-        let err = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            false,
-            None,
-            sink,
-        )
-        .await
-        .unwrap_err();
+        let wire = [
+            audio_announcement(),
+            server_audio(1),
+            vec![255, 1, 0, 2, 0, 0, 0, 4, 1, 2, 3, 4],
+        ]
+        .concat();
+        let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+            .await
+            .unwrap_err();
         assert!(format!("{err:#}").contains("operation 2"), "{err:#}");
     }
 
@@ -10146,7 +11334,11 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let bridge = Arc::new(crate::audio::AudioBridge::new());
         let shared = test_shared_with_audio(
-            test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2))),
+            test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            ),
             &bridge,
         );
         let _ = read_loop(
@@ -10163,7 +11355,10 @@ mod tests {
             forwarded(&sink, &mut rx).await.is_some(),
             "the Raw rect should have reached the browser as pixels"
         );
-        assert!(written(&sent).is_empty(), "nothing was sent to a server with no sound to give");
+        assert!(
+            written(&sent).is_empty(),
+            "nothing was sent to a server with no sound to give"
+        );
         assert_eq!(bridge.negotiated_format(), None);
     }
 
@@ -10196,20 +11391,18 @@ mod tests {
         let (sink, _rx) = test_sink();
         let bridge = Arc::new(crate::audio::AudioBridge::new());
         let shared = test_shared_with_audio(
-            test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2))),
+            test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            ),
             &bridge,
         );
         let mut wire = audio_announcement();
         wire.extend_from_slice(&[255, 2, 0, 1]); // submessage 2, which is not audio
-        let err = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            false,
-            None,
-            sink,
-        )
-        .await
-        .unwrap_err();
+        let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+            .await
+            .unwrap_err();
         assert!(format!("{err:#}").contains("submessage 2"), "{err:#}");
     }
 
@@ -10220,8 +11413,14 @@ mod tests {
             client_density((3456, 1766), 2.0),
             [0xE0, 0, 0x0D, 0x80, 0x06, 0xE6, 0x00, 0x02, 0x00, 0x00]
         );
-        assert_eq!(&client_density((1728, 883), 1.0)[6..], &[0x00, 0x01, 0x00, 0x00]);
-        assert_eq!(&client_density((2592, 1325), 1.5)[6..], &[0x00, 0x01, 0x80, 0x00]);
+        assert_eq!(
+            &client_density((1728, 883), 1.0)[6..],
+            &[0x00, 0x01, 0x00, 0x00]
+        );
+        assert_eq!(
+            &client_density((2592, 1325), 1.5)[6..],
+            &[0x00, 0x01, 0x80, 0x00]
+        );
     }
 
     /// The declaration is the report's layout, so the report's own parser reads
@@ -10230,7 +11429,13 @@ mod tests {
     #[test]
     fn client_density_reads_back_as_an_output_scale() {
         let msg = client_density((2592, 1325), 1.5);
-        assert_eq!(OutputScale::parse(&msg).unwrap(), OutputScale { size: (2592, 1325), scale: 1.5 });
+        assert_eq!(
+            OutputScale::parse(&msg).unwrap(),
+            OutputScale {
+                size: (2592, 1325),
+                scale: 1.5
+            }
+        );
     }
 
     #[cfg(feature = "wlshare")]
@@ -10240,7 +11445,10 @@ mod tests {
         let msg = [0xE0, 0, 0x0D, 0x80, 0x06, 0xE6, 0x00, 0x02, 0x00, 0x00];
         assert_eq!(
             OutputScale::parse(&msg).unwrap(),
-            OutputScale { size: (3456, 1766), scale: 2.0 }
+            OutputScale {
+                size: (3456, 1766),
+                scale: 2.0
+            }
         );
         let fractional = [0xE0, 0, 0x07, 0x80, 0x04, 0x38, 0x00, 0x01, 0x80, 0x00];
         assert_eq!(OutputScale::parse(&fractional).unwrap().scale, 1.5);
@@ -10304,7 +11512,11 @@ mod tests {
         // Scroll down = button 5 (0x10) press + release, on top of the held mask.
         // Three lines of intent is exactly one pulse here.
         let bytes = translate_input(
-            ClientMsg::Wheel { dx: 0.0, dy: 3.0, unit: WheelUnit::Line },
+            ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 3.0,
+                unit: WheelUnit::Line,
+            },
             &Buttons::Rfb,
             &mut mask,
             &mut pos,
@@ -10344,10 +11556,9 @@ mod tests {
     /// macOS 26.6: see [`Buttons`].
     #[test]
     fn apples_revision_swaps_the_middle_and_right_mask_bits() {
-        for (buttons, right_bit, middle_bit) in [
-            (Buttons::Rfb, 0x04u8, 0x02u8),
-            (Buttons::Apple, 0x02, 0x04),
-        ] {
+        for (buttons, right_bit, middle_bit) in
+            [(Buttons::Rfb, 0x04u8, 0x02u8), (Buttons::Apple, 0x02, 0x04)]
+        {
             for (button, bit) in [
                 (MouseButton::Right, right_bit),
                 (MouseButton::Middle, middle_bit),
@@ -10355,7 +11566,11 @@ mod tests {
                 let mut mask = 0u8;
                 let mut pos = (10, 20);
                 let bytes = translate_input(
-                    ClientMsg::MouseButton { button, pressed: true, clicks: 1 },
+                    ClientMsg::MouseButton {
+                        button,
+                        pressed: true,
+                        clicks: 1,
+                    },
                     &buttons,
                     &mut mask,
                     &mut pos,
@@ -10413,7 +11628,11 @@ mod tests {
         let mut wheel = Wheel::wlshare();
         let mut send = |dx, dy| {
             translate_input(
-                ClientMsg::Wheel { dx, dy, unit: WheelUnit::Pixel },
+                ClientMsg::Wheel {
+                    dx,
+                    dy,
+                    unit: WheelUnit::Pixel,
+                },
                 &Buttons::Rfb,
                 &mut 0x01,
                 &mut (5, 6),
@@ -10425,7 +11644,11 @@ mod tests {
         assert_eq!(send(48.0, -32.0), [vec![0xE5, 0, 0x00, 0x30, 0xFF, 0xE0]]);
         assert!(send(0.0, 0.5).is_empty(), "less than a pixel is held");
         assert_eq!(send(0.0, 0.5), [vec![0xE5, 0, 0, 0, 0, 1]]);
-        assert_eq!(send(0.0, 10_000.0), [vec![0xE5, 0, 0, 0, 0x02, 0x00]], "held to one event's cap");
+        assert_eq!(
+            send(0.0, 10_000.0),
+            [vec![0xE5, 0, 0, 0, 0x02, 0x00]],
+            "held to one event's cap"
+        );
     }
 
     /// A wheel is not a glide: its notches reach a `wlshare` target as the
@@ -10448,23 +11671,37 @@ mod tests {
         };
         let masks = |msgs: Vec<Vec<u8>>| msgs.iter().map(|m| m[1]).collect::<Vec<_>>();
         assert_eq!(masks(send(0.0, 1.0, WheelUnit::Notch)), [0x11, 0x01]);
-        assert_eq!(masks(send(0.0, -2.0, WheelUnit::Notch)), [0x09, 0x01, 0x09, 0x01]);
+        assert_eq!(
+            masks(send(0.0, -2.0, WheelUnit::Notch)),
+            [0x09, 0x01, 0x09, 0x01]
+        );
         assert_eq!(masks(send(1.0, 0.0, WheelUnit::Notch)), [0x41, 0x01]);
         // Three lines are a notch, and fewer wait for the rest of one.
         assert_eq!(masks(send(0.0, 3.0, WheelUnit::Line)), [0x11, 0x01]);
         assert!(send(0.0, 1.5, WheelUnit::Line).is_empty());
         assert_eq!(masks(send(0.0, 1.5, WheelUnit::Line)), [0x11, 0x01]);
-        assert_eq!(masks(send(0.0, 1.0, WheelUnit::Page)).len(), 10, "a page, held to one event's cap");
+        assert_eq!(
+            masks(send(0.0, 1.0, WheelUnit::Page)).len(),
+            10,
+            "a page, held to one event's cap"
+        );
         assert_eq!(masks(send(0.0, 1_000.0, WheelUnit::Notch)).len(), 10);
         // A glide between two notches is still a distance.
-        assert_eq!(send(0.0, 7.0, WheelUnit::Pixel), [vec![0xE5, 0, 0, 0, 0, 7]]);
+        assert_eq!(
+            send(0.0, 7.0, WheelUnit::Pixel),
+            [vec![0xE5, 0, 0, 0, 0, 7]]
+        );
     }
 
     /// One wheel event with `held` buttons down, as the masks it sends.
     fn wheel_masks(wheel: &mut Wheel, held: u8, dx: f32, dy: f32) -> Vec<u8> {
         let (mut mask, mut pos) = (held, (5u16, 6u16));
         translate_input(
-            ClientMsg::Wheel { dx, dy, unit: WheelUnit::Line },
+            ClientMsg::Wheel {
+                dx,
+                dy,
+                unit: WheelUnit::Line,
+            },
             &Buttons::Rfb,
             &mut mask,
             &mut pos,
@@ -10485,7 +11722,11 @@ mod tests {
         let mut wheel = Wheel::new(true);
         let mut send = |dx, dy| {
             translate_input(
-                ClientMsg::Wheel { dx, dy, unit: WheelUnit::Pixel },
+                ClientMsg::Wheel {
+                    dx,
+                    dy,
+                    unit: WheelUnit::Pixel,
+                },
                 &Buttons::Apple,
                 &mut 0x01,
                 &mut (0x0190, 0x012C),
@@ -10495,7 +11736,9 @@ mod tests {
             )
         };
         let sent = send(40.0, -25.0);
-        let [msg] = sent.as_slice() else { panic!("one message, got {}", sent.len()) };
+        let [msg] = sent.as_slice() else {
+            panic!("one message, got {}", sent.len())
+        };
         let expected: &[&[u8]] = &[
             &[0x17, 0, 0, 54, 0, 1, 0, 11],
             // Lines: right is negative, up is positive, and no third axis.
@@ -10515,7 +11758,10 @@ mod tests {
 
         // Every other server reads the mask by the RFB convention, held buttons and all.
         let mut generic = Wheel::new(false);
-        assert_eq!(wheel_masks(&mut generic, 0x01, 1.0, 1.0), [0x11, 0x01, 0x41, 0x01]);
+        assert_eq!(
+            wheel_masks(&mut generic, 0x01, 1.0, 1.0),
+            [0x11, 0x01, 0x41, 0x01]
+        );
     }
 
     #[test]
@@ -10555,7 +11801,10 @@ mod tests {
         // The surplus is dropped, not left trickling into later events.
         assert_eq!(scroll(&mut wheel, 0.0, 0.5, WheelUnit::Pixel).1, 0);
         // A delta a client should never send at all buys nothing.
-        assert_eq!(scroll(&mut wheel, f32::NAN, f32::INFINITY, WheelUnit::Pixel), (0, 0));
+        assert_eq!(
+            scroll(&mut wheel, f32::NAN, f32::INFINITY, WheelUnit::Pixel),
+            (0, 0)
+        );
     }
 
     #[test]
@@ -10566,7 +11815,10 @@ mod tests {
         // the one window where "capped" and "spent everything" look alike.
         let mut wheel = Wheel::new(true);
         let cap = Wheel::MAX_PX as i32;
-        assert_eq!(scroll(&mut wheel, 0.0, Wheel::MAX_PX + 0.5, WheelUnit::Pixel).1, cap);
+        assert_eq!(
+            scroll(&mut wheel, 0.0, Wheel::MAX_PX + 0.5, WheelUnit::Pixel).1,
+            cap
+        );
         // Half a point on its own, with nothing carried in to round it up.
         assert_eq!(scroll(&mut wheel, 0.0, 0.5, WheelUnit::Pixel).1, 0);
     }
@@ -10617,10 +11869,7 @@ mod tests {
     /// A plain uplink and the buffer behind it.
     fn test_uplink() -> (SharedUplink, Wire) {
         let wire = Wire::default();
-        (
-            Arc::new(Mutex::new(Uplink::plain(wire.clone()))),
-            wire,
-        )
+        (Arc::new(Mutex::new(Uplink::plain(wire.clone()))), wire)
     }
 
     /// An uplink that frames what it sends into Apple records, and the buffer
@@ -10714,14 +11963,19 @@ mod tests {
             apple_media: false,
             apple_h264: false,
             hevc_instead: false,
-            apple_standard: None, apple_combined: false,
+            apple_standard: None,
+            apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
             rdp_video: false,
             rdp_small_cache: false,
-            wlshare: true, wlshare_tiles: None,
+            wlshare: true,
+            wlshare_tiles: None,
         };
-        Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
+        Arc::new(Listing::new(
+            wlshare_encoding_list(None, false, false),
+            plan,
+        ))
     }
 
     /// A repaint of a session that lists wlshare's tiles says first that the
@@ -10731,8 +11985,14 @@ mod tests {
     #[test]
     fn a_repaint_of_wlshares_tiles_empties_their_cache_first() {
         let full = update_request(false, (8, 4)).to_vec();
-        assert_eq!(repaint_request(Some(&test_tiles_listing()), (8, 4)), [vec![0xE6], full.clone()]);
-        assert_eq!(repaint_request(Some(&test_listing()), (8, 4)), std::slice::from_ref(&full));
+        assert_eq!(
+            repaint_request(Some(&test_tiles_listing()), (8, 4)),
+            [vec![0xE6], full.clone()]
+        );
+        assert_eq!(
+            repaint_request(Some(&test_listing()), (8, 4)),
+            std::slice::from_ref(&full)
+        );
         assert_eq!(repaint_request(None, (8, 4)), [full]);
     }
 
@@ -10743,20 +12003,28 @@ mod tests {
             apple_media: false,
             apple_h264: false,
             hevc_instead: false,
-            apple_standard: None, apple_combined: false,
+            apple_standard: None,
+            apple_combined: false,
             rdp_graphics: false,
             rdp_h264: false,
             rdp_video: false,
             rdp_small_cache: false,
-            wlshare: true, wlshare_tiles: Some(crate::config::WlshareTiles::Motion),
+            wlshare: true,
+            wlshare_tiles: Some(crate::config::WlshareTiles::Motion),
         };
-        Arc::new(Listing::new(wlshare_encoding_list(None, false, false), plan))
+        Arc::new(Listing::new(
+            wlshare_encoding_list(None, false, false),
+            plan,
+        ))
     }
 
     /// The same, for a session that asked for the desktop's sound: the bridge
     /// the read loop feeds is what makes the extension readable at all.
     fn test_shared_with_audio(shared: Shared, audio: &Arc<crate::audio::AudioBridge>) -> Shared {
-        Shared { audio: Some(Arc::clone(audio)), ..shared }
+        Shared {
+            audio: Some(Arc::clone(audio)),
+            ..shared
+        }
     }
 
     // A server that hangs up mid-session has to reach `run`'s error branch. Ending
@@ -10775,7 +12043,9 @@ mod tests {
 
     /// A sink reading the browser's link from `feedback`, for a test that says
     /// what the link is doing.
-    fn test_sink_on(feedback: Arc<crate::feedback::LinkFeedback>) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
+    fn test_sink_on(
+        feedback: Arc<crate::feedback::LinkFeedback>,
+    ) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, frame_rx) = mpsc::channel(8);
         let sink = VideoSink::new("vnc", frame_tx, feedback, Oversize::Refuse);
         // Larger than any desktop these tests paint, so a rectangle lands in the
@@ -10796,7 +12066,13 @@ mod tests {
         feedback: Arc<crate::feedback::LinkFeedback>,
     ) -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (sink, mut rx) = test_sink_on(feedback);
-        sink.msg(ServerMsg::Resize { w: size.0, h: size.1, scale: UNSCALED }).await.unwrap();
+        sink.msg(ServerMsg::Resize {
+            w: size.0,
+            h: size.1,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
         sink.flush().await;
         assert!(matches!(rx.recv().await, Some(ServerMsg::Resize { .. })));
         (sink, rx)
@@ -10816,10 +12092,7 @@ mod tests {
     /// bare `try_recv` would race it and read `None` for a message that is on its
     /// way. `None` here means the engine sent nothing, which is what these tests
     /// mean when they assert it.
-    async fn forwarded(
-        sink: &VideoSink,
-        rx: &mut mpsc::Receiver<ServerMsg>,
-    ) -> Option<ServerMsg> {
+    async fn forwarded(sink: &VideoSink, rx: &mut mpsc::Receiver<ServerMsg>) -> Option<ServerMsg> {
         sink.flush().await;
         rx.try_recv().ok()
     }
@@ -10871,24 +12144,34 @@ mod tests {
         let desktop = shared_desktop((1024, 768), None, None);
 
         // Matching the current size or a zero dimension: no-ops.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1024, 768)), false).await.unwrap();
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((0, 600)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1024, 768)), false)
+            .await
+            .unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((0, 600)), false)
+            .await
+            .unwrap();
         assert!(desktop.lock().unwrap().pending.is_none());
         assert!(written(&wire).is_empty());
 
         // Support not declared yet: stashed, nothing on the wire.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), false)
+            .await
+            .unwrap();
         assert_eq!(desktop.lock().unwrap().pending, Some((800, 600)));
         assert!(written(&wire).is_empty());
 
         // Browser back at the current size: the stale stash is dropped.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1024, 768)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1024, 768)), false)
+            .await
+            .unwrap();
         assert!(desktop.lock().unwrap().pending.is_none());
 
         // Support declared: SetDesktopSize goes out immediately.
         let screen = Screen { id: 7, flags: 0 };
         desktop.lock().unwrap().screen = Some(screen);
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), false)
+            .await
+            .unwrap();
         assert_eq!(written(&wire), set_desktop_size((800, 600), screen));
     }
 
@@ -10903,9 +12186,15 @@ mod tests {
         // Stashed while support was still undeclared, then the window moved on.
         let desktop = shared_desktop((1024, 768), Some(screen), Some((800, 600)));
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((640, 480)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((640, 480)), false)
+            .await
+            .unwrap();
         assert_eq!(written(&wire), set_desktop_size((640, 480), screen));
-        assert_eq!(desktop.lock().unwrap().pending, None, "the sent request supersedes the stash");
+        assert_eq!(
+            desktop.lock().unwrap().pending,
+            None,
+            "the sent request supersedes the stash"
+        );
 
         // The server answers with the new size: the browser is told, and the
         // stale 800x600 is not sent after the 640x480 the window asked for.
@@ -10921,8 +12210,19 @@ mod tests {
         .await
         .unwrap();
         let resize = forwarded(&sink, &mut rx).await;
-        assert!(matches!(resize, Some(ServerMsg::Resize { w: 640, h: 480, scale: UNSCALED })));
-        assert_eq!(written(&wire), set_desktop_size((640, 480), screen), "nothing replayed");
+        assert!(matches!(
+            resize,
+            Some(ServerMsg::Resize {
+                w: 640,
+                h: 480,
+                scale: UNSCALED
+            })
+        ));
+        assert_eq!(
+            written(&wire),
+            set_desktop_size((640, 480), screen),
+            "nothing replayed"
+        );
         assert_eq!(desktop.lock().unwrap().viewport, Some((640, 480)));
     }
 
@@ -10954,7 +12254,11 @@ mod tests {
         assert_eq!(written(&wire), set_desktop_size((1440, 900), screen));
         let d = desktop.lock().unwrap();
         assert_eq!(d.pending, None, "the size was asked for, not held again");
-        assert_eq!(d.viewport, Some((1440, 900)), "and it is what a scale report re-asks for");
+        assert_eq!(
+            d.viewport,
+            Some((1440, 900)),
+            "and it is what a scale report re-asks for"
+        );
     }
 
     /// The same declaration in a session that follows a window which has not
@@ -10993,9 +12297,18 @@ mod tests {
         let desktop = shared_desktop((1920, 1080), None, Some((1440, 900)));
 
         // The browser's first viewport, handled before any rect has arrived.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1280, 800)), false).await.unwrap();
-        assert!(written(&wire).is_empty(), "nothing goes out before support is declared");
-        assert_eq!(desktop.lock().unwrap().pending, Some((1280, 800)), "the older size gave way");
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1280, 800)), false)
+            .await
+            .unwrap();
+        assert!(
+            written(&wire).is_empty(),
+            "nothing goes out before support is declared"
+        );
+        assert_eq!(
+            desktop.lock().unwrap().pending,
+            Some((1280, 800)),
+            "the older size gave way"
+        );
 
         let payload = eds_payload(screen);
         read_extended_desktop_size(
@@ -11026,7 +12339,11 @@ mod tests {
         // Something else holds the uplink while the declaring rect arrives.
         let held = uplink.lock().await;
         let replay = tokio::spawn({
-            let (uplink, desktop, shadow) = (Arc::clone(&uplink), Arc::clone(&desktop), test_shadow((1024, 768)));
+            let (uplink, desktop, shadow) = (
+                Arc::clone(&uplink),
+                Arc::clone(&desktop),
+                test_shadow((1024, 768)),
+            );
             let payload = eds_payload(screen);
             async move {
                 read_extended_desktop_size(
@@ -11049,10 +12366,15 @@ mod tests {
         // the replay for the same lock.
         let input = tokio::spawn({
             let (uplink, desktop) = (Arc::clone(&uplink), Arc::clone(&desktop));
-            async move { request_resize(&uplink, &desktop, ResizeAsk::Viewport((640, 480)), false).await }
+            async move {
+                request_resize(&uplink, &desktop, ResizeAsk::Viewport((640, 480)), false).await
+            }
         });
         tokio::task::yield_now().await;
-        assert!(written(&wire).is_empty(), "nothing goes out while the uplink is held");
+        assert!(
+            written(&wire).is_empty(),
+            "nothing goes out while the uplink is held"
+        );
         drop(held);
         replay.await.unwrap().unwrap();
         input.await.unwrap().unwrap();
@@ -11073,20 +12395,33 @@ mod tests {
         let screen = Screen { id: 7, flags: 0 };
         let desktop = shared_desktop((1024, 768), Some(screen), None);
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((5120, 2880)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((5120, 2880)), false)
+            .await
+            .unwrap();
         assert_eq!(written(&wire), set_desktop_size((3840, 2400), screen));
 
         // Already the held size: a window still 5120×2880 asks for nothing more.
         desktop.lock().unwrap().size = (3840, 2400);
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((5120, 2880)), false).await.unwrap();
-        assert_eq!(written(&wire), set_desktop_size((3840, 2400), screen), "nothing further went out");
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((5120, 2880)), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            written(&wire),
+            set_desktop_size((3840, 2400), screen),
+            "nothing further went out"
+        );
 
         // Stashed before support is declared: the stash is the window in points,
         // and the replay holds it under the same ceiling the live request would.
         let stashed = shared_desktop((1024, 768), None, None);
-        request_resize(&uplink, &stashed, ResizeAsk::Viewport((5120, 2880)), false).await.unwrap();
+        request_resize(&uplink, &stashed, ResizeAsk::Viewport((5120, 2880)), false)
+            .await
+            .unwrap();
         assert_eq!(stashed.lock().unwrap().pending, Some((5120, 2880)));
-        assert_eq!(stashed.lock().unwrap().generic_pixels((5120, 2880)), (3840, 2400));
+        assert_eq!(
+            stashed.lock().unwrap().generic_pixels((5120, 2880)),
+            (3840, 2400)
+        );
     }
 
     /// Let a High Performance report settle, run what falls due, and play the
@@ -11098,18 +12433,29 @@ mod tests {
         desktop: &SharedDesktop,
         sink: &VideoSink,
     ) -> Option<Vec<u8>> {
-        hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink).await.unwrap();
+        hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink)
+            .await
+            .unwrap();
         let wait = desktop.lock().unwrap().hp.not_before;
         if let Some(at) = wait {
             tokio::time::advance(at.saturating_duration_since(tokio::time::Instant::now())).await;
-            hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink).await.unwrap();
+            hp_resize_step(uplink, desktop, None, &SharedTab::default(), sink)
+                .await
+                .unwrap();
         }
-        desktop.lock().unwrap().hp_take_request(tokio::time::Instant::now()).map(|request| request.msg)
+        desktop
+            .lock()
+            .unwrap()
+            .hp_take_request(tokio::time::Instant::now())
+            .map(|request| request.msg)
     }
 
     /// The configuration asked for `points` at `density`.
     fn hp_config(points: (u16, u16), density: f32) -> Vec<u8> {
-        vnc_apple::set_display_configuration(&[vnc_apple::virtual_display_mode(points, density)], true)
+        vnc_apple::set_display_configuration(
+            &[vnc_apple::virtual_display_mode(points, density)],
+            true,
+        )
     }
 
     #[tokio::test(start_paused = true)]
@@ -11118,17 +12464,28 @@ mod tests {
         let (sink, mut rx) = test_sink();
         let desktop = shared_desktop((1024, 768), None, None);
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true).await.unwrap();
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true)
+            .await
+            .unwrap();
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
         assert!(matches!(
             forwarded(&sink, &mut rx).await,
             Some(ServerMsg::Resizing { active: true })
         ));
 
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((800, 600), 1.0)));
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            Some(hp_config((800, 600), 1.0))
+        );
         // The drain is a one-pixel full request, which the Mac answers at once.
         assert_eq!(written(&wire), update_request(false, HP_HOLD_REQUEST));
-        assert_eq!(desktop.lock().unwrap().poll_size(), HP_HOLD_REQUEST, "polling is held");
+        assert_eq!(
+            desktop.lock().unwrap().poll_size(),
+            HP_HOLD_REQUEST,
+            "polling is held"
+        );
         assert!(desktop.lock().unwrap().pending.is_none());
     }
 
@@ -11144,9 +12501,20 @@ mod tests {
         d.hp = HpResize::opening((1024, 768), false);
         d.hp.layout(true);
         assert_eq!(d.hp.step(now), Some(HpStep::Drain));
-        let request = d.hp_take_request(now).expect("the session-ready request goes");
-        assert_eq!(request, HpRequest { msg: hp_config((1024, 768), 1.0), changes: false });
-        assert!(!d.hp.holds_pixels(), "nothing waits for a layout to answer it");
+        let request = d
+            .hp_take_request(now)
+            .expect("the session-ready request goes");
+        assert_eq!(
+            request,
+            HpRequest {
+                msg: hp_config((1024, 768), 1.0),
+                changes: false
+            }
+        );
+        assert!(
+            !d.hp.holds_pixels(),
+            "nothing waits for a layout to answer it"
+        );
     }
 
     /// A Mac whose preferred codec is the media stream sends no update to wait
@@ -11158,21 +12526,34 @@ mod tests {
         let desktop = shared_desktop((1024, 768), None, None);
         desktop.lock().unwrap().media_stream = true;
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true).await.unwrap();
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true)
+            .await
+            .unwrap();
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
 
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, None, "the step sent it itself");
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            None,
+            "the step sent it itself"
+        );
         let interval = desktop.lock().unwrap().push_interval_us;
         let mut sent = vnc_apple::auto_framebuffer_update(interval, HP_HOLD_REQUEST);
         sent.extend_from_slice(&hp_config((800, 600), 1.0));
         assert_eq!(written(&wire), sent);
-        assert!(matches!(desktop.lock().unwrap().hp.phase, HpPhase::InFlight((800, 600))));
+        assert!(matches!(
+            desktop.lock().unwrap().hp.phase,
+            HpPhase::InFlight((800, 600))
+        ));
 
         // Unanswered and given up on, the region re-armed is still the one
         // pixel: the Mac would hold a full request until the display changed.
         wire.0.lock().unwrap().clear();
         tokio::time::advance(HP_RESIZE_STUCK).await;
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
         let mut rearmed = vnc_apple::auto_framebuffer_update(interval, HP_HOLD_REQUEST);
         rearmed.extend_from_slice(&update_request(false, HP_HOLD_REQUEST));
         assert_eq!(written(&wire), rearmed);
@@ -11204,14 +12585,30 @@ mod tests {
             d.in_update = true;
         }
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true).await.unwrap();
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
-        assert!(written(&wire).is_empty(), "nothing goes out inside an update");
-        assert!(matches!(desktop.lock().unwrap().hp.phase, HpPhase::Draining((800, 600))));
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((800, 600)), true)
+            .await
+            .unwrap();
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
+        assert!(
+            written(&wire).is_empty(),
+            "nothing goes out inside an update"
+        );
+        assert!(matches!(
+            desktop.lock().unwrap().hp.phase,
+            HpPhase::Draining((800, 600))
+        ));
 
         desktop.lock().unwrap().in_update = false;
-        assert!(hp_send_due(&uplink, &desktop, None, &SharedTab::default()).await.unwrap());
+        assert!(
+            hp_send_due(&uplink, &desktop, None, &SharedTab::default())
+                .await
+                .unwrap()
+        );
         let interval = desktop.lock().unwrap().push_interval_us;
         let mut sent = vnc_apple::auto_framebuffer_update(interval, HP_HOLD_REQUEST);
         sent.extend_from_slice(&hp_config((800, 600), 1.0));
@@ -11232,13 +12629,24 @@ mod tests {
             ((800, 600), (800, 600)),
             ((1440, 900), (1440, 900)),
         ] {
-            request_resize(&uplink, &desktop, ResizeAsk::Viewport(small), true).await.unwrap();
-            assert_eq!(desktop.lock().unwrap().hp.newest_points(), Some(raised), "{small:?}");
+            request_resize(&uplink, &desktop, ResizeAsk::Viewport(small), true)
+                .await
+                .unwrap();
+            assert_eq!(
+                desktop.lock().unwrap().hp.newest_points(),
+                Some(raised),
+                "{small:?}"
+            );
         }
-        assert!(written(&wire).is_empty(), "a virtual display's size waits for the window to settle");
+        assert!(
+            written(&wire).is_empty(),
+            "a virtual display's size waits for the window to settle"
+        );
 
         let generic = shared_desktop((1024, 768), None, None);
-        request_resize(&uplink, &generic, ResizeAsk::Viewport((320, 68)), false).await.unwrap();
+        request_resize(&uplink, &generic, ResizeAsk::Viewport((320, 68)), false)
+            .await
+            .unwrap();
         assert_eq!(generic.lock().unwrap().pending, Some((320, 68)));
     }
 
@@ -11250,7 +12658,9 @@ mod tests {
         let desktop = shared_desktop((1600, 1000), None, None);
         desktop.lock().unwrap().host_density = 2.0;
 
-        request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Density, true)
+            .await
+            .unwrap();
         assert_eq!(
             hp_settle(&uplink, &desktop, &sink).await,
             Some(hp_config((1600, 1000), 2.0)),
@@ -11267,9 +12677,18 @@ mod tests {
         let desktop = shared_desktop((1600, 1000), None, None);
         desktop.lock().unwrap().even_sides = true;
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1863, 983)), true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((1862, 982), 1.0)));
-        assert_eq!(desktop.lock().unwrap().hp_points, Some((1863, 983)), "the window's points are kept");
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1863, 983)), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            Some(hp_config((1862, 982), 1.0))
+        );
+        assert_eq!(
+            desktop.lock().unwrap().hp_points,
+            Some((1863, 983)),
+            "the window's points are kept"
+        );
     }
 
     /// A session passing the H.264 asked for 1863×983 and got a 1862×982 display
@@ -11287,8 +12706,13 @@ mod tests {
             d.host_density = 2.0;
         }
 
-        request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((1863, 983), 2.0)));
+        request_resize(&uplink, &desktop, ResizeAsk::Density, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            Some(hp_config((1863, 983), 2.0))
+        );
     }
 
     /// Only a density report waits for a viewport: the current size asked for
@@ -11298,14 +12722,31 @@ mod tests {
     async fn only_a_density_report_waits_for_a_viewport() {
         let (uplink, _wire) = test_uplink();
         let desktop = shared_desktop((1600, 1000), None, None);
-        request_resize(&uplink, &desktop, ResizeAsk::Current, true).await.unwrap();
-        assert_eq!(desktop.lock().unwrap().hp.not_before, None, "the current size goes at once");
+        request_resize(&uplink, &desktop, ResizeAsk::Current, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            desktop.lock().unwrap().hp.not_before,
+            None,
+            "the current size goes at once"
+        );
 
         desktop.lock().unwrap().host_density = 2.0;
-        request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
-        assert!(desktop.lock().unwrap().hp.not_before.is_some(), "a density waits");
-        request_resize(&uplink, &desktop, ResizeAsk::Current, true).await.unwrap();
-        assert_eq!(desktop.lock().unwrap().hp.not_before, None, "and is let go by the current size");
+        request_resize(&uplink, &desktop, ResizeAsk::Density, true)
+            .await
+            .unwrap();
+        assert!(
+            desktop.lock().unwrap().hp.not_before.is_some(),
+            "a density waits"
+        );
+        request_resize(&uplink, &desktop, ResizeAsk::Current, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            desktop.lock().unwrap().hp.not_before,
+            None,
+            "and is let go by the current size"
+        );
     }
 
     /// A window dragged to another screen reports its new size and then its new
@@ -11317,10 +12758,17 @@ mod tests {
         let (sink, _rx) = test_sink();
         let desktop = shared_desktop((1600, 1000), None, None);
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1280, 800)), true).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1280, 800)), true)
+            .await
+            .unwrap();
         desktop.lock().unwrap().host_density = 2.0;
-        request_resize(&uplink, &desktop, ResizeAsk::Density, true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((1280, 800), 2.0)));
+        request_resize(&uplink, &desktop, ResizeAsk::Density, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            Some(hp_config((1280, 800), 2.0))
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -11338,26 +12786,52 @@ mod tests {
             d.host_density = 2.0;
         }
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1000)), true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, None, "the current size");
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "no cover for a no-op");
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1000)), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            None,
+            "the current size"
+        );
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "no cover for a no-op"
+        );
 
         // A genuinely new window size: 1600×1200 points, rendered at the
         // client's density.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1200)), true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, Some(hp_config((1600, 1200), 2.0)));
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1200)), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            hp_settle(&uplink, &desktop, &sink).await,
+            Some(hp_config((1600, 1200), 2.0))
+        );
 
         // The same points reported while this end still announces 1x — a
         // browser right after a reconnect, before the layout has reached it —
         // ask for the same desktop again, not half of one, once the Mac has
         // answered the request already out.
         desktop.lock().unwrap().scale = UNSCALED;
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1200)), true).await.unwrap();
-        assert_eq!(hp_settle(&uplink, &desktop, &sink).await, None, "one request in flight at a time");
-        desktop.lock().unwrap().hp.layout(true);
-        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 1200)), true)
+            .await
+            .unwrap();
         assert_eq!(
-            desktop.lock().unwrap().hp_take_request(tokio::time::Instant::now()).map(|request| request.msg),
+            hp_settle(&uplink, &desktop, &sink).await,
+            None,
+            "one request in flight at a time"
+        );
+        desktop.lock().unwrap().hp.layout(true);
+        hp_resize_step(&uplink, &desktop, None, &SharedTab::default(), &sink)
+            .await
+            .unwrap();
+        assert_eq!(
+            desktop
+                .lock()
+                .unwrap()
+                .hp_take_request(tokio::time::Instant::now())
+                .map(|request| request.msg),
             Some(hp_config((1600, 1200), 2.0))
         );
     }
@@ -11372,7 +12846,11 @@ mod tests {
         let mut hp = HpResize::opening((1728, 902), false);
         assert!(hp.shown, "covered from the start");
 
-        assert_eq!(hp.step(ms(5_000)), None, "the opening configuration is still unanswered");
+        assert_eq!(
+            hp.step(ms(5_000)),
+            None,
+            "the opening configuration is still unanswered"
+        );
         assert_eq!(hp.deadline(ms(5_000)), None);
 
         // The opening display, then the same layout again after the request
@@ -11384,7 +12862,11 @@ mod tests {
         assert!(hp.holds_pixels(), "a repeated layout is not the answer");
 
         hp.layout(true);
-        assert_eq!(hp.step(ms(8_000)), Some(HpStep::Hide), "no layout quiet timer");
+        assert_eq!(
+            hp.step(ms(8_000)),
+            Some(HpStep::Hide),
+            "no layout quiet timer"
+        );
         assert!(!hp.shown);
     }
 
@@ -11408,13 +12890,20 @@ mod tests {
         let t0 = tokio::time::Instant::now();
         let ms = |n: u64| t0 + Duration::from_millis(n);
         let mut hp = HpResize::opening((1728, 902), true);
-        assert!(!hp.holds_for_media(), "nothing to offer for before the canonical display");
+        assert!(
+            !hp.holds_for_media(),
+            "nothing to offer for before the canonical display"
+        );
 
         hp.layout(true);
         assert!(hp.holds_for_media());
         assert!(!hp.settled());
         assert_eq!(hp.step(ms(5_000)), None, "held for the media stream");
-        assert_eq!(hp.deadline(ms(5_000)), None, "only the media answer releases it");
+        assert_eq!(
+            hp.deadline(ms(5_000)),
+            None,
+            "only the media answer releases it"
+        );
 
         assert!(hp.media_answered());
         assert!(!hp.media_answered(), "only the first answer releases it");
@@ -11449,7 +12938,11 @@ mod tests {
         hp.handed_over((1728, 902));
         assert!(!hp.holds_for_media());
         assert_eq!(hp.step(t0), Some(HpStep::Drain));
-        assert_eq!(hp.take_due(t0), Some(((1728, 902), true)), "still the session-ready request");
+        assert_eq!(
+            hp.take_due(t0),
+            Some(((1728, 902), true)),
+            "still the session-ready request"
+        );
     }
 
     /// The browser has already debounced a window change. It goes out without
@@ -11470,7 +12963,11 @@ mod tests {
         assert!(hp.holds_pixels(), "an unchanged layout answers nothing");
         hp.layout(true);
         assert_eq!(hp.step(now), Some(HpStep::Drain));
-        assert_eq!(hp.take_due(now), Some(((1200, 700), false)), "only the latest queued size");
+        assert_eq!(
+            hp.take_due(now),
+            Some(((1200, 700), false)),
+            "only the latest queued size"
+        );
         hp.layout(true);
         hp.layout(false);
         assert_eq!(hp.step(now), Some(HpStep::Hide));
@@ -11492,7 +12989,11 @@ mod tests {
         hp.report((1280, 800), false);
         assert_eq!(hp.deadline(t0), Some(t0));
         assert_eq!(hp.step(t0), Some(HpStep::Drain));
-        assert_eq!(hp.take_due(t0), Some(((1280, 800), false)), "one change, at the window's points");
+        assert_eq!(
+            hp.take_due(t0),
+            Some(((1280, 800), false)),
+            "one change, at the window's points"
+        );
 
         let mut hp = HpResize::default();
         hp.report_density((1440, 900), false, t0);
@@ -11500,7 +13001,11 @@ mod tests {
         let due = t0 + HP_DENSITY_JOIN;
         assert_eq!(hp.step(due - Duration::from_millis(1)), None);
         assert_eq!(hp.step(due), Some(HpStep::Drain));
-        assert_eq!(hp.take_due(due), Some(((1440, 900), false)), "a density alone goes");
+        assert_eq!(
+            hp.take_due(due),
+            Some(((1440, 900), false)),
+            "a density alone goes"
+        );
     }
 
     /// A report while a size waits for its update boundary replaces it, and one
@@ -11518,7 +13023,11 @@ mod tests {
         assert_eq!(hp.step(due), Some(HpStep::Drain));
         hp.report((1728, 1080), true);
         assert_eq!(hp.take_due(due), None);
-        assert_eq!(hp.newest_points(), None, "a return to the desktop showing cancels");
+        assert_eq!(
+            hp.newest_points(),
+            None,
+            "a return to the desktop showing cancels"
+        );
     }
 
     /// An answer that never comes does not leave the cover up for good.
@@ -11531,7 +13040,11 @@ mod tests {
         let due = t0;
         assert_eq!(hp.step(due), Some(HpStep::Drain));
         assert_eq!(hp.take_due(due), Some(((1000, 700), false)));
-        assert_eq!(hp.newest_points(), Some((1000, 700)), "the points out are still the newest");
+        assert_eq!(
+            hp.newest_points(),
+            Some((1000, 700)),
+            "the points out are still the newest"
+        );
         let expiry = due + HP_RESIZE_STUCK;
         assert_eq!(hp.deadline(expiry), Some(expiry));
         assert_eq!(hp.step(expiry), Some(HpStep::GiveUp));
@@ -11566,16 +13079,24 @@ mod tests {
             d.host_density = 2.0;
         }
 
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false)
+            .await
+            .unwrap();
         assert!(written(&wire).is_empty(), "held until the server reports");
         assert_eq!(desktop.lock().unwrap().pending, Some((1728, 883)));
 
         // The report describes the current framebuffer at 2x: same pixels, a new
         // label, and the held request goes out at points × 2.
         let body = output_scale_body((1024, 768), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1024, 768)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1024, 768)),
+            &sink,
+        )
+        .await
+        .unwrap();
         let declared = client_density((3456, 1766), 2.0);
         assert_eq!(written(&wire), declared);
         assert!(matches!(
@@ -11593,9 +13114,15 @@ mod tests {
 
         // The answer names the window's pixels: its rect is on the way.
         let body = output_scale_body((3456, 1766), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1024, 768)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1024, 768)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), declared);
         assert!(forwarded(&sink, &mut rx).await.is_none());
         assert!(!desktop.lock().unwrap().following);
@@ -11616,9 +13143,15 @@ mod tests {
             d.host_density = 2.0;
         }
         let body = output_scale_body((1280, 800), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1280, 800)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1280, 800)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), client_density((1280, 800), 2.0));
         assert_eq!(desktop.lock().unwrap().viewport, Some((640, 400)));
     }
@@ -11639,16 +13172,27 @@ mod tests {
             d.density = Density::Asked;
             d.host_density = 2.0;
         }
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false)
+            .await
+            .unwrap();
 
         // Output at 1x, browser at 2x: declare, and ask for nothing yet.
         let body = output_scale_body((1920, 1080), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         let declared = client_density((3456, 1766), 2.0).to_vec();
         assert_eq!(written(&wire), declared, "the window declared at 2x");
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "1x is what the browser already has");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "1x is what the browser already has"
+        );
         {
             let d = desktop.lock().unwrap();
             assert!(d.following);
@@ -11656,19 +13200,30 @@ mod tests {
         }
 
         // The window changes while the server is following: held.
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 900)), false).await.unwrap();
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1600, 900)), false)
+            .await
+            .unwrap();
         assert_eq!(written(&wire), declared, "nothing more on the wire");
         assert_eq!(desktop.lock().unwrap().pending, Some((1600, 900)));
 
         // The server set the output to the declared 3456×1766 at 2x: a label
         // for the rect on its way, and the newest window asked for in points × 2.
         let body = output_scale_body((3456, 1766), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         let expected = [declared, set_desktop_size((3200, 1800), screen).to_vec()].concat();
         assert_eq!(written(&wire), expected);
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "the rect carries the label");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "the rect carries the label"
+        );
         let d = desktop.lock().unwrap();
         assert!(!d.following);
         assert_eq!(d.pending, None);
@@ -11690,20 +13245,38 @@ mod tests {
             d.density = Density::Asked;
             d.host_density = 2.0;
         }
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false).await.unwrap();
-
-        let body = output_scale_body((1920, 1080), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false)
             .await
             .unwrap();
+
+        let body = output_scale_body((1920, 1080), 1.0);
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), client_density((3456, 1766), 2.0));
 
         // Answered with the output as it was: the follow is over, the window is
         // asked for at 1x, and the browser is told nothing new.
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
-        let expected = [client_density((3456, 1766), 2.0).to_vec(), set_desktop_size((1728, 883), screen).to_vec()].concat();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
+        let expected = [
+            client_density((3456, 1766), 2.0).to_vec(),
+            set_desktop_size((1728, 883), screen).to_vec(),
+        ]
+        .concat();
         assert_eq!(written(&wire), expected);
         assert!(forwarded(&sink, &mut rx).await.is_none());
         let d = desktop.lock().unwrap();
@@ -11731,15 +13304,28 @@ mod tests {
         }
 
         // The browser moved to a 1x screen: what the run loop does on HostDisplay.
-        assert!(send_decided(&uplink, &desktop, |d| d.host_density_changed(1.0)).await.unwrap());
+        assert!(
+            send_decided(&uplink, &desktop, |d| d.host_density_changed(1.0))
+                .await
+                .unwrap()
+        );
         assert!(desktop.lock().unwrap().following);
 
         let body = output_scale_body((1728, 883), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((3456, 1766)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((3456, 1766)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), client_density((1728, 883), 1.0));
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "the rect carries the label");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "the rect carries the label"
+        );
         let d = desktop.lock().unwrap();
         assert!(!d.following);
         assert_eq!(d.wire_scale, Some(UNSCALED));
@@ -11765,25 +13351,42 @@ mod tests {
         }
 
         // To a 2x screen: declared, and the server is now busy following.
-        assert!(send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0)).await.unwrap());
+        assert!(
+            send_decided(&uplink, &desktop, |d| d.host_density_changed(2.0))
+                .await
+                .unwrap()
+        );
         let at_2x = client_density((3456, 1766), 2.0).to_vec();
         assert_eq!(written(&wire), at_2x);
         assert!(desktop.lock().unwrap().following);
 
         // Back to 1x before the answer: recorded, not declared.
-        assert!(!send_decided(&uplink, &desktop, |d| d.host_density_changed(1.0)).await.unwrap());
+        assert!(
+            !send_decided(&uplink, &desktop, |d| d.host_density_changed(1.0))
+                .await
+                .unwrap()
+        );
         assert_eq!(written(&wire), at_2x, "nothing more while the first is out");
         assert_eq!(desktop.lock().unwrap().host_density, 1.0);
 
         // The server followed to 2x: the browser's current 1x is declared in the
         // answer's place, with the window at 1x.
         let body = output_scale_body((3456, 1766), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         let at_1x = client_density((1728, 883), 1.0).to_vec();
         assert_eq!(written(&wire), [at_2x.clone(), at_1x.clone()].concat());
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "the rect carries the label");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "the rect carries the label"
+        );
         {
             let d = desktop.lock().unwrap();
             assert!(d.following, "the second declaration is out");
@@ -11792,9 +13395,15 @@ mod tests {
 
         // The answer to that one names the window's pixels at 1x: nothing more.
         let body = output_scale_body((1728, 883), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), [at_2x, at_1x].concat());
         assert!(forwarded(&sink, &mut rx).await.is_none());
         let d = desktop.lock().unwrap();
@@ -11823,14 +13432,24 @@ mod tests {
 
         // The host toggles the output to 2x: 3456×1766 is already points × 2.
         let body = output_scale_body((3456, 1766), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((3456, 1766)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((3456, 1766)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             forwarded(&sink, &mut rx).await,
             Some(ServerMsg::Resize { w: 3456, h: 1766, scale }) if scale == 2.0
         ));
-        assert_eq!(written(&wire), update_request(false, (3456, 1766)), "a full update, no resize");
+        assert_eq!(
+            written(&wire),
+            update_request(false, (3456, 1766)),
+            "a full update, no resize"
+        );
         let d = desktop.lock().unwrap();
         assert!(!d.repaint_owed);
         assert!(!d.following);
@@ -11855,9 +13474,15 @@ mod tests {
         }
 
         let body = output_scale_body((1920, 1080), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(forwarded(&sink, &mut rx).await.is_some(), "relabelled");
         let resize = set_desktop_size((3456, 1766), screen).to_vec();
         assert_eq!(written(&wire), resize, "the resize is what will repaint");
@@ -11889,8 +13514,11 @@ mod tests {
         let (uplink, wire) = test_uplink();
         let (sink, _rx) = test_sink();
         // What `active_loop` builds for a session kept at 1440×900 on a 2x screen.
-        let desktop =
-            shared_desktop((1920, 1080), Some(Screen { id: 3, flags: 0 }), Some((1440, 900)));
+        let desktop = shared_desktop(
+            (1920, 1080),
+            Some(Screen { id: 3, flags: 0 }),
+            Some((1440, 900)),
+        );
         {
             let mut d = desktop.lock().unwrap();
             d.density = Density::Asked;
@@ -11898,9 +13526,15 @@ mod tests {
         }
 
         let body = output_scale_body((1920, 1080), 1.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), client_density((2880, 1800), 2.0));
         {
             let d = desktop.lock().unwrap();
@@ -11911,9 +13545,15 @@ mod tests {
 
         // The answer names the kept size's pixels: nothing more is asked.
         let body = output_scale_body((2880, 1800), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1920, 1080)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1920, 1080)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(written(&wire), client_density((2880, 1800), 2.0));
         assert!(!desktop.lock().unwrap().following);
     }
@@ -11936,11 +13576,23 @@ mod tests {
         }
 
         let body = output_scale_body((2048, 1536), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1024, 768)), &sink)
-            .await
-            .unwrap();
-        assert!(written(&wire).is_empty(), "the rect is on its way; nothing to ask");
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "no relabel of pixels that are going away");
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1024, 768)),
+            &sink,
+        )
+        .await
+        .unwrap();
+        assert!(
+            written(&wire).is_empty(),
+            "the rect is on its way; nothing to ask"
+        );
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "no relabel of pixels that are going away"
+        );
         assert_eq!(desktop.lock().unwrap().wire_scale, Some(2.0));
 
         // The rect carries the reported scale as its label.
@@ -11978,33 +13630,52 @@ mod tests {
             d.density = Density::Asked;
             d.host_density = 2.0;
         }
-        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false).await.unwrap();
-        assert!(written(&wire).is_empty(), "held until the server reports or sends pixels");
+        request_resize(&uplink, &desktop, ResizeAsk::Viewport((1728, 883)), false)
+            .await
+            .unwrap();
+        assert!(
+            written(&wire).is_empty(),
+            "held until the server reports or sends pixels"
+        );
 
         desktop.lock().unwrap().first_update();
         assert_eq!(desktop.lock().unwrap().density, Density::Unanswered);
         assert_eq!(desktop.lock().unwrap().generic_scale(), UNSCALED);
         // The hold is off: the stashed window goes out in points, at 1x.
-        let replayed = send_decided(&uplink, &desktop, |d| d.pending.take().and_then(|p| d.generic_resize(p)))
-            .await
-            .unwrap();
+        let replayed = send_decided(&uplink, &desktop, |d| {
+            d.pending.take().and_then(|p| d.generic_resize(p))
+        })
+        .await
+        .unwrap();
         assert!(replayed);
-        assert_eq!(written(&wire), set_desktop_size((1728, 883), screen).to_vec());
+        assert_eq!(
+            written(&wire),
+            set_desktop_size((1728, 883), screen).to_vec()
+        );
 
         // A late report is still taken, as a first one: the current pixels are
         // relabelled, and the browser's density declared with the window in
         // points × that density.
         let before = written(&wire).len();
         let body = output_scale_body((1024, 768), 2.0);
-        read_output_scale(&mut body.as_slice(), &uplink, &desktop, &test_shadow((1024, 768)), &sink)
-            .await
-            .unwrap();
+        read_output_scale(
+            &mut body.as_slice(),
+            &uplink,
+            &desktop,
+            &test_shadow((1024, 768)),
+            &sink,
+        )
+        .await
+        .unwrap();
         assert_eq!(desktop.lock().unwrap().density, Density::Reported);
         assert!(matches!(
             forwarded(&sink, &mut rx).await,
             Some(ServerMsg::Resize { w: 1024, h: 768, scale }) if scale == 2.0
         ));
-        assert_eq!(written(&wire)[before..], client_density((3456, 1766), 2.0)[..]);
+        assert_eq!(
+            written(&wire)[before..],
+            client_density((3456, 1766), 2.0)[..]
+        );
 
         let mut d = desktop.lock().unwrap();
         d.first_update();
@@ -12068,7 +13739,14 @@ mod tests {
         assert!(resized);
         assert_eq!(desktop.lock().unwrap().size, (800, 600));
         let resize = forwarded(&sink, &mut rx).await;
-        assert!(matches!(resize, Some(ServerMsg::Resize { w: 800, h: 600, scale: UNSCALED })));
+        assert!(matches!(
+            resize,
+            Some(ServerMsg::Resize {
+                w: 800,
+                h: 600,
+                scale: UNSCALED
+            })
+        ));
         assert!(written(&wire).is_empty(), "nothing left to request");
     }
 
@@ -12093,7 +13771,10 @@ mod tests {
 
         assert!(!resized);
         assert_eq!(desktop.lock().unwrap().size, (1024, 768));
-        assert!(forwarded(&sink, &mut rx).await.is_none(), "no resize reported to the browser");
+        assert!(
+            forwarded(&sink, &mut rx).await.is_none(),
+            "no resize reported to the browser"
+        );
         assert!(written(&wire).is_empty());
     }
 
@@ -12104,20 +13785,39 @@ mod tests {
         let shadow = test_shadow((1024, 768));
 
         // Same size: no change, nothing sent to the browser.
-        assert!(!apply_resize(&desktop, &shadow, (1024, 768), UNSCALED, &sink).await.unwrap());
+        assert!(
+            !apply_resize(&desktop, &shadow, (1024, 768), UNSCALED, &sink)
+                .await
+                .unwrap()
+        );
         assert!(forwarded(&sink, &mut rx).await.is_none());
 
         // A real change updates the state and reaches the browser.
-        assert!(apply_resize(&desktop, &shadow, (640, 480), UNSCALED, &sink).await.unwrap());
+        assert!(
+            apply_resize(&desktop, &shadow, (640, 480), UNSCALED, &sink)
+                .await
+                .unwrap()
+        );
         assert_eq!(desktop.lock().unwrap().size, (640, 480));
         let resize = forwarded(&sink, &mut rx).await;
-        assert!(matches!(resize, Some(ServerMsg::Resize { w: 640, h: 480, scale: UNSCALED })));
+        assert!(matches!(
+            resize,
+            Some(ServerMsg::Resize {
+                w: 640,
+                h: 480,
+                scale: UNSCALED
+            })
+        ));
         // And the shadow follows it, or the next rect would be compared against a
         // framebuffer that no longer exists.
         assert_eq!(shadow.lock().unwrap().size(), (640, 480));
 
         // A zero dimension is a protocol violation, not a resize.
-        assert!(apply_resize(&desktop, &shadow, (0, 480), UNSCALED, &sink).await.is_err());
+        assert!(
+            apply_resize(&desktop, &shadow, (0, 480), UNSCALED, &sink)
+                .await
+                .is_err()
+        );
     }
 
     /// Feed one key event through `translate_input`, carrying the browser's
@@ -12160,13 +13860,28 @@ mod tests {
         let mut keys = HashMap::new();
         // Alt goes out as Meta_L so Screen Sharing lands it on Option, and the
         // release is the keysym that was pressed, not a fresh X11 lookup.
-        assert_eq!(key_on(true, &mut keys, "AltLeft", true, false), key_event(true, 0xFFE7));
-        assert_eq!(key_on(true, &mut keys, "AltLeft", false, false), key_event(false, 0xFFE7));
-        assert_eq!(key_on(true, &mut keys, "AltRight", true, false), key_event(true, 0xFFE8));
+        assert_eq!(
+            key_on(true, &mut keys, "AltLeft", true, false),
+            key_event(true, 0xFFE7)
+        );
+        assert_eq!(
+            key_on(true, &mut keys, "AltLeft", false, false),
+            key_event(false, 0xFFE7)
+        );
+        assert_eq!(
+            key_on(true, &mut keys, "AltRight", true, false),
+            key_event(true, 0xFFE8)
+        );
         // The Windows key already lands on Command as Super_L, so it is unchanged,
         // and a generic server still gets Alt_L for Alt.
-        assert_eq!(key_on(true, &mut keys, "MetaLeft", true, false), key_event(true, 0xFFEB));
-        assert_eq!(key_on(false, &mut keys, "AltLeft", true, false), key_event(true, 0xFFE9));
+        assert_eq!(
+            key_on(true, &mut keys, "MetaLeft", true, false),
+            key_event(true, 0xFFEB)
+        );
+        assert_eq!(
+            key_on(false, &mut keys, "AltLeft", true, false),
+            key_event(true, 0xFFE9)
+        );
     }
 
     #[test]
@@ -12259,14 +13974,23 @@ mod tests {
         for modifier in ["MetaLeft", "ControlRight"] {
             let mut keys = HashMap::new();
             key_on(true, &mut keys, modifier, true, true);
-            assert_eq!(key_on(true, &mut keys, "KeyZ", true, true), key_event(true, 0x7a));
+            assert_eq!(
+                key_on(true, &mut keys, "KeyZ", true, true),
+                key_event(true, 0x7a)
+            );
         }
         let mut keys = HashMap::new();
         key_on(false, &mut keys, "ControlLeft", true, true);
-        assert_eq!(key_on(false, &mut keys, "KeyZ", true, true), key_event(true, 0x5a));
+        assert_eq!(
+            key_on(false, &mut keys, "KeyZ", true, true),
+            key_event(true, 0x5a)
+        );
         let mut keys = HashMap::new();
         key_on(true, &mut keys, "AltLeft", true, true);
-        assert_eq!(key_on(true, &mut keys, "KeyZ", true, true), key_event(true, 0x5a));
+        assert_eq!(
+            key_on(true, &mut keys, "KeyZ", true, true),
+            key_event(true, 0x5a)
+        );
     }
 
     // ── The Apple dialect (no sockets: framed records over a slice) ─────────
@@ -12325,7 +14049,10 @@ mod tests {
         wire.extend_from_slice(&[0u8; 8]);
         wire.extend_from_slice(&ENCODING_RAW.to_be_bytes());
         let err = await_rekey(&mut wire.as_slice(), &wrap).await.unwrap_err();
-        assert!(format!("{err:#}").contains("before the record layer was up"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("before the record layer was up"),
+            "{err:#}"
+        );
 
         // A second rectangle in the same update, which would already be encrypted.
         let mut wire = rekey_update(&wrap, apple_keys());
@@ -12374,10 +14101,10 @@ mod tests {
             msg.extend_from_slice(&value.to_be_bytes());
         }
         msg.extend_from_slice(&ENCODING_RAW.to_be_bytes());
-        msg.extend(std::iter::repeat_n(
-            [shade, shade, shade, 0],
-            usize::from(w) * usize::from(h),
-        ).flatten());
+        msg.extend(
+            std::iter::repeat_n([shade, shade, shade, 0], usize::from(w) * usize::from(h))
+                .flatten(),
+        );
         msg
     }
 
@@ -12422,10 +14149,7 @@ mod tests {
         msg.extend_from_slice(&1u16.to_be_bytes());
         msg.extend_from_slice(&[0u8; 8]);
         msg.extend_from_slice(&vnc_apple::ENCODING_DISPLAY_LAYOUT.to_be_bytes());
-        msg.extend_from_slice(&layout_payload(
-            current,
-            &[(11, backing, backing, 0x01)],
-        ));
+        msg.extend_from_slice(&layout_payload(current, &[(11, backing, backing, 0x01)]));
         msg
     }
 
@@ -12450,10 +14174,7 @@ mod tests {
             [0x00, 0x00, 0xf0],
             [0x10, 0x20, 0x30],
         ];
-        let bgrx: Vec<u8> = colours
-            .iter()
-            .flat_map(|c| [c[2], c[1], c[0], 0])
-            .collect();
+        let bgrx: Vec<u8> = colours.iter().flat_map(|c| [c[2], c[1], c[0], 0]).collect();
 
         let mut rects = Vec::new();
         // Raw.
@@ -12472,7 +14193,11 @@ mod tests {
         let (uplink, _sent) = test_uplink();
         let (sink, mut rx) = sized_sink((2, 2)).await;
         let shadow = test_shadow((2, 2));
-        let shared = test_shared(uplink, shared_desktop((2, 2), None, None), Arc::clone(&shadow));
+        let shared = test_shared(
+            uplink,
+            shared_desktop((2, 2), None, None),
+            Arc::clone(&shadow),
+        );
         // Kept, not discarded: a decoder that bailed on the second encoding would
         // leave the first rectangle's pixels in the shadow and the check below would
         // still pass. Running out of stream is the only acceptable way to stop.
@@ -12485,15 +14210,30 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(format!("{err:#}").contains("closed the connection"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("closed the connection"),
+            "{err:#}"
+        );
 
         sink.flush().await;
         assert_eq!(units(&mut rx).len(), 1, "one update, one tile");
         // Both encodings decoded the same picture, so the shadow — which holds what
         // the last of them left — matches the first.
-        let held = shadow.lock().unwrap().copy_out(Rect::from_size(0, 0, 2, 2).unwrap());
-        let first: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0]]).collect();
-        assert_eq!(held, Some(first), "two encodings of one picture, one picture");
+        let held = shadow
+            .lock()
+            .unwrap()
+            .copy_out(Rect::from_size(0, 0, 2, 2).unwrap());
+        let first: Vec<u8> = bgrx
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| [p[2], p[1], p[0]])
+            .collect();
+        assert_eq!(
+            held,
+            Some(first),
+            "two encodings of one picture, one picture"
+        );
     }
 
     /// The picture of a session with a media stream is the stream alone: the
@@ -12511,8 +14251,22 @@ mod tests {
         let shared = test_shared(uplink, Arc::clone(&desktop), Arc::clone(&shadow));
 
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
-        let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: true, strip: None, begins: true, data: vec![0; 16] };
+        let media = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: false },
+                1,
+            )
+            .0,
+        ));
+        let unit = PassedUnit {
+            size: (2, 2),
+            decode: "hev1.4.10.L150.BE.8".into(),
+            keyframe: true,
+            strip: None,
+            begins: true,
+            data: vec![0; 16],
+        };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         assert!(sink.passing());
         sink.flush().await;
@@ -12535,11 +14289,24 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(format!("{err:#}").contains("closed the connection"), "{err:#}");
-        assert!(sink.passing(), "the Mac's rectangles do not take the picture");
+        assert!(
+            format!("{err:#}").contains("closed the connection"),
+            "{err:#}"
+        );
+        assert!(
+            sink.passing(),
+            "the Mac's rectangles do not take the picture"
+        );
         sink.flush().await;
         assert!(units(&mut rx).is_empty(), "nothing is encoded of them");
-        assert!(shadow.lock().unwrap().copy_out(Rect::from_size(0, 0, 2, 2).unwrap()).is_none(), "nor recorded as sent");
+        assert!(
+            shadow
+                .lock()
+                .unwrap()
+                .copy_out(Rect::from_size(0, 0, 2, 2).unwrap())
+                .is_none(),
+            "nor recorded as sent"
+        );
     }
 
     /// The browser's notice that the screen is not available comes down on the
@@ -12557,23 +14324,56 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: false },
+                1,
+            )
+            .0,
+        ));
 
         // Not a keyframe: dropped for one, and the notice stays up.
-        let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: false, strip: None, begins: true, data: vec![0; 16] };
+        let unit = PassedUnit {
+            size: (2, 2),
+            decode: "hev1.4.10.L150.BE.8".into(),
+            keyframe: false,
+            strip: None,
+            begins: true,
+            data: vec![0; 16],
+        };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert!(!out.iter().any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })), "{out:?}");
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })),
+            "{out:?}"
+        );
 
-        let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: true, strip: None, begins: true, data: vec![0; 16] };
+        let unit = PassedUnit {
+            size: (2, 2),
+            decode: "hev1.4.10.L150.BE.8".into(),
+            keyframe: true,
+            strip: None,
+            begins: true,
+            data: vec![0; 16],
+        };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        let video = out.iter().position(|m| matches!(m, ServerMsg::Video(_))).expect("the unit");
-        let uncovered =
-            out.iter().position(|m| matches!(m, ServerMsg::ScreenUnavailable { active: false })).expect("uncovered");
-        assert!(uncovered > video, "the notice lifts behind the picture: {out:?}");
+        let video = out
+            .iter()
+            .position(|m| matches!(m, ServerMsg::Video(_)))
+            .expect("the unit");
+        let uncovered = out
+            .iter()
+            .position(|m| matches!(m, ServerMsg::ScreenUnavailable { active: false }))
+            .expect("uncovered");
+        assert!(
+            uncovered > video,
+            "the notice lifts behind the picture: {out:?}"
+        );
         assert!(!desktop.lock().unwrap().covered);
 
         // The stream stops: said once, however many times it is found stopped.
@@ -12581,7 +14381,13 @@ mod tests {
         cover(&desktop, &sink).await.unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert!(matches!(out.as_slice(), [ServerMsg::ScreenUnavailable { active: true }]), "{out:?}");
+        assert!(
+            matches!(
+                out.as_slice(),
+                [ServerMsg::ScreenUnavailable { active: true }]
+            ),
+            "{out:?}"
+        );
     }
 
     /// A display in strips is the browser's at a frame's last strip, not at the
@@ -12600,7 +14406,14 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
+        let media = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: true },
+                1,
+            )
+            .0,
+        ));
         let strip = |index, ends| PassedUnit {
             size: (2, 2),
             decode: "hev1.4.10.L150.BE.8".into(),
@@ -12610,20 +14423,39 @@ mod tests {
             data: vec![0; 16],
         };
 
-        pass_unit(&shared, 0, strip(0, false), &sink, &media).await.unwrap();
+        pass_unit(&shared, 0, strip(0, false), &sink, &media)
+            .await
+            .unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert!(out.iter().any(|m| matches!(m, ServerMsg::Video(_))), "{out:?}");
-        assert!(!out.iter().any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })), "{out:?}");
+        assert!(
+            out.iter().any(|m| matches!(m, ServerMsg::Video(_))),
+            "{out:?}"
+        );
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })),
+            "{out:?}"
+        );
         assert!(desktop.lock().unwrap().covered && !desktop.lock().unwrap().canvas_live);
 
-        pass_unit(&shared, 0, strip(1, true), &sink, &media).await.unwrap();
+        pass_unit(&shared, 0, strip(1, true), &sink, &media)
+            .await
+            .unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        let video = out.iter().position(|m| matches!(m, ServerMsg::Video(_))).expect("the strip");
-        let uncovered =
-            out.iter().position(|m| matches!(m, ServerMsg::ScreenUnavailable { active: false })).expect("uncovered");
-        assert!(uncovered > video, "the notice lifts behind the frame's last strip: {out:?}");
+        let video = out
+            .iter()
+            .position(|m| matches!(m, ServerMsg::Video(_)))
+            .expect("the strip");
+        let uncovered = out
+            .iter()
+            .position(|m| matches!(m, ServerMsg::ScreenUnavailable { active: false }))
+            .expect("uncovered");
+        assert!(
+            uncovered > video,
+            "the notice lifts behind the frame's last strip: {out:?}"
+        );
         assert!(desktop.lock().unwrap().canvas_live);
     }
 
@@ -12654,14 +14486,38 @@ mod tests {
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((2, 2)));
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 1).0));
-        let unit = PassedUnit { size: (2, 2), decode: "hev1.4.10.L150.BE.8".into(), keyframe: true, strip: None, begins: true, data: vec![0; 16] };
+        let media = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: false },
+                1,
+            )
+            .0,
+        ));
+        let unit = PassedUnit {
+            size: (2, 2),
+            decode: "hev1.4.10.L150.BE.8".into(),
+            keyframe: true,
+            strip: None,
+            begins: true,
+            data: vec![0; 16],
+        };
         pass_unit(&shared, 0, unit, &sink, &media).await.unwrap();
         sink.flush().await;
         let out: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert!(out.iter().any(|m| matches!(m, ServerMsg::Video(_))), "{out:?}");
-        assert!(!out.iter().any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })), "{out:?}");
-        assert!(desktop.lock().unwrap().covered, "still owed to the display the resize brings");
+        assert!(
+            out.iter().any(|m| matches!(m, ServerMsg::Video(_))),
+            "{out:?}"
+        );
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, ServerMsg::ScreenUnavailable { .. })),
+            "{out:?}"
+        );
+        assert!(
+            desktop.lock().unwrap().covered,
+            "still owed to the display the resize brings"
+        );
     }
 
     /// An encoding that was never listed is a server breaking the protocol, and
@@ -12674,11 +14530,18 @@ mod tests {
             let wire = update(&[geometry(0, 0, 2, 2, encoding)]);
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = test_sink();
-            let shared = test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2)));
+            let shared = test_shared(
+                uplink,
+                shared_desktop((2, 2), None, None),
+                test_shadow((2, 2)),
+            );
             let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
                 .await
                 .unwrap_err();
-            assert!(format!("{err:#}").contains("which was not advertised"), "{encoding}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("which was not advertised"),
+                "{encoding}: {err:#}"
+            );
         }
     }
 
@@ -12718,10 +14581,17 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(format!("{err:#}").contains("closed the connection"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("closed the connection"),
+            "{err:#}"
+        );
 
         sink.flush().await;
-        assert_eq!(units(&mut rx).len(), 1, "the rectangle behind the empty one");
+        assert_eq!(
+            units(&mut rx).len(),
+            1,
+            "the rectangle behind the empty one"
+        );
     }
 
     #[tokio::test]
@@ -12748,7 +14618,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(format!("{err:#}").contains("closed the connection"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("closed the connection"),
+            "{err:#}"
+        );
 
         // The rectangle arrived whole, which is the point: one 2x2 frame.
         sink.flush().await;
@@ -12799,7 +14672,9 @@ mod tests {
         }));
         let (sink, mut rx) = test_sink();
 
-        request_apple_clipboard(&clipboard, &uplink, &sink).await.unwrap();
+        request_apple_clipboard(&clipboard, &uplink, &sink)
+            .await
+            .unwrap();
 
         {
             let state = clipboard.lock().unwrap();
@@ -12884,8 +14759,14 @@ mod tests {
             let mut before_idle = vnc_apple_clipboard::fetch(0).to_vec();
             before_idle.extend_from_slice(&client_fence(0, b"idle"));
             if repaint_pending {
-                server.write_all(&apple_layout_update(Some(11), (2, 2))).await.unwrap();
-                before_idle.extend_from_slice(&vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (2, 2)));
+                server
+                    .write_all(&apple_layout_update(Some(11), (2, 2)))
+                    .await
+                    .unwrap();
+                before_idle.extend_from_slice(&vnc_apple::auto_framebuffer_update(
+                    vnc_apple::PUSH_INTERVAL_STANDARD_US,
+                    (2, 2),
+                ));
                 before_idle.extend_from_slice(&update_request(false, (2, 2)));
             }
             let mut observed = vec![0; before_idle.len()];
@@ -12995,7 +14876,10 @@ mod tests {
         let mut queued = vec![vec![0u8; 64]; 8];
         queued.push(key_event(false, 0xffe3).to_vec());
         send_all(&uplink, &queued).await.unwrap();
-        assert!(backlog.behind(1), "a 16-byte socket cannot have taken it all yet");
+        assert!(
+            backlog.behind(1),
+            "a 16-byte socket cannot have taken it all yet"
+        );
 
         let expected: Vec<u8> = queued.concat();
         let reader = tokio::spawn(async move {
@@ -13033,7 +14917,9 @@ mod tests {
             .unwrap();
 
         // Every update earns a request for the next, which is a send of its own.
-        let updates: Vec<u8> = (0..32).flat_map(|shade| raw_rect_update(0, 0, 2, 2, shade)).collect();
+        let updates: Vec<u8> = (0..32)
+            .flat_map(|shade| raw_rect_update(0, 0, 2, 2, shade))
+            .collect();
         let (sink, mut frames) = test_sink();
         tokio::spawn(async move { while frames.recv().await.is_some() {} });
         let shared = test_shared(
@@ -13043,30 +14929,34 @@ mod tests {
         );
         let err = tokio::time::timeout(
             Duration::from_secs(5),
-            read_loop(
-                std::io::Cursor::new(updates),
-                shared,
-                true,
-                None,
-                sink,
-            ),
+            read_loop(std::io::Cursor::new(updates), shared, true, None, sink),
         )
         .await
         .expect("the read loop stopped reading behind a send")
         .unwrap_err();
-        assert!(format!("{err:#}").contains("closed the connection"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("closed the connection"),
+            "{err:#}"
+        );
 
         // Nothing was dropped to get there, and the requests went out behind the
         // input they were queued behind.
         let mut sent = vec![0u8; 64 * 64 + 1];
         unread.read_exact(&mut sent).await.unwrap();
         assert!(sent[..64 * 64].iter().all(|&b| b == 0));
-        assert_eq!(sent[64 * 64], 3, "a FramebufferUpdateRequest follows the input");
+        assert_eq!(
+            sent[64 * 64],
+            3,
+            "a FramebufferUpdateRequest follows the input"
+        );
         let mut rest = vec![0u8; 32 * 10 - 1];
         unread.read_exact(&mut rest).await.unwrap();
         #[cfg(feature = "wlshare")]
         backlog.room_for_media().await;
-        assert!(!writer.is_finished(), "the writer outlives everything queued so far");
+        assert!(
+            !writer.is_finished(),
+            "the writer outlives everything queued so far"
+        );
     }
 
     /// What waits behind a slow uplink is where the pointer is and how far the
@@ -13078,12 +14968,54 @@ mod tests {
         for x in 0..100 {
             assert!(held.hold(ClientMsg::MouseMove { x, y: 2 * x }).is_none());
         }
-        assert!(held.hold(ClientMsg::Wheel { dx: 0.0, dy: 30.0, unit: WheelUnit::Pixel }).is_none());
-        assert!(held.hold(ClientMsg::Wheel { dx: 0.0, dy: 2.0, unit: WheelUnit::Line }).is_none());
-        assert!(held.hold(ClientMsg::Wheel { dx: -4.0, dy: -12.0, unit: WheelUnit::Pixel }).is_none());
-        assert!(held.hold(ClientMsg::Wheel { dx: 0.0, dy: 1.0, unit: WheelUnit::Page }).is_none());
-        assert!(held.hold(ClientMsg::Wheel { dx: 0.0, dy: 0.25, unit: WheelUnit::Notch }).is_none());
-        assert!(held.hold(ClientMsg::Wheel { dx: 0.0, dy: 0.75, unit: WheelUnit::Notch }).is_none());
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 30.0,
+                unit: WheelUnit::Pixel
+            })
+            .is_none()
+        );
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 2.0,
+                unit: WheelUnit::Line
+            })
+            .is_none()
+        );
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: -4.0,
+                dy: -12.0,
+                unit: WheelUnit::Pixel
+            })
+            .is_none()
+        );
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 1.0,
+                unit: WheelUnit::Page
+            })
+            .is_none()
+        );
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 0.25,
+                unit: WheelUnit::Notch
+            })
+            .is_none()
+        );
+        assert!(
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 0.75,
+                unit: WheelUnit::Notch
+            })
+            .is_none()
+        );
         assert!(!held.is_empty());
 
         // The position first: the scroll lands where the pointer is.
@@ -13113,9 +15045,17 @@ mod tests {
     fn held_scroll_is_capped_and_only_motion_is_held() {
         let mut held = HeldMotion::default();
         for _ in 0..50 {
-            held.hold(ClientMsg::Wheel { dx: 0.0, dy: 400.0, unit: WheelUnit::Pixel });
+            held.hold(ClientMsg::Wheel {
+                dx: 0.0,
+                dy: 400.0,
+                unit: WheelUnit::Pixel,
+            });
         }
-        held.hold(ClientMsg::Wheel { dx: f32::NAN, dy: 0.0, unit: WheelUnit::Pixel });
+        held.hold(ClientMsg::Wheel {
+            dx: f32::NAN,
+            dy: 0.0,
+            unit: WheelUnit::Pixel,
+        });
         let out: Vec<ClientMsg> = held.take().collect();
         assert!(matches!(
             out[..],
@@ -13124,11 +15064,28 @@ mod tests {
 
         // The cap is the units' together: a hand that changed from trackpad to
         // wheel behind the link is still owed one event's worth, not one each.
-        held.hold(ClientMsg::Wheel { dx: 0.0, dy: 200.0, unit: WheelUnit::Pixel });
-        held.hold(ClientMsg::Wheel { dx: 0.0, dy: -1.0, unit: WheelUnit::Notch });
-        for unit in [WheelUnit::Line, WheelUnit::Page, WheelUnit::Notch, WheelUnit::Pixel] {
+        held.hold(ClientMsg::Wheel {
+            dx: 0.0,
+            dy: 200.0,
+            unit: WheelUnit::Pixel,
+        });
+        held.hold(ClientMsg::Wheel {
+            dx: 0.0,
+            dy: -1.0,
+            unit: WheelUnit::Notch,
+        });
+        for unit in [
+            WheelUnit::Line,
+            WheelUnit::Page,
+            WheelUnit::Notch,
+            WheelUnit::Pixel,
+        ] {
             for _ in 0..50 {
-                held.hold(ClientMsg::Wheel { dx: 0.0, dy: 300.0, unit });
+                held.hold(ClientMsg::Wheel {
+                    dx: 0.0,
+                    dy: 300.0,
+                    unit,
+                });
             }
         }
         let out: Vec<ClientMsg> = held.take().collect();
@@ -13142,10 +15099,21 @@ mod tests {
             .sum();
         assert!((owed - Wheel::MAX_PX).abs() < 0.01, "{owed}");
 
-        let key = ClientMsg::Key { code: "KeyA".into(), pressed: true, caps: false };
+        let key = ClientMsg::Key {
+            code: "KeyA".into(),
+            pressed: true,
+            caps: false,
+        };
         assert!(matches!(held.hold(key), Some(ClientMsg::Key { .. })));
-        let click = ClientMsg::MouseButton { button: MouseButton::Left, pressed: true, clicks: 1 };
-        assert!(matches!(held.hold(click), Some(ClientMsg::MouseButton { .. })));
+        let click = ClientMsg::MouseButton {
+            button: MouseButton::Left,
+            pressed: true,
+            clicks: 1,
+        };
+        assert!(matches!(
+            held.hold(click),
+            Some(ClientMsg::MouseButton { .. })
+        ));
         assert!(held.is_empty());
     }
 
@@ -13156,7 +15124,10 @@ mod tests {
         let (mut uplink, backlog, writer) = Uplink::plain(sock).queued();
         let writer = tokio::spawn(writer);
         assert!(!backlog.behind(Backlog::MOTION_LIMIT));
-        uplink.send(&vec![0u8; Backlog::MOTION_LIMIT + 16]).await.unwrap();
+        uplink
+            .send(&vec![0u8; Backlog::MOTION_LIMIT + 16])
+            .await
+            .unwrap();
         assert!(backlog.behind(Backlog::MOTION_LIMIT));
 
         let mut sent = vec![0u8; Backlog::MOTION_LIMIT + 16];
@@ -13226,14 +15197,7 @@ mod tests {
                 shared_desktop((2, 2), None, None),
                 test_shadow((2, 2)),
             );
-            let _ = read_loop(
-                std::io::Cursor::new(wire),
-                shared,
-                true,
-                None,
-                sink,
-            )
-            .await;
+            let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink).await;
 
             let expected = if continuous {
                 enable_continuous_updates(true, (2, 2)).to_vec()
@@ -13268,14 +15232,7 @@ mod tests {
             shared_desktop((2, 2), None, None),
             test_shadow((2, 2)),
         );
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            true,
-            None,
-            sink,
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink).await;
 
         let mut expected = enable_continuous_updates(true, (2, 2)).to_vec();
         expected.extend_from_slice(&update_request(true, (2, 2)));
@@ -13302,14 +15259,7 @@ mod tests {
             shared_desktop((2, 2), None, None),
             test_shadow((2, 2)),
         );
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            true,
-            None,
-            sink,
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink).await;
 
         let mut expected = enable_continuous_updates(true, (2, 2)).to_vec();
         expected.extend_from_slice(&enable_continuous_updates(true, (8, 4)));
@@ -13382,7 +15332,12 @@ mod tests {
 
     /// [`wlshare_tiles_update`] with the copy from `from`, and the store of `stored`.
     #[cfg(feature = "wlshare")]
-    fn wlshare_tiles_update_copying(w: u16, from: (u16, u16), stored: (u16, u16, u16, u16), marker: &[u8]) -> Vec<u8> {
+    fn wlshare_tiles_update_copying(
+        w: u16,
+        from: (u16, u16),
+        stored: (u16, u16, u16, u16),
+        marker: &[u8],
+    ) -> Vec<u8> {
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&7u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
@@ -13395,7 +15350,10 @@ mod tests {
         rect(&mut msg, (0, 0, w, 16), wlshare_proto::tiles::KIND_PNG);
         msg.extend_from_slice(&3u32.to_be_bytes());
         msg.extend_from_slice(&[0x89, 0x50, 0x4e]);
-        for (kind, frame) in [(wlshare_proto::tiles::KIND_START, KEYFRAME), (wlshare_proto::tiles::KIND_FRAME, FRAME)] {
+        for (kind, frame) in [
+            (wlshare_proto::tiles::KIND_START, KEYFRAME),
+            (wlshare_proto::tiles::KIND_FRAME, FRAME),
+        ] {
             rect(&mut msg, (0, 16, 320, 192), kind);
             msg.push(2);
             msg.extend_from_slice(&(frame.len() as u32).to_be_bytes());
@@ -13403,7 +15361,11 @@ mod tests {
         }
         rect(&mut msg, (0, 16, 320, 192), wlshare_proto::tiles::KIND_END);
         msg.push(2);
-        rect(&mut msg, (0, 16, w.min(320), 160), wlshare_proto::tiles::KIND_COPY);
+        rect(
+            &mut msg,
+            (0, 16, w.min(320), 160),
+            wlshare_proto::tiles::KIND_COPY,
+        );
         msg.extend_from_slice(&from.0.to_be_bytes());
         msg.extend_from_slice(&from.1.to_be_bytes());
         rect(&mut msg, stored, wlshare_proto::tiles::KIND_STORE);
@@ -13422,23 +15384,50 @@ mod tests {
     async fn wlshares_tiles_are_passed_rectangle_by_rectangle() {
         let (uplink, sent) = test_uplink();
         let (sink, mut rx) = sized_sink((320, 208)).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 208), None, None),
+            test_shadow((320, 208)),
+        );
         shared.passthrough = Some(test_tiles_listing());
         let task = open_read_loop(wlshare_tiles_update(320, b"t1"), shared, sink);
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        let Some(ServerMsg::Run { records: tile, .. }) = rx.recv().await else { panic!("the tile's run") };
-        assert!(matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e]));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D"));
-        let Some(ServerMsg::Run { records: region, .. }) = rx.recv().await else { panic!("the region's run") };
-        assert!(matches!(&region[..], [ServerMsg::Region(first), ServerMsg::Region(next)]
-            if first.keyframe && (first.x, first.y, first.w, first.h) == (0, 16, 320, 192) && !next.keyframe));
-        assert!(matches!(rx.recv().await, Some(ServerMsg::RegionEnd { stream: 2, .. })));
-        let Some(ServerMsg::Run { records: rest, .. }) = rx.recv().await else { panic!("the copy's and the cache's run") };
-        assert!(matches!(&rest[..], [ServerMsg::Copy(copy), ServerMsg::Cache(store), ServerMsg::Cache(drawn)]
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::TilesStart { .. })
+        ));
+        let Some(ServerMsg::Run { records: tile, .. }) = rx.recv().await else {
+            panic!("the tile's run")
+        };
+        assert!(
+            matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e])
+        );
+        assert!(
+            matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D")
+        );
+        let Some(ServerMsg::Run {
+            records: region, ..
+        }) = rx.recv().await
+        else {
+            panic!("the region's run")
+        };
+        assert!(
+            matches!(&region[..], [ServerMsg::Region(first), ServerMsg::Region(next)]
+            if first.keyframe && (first.x, first.y, first.w, first.h) == (0, 16, 320, 192) && !next.keyframe)
+        );
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::RegionEnd { stream: 2, .. })
+        ));
+        let Some(ServerMsg::Run { records: rest, .. }) = rx.recv().await else {
+            panic!("the copy's and the cache's run")
+        };
+        assert!(
+            matches!(&rest[..], [ServerMsg::Copy(copy), ServerMsg::Cache(store), ServerMsg::Cache(drawn)]
             if *copy == crate::protocol::CopyUnit { sx: 0, sy: 48, x: 0, y: 16, w: 320, h: 160 }
                 && *store == crate::protocol::CacheUnit { store: true, slot: 5, x: 0, y: 0 }
-                && *drawn == crate::protocol::CacheUnit { store: false, slot: 5, x: 0, y: 0 }));
+                && *drawn == crate::protocol::CacheUnit { store: false, slot: 5, x: 0, y: 0 })
+        );
         let echo = client_fence(0, b"t1");
         tokio::time::timeout(Duration::from_secs(2), async {
             while written(&sent) != echo {
@@ -13457,11 +15446,20 @@ mod tests {
     async fn a_tiles_copy_from_outside_the_desktop_is_fatal() {
         let (uplink, _sent) = test_uplink();
         let (sink, _rx) = sized_sink((320, 208)).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 208), None, None),
+            test_shadow((320, 208)),
+        );
         shared.passthrough = Some(test_tiles_listing());
         let wire = wlshare_tiles_update_copying(320, (0, 49), (0, 0, 64, 64), b"t1");
-        let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
-        assert!(format!("{err:#}").contains("not inside the 320x208 desktop"), "{err:#}");
+        let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not inside the 320x208 desktop"),
+            "{err:#}"
+        );
     }
 
     /// A store that is not one 64×64 tile on the grid is fatal: the page's cache keeps
@@ -13472,11 +15470,20 @@ mod tests {
         for stored in [(0, 0, 64, 32), (16, 0, 64, 64)] {
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = sized_sink((320, 208)).await;
-            let mut shared = test_shared(uplink, shared_desktop((320, 208), None, None), test_shadow((320, 208)));
+            let mut shared = test_shared(
+                uplink,
+                shared_desktop((320, 208), None, None),
+                test_shadow((320, 208)),
+            );
             shared.passthrough = Some(test_tiles_listing());
             let wire = wlshare_tiles_update_copying(320, (0, 48), stored, b"t1");
-            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
-            assert!(format!("{err:#}").contains("not one 64x64 tile on the grid"), "{err:#}");
+            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{err:#}").contains("not one 64x64 tile on the grid"),
+                "{err:#}"
+            );
         }
     }
 
@@ -13501,7 +15508,10 @@ mod tests {
             first.extend_from_slice(&cell.0.to_le_bytes());
             first.extend_from_slice(&cell.1.to_le_bytes());
             first.extend_from_slice(&[0; 11]);
-            let block = wlshare_proto::progressive::block(wlshare_proto::progressive::WBT_TILE_FIRST, &first);
+            let block = wlshare_proto::progressive::block(
+                wlshare_proto::progressive::WBT_TILE_FIRST,
+                &first,
+            );
             msg.extend_from_slice(&(block.len() as u32).to_be_bytes());
             msg.extend_from_slice(&block);
         }
@@ -13521,27 +15531,63 @@ mod tests {
         let (sink, mut rx) = sized_sink(size).await;
         let mut shared = test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
         shared.passthrough = Some(test_tiles_listing());
-        let wire = wlshare_progressive_update(&[((0, 0, 64, 64), (0, 0)), ((64, 0, 36, 64), (1, 0)), ((64, 64, 36, 16), (1, 1))], b"p1");
+        let wire = wlshare_progressive_update(
+            &[
+                ((0, 0, 64, 64), (0, 0)),
+                ((64, 0, 36, 64), (1, 0)),
+                ((64, 64, 36, 16), (1, 1)),
+            ],
+            b"p1",
+        );
         let task = open_read_loop(wire, shared, sink);
-        assert!(matches!(rx.recv().await, Some(ServerMsg::TilesStart { .. })));
-        let Some(ServerMsg::Run { records: tiles, .. }) = rx.recv().await else { panic!("the update's run") };
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::TilesStart { .. })
+        ));
+        let Some(ServerMsg::Run { records: tiles, .. }) = rx.recv().await else {
+            panic!("the update's run")
+        };
         assert_eq!(tiles.len(), 3, "the update's tiles together");
-        for (place, tile) in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)].into_iter().zip(tiles) {
-            let ServerMsg::Tile(unit) = tile else { panic!("a tile") };
-            assert_eq!((unit.format, (unit.x, unit.y, unit.w, unit.h)), (crate::tiles::Format::Progressive, place));
-            assert_eq!(wlshare_proto::progressive::tile_of(&unit.data), Some((place.0 / 64, place.1 / 64)), "the block as it came");
+        for (place, tile) in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)]
+            .into_iter()
+            .zip(tiles)
+        {
+            let ServerMsg::Tile(unit) = tile else {
+                panic!("a tile")
+            };
+            assert_eq!(
+                (unit.format, (unit.x, unit.y, unit.w, unit.h)),
+                (crate::tiles::Format::Progressive, place)
+            );
+            assert_eq!(
+                wlshare_proto::progressive::tile_of(&unit.data),
+                Some((place.0 / 64, place.1 / 64)),
+                "the block as it came"
+            );
         }
         task.abort();
         for (tile, says) in [
             (((16, 0, 64, 64), (0, 0)), "not one 64x64 tile on the grid"),
             (((0, 0, 64, 32), (0, 0)), "not one 64x64 tile on the grid"),
-            (((64, 0, 36, 64), (0, 0)), "whose block is Some((0, 0)), not that tile"),
+            (
+                ((64, 0, 36, 64), (0, 0)),
+                "whose block is Some((0, 0)), not that tile",
+            ),
         ] {
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = sized_sink(size).await;
-            let mut shared = test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
+            let mut shared =
+                test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
             shared.passthrough = Some(test_tiles_listing());
-            let err = read_loop(std::io::Cursor::new(wlshare_progressive_update(&[tile], b"p1")), shared, false, None, sink).await.unwrap_err();
+            let err = read_loop(
+                std::io::Cursor::new(wlshare_progressive_update(&[tile], b"p1")),
+                shared,
+                false,
+                None,
+                sink,
+            )
+            .await
+            .unwrap_err();
             assert!(format!("{err:#}").contains(says), "{tile:?}: {err:#}");
         }
     }
@@ -13553,13 +15599,22 @@ mod tests {
     async fn the_wlshare_picture_not_listed_is_refused() {
         for (listing, wire) in [
             (test_listing(), wlshare_tiles_update(64, b"t1")),
-            (test_tiles_listing(), wlshare_video_update(64, 32, KEYFRAME, b"f1")),
+            (
+                test_tiles_listing(),
+                wlshare_video_update(64, 32, KEYFRAME, b"f1"),
+            ),
         ] {
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = sized_sink((64, 32)).await;
-            let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+            let mut shared = test_shared(
+                uplink,
+                shared_desktop((64, 32), None, None),
+                test_shadow((64, 32)),
+            );
             shared.passthrough = Some(listing);
-            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await.unwrap_err();
+            let err = read_loop(std::io::Cursor::new(wire), shared, false, None, sink)
+                .await
+                .unwrap_err();
             assert!(format!("{err:#}").contains("not advertised"), "{err:#}");
         }
     }
@@ -13574,9 +15629,24 @@ mod tests {
         for oversize in [Oversize::Hold, Oversize::Refuse] {
             let (uplink, sent) = test_uplink();
             let (frame_tx, mut rx) = mpsc::channel(64);
-            let sink = VideoSink::new("vnc", frame_tx, Arc::new(crate::feedback::LinkFeedback::new()), oversize);
-            sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
-            let mut shared = test_shared(uplink, shared_desktop(small, None, None), test_shadow(small));
+            let sink = VideoSink::new(
+                "vnc",
+                frame_tx,
+                Arc::new(crate::feedback::LinkFeedback::new()),
+                oversize,
+            );
+            sink.msg(ServerMsg::Resize {
+                w: small.0,
+                h: small.1,
+                scale: UNSCALED,
+            })
+            .await
+            .unwrap();
+            let mut shared = test_shared(
+                uplink,
+                shared_desktop(small, None, None),
+                test_shadow(small),
+            );
             shared.passthrough = Some(test_tiles_listing());
             let mut wire = update(&[geometry(0, 0, big.0, big.1, ENCODING_DESKTOP_SIZE)]);
             wire.extend_from_slice(&wlshare_tiles_update(big.0, b"t1"));
@@ -13584,7 +15654,12 @@ mod tests {
             match oversize {
                 Oversize::Hold => {
                     let echo = client_fence(0, b"t1");
-                    assert!(written(&sent).windows(echo.len()).any(|window| window == echo), "the fence was not echoed");
+                    assert!(
+                        written(&sent)
+                            .windows(echo.len())
+                            .any(|window| window == echo),
+                        "the fence was not echoed"
+                    );
                 }
                 _ => {
                     let err = result.unwrap_err();
@@ -13593,7 +15668,15 @@ mod tests {
             }
             while let Ok(msg) = rx.try_recv() {
                 assert!(
-                    !matches!(msg, ServerMsg::TilesStart { .. } | ServerMsg::Tile(_) | ServerMsg::RegionFormat { .. } | ServerMsg::Region(_) | ServerMsg::RegionEnd { .. } | ServerMsg::Copy(_)),
+                    !matches!(
+                        msg,
+                        ServerMsg::TilesStart { .. }
+                            | ServerMsg::Tile(_)
+                            | ServerMsg::RegionFormat { .. }
+                            | ServerMsg::Region(_)
+                            | ServerMsg::RegionEnd { .. }
+                            | ServerMsg::Copy(_)
+                    ),
                     "{oversize:?}: {msg:?}"
                 );
             }
@@ -13603,7 +15686,11 @@ mod tests {
     /// A read loop over a connection that stays open, so a held echo is not cut off by
     /// the end of the stream.
     #[cfg(feature = "wlshare")]
-    fn open_read_loop(wire: Vec<u8>, shared: Shared, sink: VideoSink) -> tokio::task::JoinHandle<()> {
+    fn open_read_loop(
+        wire: Vec<u8>,
+        shared: Shared,
+        sink: VideoSink,
+    ) -> tokio::task::JoinHandle<()> {
         let (mut server, client) = tokio::io::duplex(1 << 16);
         tokio::spawn(async move {
             server.write_all(&wire).await.unwrap();
@@ -13619,13 +15706,26 @@ mod tests {
     async fn a_wlshare_frame_past_the_longest_is_refused() {
         let (uplink, _sent) = test_uplink();
         let (sink, _rx) = sized_sink((64, 32)).await;
-        let mut shared = test_shared(uplink, shared_desktop((64, 32), None, None), test_shadow((64, 32)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((64, 32), None, None),
+            test_shadow((64, 32)),
+        );
         shared.passthrough = Some(test_listing());
         let over = wlshare_proto::MAX_BODY as u32 + 1;
-        let err = read_loop(std::io::Cursor::new(wlshare_video_header(64, 32, over)), shared, false, None, sink)
-            .await
-            .unwrap_err();
-        assert!(format!("{err:#}").contains(&format!("a video frame of {over} bytes, past the")), "{err:#}");
+        let err = read_loop(
+            std::io::Cursor::new(wlshare_video_header(64, 32, over)),
+            shared,
+            false,
+            None,
+            sink,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&format!("a video frame of {over} bytes, past the")),
+            "{err:#}"
+        );
     }
 
     /// wlshare's video goes to the browser as it came, and the fence behind a frame is
@@ -13639,18 +15739,32 @@ mod tests {
         // Two batches owed, the older for 250 ms beyond the distance.
         let feedback = queued_for(Duration::from_millis(250)).await;
         let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 192), None, None),
+            test_shadow((320, 192)),
+        );
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
+        let task = open_read_loop(
+            wlshare_video_update(320, 192, KEYFRAME, b"f1"),
+            shared,
+            sink,
+        );
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::VideoFormat { .. })
+        ));
         let Some(ServerMsg::Video(unit)) = rx.recv().await else {
             panic!("the frame was not passed");
         };
         assert!(unit.keyframe && unit.data == KEYFRAME);
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(written(&sent).is_empty(), "the fence was echoed before the browser's delivery");
+        assert!(
+            written(&sent).is_empty(),
+            "the fence was echoed before the browser's delivery"
+        );
 
         let echo = client_fence(0, b"f1");
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -13660,7 +15774,10 @@ mod tests {
         })
         .await
         .expect("the fence was never echoed");
-        assert!(started.elapsed() >= Duration::from_millis(240), "echoed before the queue ahead had gone");
+        assert!(
+            started.elapsed() >= Duration::from_millis(240),
+            "echoed before the queue ahead had gone"
+        );
         task.abort();
     }
 
@@ -13684,12 +15801,23 @@ mod tests {
     async fn a_passed_frames_fence_goes_at_once_on_a_link_with_room() {
         let (uplink, sent) = test_uplink();
         let (sink, mut rx) = sized_sink((320, 192)).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 192), None, None),
+            test_shadow((320, 192)),
+        );
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
+        let task = open_read_loop(
+            wlshare_video_update(320, 192, KEYFRAME, b"f1"),
+            shared,
+            sink,
+        );
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::VideoFormat { .. })
+        ));
         let _kept = rx.recv().await;
         let echo = client_fence(0, b"f1");
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -13699,7 +15827,10 @@ mod tests {
         })
         .await
         .expect("the fence was never echoed");
-        assert!(started.elapsed() < Duration::from_millis(200), "a link with room held the fence");
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "a link with room held the fence"
+        );
         task.abort();
     }
 
@@ -13713,12 +15844,23 @@ mod tests {
         // A queue seconds deep ahead of the frame.
         let feedback = queued_for(Duration::from_secs(2)).await;
         let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 192), None, None),
+            test_shadow((320, 192)),
+        );
         shared.passthrough = Some(test_listing());
         let started = tokio::time::Instant::now();
-        let task = open_read_loop(wlshare_video_update(320, 192, KEYFRAME, b"f1"), shared, sink);
+        let task = open_read_loop(
+            wlshare_video_update(320, 192, KEYFRAME, b"f1"),
+            shared,
+            sink,
+        );
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::VideoFormat { .. })
+        ));
         let _kept = rx.recv().await;
         let echo = client_fence(0, b"f1");
         tokio::time::timeout(FENCE_HOLD_LIMIT * 4, async {
@@ -13728,7 +15870,10 @@ mod tests {
         })
         .await
         .expect("the fence was echoed with the frame still held");
-        assert!(started.elapsed() >= FENCE_HOLD_LIMIT, "echoed before the limit");
+        assert!(
+            started.elapsed() >= FENCE_HOLD_LIMIT,
+            "echoed before the limit"
+        );
         task.abort();
     }
 
@@ -13741,10 +15886,17 @@ mod tests {
         let (uplink, sent) = test_uplink();
         let feedback = queued_for(Duration::from_secs(2)).await;
         let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 192), None, None),
+            test_shadow((320, 192)),
+        );
         shared.passthrough = Some(test_listing());
         let (mut server, client) = tokio::io::duplex(1 << 16);
-        server.write_all(&wlshare_video_update(320, 192, KEYFRAME, b"f1")).await.unwrap();
+        server
+            .write_all(&wlshare_video_update(320, 192, KEYFRAME, b"f1"))
+            .await
+            .unwrap();
         let talking = tokio::spawn(async move {
             for _ in 0..40 {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -13756,7 +15908,10 @@ mod tests {
             let _ = read_loop(client, shared, false, None, sink).await;
         });
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::VideoFormat { .. })
+        ));
         let _kept = rx.recv().await;
         let echo = client_fence(0, b"f1");
         tokio::time::timeout(FENCE_HOLD_LIMIT * 3, async {
@@ -13766,7 +15921,10 @@ mod tests {
         })
         .await
         .expect("the fence waited out the server's talking instead of its deadline");
-        assert!(!talking.is_finished(), "the server had stopped talking before the echo");
+        assert!(
+            !talking.is_finished(),
+            "the server had stopped talking before the echo"
+        );
         task.abort();
         talking.abort();
     }
@@ -13780,25 +15938,46 @@ mod tests {
         let (small, big) = ((64, 32), (5376, 2288));
         let (uplink, sent) = test_uplink();
         let (frame_tx, mut rx) = mpsc::channel(64);
-        let plan = crate::config::RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, rdp_small_cache: false, wlshare: false, wlshare_tiles: None };
+        let plan = crate::config::RenderPlan {
+            apple_media: false,
+            apple_h264: false,
+            hevc_instead: false,
+            apple_standard: None,
+            apple_combined: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            rdp_small_cache: false,
+            wlshare: false,
+            wlshare_tiles: None,
+        };
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());
         let sink = VideoSink::new("vnc", frame_tx, feedback, Oversize::Hold);
-        sink.msg(ServerMsg::Resize { w: small.0, h: small.1, scale: UNSCALED }).await.unwrap();
-        let mut shared = test_shared(uplink, shared_desktop(small, None, None), test_shadow(small));
+        sink.msg(ServerMsg::Resize {
+            w: small.0,
+            h: small.1,
+            scale: UNSCALED,
+        })
+        .await
+        .unwrap();
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop(small, None, None),
+            test_shadow(small),
+        );
         let encodings = wlshare_encoding_list(None, false, false);
         let lists = Arc::new(Listing::new(encodings, plan));
         shared.passthrough = Some(Arc::clone(&lists));
         let mut wire = update(&[geometry(0, 0, big.0, big.1, ENCODING_DESKTOP_SIZE)]);
         wire.extend_from_slice(&wlshare_video_update(big.0, big.1, KEYFRAME, b"f1"));
-        wire.extend_from_slice(&update(&[geometry(0, 0, small.0, small.1, ENCODING_DESKTOP_SIZE)]));
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            false,
-            None,
-            sink,
-        )
-        .await;
+        wire.extend_from_slice(&update(&[geometry(
+            0,
+            0,
+            small.0,
+            small.1,
+            ENCODING_DESKTOP_SIZE,
+        )]));
+        let _ = read_loop(std::io::Cursor::new(wire), shared, false, None, sink).await;
 
         let wrote = written(&sent);
         let mut from = 0;
@@ -13814,7 +15993,10 @@ mod tests {
             from += at + expected.len();
         }
         while let Ok(msg) = rx.try_recv() {
-            assert!(!matches!(msg, ServerMsg::Video(_) | ServerMsg::VideoFormat { .. }), "{msg:?}");
+            assert!(
+                !matches!(msg, ServerMsg::Video(_) | ServerMsg::VideoFormat { .. }),
+                "{msg:?}"
+            );
         }
     }
 
@@ -13828,16 +16010,13 @@ mod tests {
 
         let (uplink, sent) = test_uplink();
         let (sink, _rx) = sized_sink((2, 2)).await;
-        let mut shared = test_shared(uplink, shared_desktop((2, 2), None, None), test_shadow((2, 2)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((2, 2), None, None),
+            test_shadow((2, 2)),
+        );
         shared.passthrough = Some(test_listing());
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            true,
-            None,
-            sink,
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink).await;
 
         let mut expected = client_fence(FENCE_BLOCK_AFTER, b"marker");
         expected.extend_from_slice(&update_request(true, (2, 2)));
@@ -13852,7 +16031,11 @@ mod tests {
         let (uplink, sent) = test_uplink();
         let feedback = queued_for(Duration::from_millis(250)).await;
         let (sink, mut rx) = sized_sink_on((320, 192), feedback).await;
-        let mut shared = test_shared(uplink, shared_desktop((320, 192), None, None), test_shadow((320, 192)));
+        let mut shared = test_shared(
+            uplink,
+            shared_desktop((320, 192), None, None),
+            test_shadow((320, 192)),
+        );
         shared.passthrough = Some(test_listing());
         let mut wire = wlshare_video_update(320, 192, KEYFRAME, b"f1");
         wire.truncate(wire.len() - server_fence(FENCE_REQUEST, b"f1").len());
@@ -13860,21 +16043,31 @@ mod tests {
         wire.extend_from_slice(&wlshare_video_update(320, 192, FRAME, b"f2"));
         let task = open_read_loop(wire, shared, sink);
 
-        assert!(matches!(rx.recv().await, Some(ServerMsg::VideoFormat { .. })));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::VideoFormat { .. })
+        ));
         let Some(ServerMsg::Video(unit)) = rx.recv().await else {
             panic!("the frame was not passed");
         };
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), rx.recv()).await.is_err(),
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
             "the frame behind a held BlockAfter fence was read"
         );
-        assert!(written(&sent).is_empty(), "the fence was echoed before the browser's delivery");
+        assert!(
+            written(&sent).is_empty(),
+            "the fence was echoed before the browser's delivery"
+        );
 
         drop(unit);
         let next = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
             .expect("the frame behind the fence was read once it went back");
-        assert!(matches!(next, Some(ServerMsg::Video(unit)) if !unit.keyframe && unit.data == FRAME));
+        assert!(
+            matches!(next, Some(ServerMsg::Video(unit)) if !unit.keyframe && unit.data == FRAME)
+        );
         assert_eq!(written(&sent), client_fence(FENCE_BLOCK_AFTER, b"f1"));
         task.abort();
     }
@@ -13887,7 +16080,10 @@ mod tests {
     #[tokio::test]
     async fn an_oversized_fence_payload_is_echoed_cut_to_length_and_read_whole() {
         let payload: Vec<u8> = (0..=u8::try_from(MAX_FENCE_PAYLOAD).unwrap()).collect();
-        assert!(payload.len() > MAX_FENCE_PAYLOAD, "the payload has to be over the cap");
+        assert!(
+            payload.len() > MAX_FENCE_PAYLOAD,
+            "the payload has to be over the cap"
+        );
         let mut wire = server_fence(FENCE_REQUEST, &payload);
         wire.extend_from_slice(&raw_update());
 
@@ -13898,14 +16094,7 @@ mod tests {
             shared_desktop((2, 2), None, None),
             test_shadow((2, 2)),
         );
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            true,
-            None,
-            sink.clone(),
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink.clone()).await;
 
         // Request is not echoed and nothing else was set, so the flags go back empty.
         let mut expected = client_fence(0, &payload[..MAX_FENCE_PAYLOAD]);
@@ -13934,14 +16123,7 @@ mod tests {
             shared_desktop((2, 2), None, None),
             test_shadow((2, 2)),
         );
-        let _ = read_loop(
-            std::io::Cursor::new(wire),
-            shared,
-            true,
-            None,
-            sink.clone(),
-        )
-        .await;
+        let _ = read_loop(std::io::Cursor::new(wire), shared, true, None, sink.clone()).await;
 
         assert_eq!(
             written(&sent),
@@ -14020,7 +16202,8 @@ mod tests {
         )
         .await;
 
-        let mut expected = vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (2, 2));
+        let mut expected =
+            vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (2, 2));
         expected.extend_from_slice(&update_request(false, (2, 2)));
         expected.extend_from_slice(&update_request(false, (2, 2)));
         expected.extend_from_slice(&update_request(false, (2, 2)));
@@ -14053,7 +16236,8 @@ mod tests {
         )
         .await;
 
-        let mut expected = vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (2, 2));
+        let mut expected =
+            vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (2, 2));
         for _ in 0..FULL_REPAINT_UPDATE_BUDGET {
             expected.extend_from_slice(&update_request(false, (2, 2)));
         }
@@ -14074,8 +16258,10 @@ mod tests {
     #[test]
     fn standard_server_scaling_follows_the_messages_in_flight() {
         use crate::vnc_apple::{parse_layout, test_layout, test_scale_layout};
-        const SCREENS: [TestScreen; 2] =
-            [(1, (1280, 800), (1280, 800), 0x01), (7, (1440, 900), (2880, 1800), 0x00)];
+        const SCREENS: [TestScreen; 2] = [
+            (1, (1280, 800), (1280, 800), 0x01),
+            (7, (1440, 900), (2880, 1800), 0x00),
+        ];
         let mut state = DisplayState::default();
 
         // A 1x browser on Combined Display over mixed densities: composed from the
@@ -14091,7 +16277,10 @@ mod tests {
         assert_eq!(state.accept_apple_layout(&picked, 1.0), None);
         let mut halved = test_layout(
             Some(7),
-            &[(1, (1280, 800), (640, 400), 0x01), (7, (1440, 900), (1440, 900), 0x00)],
+            &[
+                (1, (1280, 800), (640, 400), 0x01),
+                (7, (1440, 900), (1440, 900), 0x00),
+            ],
         );
         test_scale_layout(&mut halved, 0.5, &[1.0, 2.0]);
         let halved = parse_layout(&halved).unwrap();
@@ -14109,8 +16298,14 @@ mod tests {
         // force. The 1 asked for the 1x screen is still on its way, so picking
         // that screen again asks for nothing; once it has gone unanswered too
         // long, the last layout's 0.5 counts again and the pick asks anew.
-        assert_eq!(state.request_apple_scale(Some(1), 1.0), None, "still on its way");
-        let sent = std::time::Instant::now().checked_sub(APPLE_SCALE_ANSWER).unwrap();
+        assert_eq!(
+            state.request_apple_scale(Some(1), 1.0),
+            None,
+            "still on its way"
+        );
+        let sent = std::time::Instant::now()
+            .checked_sub(APPLE_SCALE_ANSWER)
+            .unwrap();
         state.apple_scale_pending = Some((1.0, sent));
         assert_eq!(state.request_apple_scale(Some(1), 1.0), Some(1.0));
     }
@@ -14129,7 +16324,13 @@ mod tests {
         state.apple_layout = Some(parse_layout(&halved).unwrap());
         assert_eq!(state.apple_pointer(720, 450), (1440, 900));
 
-        state.apple_layout = Some(parse_layout(&test_layout(Some(7), &[(7, (1440, 900), (2880, 1800), 0x00)])).unwrap());
+        state.apple_layout = Some(
+            parse_layout(&test_layout(
+                Some(7),
+                &[(7, (1440, 900), (2880, 1800), 0x00)],
+            ))
+            .unwrap(),
+        );
         assert_eq!(state.apple_pointer(1440, 900), (1440, 900));
     }
 
@@ -14156,12 +16357,21 @@ mod tests {
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
         let receive = vnc_apple_media::Receive::Hevc { strips: true };
-        let media: SharedMedia = Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), receive, 1).0));
+        let media: SharedMedia = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(vnc_apple_media::Route::direct(addr, addr), receive, 1).0,
+        ));
         let shared = Shared {
             media: Some(Arc::clone(&media)),
             ..test_shared(uplink, Arc::clone(&desktop), test_shadow((1600, 1000)))
         };
-        read_display_layout(&mut flagged((1600, 1000), 0x5).as_slice(), &shared, true, &sink).await.unwrap();
+        read_display_layout(
+            &mut flagged((1600, 1000), 0x5).as_slice(),
+            &shared,
+            true,
+            &sink,
+        )
+        .await
+        .unwrap();
         media.lock().unwrap().test_offered(&[(1600, 1000)]);
         {
             let mut d = desktop.lock().unwrap();
@@ -14171,22 +16381,51 @@ mod tests {
         }
 
         let physical = flagged((1280, 800), 0x4);
-        assert!(!read_display_layout(&mut physical.as_slice(), &shared, true, &sink).await.unwrap());
+        assert!(
+            !read_display_layout(&mut physical.as_slice(), &shared, true, &sink)
+                .await
+                .unwrap()
+        );
         {
             let mut d = desktop.lock().unwrap();
-            assert_eq!(d.size, (1600, 1000), "the physical display is not the desktop");
+            assert_eq!(
+                d.size,
+                (1600, 1000),
+                "the physical display is not the desktop"
+            );
             assert!(d.moved_off && d.covered);
-            assert_eq!(d.poll_size(), HP_HOLD_REQUEST, "no request in the old display's size");
+            assert_eq!(
+                d.poll_size(),
+                HP_HOLD_REQUEST,
+                "no request in the old display's size"
+            );
             assert_eq!(d.hp.phase, HpPhase::Idle, "the old agent's request let go");
-            assert_eq!(d.hp.want, Some((1500, 900)), "the newest display asked for, again");
+            assert_eq!(
+                d.hp.want,
+                Some((1500, 900)),
+                "the newest display asked for, again"
+            );
             assert!(!d.hp_noop((1600, 1000)), "though the desktop has its size");
             d.hp.want = None;
         }
-        read_display_layout(&mut physical.as_slice(), &shared, true, &sink).await.unwrap();
+        read_display_layout(&mut physical.as_slice(), &shared, true, &sink)
+            .await
+            .unwrap();
         assert_eq!(desktop.lock().unwrap().hp.want, None, "asked for once");
-        assert_eq!(media.lock().unwrap().offer(&[(1600, 1000)]), None, "no stream for the physical display");
+        assert_eq!(
+            media.lock().unwrap().offer(&[(1600, 1000)]),
+            None,
+            "no stream for the physical display"
+        );
 
-        read_display_layout(&mut flagged((1600, 1000), 0x5).as_slice(), &shared, true, &sink).await.unwrap();
+        read_display_layout(
+            &mut flagged((1600, 1000), 0x5).as_slice(),
+            &shared,
+            true,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(!desktop.lock().unwrap().moved_off);
         assert!(
             media.lock().unwrap().offer(&[(1600, 1000)]).is_some(),
@@ -14212,14 +16451,31 @@ mod tests {
             d.covered = true;
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((100, 100)));
-        let payload =
-            layout_payload(None, &[(9, (1600, 1000), (1600, 1000), 0x01), (10, (1280, 800), (1280, 800), 0x00)]);
-        assert!(read_display_layout(&mut payload.as_slice(), &shared, true, &sink).await.unwrap());
+        let payload = layout_payload(
+            None,
+            &[
+                (9, (1600, 1000), (1600, 1000), 0x01),
+                (10, (1280, 800), (1280, 800), 0x00),
+            ],
+        );
+        assert!(
+            read_display_layout(&mut payload.as_slice(), &shared, true, &sink)
+                .await
+                .unwrap()
+        );
         {
             let d = desktop.lock().unwrap();
             assert_eq!(d.size, (1600, 1000), "the first display, not the span");
-            assert_eq!(d.span, Some((2880, 1000)), "which the Mac's rectangles are addressed in");
-            assert_eq!(d.hp_sizes(), [(1600, 1000), (1280, 800)], "a video leg each");
+            assert_eq!(
+                d.span,
+                Some((2880, 1000)),
+                "which the Mac's rectangles are addressed in"
+            );
+            assert_eq!(
+                d.hp_sizes(),
+                [(1600, 1000), (1280, 800)],
+                "a video leg each"
+            );
             assert_eq!((d.hp_origin(0), d.hp_origin(1)), ((0, 0), (1600, 0)));
             // A position past the edge between them lands on the other display,
             // one past the span's own edge at it, and one below the shorter
@@ -14231,20 +16487,43 @@ mod tests {
             assert_eq!(d.hp_span_point(0, -5, -5), (0, 0));
         }
         sink.flush().await;
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::Resize { w: 1600, h: 1000, .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::Resize {
+                w: 1600,
+                h: 1000,
+                ..
+            })
+        ));
         let listed = |msg: ServerMsg| match msg {
             ServerMsg::Displays { active, displays } => (
                 active,
-                displays.into_iter().map(|d| (d.id, d.label, d.detail, d.tab)).collect::<Vec<_>>(),
+                displays
+                    .into_iter()
+                    .map(|d| (d.id, d.label, d.detail, d.tab))
+                    .collect::<Vec<_>>(),
             ),
             other => panic!("not a display list: {other:?}"),
         };
-        let all = (DisplayState::COMBINED, "All Displays".to_owned(), "One browser tab each".to_owned(), None);
-        let first = (0, "Display 1".to_owned(), "1600×1000 at 1x".to_owned(), None);
+        let all = (
+            DisplayState::COMBINED,
+            "All Displays".to_owned(),
+            "One browser tab each".to_owned(),
+            None,
+        );
+        let first = (
+            0,
+            "Display 1".to_owned(),
+            "1600×1000 at 1x".to_owned(),
+            None,
+        );
         let second = |tab| (1, "Display 2".to_owned(), "1280×800 at 1x".to_owned(), tab);
         assert_eq!(
             listed(rx.try_recv().unwrap()),
-            (DisplayState::COMBINED, vec![first.clone(), second(Some(2)), all.clone()]),
+            (
+                DisplayState::COMBINED,
+                vec![first.clone(), second(Some(2)), all.clone()]
+            ),
             "two displays start shown beside each other"
         );
         assert!(rx.try_recv().is_err());
@@ -14257,22 +16536,48 @@ mod tests {
         hp_select(&shared, 1, &sink).await.unwrap();
         assert_eq!(desktop.lock().unwrap().size, (1280, 800));
         sink.flush().await;
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::Resize { w: 1280, h: 800, .. })));
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::ScreenUnavailable { active: true })));
-        assert_eq!(listed(rx.try_recv().unwrap()), (1, vec![first.clone(), second(None), all.clone()]));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::Resize {
+                w: 1280,
+                h: 800,
+                ..
+            })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::ScreenUnavailable { active: true })
+        ));
+        assert_eq!(
+            listed(rx.try_recv().unwrap()),
+            (1, vec![first.clone(), second(None), all.clone()])
+        );
         {
             let d = desktop.lock().unwrap();
-            assert_eq!(d.hp_origin(d.view.active), (1600, 0), "a position on it is offset into the span");
+            assert_eq!(
+                d.hp_origin(d.view.active),
+                (1600, 0),
+                "a position on it is offset into the span"
+            );
         }
         // An id the list does not have changes nothing.
         hp_select(&shared, 7, &sink).await.unwrap();
         assert!(forwarded(&sink, &mut rx).await.is_none());
 
         // All of them: the first on the canvas, the second named for a tab.
-        hp_select(&shared, DisplayState::COMBINED, &sink).await.unwrap();
+        hp_select(&shared, DisplayState::COMBINED, &sink)
+            .await
+            .unwrap();
         assert_eq!(desktop.lock().unwrap().size, (1600, 1000));
         sink.flush().await;
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::Resize { w: 1600, h: 1000, .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::Resize {
+                w: 1600,
+                h: 1000,
+                ..
+            })
+        ));
         assert_eq!(
             listed(rx.try_recv().unwrap()),
             (DisplayState::COMBINED, vec![first, second(Some(2)), all])
@@ -14305,13 +16610,22 @@ mod tests {
             d.covered = true;
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media: SharedMedia =
-            Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 1).0));
+        let media: SharedMedia = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: true },
+                1,
+            )
+            .0,
+        ));
         let tab = SharedTab::default();
 
         media.lock().unwrap().test_answered(&[(1600, 1200)]);
         tell_withheld(&desktop, &media, &sink, &tab).await.unwrap();
-        assert!(withheld_said(&sink, &mut rx).await.is_empty(), "a stream that has reported nothing");
+        assert!(
+            withheld_said(&sink, &mut rx).await.is_empty(),
+            "a stream that has reported nothing"
+        );
 
         media.lock().unwrap().test_report(0, 201);
         tell_withheld(&desktop, &media, &sink, &tab).await.unwrap();
@@ -14321,7 +16635,11 @@ mod tests {
 
         media.lock().unwrap().test_pictured(0);
         tell_withheld(&desktop, &media, &sink, &tab).await.unwrap();
-        assert_eq!(withheld_said(&sink, &mut rx).await, [false], "a picture came after all");
+        assert_eq!(
+            withheld_said(&sink, &mut rx).await,
+            [false],
+            "a picture came after all"
+        );
         assert!(!desktop.lock().unwrap().withheld);
 
         // Nor is a stream that reports as a sender one the Mac withholds, though
@@ -14331,7 +16649,10 @@ mod tests {
         media.lock().unwrap().test_report(0, 200);
         media.lock().unwrap().test_report(0, 201);
         tell_withheld(&desktop, &media, &sink, &tab).await.unwrap();
-        assert!(withheld_said(&sink, &mut rx).await.is_empty(), "a sender's report since the offer");
+        assert!(
+            withheld_said(&sink, &mut rx).await.is_empty(),
+            "a sender's report since the offer"
+        );
     }
 
     /// A second display the Mac withholds is told to whichever socket shows it:
@@ -14349,38 +16670,84 @@ mod tests {
             d.media_stream = true;
         }
         let addr = "127.0.0.1:5900".parse().unwrap();
-        let media: SharedMedia =
-            Arc::new(std::sync::Mutex::new(MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: true }, 2).0));
+        let media: SharedMedia = Arc::new(std::sync::Mutex::new(
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: true },
+                2,
+            )
+            .0,
+        ));
         let shared = Shared {
             media: Some(Arc::clone(&media)),
             ..test_shared(uplink, Arc::clone(&desktop), test_shadow((100, 100)))
         };
-        let two = layout_payload(None, &[(9, (160, 100), (160, 100), 0x01), (10, (128, 80), (128, 80), 0x00)]);
-        read_display_layout(&mut two.as_slice(), &shared, true, &sink).await.unwrap();
+        let two = layout_payload(
+            None,
+            &[
+                (9, (160, 100), (160, 100), 0x01),
+                (10, (128, 80), (128, 80), 0x00),
+            ],
+        );
+        read_display_layout(&mut two.as_slice(), &shared, true, &sink)
+            .await
+            .unwrap();
         hp_select(&shared, 0, &sink).await.unwrap();
 
         // The Mac says so of the second display while the first is on the canvas.
-        media.lock().unwrap().test_answered(&[(160, 100), (128, 80)]);
+        media
+            .lock()
+            .unwrap()
+            .test_answered(&[(160, 100), (128, 80)]);
         media.lock().unwrap().test_report(1, 201);
-        tell_withheld(&desktop, &media, &sink, &shared.tab).await.unwrap();
-        assert!(withheld_said(&sink, &mut rx).await.is_empty(), "not the first display's to hear");
+        tell_withheld(&desktop, &media, &sink, &shared.tab)
+            .await
+            .unwrap();
+        assert!(
+            withheld_said(&sink, &mut rx).await.is_empty(),
+            "not the first display's to hear"
+        );
 
         hp_select(&shared, 1, &sink).await.unwrap();
-        assert_eq!(withheld_said(&sink, &mut rx).await, [true], "said as it comes onto the canvas");
-        hp_select(&shared, DisplayState::COMBINED, &sink).await.unwrap();
-        assert_eq!(withheld_said(&sink, &mut rx).await, [false], "the first display is back on it");
+        assert_eq!(
+            withheld_said(&sink, &mut rx).await,
+            [true],
+            "said as it comes onto the canvas"
+        );
+        hp_select(&shared, DisplayState::COMBINED, &sink)
+            .await
+            .unwrap();
+        assert_eq!(
+            withheld_said(&sink, &mut rx).await,
+            [false],
+            "the first display is back on it"
+        );
 
         let (frames, mut tab_rx) = mpsc::channel(8);
-        let feed = crate::session::DisplayFeed { frames, feedback: Arc::new(crate::feedback::LinkFeedback::new()) };
+        let feed = crate::session::DisplayFeed {
+            frames,
+            feedback: Arc::new(crate::feedback::LinkFeedback::new()),
+        };
         hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(feed), true).await;
         let tab_sink = tab_sink(&shared.tab).expect("the tab is fed");
-        assert_eq!(withheld_said(&tab_sink, &mut tab_rx).await, [true], "said as the tab attaches");
-        tell_withheld(&desktop, &media, &sink, &shared.tab).await.unwrap();
-        assert!(withheld_said(&tab_sink, &mut tab_rx).await.is_empty(), "and once");
+        assert_eq!(
+            withheld_said(&tab_sink, &mut tab_rx).await,
+            [true],
+            "said as the tab attaches"
+        );
+        tell_withheld(&desktop, &media, &sink, &shared.tab)
+            .await
+            .unwrap();
+        assert!(
+            withheld_said(&tab_sink, &mut tab_rx).await.is_empty(),
+            "and once"
+        );
         assert!(withheld_said(&sink, &mut rx).await.is_empty());
 
         media.lock().unwrap().test_pictured(1);
-        tell_withheld(&desktop, &media, &sink, &shared.tab).await.unwrap();
+        tell_withheld(&desktop, &media, &sink, &shared.tab)
+            .await
+            .unwrap();
         assert_eq!(withheld_said(&tab_sink, &mut tab_rx).await, [false]);
     }
 
@@ -14398,8 +16765,16 @@ mod tests {
             d.media_stream = true;
         }
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((100, 100)));
-        let two = layout_payload(None, &[(9, (160, 100), (160, 100), 0x01), (10, (128, 80), (128, 80), 0x00)]);
-        read_display_layout(&mut two.as_slice(), &shared, true, &sink).await.unwrap();
+        let two = layout_payload(
+            None,
+            &[
+                (9, (160, 100), (160, 100), 0x01),
+                (10, (128, 80), (128, 80), 0x00),
+            ],
+        );
+        read_display_layout(&mut two.as_slice(), &shared, true, &sink)
+            .await
+            .unwrap();
 
         let feed = || {
             let (frames, rx) = mpsc::channel(8);
@@ -14417,14 +16792,25 @@ mod tests {
         hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(early), true).await;
         assert!(shared.tab.lock().unwrap().is_none());
 
-        hp_select(&shared, DisplayState::COMBINED, &sink).await.unwrap();
+        hp_select(&shared, DisplayState::COMBINED, &sink)
+            .await
+            .unwrap();
         let (shown, mut tab_rx) = feed();
         hp_tab_shown(&shared, HP_TAB_DISPLAY, Some(shown), true).await;
         let tab_sink = tab_sink(&shared.tab).expect("the tab is fed");
         tab_sink.flush().await;
-        assert!(matches!(tab_rx.try_recv(), Ok(ServerMsg::Resize { w: 128, h: 80, .. })));
-        assert!(matches!(tab_rx.try_recv(), Ok(ServerMsg::RemoteOs { macos: true })));
-        assert!(matches!(tab_rx.try_recv(), Ok(ServerMsg::ScreenUnavailable { active: true })));
+        assert!(matches!(
+            tab_rx.try_recv(),
+            Ok(ServerMsg::Resize { w: 128, h: 80, .. })
+        ));
+        assert!(matches!(
+            tab_rx.try_recv(),
+            Ok(ServerMsg::RemoteOs { macos: true })
+        ));
+        assert!(matches!(
+            tab_rx.try_recv(),
+            Ok(ServerMsg::ScreenUnavailable { active: true })
+        ));
         assert_eq!(shown_on(&shared, 1), ShownOn::Tab);
         assert_eq!(shown_on(&shared, 0), ShownOn::Canvas);
 
@@ -14432,7 +16818,12 @@ mod tests {
         // brings the tab's notice down.
         let addr = "127.0.0.1:5900".parse().unwrap();
         let media: SharedMedia = Arc::new(std::sync::Mutex::new(
-            MediaStream::new(vnc_apple_media::Route::direct(addr, addr), vnc_apple_media::Receive::Hevc { strips: false }, 2).0,
+            MediaStream::new(
+                vnc_apple_media::Route::direct(addr, addr),
+                vnc_apple_media::Receive::Hevc { strips: false },
+                2,
+            )
+            .0,
         ));
         let unit = |size: (u16, u16)| PassedUnit {
             size,
@@ -14450,13 +16841,25 @@ mod tests {
         assert!(!shared.tab.lock().unwrap().as_ref().unwrap().covered);
         tab_sink.flush().await;
         let sent: Vec<ServerMsg> = std::iter::from_fn(|| tab_rx.try_recv().ok()).collect();
-        assert!(sent.iter().any(|msg| matches!(msg, ServerMsg::Video(_))), "{sent:?}");
-        assert!(sent.iter().any(|msg| matches!(msg, ServerMsg::ScreenUnavailable { active: false })), "{sent:?}");
+        assert!(
+            sent.iter().any(|msg| matches!(msg, ServerMsg::Video(_))),
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter()
+                .any(|msg| matches!(msg, ServerMsg::ScreenUnavailable { active: false })),
+            "{sent:?}"
+        );
 
         // The legs deliver apart: the stream carries the picture once the
         // canvas's has delivered too.
-        assert!(!desktop.lock().unwrap().media_live, "the canvas's leg has not delivered");
-        pass_unit(&shared, 0, unit((160, 100)), &sink, &media).await.unwrap();
+        assert!(
+            !desktop.lock().unwrap().media_live,
+            "the canvas's leg has not delivered"
+        );
+        pass_unit(&shared, 0, unit((160, 100)), &sink, &media)
+            .await
+            .unwrap();
         assert!(desktop.lock().unwrap().media_live);
         // A display change stops both legs.
         stream_stopped(&mut desktop.lock().unwrap(), &shared.tab);
@@ -14466,27 +16869,44 @@ mod tests {
         // display keeps its own.
         desktop.lock().unwrap().second_points = Some((100, 60));
         let modes = desktop.lock().unwrap().hp_modes((160, 100));
-        assert_eq!(modes.iter().map(|mode| mode.pixels).collect::<Vec<_>>(), [(160, 100), (100, 60)]);
-        assert!(!desktop.lock().unwrap().hp_noop((160, 100)), "the second display is still 128x80");
+        assert_eq!(
+            modes.iter().map(|mode| mode.pixels).collect::<Vec<_>>(),
+            [(160, 100), (100, 60)]
+        );
+        assert!(
+            !desktop.lock().unwrap().hp_noop((160, 100)),
+            "the second display is still 128x80"
+        );
         desktop.lock().unwrap().second_points = Some((128, 80));
         assert!(desktop.lock().unwrap().hp_noop((160, 100)));
         // And its screen gives it a density of its own: the same points, at 2x.
         desktop.lock().unwrap().second_density = Some(2.0);
         let modes = desktop.lock().unwrap().hp_modes((160, 100));
         assert_eq!(
-            modes.iter().map(|mode| (mode.pixels, mode.scaled)).collect::<Vec<_>>(),
+            modes
+                .iter()
+                .map(|mode| (mode.pixels, mode.scaled))
+                .collect::<Vec<_>>(),
             [((160, 100), (160, 100)), ((256, 160), (128, 80))]
         );
-        assert!(!desktop.lock().unwrap().hp_noop((160, 100)), "the second display is still 1x");
+        assert!(
+            !desktop.lock().unwrap().hp_noop((160, 100)),
+            "the second display is still 1x"
+        );
         desktop.lock().unwrap().second_density = Some(1.0);
         assert!(desktop.lock().unwrap().hp_noop((160, 100)));
 
         // The Mac lays out one display: nothing to choose between, and no tab.
         let one = layout_payload(None, &[(9, (160, 100), (160, 100), 0x01)]);
-        read_display_layout(&mut one.as_slice(), &shared, true, &sink).await.unwrap();
+        read_display_layout(&mut one.as_slice(), &shared, true, &sink)
+            .await
+            .unwrap();
         assert!(shared.tab.lock().unwrap().is_none());
         let d = desktop.lock().unwrap();
-        assert_eq!((d.view, d.span, d.second_points, d.second_density), (HpView::default(), None, None, None));
+        assert_eq!(
+            (d.view, d.span, d.second_points, d.second_density),
+            (HpView::default(), None, None, None)
+        );
     }
 
     /// A layout does three things, and the third is the one that is easy to miss:
@@ -14503,7 +16923,10 @@ mod tests {
         // The Retina screen selected, which is the case the density matters in.
         let payload = layout_payload(
             Some(11),
-            &[(11, (1920, 1080), (3840, 2160), 0x01), (22, (1600, 1000), (1600, 1000), 0x00)],
+            &[
+                (11, (1920, 1080), (3840, 2160), 0x01),
+                (22, (1600, 1000), (1600, 1000), 0x00),
+            ],
         );
         let resized = read_display_layout(&mut payload.as_slice(), &shared, false, &sink)
             .await
@@ -14538,7 +16961,10 @@ mod tests {
         // update loop sends the paired full request after it has consumed every
         // rectangle in this FramebufferUpdate.
         let mut expected = vnc_apple::set_server_scaling(0.5);
-        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (3840, 2160)));
+        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(
+            vnc_apple::PUSH_INTERVAL_STANDARD_US,
+            (3840, 2160),
+        ));
         assert_eq!(written(&sent), expected);
     }
 
@@ -14553,22 +16979,51 @@ mod tests {
         let desktop = shared_desktop((3520, 1080), None, None);
         desktop.lock().unwrap().opening = true;
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((3520, 1080)));
-        let screens: [TestScreen; 2] = [(22, (1600, 1000), (1600, 1000), 0x00), (11, (1920, 1080), (1920, 1080), 0x01)];
-        let resized = read_display_layout(&mut layout_payload(None, &screens).as_slice(), &shared, false, &sink)
-            .await
-            .unwrap();
+        let screens: [TestScreen; 2] = [
+            (22, (1600, 1000), (1600, 1000), 0x00),
+            (11, (1920, 1080), (1920, 1080), 0x01),
+        ];
+        let resized = read_display_layout(
+            &mut layout_payload(None, &screens).as_slice(),
+            &shared,
+            false,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(!resized, "the combined view is not shown");
         sink.flush().await;
         assert!(rx.try_recv().is_err(), "nothing said of the combined view");
         let mut expected = vnc_apple::set_display_message(Some(11));
-        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, HP_HOLD_REQUEST));
-        assert_eq!(written(&sent), expected, "no pixel of the combined view past one");
+        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(
+            vnc_apple::PUSH_INTERVAL_STANDARD_US,
+            HP_HOLD_REQUEST,
+        ));
+        assert_eq!(
+            written(&sent),
+            expected,
+            "no pixel of the combined view past one"
+        );
 
         let before = written(&sent).len();
-        read_display_layout(&mut layout_payload(Some(11), &screens).as_slice(), &shared, false, &sink).await.unwrap();
+        read_display_layout(
+            &mut layout_payload(Some(11), &screens).as_slice(),
+            &shared,
+            false,
+            &sink,
+        )
+        .await
+        .unwrap();
         let mut expected = update_request(false, (1920, 1080)).to_vec();
-        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(vnc_apple::PUSH_INTERVAL_STANDARD_US, (1920, 1080)));
-        assert_eq!(written(&sent)[before..], expected, "the screen it shows, whole");
+        expected.extend_from_slice(&vnc_apple::auto_framebuffer_update(
+            vnc_apple::PUSH_INTERVAL_STANDARD_US,
+            (1920, 1080),
+        ));
+        assert_eq!(
+            written(&sent)[before..],
+            expected,
+            "the screen it shows, whole"
+        );
         assert!(!desktop.lock().unwrap().opening);
         sink.flush().await;
         let listed = std::iter::from_fn(|| rx.try_recv().ok())
@@ -14577,7 +17032,11 @@ mod tests {
                 _ => None,
             })
             .expect("a display list");
-        assert_eq!(listed.iter().map(|display| display.id).collect::<Vec<_>>(), [22, 11], "no Combined Display");
+        assert_eq!(
+            listed.iter().map(|display| display.id).collect::<Vec<_>>(),
+            [22, 11],
+            "no Combined Display"
+        );
     }
 
     /// Combined Display over a 1x screen and a 2x one is composed here for a 1x
@@ -14593,16 +17052,44 @@ mod tests {
         let desktop = shared_desktop((100, 100), None, None);
         desktop.lock().unwrap().combined = true;
         let shared = test_shared(uplink, Arc::clone(&desktop), test_shadow((100, 100)));
-        let screens: [TestScreen; 2] = [(11, (1280, 800), (1280, 800), 0x01), (22, (1440, 900), (2880, 1800), 0x00)];
-        read_display_layout(&mut layout_payload(None, &screens).as_slice(), &shared, false, &sink).await.unwrap();
+        let screens: [TestScreen; 2] = [
+            (11, (1280, 800), (1280, 800), 0x01),
+            (22, (1440, 900), (2880, 1800), 0x00),
+        ];
+        read_display_layout(
+            &mut layout_payload(None, &screens).as_slice(),
+            &shared,
+            false,
+            &sink,
+        )
+        .await
+        .unwrap();
         sink.flush().await;
         let told: Vec<ServerMsg> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert!(matches!(told.as_slice(), [ServerMsg::Resize { w: 2720, h: 900, scale }] if *scale == 1.0), "{told:?}");
-        assert_eq!(desktop.lock().unwrap().size, (4160, 1800), "the Mac's framebuffer, which it is asked in");
-        let at = desktop.lock().unwrap().composed.as_ref().map(|composed| composed.to_framebuffer(2000, 450));
+        assert!(
+            matches!(told.as_slice(), [ServerMsg::Resize { w: 2720, h: 900, scale }] if *scale == 1.0),
+            "{told:?}"
+        );
+        assert_eq!(
+            desktop.lock().unwrap().size,
+            (4160, 1800),
+            "the Mac's framebuffer, which it is asked in"
+        );
+        let at = desktop
+            .lock()
+            .unwrap()
+            .composed
+            .as_ref()
+            .map(|composed| composed.to_framebuffer(2000, 450));
         assert_eq!(at, Some(Some((2720, 900))));
 
-        let layout = shared.display.lock().unwrap().apple_layout.clone().expect("the layout");
+        let layout = shared
+            .display
+            .lock()
+            .unwrap()
+            .apple_layout
+            .clone()
+            .expect("the layout");
         desktop.lock().unwrap().host_density = 2.0;
         let before = written(&sent).len();
         recompose(&shared, &layout, &sink).await.unwrap();
@@ -14616,14 +17103,22 @@ mod tests {
             ),
             "{told:?}"
         );
-        assert_eq!(written(&sent)[before..], update_request(false, (4160, 1800)));
+        assert_eq!(
+            written(&sent)[before..],
+            update_request(false, (4160, 1800))
+        );
 
         // A screen the Mac sends alone, as at a login, is not shown: the browser
         // keeps every screen until the Mac answers with them again.
         let before = written(&sent).len();
-        let resized = read_display_layout(&mut layout_payload(Some(22), &screens).as_slice(), &shared, false, &sink)
-            .await
-            .unwrap();
+        let resized = read_display_layout(
+            &mut layout_payload(Some(22), &screens).as_slice(),
+            &shared,
+            false,
+            &sink,
+        )
+        .await
+        .unwrap();
         assert!(!resized);
         sink.flush().await;
         assert!(rx.try_recv().is_err(), "nothing said of the one screen");

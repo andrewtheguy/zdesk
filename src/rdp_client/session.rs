@@ -11,14 +11,11 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Duration, Instant};
 
-use crate::config::Placement;
+use super::camera::{Camera, CameraCommand, CameraFeed, CameraInput, CameraQueues, CameraSink};
 use super::connect::{self, Connected, Joined};
 use super::error::Error;
-use zdesk_rdp_graphics::framebuffer::{Framebuffer, Rect, affordable, stage};
-use zdesk_rdp_graphics::fidelity::Fidelity;
-use zdesk_rdp_graphics::gfx::{self, Graphics};
-use super::camera::{Camera, CameraCommand, CameraFeed, CameraInput, CameraQueues, CameraSink};
 use super::input::{Clipboard, Command, Input};
+use super::microphone::{MicrophoneFeed, MicrophoneInput, MicrophoneQueue, MicrophoneSink};
 use super::pointer::Cursor;
 use super::proto::autodetect::{self, Detector};
 use super::proto::capabilities::DemandActive;
@@ -26,11 +23,17 @@ use super::proto::channel::Chunk;
 use super::proto::fastpath::{self, Fragments, Update};
 use super::proto::frame::Frames;
 use super::proto::gcc::Channel;
+use super::proto::gfx as gfx_proto;
 use super::proto::pointer::{self, Pointer};
 use super::proto::share::{self, Pdu};
-use super::microphone::{MicrophoneFeed, MicrophoneInput, MicrophoneQueue, MicrophoneSink};
-use super::proto::{bitmap, channel, cliprdr, desktop, display, dvc, input, mcs, rdpdr, rdpeai, rdpecam, rdpsnd, tls};
-use super::proto::gfx as gfx_proto;
+use super::proto::{
+    bitmap, channel, cliprdr, desktop, display, dvc, input, mcs, rdpdr, rdpeai, rdpecam, rdpsnd,
+    tls,
+};
+use crate::config::Placement;
+use zdesk_rdp_graphics::fidelity::Fidelity;
+use zdesk_rdp_graphics::framebuffer::{Framebuffer, Rect, affordable, stage};
+use zdesk_rdp_graphics::gfx::{self, Graphics};
 pub use zdesk_rdp_graphics::proto::gfx::Placed;
 
 // ------------------------------------------------------------------ configuration
@@ -171,7 +174,10 @@ pub trait AudioSink: Send {
 pub enum Event {
     /// The desktop exists and its size is settled. Always the first event of a
     /// successful session; a failed one goes straight to [`Event::Ended`].
-    Connected { width: u32, height: u32 },
+    Connected {
+        width: u32,
+        height: u32,
+    },
     /// This rectangle of the framebuffer changed. Never sent on a session that
     /// passes the pipeline ([`Connect::egfx`]).
     ///
@@ -203,7 +209,10 @@ pub enum Event {
     /// cache slot and each codec's own state are built by the commands before.
     /// [`Event::FramesMarked`] is where a pipeline begins, and it is sent again when
     /// a host closes the channel and opens another.
-    Graphics { wrapped: Vec<u8>, frame: Option<u32> },
+    Graphics {
+        wrapped: Vec<u8>,
+        frame: Option<u32>,
+    },
     /// One frame of a pipeline whose picture is its H.264 alone, a session asked
     /// for the whole desktop in it ([`gfx_proto::H264::WholeDesktop`]): the access
     /// units it drew, each with the surface whose stream it is, Annex B as the host
@@ -216,13 +225,21 @@ pub enum Event {
     ///
     /// A stream starts at an IDR picture and has no other: a caller that loses its
     /// place in one asks for a new one with [`Input::keyframe`].
-    Video { units: Vec<(u16, Vec<u8>)>, frame: u32 },
+    Video {
+        units: Vec<(u16, Vec<u8>)>,
+        frame: u32,
+    },
     /// A surface of such a pipeline was mapped to the output at `rect`, or with
     /// `None`, deleted: whatever stream it had is over.
-    Surface { surface: u16, rect: Option<Rect> },
+    Surface {
+        surface: u16,
+        rect: Option<Rect>,
+    },
     /// A surface's stream lost a unit, one whose command did not read: its units
     /// after it are drawn against a picture the caller does not have.
-    UnitLost { surface: u16 },
+    UnitLost {
+        surface: u16,
+    },
     /// The server confirmed the graphics pipeline, so every [`Event::Paint`] from
     /// here on arrives inside a frame that ends in an [`Event::Frame`]. Sent before
     /// the first such paint, so a consumer pacing frames itself stops guessing
@@ -245,7 +262,11 @@ pub enum Event {
     /// `monitors` is where each monitor the server laid the desktop out over is in
     /// it, the primary first, from the graphics reset that redefined it: the ones
     /// [`Connect::monitors`] asked for, each of its own size, or the one desktop.
-    Resize { width: u32, height: u32, monitors: Vec<Placed> },
+    Resize {
+        width: u32,
+        height: u32,
+        monitors: Vec<Placed>,
+    },
     /// The server offered Display Control, so [`Input::resize`] now has somewhere
     /// to go. Only ever sent on a session configured with [`Connect::resize`], and
     /// not at all by a server that does not implement MS-RDPEDISP.
@@ -256,7 +277,9 @@ pub enum Event {
     ///
     /// `max_area` is the largest total monitor area the server will accept, in
     /// pixels, over every monitor of a layout together.
-    ResizeReady { max_area: u64 },
+    ResizeReady {
+        max_area: u64,
+    },
     /// The server closed Display Control after [`Event::ResizeReady`]: a resize has
     /// nowhere to go until another `ResizeReady` arrives.
     ResizeGone,
@@ -283,12 +306,16 @@ pub enum Event {
     /// [`channel::MAX_PDU`]. `bytes` is the size it announced, which is all there is
     /// left to report, and the honest thing to report: a truncated paste cannot be
     /// told from a whole one.
-    ClipboardOversized { bytes: u64 },
+    ClipboardOversized {
+        bytes: u64,
+    },
     /// The remote is pasting and **is waiting** for the bytes of `format`. Every one
     /// of these has to be answered with [`Input::send_clipboard`], including with
     /// nothing — the application on the far end is blocked inside its own paste
     /// handler until it is.
-    ClipboardWanted { format: u32 },
+    ClipboardWanted {
+        format: u32,
+    },
     Cursor(Cursor),
     /// The session is over, and the channel is about to close. `Ok(())` is an
     /// orderly disconnection from either side.
@@ -461,7 +488,10 @@ pub(super) struct PassedSocket {
 
 impl PassedSocket {
     pub(super) fn of(tcp: &tokio::net::TcpStream) -> std::io::Result<Self> {
-        Ok(Self { socket: socket2::SockRef::from(tcp).try_clone()?, usual: None })
+        Ok(Self {
+            socket: socket2::SockRef::from(tcp).try_clone()?,
+            usual: None,
+        })
     }
 
     /// Make the buffer small while a pipeline is `open`, and what it was otherwise.
@@ -520,7 +550,9 @@ impl PassedFrames {
         self.owed
             .iter()
             .take_while(|(_, _, handed)| now.saturating_duration_since(*handed) >= self.distance)
-            .fold((0, 0), |(frames, bytes), (_, size, _)| (frames + 1, bytes + size))
+            .fold((0, 0), |(frames, bytes), (_, size, _)| {
+                (frames + 1, bytes + size)
+            })
     }
 
     /// Whether the caller is behind at `now`: a frame waits for it.
@@ -632,10 +664,15 @@ impl Paced {
     /// The caller composed `bytes`, and is `behind` after.
     fn composed(&mut self, bytes: usize, behind: bool, now: Instant) {
         if let Some((last, true)) = self.last {
-            self.samples.push_back((now, bytes as u64, now.saturating_duration_since(last)));
+            self.samples
+                .push_back((now, bytes as u64, now.saturating_duration_since(last)));
         }
         self.last = Some((now, behind));
-        while self.samples.front().is_some_and(|(at, ..)| now.saturating_duration_since(*at) > PACE_WINDOW) {
+        while self
+            .samples
+            .front()
+            .is_some_and(|(at, ..)| now.saturating_duration_since(*at) > PACE_WINDOW)
+        {
             self.samples.pop_front();
         }
     }
@@ -644,7 +681,11 @@ impl Paced {
     /// from the samples within [`PACE_WINDOW`] of `now`, since a caller that has
     /// stopped composing has not composed since.
     fn pace(&self, now: Instant) -> Option<f64> {
-        let recent = || self.samples.iter().filter(|(at, ..)| now.saturating_duration_since(*at) <= PACE_WINDOW);
+        let recent = || {
+            self.samples
+                .iter()
+                .filter(|(at, ..)| now.saturating_duration_since(*at) <= PACE_WINDOW)
+        };
         let busy: Duration = recent().map(|(_, _, took)| *took).sum();
         let bytes: u64 = recent().map(|(_, bytes, _)| *bytes).sum();
         (busy >= PACE_SAMPLE && bytes > 0).then(|| bytes as f64 / busy.as_secs_f64())
@@ -665,12 +706,17 @@ impl Paced {
         let pace = self.pace(now).filter(|_| behind);
         match answer {
             Answer::Reply(reply) => {
-                let queued = pace.map_or(Duration::ZERO, |pace| Duration::from_secs_f64(owed as f64 / pace));
+                let queued = pace.map_or(Duration::ZERO, |pace| {
+                    Duration::from_secs_f64(owed as f64 / pace)
+                });
                 let wait = queued + distance;
                 if wait.is_zero() && self.held.is_empty() {
                     return Some(reply);
                 }
-                debug!("rdp: a network-detection round trip held {} ms for the caller", wait.as_millis());
+                debug!(
+                    "rdp: a network-detection round trip held {} ms for the caller",
+                    wait.as_millis()
+                );
                 let due = now + wait;
                 // In the order asked: the host matches them by sequence number, and
                 // one behind another is due no sooner.
@@ -678,13 +724,22 @@ impl Paced {
                 self.held.push_back((due, reply));
                 None
             }
-            Answer::Measured { reply, sequence, results, millis, bytes } => {
+            Answer::Measured {
+                reply,
+                sequence,
+                results,
+                millis,
+                bytes,
+            } => {
                 let Some(pace) = pace else { return Some(reply) };
-                let taken = u32::try_from((f64::from(bytes) * 1000.0 / pace).ceil() as u64).unwrap_or(u32::MAX);
+                let taken = u32::try_from((f64::from(bytes) * 1000.0 / pace).ceil() as u64)
+                    .unwrap_or(u32::MAX);
                 if taken <= millis {
                     return Some(reply);
                 }
-                debug!("rdp: network detection measured {bytes} bytes, in {taken} ms at the caller's pace");
+                debug!(
+                    "rdp: network detection measured {bytes} bytes, in {taken} ms at the caller's pace"
+                );
                 Some(autodetect::timed(sequence, results, taken, bytes))
             }
             Answer::Nothing | Answer::Started | Answer::Concluded(_) => None,
@@ -780,13 +835,19 @@ impl Session {
             }
             None => (None, None),
         };
-        let feeds = Feeds { camera: camera_queues, microphone: mic_queue };
+        let feeds = Feeds {
+            camera: camera_queues,
+            microphone: mic_queue,
+        };
 
         // The session's last word has its place kept from the start. Waiting for room
         // at the end would wait on a caller that may be doing nothing but dropping the
         // session — which waits on this thread in turn — so a queue left full when the
         // caller stopped reading would lose the one event that says how it ended.
-        let last_word = events.clone().try_reserve_owned().expect("a new queue has room");
+        let last_word = events
+            .clone()
+            .try_reserve_owned()
+            .expect("a new queue has room");
         let spawned = std::thread::Builder::new().name("rdp".into()).spawn({
             let framebuffer = Arc::clone(&framebuffer);
             let events = events.clone();
@@ -794,7 +855,9 @@ impl Session {
             move || {
                 // Dropped when this closure returns, however it returns.
                 let _finished = finished_tx;
-                let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
                 let runtime = match runtime {
                     Ok(runtime) => runtime,
                     Err(e) => {
@@ -808,10 +871,17 @@ impl Session {
                 // event, and the caller would wait on the receiver forever. Converted
                 // into the disconnection it really is.
                 let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    runtime.block_on(thread_main(config, commands, feeds, &framebuffer, &events, stop))
+                    runtime.block_on(thread_main(
+                        config,
+                        commands,
+                        feeds,
+                        &framebuffer,
+                        &events,
+                        stop,
+                    ))
                 }));
-                let result = outcome
-                    .unwrap_or_else(|_| Err(Error::new("the RDP session thread panicked")));
+                let result =
+                    outcome.unwrap_or_else(|_| Err(Error::new("the RDP session thread panicked")));
                 last_word.send(Event::Ended(result));
             }
         });
@@ -826,7 +896,17 @@ impl Session {
                 None
             }
         };
-        (Self { input, framebuffer, thread, finished, camera, microphone }, receiver)
+        (
+            Self {
+                input,
+                framebuffer,
+                thread,
+                finished,
+                camera,
+                microphone,
+            },
+            receiver,
+        )
     }
 
     /// Keyboard, mouse, refresh and resize.
@@ -897,7 +977,9 @@ async fn thread_main(
     events: &mpsc::Sender<Event>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), Error> {
-    run(config, &mut commands, feeds, framebuffer, events, stop).await.map_err(Error::from)
+    run(config, &mut commands, feeds, framebuffer, events, stop)
+        .await
+        .map_err(Error::from)
 }
 
 /// The session thread's ends of the caller's media feeds, each only for a session that
@@ -926,7 +1008,10 @@ async fn run(
         }
         connected = connect::connect(&config) => connected?,
     };
-    let (width, height) = (u32::from(connected.demand.width), u32::from(connected.demand.height));
+    let (width, height) = (
+        u32::from(connected.demand.width),
+        u32::from(connected.demand.height),
+    );
     info!("rdp: connected, desktop {width}x{height}");
     // Before the framebuffer is sized to it. A pipeline that is passed draws none
     // of its picture there, so it is left empty.
@@ -940,7 +1025,18 @@ async fn run(
     let audio = config.audio.take();
     let capture = config.camera.take();
     let recorder = config.microphone.take();
-    Active::new(connected, &config, audio, capture, recorder, framebuffer, events, stop).run(commands, feeds).await
+    Active::new(
+        connected,
+        &config,
+        audio,
+        capture,
+        recorder,
+        framebuffer,
+        events,
+        stop,
+    )
+    .run(commands, feeds)
+    .await
 }
 
 /// The next thing a camera feed wants, for a session that has one; a session that does
@@ -1026,10 +1122,13 @@ impl Share {
     /// always is.
     fn takes(&self, event: &input::Event) -> bool {
         match event {
-            input::Event::Wheel { horizontal: true, .. } => self.horizontal_wheel,
-            input::Event::Button { button: input::Button::X1 | input::Button::X2, .. } => {
-                self.extended_buttons
-            }
+            input::Event::Wheel {
+                horizontal: true, ..
+            } => self.horizontal_wheel,
+            input::Event::Button {
+                button: input::Button::X1 | input::Button::X2,
+                ..
+            } => self.extended_buttons,
             _ => true,
         }
     }
@@ -1184,7 +1283,10 @@ impl Sound {
     /// and what it earned goes back to the caller to send on the channel it came in
     /// on.
     fn push(&mut self, pdu: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let rdpsnd::Turn { mut replies, output } = self.proto.push(pdu)?;
+        let rdpsnd::Turn {
+            mut replies,
+            output,
+        } = self.proto.push(pdu)?;
         match output {
             rdpsnd::Output::Negotiated => {
                 let format = rdpsnd::CD_QUALITY;
@@ -1234,7 +1336,12 @@ struct Capture {
 
 impl Capture {
     fn new(proto: rdpecam::Rdpecam, sink: Box<dyn CameraSink>) -> Self {
-        Self { proto, sink, requests_seen: 0, quiet_since: None }
+        Self {
+            proto,
+            sink,
+            requests_seen: 0,
+            quiet_since: None,
+        }
     }
 
     /// When the stream goes idle if the host asks for nothing before then.
@@ -1328,7 +1435,9 @@ impl Recorder {
         for output in turn.outputs {
             match output {
                 rdpeai::Output::Negotiated { version } => {
-                    info!("rdp: the host offers microphone redirection, MS-RDPEAI version {version}");
+                    info!(
+                        "rdp: the host offers microphone redirection, MS-RDPEAI version {version}"
+                    );
                     self.sink.negotiated(version);
                 }
                 rdpeai::Output::Offered(format) => info!(
@@ -1378,8 +1487,18 @@ impl<'a> Active<'a> {
         let audio = connected.channel(Channel::AUDIO);
         let devices = connected.channel(Channel::DEVICES);
         let wants_audio = sink.is_some();
-        let Connected { frames, writer, socket, user, io_channel, message_channel, demand, deferred, detector, .. } =
-            connected;
+        let Connected {
+            frames,
+            writer,
+            socket,
+            user,
+            io_channel,
+            message_channel,
+            demand,
+            deferred,
+            detector,
+            ..
+        } = connected;
         Self {
             frames,
             writer,
@@ -1392,9 +1511,16 @@ impl<'a> Active<'a> {
             dynamic,
             clipboard,
             audio,
-            sound: sink.map(|sink| Sound { proto: rdpsnd::Rdpsnd::new(), sink }),
-            capture: camera.map(|camera| Capture::new(rdpecam::Rdpecam::new(&camera.name), camera.sink)),
-            recorder: microphone.map(|sink| Recorder { proto: rdpeai::Rdpeai::new(), sink }),
+            sound: sink.map(|sink| Sound {
+                proto: rdpsnd::Rdpsnd::new(),
+                sink,
+            }),
+            capture: camera
+                .map(|camera| Capture::new(rdpecam::Rdpecam::new(&camera.name), camera.sink)),
+            recorder: microphone.map(|sink| Recorder {
+                proto: rdpeai::Rdpeai::new(),
+                sink,
+            }),
             devices,
             rdpdr: rdpdr::Rdpdr::new(),
             share: Share::from(&demand),
@@ -1419,7 +1545,11 @@ impl<'a> Active<'a> {
             // The whole desktop in H.264 is that picture alone, handed on unit by
             // unit; every other pipeline is handed on as the host sent it.
             graphics: config.egfx.then(|| {
-                if config.h264 == gfx_proto::H264::WholeDesktop { Graphics::streaming() } else { Graphics::passing() }
+                if config.h264 == gfx_proto::H264::WholeDesktop {
+                    Graphics::streaming()
+                } else {
+                    Graphics::passing()
+                }
             }),
             passed: PassedFrames::default(),
             caller_paced: config.paced,
@@ -1446,7 +1576,10 @@ impl<'a> Active<'a> {
         commands: &mut mpsc::UnboundedReceiver<Command>,
         feeds: Feeds,
     ) -> Result<()> {
-        let Feeds { mut camera, mut microphone } = feeds;
+        let Feeds {
+            mut camera,
+            mut microphone,
+        } = feeds;
         if self.pipeline_due.is_some() && self.dynamic.is_none() {
             bail!(
                 "the host joined no dynamic virtual channel, so it cannot draw the graphics pipeline; \
@@ -1555,7 +1688,8 @@ impl<'a> Active<'a> {
     async fn dispatch(&mut self, frame: &[u8]) -> Result<Option<Result<()>>> {
         // A frame with no first byte is not one [`Frames`] hands out.
         if self.message_channel.is_some() {
-            self.detector.received(autodetect::counted(frame, self.message_channel)?);
+            self.detector
+                .received(autodetect::counted(frame, self.message_channel)?);
         }
         if fastpath::is_output(frame[0]) {
             self.on_updates(frame).await?;
@@ -1592,7 +1726,11 @@ impl<'a> Active<'a> {
                     let now = Instant::now();
                     // At the caller's pace, or as this connection measured it.
                     let (owed, behind, distance) = match self.caller_paced {
-                        true => (self.passed.owed_bytes, self.passed.behind(now), self.passed.distance),
+                        true => (
+                            self.passed.owed_bytes,
+                            self.passed.behind(now),
+                            self.passed.distance,
+                        ),
                         false => (0, false, Duration::ZERO),
                     };
                     self.paced.answer(answer, owed, behind, distance, now)
@@ -1603,16 +1741,25 @@ impl<'a> Active<'a> {
             }
             return Ok(());
         }
-        if self.dynamic.is_some_and(|dynamic| dynamic.number == channel) {
+        if self
+            .dynamic
+            .is_some_and(|dynamic| dynamic.number == channel)
+        {
             return self.on_dynamic(payload).await;
         }
-        if self.clipboard.is_some_and(|clipboard| clipboard.number == channel) {
+        if self
+            .clipboard
+            .is_some_and(|clipboard| clipboard.number == channel)
+        {
             return self.on_clipboard(payload).await;
         }
         if self.audio.is_some_and(|audio| audio.number == channel) {
             return self.on_audio(payload).await;
         }
-        if self.devices.is_some_and(|devices| devices.number == channel) {
+        if self
+            .devices
+            .is_some_and(|devices| devices.number == channel)
+        {
             return self.on_devices(payload).await;
         }
         // A channel this client neither asked for nor joined. A server does not send
@@ -1629,8 +1776,17 @@ impl<'a> Active<'a> {
             let cursor = {
                 // Disjoint pieces of the session, so that an update may borrow the
                 // reassembler it came out of while the decoders it feeds are used.
-                let Self { fragments, scratch, pixels, cursors, framebuffer, share, graphics, bitmaps_dropped, .. } =
-                    self;
+                let Self {
+                    fragments,
+                    scratch,
+                    pixels,
+                    cursors,
+                    framebuffer,
+                    share,
+                    graphics,
+                    bitmaps_dropped,
+                    ..
+                } = self;
                 let Some(update) = fragments.push(piece)? else {
                     continue;
                 };
@@ -1638,11 +1794,21 @@ impl<'a> Active<'a> {
                 // host sends beside it, or before it confirms it, is not decoded.
                 if graphics.is_some() && update.code == fastpath::BITMAP {
                     if !std::mem::replace(bitmaps_dropped, true) {
-                        info!("rdp: the host drew with bitmap updates outside the graphics pipeline; they are dropped");
+                        info!(
+                            "rdp: the host drew with bitmap updates outside the graphics pipeline; they are dropped"
+                        );
                     }
                     continue;
                 }
-                draw(update, scratch, pixels, cursors, framebuffer, share, &mut painted)?
+                draw(
+                    update,
+                    scratch,
+                    pixels,
+                    cursors,
+                    framebuffer,
+                    share,
+                    &mut painted,
+                )?
             };
             for rect in painted.drain(..) {
                 self.paint(rect);
@@ -1738,7 +1904,10 @@ impl<'a> Active<'a> {
                     // Its frames went with it: an acknowledgement still to come is
                     // for a channel that is no longer there to be told. The
                     // caller's distance is the caller's, and is not said again.
-                    *passed = PassedFrames { distance: passed.distance, ..PassedFrames::default() };
+                    *passed = PassedFrames {
+                        distance: passed.distance,
+                        ..PassedFrames::default()
+                    };
                     streamed.take();
                     // And it was the only picture, so another is waited for as
                     // the first was.
@@ -1772,7 +1941,9 @@ impl<'a> Active<'a> {
                 // The camera's two channels, for a session that carries one: the host
                 // opens them by name, and everything on them is the camera's to answer.
                 dvc::Message::Create { channel, name }
-                    if capture.as_ref().is_some_and(|capture| capture.proto.wants(name)) =>
+                    if capture
+                        .as_ref()
+                        .is_some_and(|capture| capture.proto.wants(name)) =>
                 {
                     let capture = capture.as_mut().expect("the guard found a camera");
                     let turn = capture.proto.opened(name, channel);
@@ -1781,14 +1952,18 @@ impl<'a> Active<'a> {
                     (replies, Vec::new())
                 }
                 dvc::Message::Data { channel, data }
-                    if capture.as_ref().is_some_and(|capture| capture.proto.owns(channel)) =>
+                    if capture
+                        .as_ref()
+                        .is_some_and(|capture| capture.proto.owns(channel)) =>
                 {
                     let capture = capture.as_mut().expect("the guard found a camera");
                     let turn = capture.proto.push(channel, data);
                     (capture.settle(turn)?, Vec::new())
                 }
                 dvc::Message::Close { channel }
-                    if capture.as_ref().is_some_and(|capture| capture.proto.owns(channel)) =>
+                    if capture
+                        .as_ref()
+                        .is_some_and(|capture| capture.proto.owns(channel)) =>
                 {
                     let capture = capture.as_mut().expect("the guard found a camera");
                     let turn = capture.proto.closed(channel);
@@ -1797,7 +1972,9 @@ impl<'a> Active<'a> {
                     (replies, Vec::new())
                 }
                 // The microphone's channel, for a session that carries one.
-                dvc::Message::Create { channel, name } if name == rdpeai::CHANNEL_NAME && recorder.is_some() => {
+                dvc::Message::Create { channel, name }
+                    if name == rdpeai::CHANNEL_NAME && recorder.is_some() =>
+                {
                     let recorder = recorder.as_mut().expect("the guard found a microphone");
                     let turn = recorder.proto.opened(channel);
                     let mut replies = vec![dvc::create_response(channel, dvc::ACCEPTED)];
@@ -1805,14 +1982,18 @@ impl<'a> Active<'a> {
                     (replies, Vec::new())
                 }
                 dvc::Message::Data { channel, data }
-                    if recorder.as_ref().is_some_and(|recorder| recorder.proto.owns(channel)) =>
+                    if recorder
+                        .as_ref()
+                        .is_some_and(|recorder| recorder.proto.owns(channel)) =>
                 {
                     let recorder = recorder.as_mut().expect("the guard found a microphone");
                     let turn = recorder.proto.push(data);
                     (recorder.settle(channel, turn)?, Vec::new())
                 }
                 dvc::Message::Close { channel }
-                    if recorder.as_ref().is_some_and(|recorder| recorder.proto.owns(channel)) =>
+                    if recorder
+                        .as_ref()
+                        .is_some_and(|recorder| recorder.proto.owns(channel)) =>
                 {
                     let recorder = recorder.as_mut().expect("the guard found a microphone");
                     let turn = recorder.proto.closed();
@@ -1824,7 +2005,9 @@ impl<'a> Active<'a> {
             }
         };
         if let Some(socket) = &mut self.socket {
-            socket.passing(self.dynamics.graphics.is_some()).context("setting the socket's receive buffer")?;
+            socket
+                .passing(self.dynamics.graphics.is_some())
+                .context("setting the socket's receive buffer")?;
         }
         if let Some(dynamic) = self.dynamic {
             for reply in replies {
@@ -1841,13 +2024,16 @@ impl<'a> Active<'a> {
                 // opening frame.
                 gfx::Update::Confirmed { version, flags } => {
                     let h264 = self.dynamics.h264;
-                    if h264 != gfx_proto::H264::Refused && !gfx_proto::confirms_h264(version, flags) {
+                    if h264 != gfx_proto::H264::Refused && !gfx_proto::confirms_h264(version, flags)
+                    {
                         bail!(
                             "the host confirmed graphics pipeline version {version:#010x} with flags {flags:#x}, \
                              which leaves it no H.264 to draw with; start the session High quality"
                         );
                     }
-                    if h264 == gfx_proto::H264::WholeDesktop && !gfx_proto::confirms_whole_desktop(version, flags) {
+                    if h264 == gfx_proto::H264::WholeDesktop
+                        && !gfx_proto::confirms_whole_desktop(version, flags)
+                    {
                         bail!(
                             "the host confirmed graphics pipeline version {version:#010x} with flags {flags:#x}, \
                              which does not take H.264 full screen; start the session H.264 region"
@@ -1861,8 +2047,14 @@ impl<'a> Active<'a> {
                 // follows too: a Refresh Rect asked for later — and one is, after
                 // every resize — is in the coordinates of this desktop, not the one
                 // the Demand Active described.
-                gfx::Update::Reset { width, height, monitors } => {
-                    info!("rdp: graphics reset, desktop {width}x{height} over monitors {monitors:?}");
+                gfx::Update::Reset {
+                    width,
+                    height,
+                    monitors,
+                } => {
+                    info!(
+                        "rdp: graphics reset, desktop {width}x{height} over monitors {monitors:?}"
+                    );
                     self.share.width = width;
                     self.share.height = height;
                     self.announce_desktop(width, height, monitors).await;
@@ -1873,7 +2065,8 @@ impl<'a> Active<'a> {
                 // message, with nothing more to compose.
                 gfx::Update::Passed { wrapped, frames } => {
                     let now = Instant::now();
-                    self.passed.handed(wrapped.len(), frames.first().copied(), now);
+                    self.passed
+                        .handed(wrapped.len(), frames.first().copied(), now);
                     for &frame in frames.iter().skip(1) {
                         self.passed.handed(0, Some(frame), now);
                     }
@@ -1893,8 +2086,20 @@ impl<'a> Active<'a> {
                     self.send(Event::Video { units, frame }).await;
                     self.send(Event::Frame).await;
                 }
-                gfx::Update::Mapped { surface, rect } => self.send(Event::Surface { surface, rect: Some(rect) }).await,
-                gfx::Update::Deleted { surface } => self.send(Event::Surface { surface, rect: None }).await,
+                gfx::Update::Mapped { surface, rect } => {
+                    self.send(Event::Surface {
+                        surface,
+                        rect: Some(rect),
+                    })
+                    .await
+                }
+                gfx::Update::Deleted { surface } => {
+                    self.send(Event::Surface {
+                        surface,
+                        rect: None,
+                    })
+                    .await
+                }
                 gfx::Update::Lost { surface } => self.send(Event::UnitLost { surface }).await,
                 gfx::Update::Drawn(fidelity) => self.send(Event::Drawn(fidelity)).await,
                 // Judged as its frame ends, by that frame's draws alone.
@@ -1922,7 +2127,10 @@ impl<'a> Active<'a> {
             && let Some(caps) = self.dynamics.caps
         {
             self.resize_ready = true;
-            self.send(Event::ResizeReady { max_area: caps.area }).await;
+            self.send(Event::ResizeReady {
+                max_area: caps.area,
+            })
+            .await;
             self.send_layout().await?;
         }
         Ok(())
@@ -1938,7 +2146,9 @@ impl<'a> Active<'a> {
             CameraInput::Command(CameraCommand::Plug(format)) => capture.proto.plug(format),
             CameraInput::Command(CameraCommand::Unplug) => capture.proto.unplug(),
             CameraInput::Command(CameraCommand::Unavailable) => {
-                info!("rdp: the camera on this end failed; the host's next pause in asking ends its stream");
+                info!(
+                    "rdp: the camera on this end failed; the host's next pause in asking ends its stream"
+                );
                 capture.proto.unavailable()
             }
             CameraInput::Sample(sample) => capture.proto.sample(sample.data, sample.keyframe),
@@ -2002,9 +2212,13 @@ impl<'a> Active<'a> {
 
     /// One reply on the message channel, for a session that has one.
     async fn answer_message(&mut self, reply: &[u8]) -> Result<()> {
-        let Some(channel) = self.message_channel else { return Ok(()) };
+        let Some(channel) = self.message_channel else {
+            return Ok(());
+        };
         let frame = mcs::send_data_request(self.user, channel, reply)?;
-        self.write(&frame).await.context("answering on the message channel")
+        self.write(&frame)
+            .await
+            .context("answering on the message channel")
     }
 
     /// The acknowledgement every EndFrame is owed: without it a Windows host
@@ -2014,7 +2228,8 @@ impl<'a> Active<'a> {
             return Ok(()); // the channel closed under the frame; nothing to answer on
         };
         let ack = gfx_proto::frame_acknowledge(frame, decoded);
-        self.write_channel(dynamic, &dvc::data(channel, &ack)?).await
+        self.write_channel(dynamic, &dvc::data(channel, &ack)?)
+            .await
     }
 
     /// The clipboard channel. Both ends announce a copy and neither transfers
@@ -2036,7 +2251,10 @@ impl<'a> Active<'a> {
                 // and the channel carries on.
                 Chunk::Dropped { length } => {
                     warn!("rdp: a {length}-byte clipboard PDU is more than this client holds");
-                    self.send(Event::ClipboardOversized { bytes: length as u64 }).await;
+                    self.send(Event::ClipboardOversized {
+                        bytes: length as u64,
+                    })
+                    .await;
                     return Ok(());
                 }
             };
@@ -2064,7 +2282,11 @@ impl<'a> Active<'a> {
     /// answered on the channel it came in on, and the buffers go to the sink.
     async fn on_audio(&mut self, payload: &[u8]) -> Result<()> {
         let replies = {
-            let Self { audio_chunks, sound, .. } = self;
+            let Self {
+                audio_chunks,
+                sound,
+                ..
+            } = self;
             let pdu = match audio_chunks.push(payload)? {
                 Chunk::Whole(pdu) => pdu,
                 Chunk::Partial => return Ok(()),
@@ -2089,7 +2311,11 @@ impl<'a> Active<'a> {
     /// Device redirection's channel: its handshake, answered, and nothing after it.
     async fn on_devices(&mut self, payload: &[u8]) -> Result<()> {
         let replies = {
-            let Self { device_chunks, rdpdr, .. } = self;
+            let Self {
+                device_chunks,
+                rdpdr,
+                ..
+            } = self;
             match device_chunks.push(payload)? {
                 Chunk::Whole(pdu) => rdpdr.push(pdu)?,
                 Chunk::Partial => return Ok(()),
@@ -2196,11 +2422,27 @@ impl<'a> Active<'a> {
         // Rectangles of the desktop that just went away name pixels that no longer
         // exist; the caller starts over from the resize anyway.
         self.damage.clear();
-        let monitors =
-            if monitors.is_empty() { vec![Placed { x: 0, y: 0, w: width, h: height }] } else { monitors };
-        let sizes = monitors.iter().map(|monitor| (monitor.w, monitor.h)).collect();
+        let monitors = if monitors.is_empty() {
+            vec![Placed {
+                x: 0,
+                y: 0,
+                w: width,
+                h: height,
+            }]
+        } else {
+            monitors
+        };
+        let sizes = monitors
+            .iter()
+            .map(|monitor| (monitor.w, monitor.h))
+            .collect();
         self.layout = Some(laid_out(self.layout.take(), sizes, self.opening_scale));
-        self.send(Event::Resize { width, height, monitors }).await;
+        self.send(Event::Resize {
+            width,
+            height,
+            monitors,
+        })
+        .await;
     }
 
     /// Send the pending monitor layout, if there is one and a channel to carry it.
@@ -2219,7 +2461,10 @@ impl<'a> Active<'a> {
         // Held to what the server said it lays out. A layout past either limit is
         // one a conforming server ignores in silence, which from the caller's end
         // is a resize that never comes, so it is not sent at all.
-        let caps = self.dynamics.caps.unwrap_or(display::Capabilities { monitors: 1, area: u64::MAX });
+        let caps = self.dynamics.caps.unwrap_or(display::Capabilities {
+            monitors: 1,
+            area: u64::MAX,
+        });
         let Some(monitors) = monitors_within(&sizes, caps) else {
             warn!(
                 "rdp: not sending a {sizes:?} monitor layout: the first monitor is past the \
@@ -2241,7 +2486,8 @@ impl<'a> Active<'a> {
         debug!("rdp: sending a monitor layout of {sizes:?} at {scales:?}%");
         let layout = display::monitor_layout(sizes, self.dynamics.placement, &scales);
         self.layout = Some((sizes.to_vec(), scales));
-        self.write_channel(dynamic, &dvc::data(control, &layout)?).await
+        self.write_channel(dynamic, &dvc::data(control, &layout)?)
+            .await
     }
 
     /// Ask the host for a keyframe of every surface's H.264, for a caller that
@@ -2258,7 +2504,9 @@ impl<'a> Active<'a> {
     /// the last one sent, or the one the host laid the desktop out as, at the scale
     /// the session opened at, which no layout has changed since.
     async fn keyframe(&mut self) -> Result<()> {
-        let (Some(control), Some(dynamic), true) = (self.dynamics.control, self.dynamic, self.resize_ready) else {
+        let (Some(control), Some(dynamic), true) =
+            (self.dynamics.control, self.dynamic, self.resize_ready)
+        else {
             debug!("rdp: a keyframe is wanted and Display Control is not open to ask for one");
             return Ok(());
         };
@@ -2268,7 +2516,8 @@ impl<'a> Active<'a> {
         };
         info!("rdp: asking the host for a keyframe with its layout, {sizes:?} at {scales:?}%");
         let layout = display::monitor_layout(&sizes, self.dynamics.placement, &scales);
-        self.write_channel(dynamic, &dvc::data(control, &layout)?).await
+        self.write_channel(dynamic, &dvc::data(control, &layout)?)
+            .await
     }
 
     /// `first`, then whatever else is already queued behind it, with consecutive
@@ -2469,7 +2718,10 @@ fn answer_clipboard(pdu: &[u8]) -> Result<(Option<Vec<u8>>, Option<Event>)> {
         cliprdr::Message::Formats(list) => {
             let formats = cliprdr::formats(list)?;
             debug!("rdp: the remote clipboard now holds {formats:?}");
-            (Some(cliprdr::format_list_response()), Some(Event::ClipboardFormats(formats)))
+            (
+                Some(cliprdr::format_list_response()),
+                Some(Event::ClipboardFormats(formats)),
+            )
         }
         cliprdr::Message::DataRequest { format } => (None, Some(Event::ClipboardWanted { format })),
         cliprdr::Message::Data(Some(bytes)) => (None, Some(Event::ClipboardData(bytes.to_vec()))),
@@ -2519,7 +2771,10 @@ fn answer(message: dvc::Message<'_>, dynamics: &mut Dynamics) -> Result<Vec<Vec<
                 // header off the channel directly, and only the server-to-client
                 // direction is bulk-compressed.
                 let caps = gfx_proto::caps_advertise(dynamics.h264, dynamics.cache);
-                vec![dvc::create_response(channel, dvc::ACCEPTED), dvc::data(channel, &caps)?]
+                vec![
+                    dvc::create_response(channel, dvc::ACCEPTED),
+                    dvc::data(channel, &caps)?,
+                ]
             } else if name == rdpsnd::DVC_NAME && dynamics.audio {
                 debug!("rdp: the host opened sound redirection on dynamic channel {channel}");
                 dynamics.sound = Some(channel);
@@ -2567,8 +2822,13 @@ fn monitors_within(sizes: &[(u32, u32)], caps: display::Capabilities) -> Option<
             u64::from(width) * u64::from(height)
         })
         .collect();
-    let most = areas.len().clamp(1, caps.monitors.max(1) as usize).min(areas.len());
-    (1..=most).rev().find(|monitors| areas[..*monitors].iter().sum::<u64>() <= caps.area)
+    let most = areas
+        .len()
+        .clamp(1, caps.monitors.max(1) as usize)
+        .min(areas.len());
+    (1..=most)
+        .rev()
+        .find(|monitors| areas[..*monitors].iter().sum::<u64>() <= caps.area)
 }
 
 fn narrow(v: u32) -> u16 {
@@ -2597,14 +2857,22 @@ mod tests {
         let mut proto = rdpecam::Rdpecam::new("zDesk Camera");
         proto.opened(rdpecam::ENUMERATOR, 5);
         proto.push(5, &[2, 0x04]);
-        proto.plug(rdpecam::Format { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 });
+        proto.plug(rdpecam::Format {
+            width: 640,
+            height: 480,
+            fps_numerator: 30,
+            fps_denominator: 1,
+        });
         proto.opened(rdpecam::DEVICE_CHANNEL, DEVICE);
         proto.push(DEVICE, &[2, 0x07]);
         let start = [
-            2, 0x0f, 0, 0x01, 0x80, 0x02, 0, 0, 0xe0, 0x01, 0, 0, 0x1e, 0, 0, 0, 0x01, 0, 0, 0, 0x01, 0, 0, 0, 0x01,
-            0, 0, 0, 0x01,
+            2, 0x0f, 0, 0x01, 0x80, 0x02, 0, 0, 0xe0, 0x01, 0, 0, 0x1e, 0, 0, 0, 0x01, 0, 0, 0,
+            0x01, 0, 0, 0, 0x01, 0, 0, 0, 0x01,
         ];
-        assert_eq!(proto.push(DEVICE, &start).replies, vec![(DEVICE, vec![2, 0x01])]);
+        assert_eq!(
+            proto.push(DEVICE, &start).replies,
+            vec![(DEVICE, vec![2, 0x01])]
+        );
         Capture::new(proto, Box::new(NoSink))
     }
 
@@ -2613,13 +2881,20 @@ mod tests {
     #[test]
     fn a_keyframe_is_asked_for_with_the_layout_the_desktop_has() {
         let sent = (vec![(1280, 800), (1920, 1080)], vec![200, 100]);
-        assert_eq!(laid_out(Some(sent.clone()), vec![(1920, 1080), (1280, 800)], 100), sent, "listed in another order");
+        assert_eq!(
+            laid_out(Some(sent.clone()), vec![(1920, 1080), (1280, 800)], 100),
+            sent,
+            "listed in another order"
+        );
         assert_eq!(
             laid_out(Some(sent), vec![(2560, 1440)], 100),
             (vec![(2560, 1440)], vec![200, 100]),
             "laid out by the host, at the scales sent"
         );
-        assert_eq!(laid_out(None, vec![(1280, 800)], 150), (vec![(1280, 800)], vec![150]));
+        assert_eq!(
+            laid_out(None, vec![(1280, 800)], 150),
+            (vec![(1280, 800)], vec![150])
+        );
     }
 
     /// A frame a host never ends is held only so far, by its units and by their
@@ -2631,7 +2906,10 @@ mod tests {
             streamed.hold(0, vec![0; 4]).unwrap();
         }
         assert!(streamed.hold(0, vec![0; 4]).is_err());
-        assert_eq!(streamed.take(), (vec![(0, vec![0; 4]); STREAMED_UNITS], 4 * STREAMED_UNITS));
+        assert_eq!(
+            streamed.take(),
+            (vec![(0, vec![0; 4]); STREAMED_UNITS], 4 * STREAMED_UNITS)
+        );
 
         streamed.hold(0, vec![0; STREAMED_BYTES - 1]).unwrap();
         streamed.hold(1, vec![0; 1]).unwrap();
@@ -2647,16 +2925,27 @@ mod tests {
         let mut capture = streaming_camera();
         let start = Instant::now();
         capture.watch(start);
-        assert_eq!(capture.idle_due(), Some(start + CAMERA_IDLE), "a started stream waits on the host");
+        assert_eq!(
+            capture.idle_due(),
+            Some(start + CAMERA_IDLE),
+            "a started stream waits on the host"
+        );
         capture.watch(start + Duration::from_secs(1));
-        assert_eq!(capture.idle_due(), Some(start + CAMERA_IDLE), "a turn with no request changes nothing");
+        assert_eq!(
+            capture.idle_due(),
+            Some(start + CAMERA_IDLE),
+            "a turn with no request changes nothing"
+        );
 
         // A request answered at once, from a sample that waited: still owed nothing, but
         // the host asked, so it is timed afresh.
         capture.proto.sample(vec![1], true);
         capture.proto.push(DEVICE, &[2, 0x11, 0]);
         capture.watch(start + Duration::from_secs(2));
-        assert_eq!(capture.idle_due(), Some(start + Duration::from_secs(2) + CAMERA_IDLE));
+        assert_eq!(
+            capture.idle_due(),
+            Some(start + Duration::from_secs(2) + CAMERA_IDLE)
+        );
 
         // A request owed: the host waits on this end, so it is not timed.
         capture.proto.push(DEVICE, &[2, 0x11, 0]);
@@ -2664,14 +2953,21 @@ mod tests {
         assert_eq!(capture.idle_due(), None);
         capture.proto.sample(vec![2], false);
         capture.watch(start + Duration::from_secs(4));
-        assert_eq!(capture.idle_due(), Some(start + Duration::from_secs(4) + CAMERA_IDLE));
+        assert_eq!(
+            capture.idle_due(),
+            Some(start + Duration::from_secs(4) + CAMERA_IDLE)
+        );
 
         // Idle, the stream is not timed again until the host asks.
         capture.idle().unwrap();
         assert_eq!(capture.idle_due(), None);
         capture.proto.push(DEVICE, &[2, 0x11, 0]);
         capture.watch(start + Duration::from_secs(9));
-        assert_eq!(capture.idle_due(), None, "the request that resumed it is owed");
+        assert_eq!(
+            capture.idle_due(),
+            None,
+            "the request that resumed it is owed"
+        );
     }
 
     /// What a paced bandwidth result says it took, out of its encoded response:
@@ -2681,7 +2977,13 @@ mod tests {
     }
 
     fn measured(bytes: u32) -> autodetect::Answer {
-        autodetect::Answer::Measured { reply: b"at once".to_vec(), sequence: 3, results: 0x000B, millis: 2, bytes }
+        autodetect::Answer::Measured {
+            reply: b"at once".to_vec(),
+            sequence: 3,
+            results: 0x000B,
+            millis: 2,
+            bytes,
+        }
     }
 
     /// A caller composing 10 KB every 100 ms while behind: 100 KB a second.
@@ -2698,10 +3000,26 @@ mod tests {
     fn a_caller_that_keeps_up_is_answered_at_once() {
         let now = Instant::now();
         let mut paced = behind(now);
-        assert_eq!(paced.answer(autodetect::Answer::Reply(b"rtt".to_vec()), 0, false, Duration::ZERO, now), Some(b"rtt".to_vec()));
-        assert_eq!(paced.answer(measured(50_000), 0, false, Duration::ZERO, now), Some(b"at once".to_vec()));
+        assert_eq!(
+            paced.answer(
+                autodetect::Answer::Reply(b"rtt".to_vec()),
+                0,
+                false,
+                Duration::ZERO,
+                now
+            ),
+            Some(b"rtt".to_vec())
+        );
+        assert_eq!(
+            paced.answer(measured(50_000), 0, false, Duration::ZERO, now),
+            Some(b"at once".to_vec())
+        );
         let mut fresh = Paced::default();
-        assert_eq!(fresh.answer(measured(50_000), 30_000, true, Duration::ZERO, now), Some(b"at once".to_vec()), "no pace read yet");
+        assert_eq!(
+            fresh.answer(measured(50_000), 30_000, true, Duration::ZERO, now),
+            Some(b"at once".to_vec()),
+            "no pace read yet"
+        );
     }
 
     /// Behind a slow caller a measurement takes as long as the caller would over
@@ -2711,13 +3029,31 @@ mod tests {
         let start = Instant::now();
         let now = start + Duration::from_millis(200);
         let mut paced = behind(start);
-        let reply = paced.answer(measured(50_000), 30_000, true, Duration::ZERO, now).unwrap();
+        let reply = paced
+            .answer(measured(50_000), 30_000, true, Duration::ZERO, now)
+            .unwrap();
         assert_eq!(paced_millis(&reply), 500, "50 KB at 100 KB a second");
 
-        assert_eq!(paced.answer(autodetect::Answer::Reply(b"rtt".to_vec()), 30_000, true, Duration::ZERO, now), None);
-        assert_eq!(paced.next_due(), Some(now + Duration::from_millis(300)), "30 KB ahead of it");
+        assert_eq!(
+            paced.answer(
+                autodetect::Answer::Reply(b"rtt".to_vec()),
+                30_000,
+                true,
+                Duration::ZERO,
+                now
+            ),
+            None
+        );
+        assert_eq!(
+            paced.next_due(),
+            Some(now + Duration::from_millis(300)),
+            "30 KB ahead of it"
+        );
         assert!(paced.due(now + Duration::from_millis(299)).is_empty());
-        assert_eq!(paced.due(now + Duration::from_millis(300)), vec![b"rtt".to_vec()]);
+        assert_eq!(
+            paced.due(now + Duration::from_millis(300)),
+            vec![b"rtt".to_vec()]
+        );
         assert_eq!(paced.next_due(), None);
     }
 
@@ -2729,13 +3065,45 @@ mod tests {
         let now = start + Duration::from_millis(200);
         let mut paced = behind(start);
         let distance = Duration::from_millis(80);
-        assert_eq!(paced.answer(autodetect::Answer::Reply(b"idle".to_vec()), 0, false, distance, now), None);
-        assert_eq!(paced.next_due(), Some(now + Duration::from_millis(80)), "the distance alone");
-        assert_eq!(paced.answer(measured(50_000), 0, false, distance, now), Some(b"at once".to_vec()));
+        assert_eq!(
+            paced.answer(
+                autodetect::Answer::Reply(b"idle".to_vec()),
+                0,
+                false,
+                distance,
+                now
+            ),
+            None
+        );
+        assert_eq!(
+            paced.next_due(),
+            Some(now + Duration::from_millis(80)),
+            "the distance alone"
+        );
+        assert_eq!(
+            paced.answer(measured(50_000), 0, false, distance, now),
+            Some(b"at once".to_vec())
+        );
 
-        assert_eq!(paced.answer(autodetect::Answer::Reply(b"behind".to_vec()), 30_000, true, distance, now), None);
-        assert_eq!(paced.due(now + Duration::from_millis(80)), vec![b"idle".to_vec()]);
-        assert_eq!(paced.next_due(), Some(now + Duration::from_millis(380)), "30 KB ahead of it, then the distance");
+        assert_eq!(
+            paced.answer(
+                autodetect::Answer::Reply(b"behind".to_vec()),
+                30_000,
+                true,
+                distance,
+                now
+            ),
+            None
+        );
+        assert_eq!(
+            paced.due(now + Duration::from_millis(80)),
+            vec![b"idle".to_vec()]
+        );
+        assert_eq!(
+            paced.next_due(),
+            Some(now + Duration::from_millis(380)),
+            "30 KB ahead of it, then the distance"
+        );
     }
 
     /// Time the caller spent with nothing to compose is not its pace.
@@ -2757,10 +3125,23 @@ mod tests {
         let start = Instant::now();
         let paced = behind(start);
         assert!(paced.pace(start + Duration::from_millis(200)).is_some());
-        assert_eq!(paced.pace(start + PACE_WINDOW + Duration::from_millis(200)), None);
+        assert_eq!(
+            paced.pace(start + PACE_WINDOW + Duration::from_millis(200)),
+            None
+        );
         let mut paced = behind(start);
-        let reply = paced.answer(measured(50_000), 30_000, true, Duration::ZERO, start + Duration::from_secs(5));
-        assert_eq!(reply, Some(b"at once".to_vec()), "answered as measured, not at a pace long gone");
+        let reply = paced.answer(
+            measured(50_000),
+            30_000,
+            true,
+            Duration::ZERO,
+            start + Duration::from_secs(5),
+        );
+        assert_eq!(
+            reply,
+            Some(b"at once".to_vec()),
+            "answered as measured, not at a pace long gone"
+        );
     }
 
     /// Time with nothing composed is no pace at all, not a pace of nothing.
@@ -2783,7 +3164,10 @@ mod tests {
     fn a_distant_caller_that_keeps_up_is_not_behind() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
-        let mut passed = PassedFrames { distance: Duration::from_millis(150), ..PassedFrames::default() };
+        let mut passed = PassedFrames {
+            distance: Duration::from_millis(150),
+            ..PassedFrames::default()
+        };
         let mut paced = Paced::default();
         for frame in 0..4 {
             passed.handed(100_000, Some(frame), at(50 * u64::from(frame)));
@@ -2791,7 +3175,11 @@ mod tests {
         for frame in 0..20 {
             let now = at(50 * u64::from(frame) + 150);
             assert!(!passed.held(now), "frame {frame}");
-            assert_eq!(passed.composed(frame, now).len(), 1, "frame {frame} acknowledged at once");
+            assert_eq!(
+                passed.composed(frame, now).len(),
+                1,
+                "frame {frame} acknowledged at once"
+            );
             paced.composed(100_000, passed.behind(now), now);
             passed.handed(100_000, Some(frame + 4), at(50 * u64::from(frame + 4)));
         }
@@ -2801,7 +3189,11 @@ mod tests {
         let late = at(1500);
         assert!(passed.behind(late));
         assert!(passed.held(late));
-        assert_eq!(passed.composed(20, late).len(), 1, "three still wait: one for one");
+        assert_eq!(
+            passed.composed(20, late).len(),
+            1,
+            "three still wait: one for one"
+        );
     }
 
     /// A caller that composes each frame before the next arrives is acknowledged
@@ -2814,9 +3206,21 @@ mod tests {
         assert_eq!(passed.composed(7, Instant::now()), vec![(7, 1)]);
         passed.handed(0, Some(8), Instant::now());
         passed.handed(0, Some(9), Instant::now());
-        assert_eq!(passed.composed(9, Instant::now()), vec![(8, 2), (9, 3)], "8 was composed before 9 could be");
-        assert_eq!(passed.composed(8, Instant::now()), Vec::new(), "already acknowledged");
-        assert_eq!(passed.composed(99, Instant::now()), Vec::new(), "never handed over");
+        assert_eq!(
+            passed.composed(9, Instant::now()),
+            vec![(8, 2), (9, 3)],
+            "8 was composed before 9 could be"
+        );
+        assert_eq!(
+            passed.composed(8, Instant::now()),
+            Vec::new(),
+            "already acknowledged"
+        );
+        assert_eq!(
+            passed.composed(99, Instant::now()),
+            Vec::new(),
+            "never handed over"
+        );
     }
 
     /// The socket is left while [`PASSED_HELD`] frames wait, and read again as soon
@@ -2832,7 +3236,10 @@ mod tests {
         assert!(passed.held(Instant::now()));
         passed.composed(1, Instant::now());
         assert!(!passed.held(Instant::now()));
-        assert_eq!(passed.owed_bytes, 100_000, "the first frame's runs went with it, whole");
+        assert_eq!(
+            passed.owed_bytes, 100_000,
+            "the first frame's runs went with it, whole"
+        );
         // A small frame beside a large one: what waits is counted by what each was.
         passed.handed(1_000, Some(3), Instant::now());
         passed.handed(200_000, Some(4), Instant::now());
@@ -2851,7 +3258,11 @@ mod tests {
             passed.handed(9_000, Some(frame), Instant::now());
             assert!(!passed.held(Instant::now()));
         }
-        assert_eq!(passed.composed(1, Instant::now()), Vec::new(), "five wait, more than the host is kept ahead by");
+        assert_eq!(
+            passed.composed(1, Instant::now()),
+            Vec::new(),
+            "five wait, more than the host is kept ahead by"
+        );
     }
 
     /// A caller with more than [`PASSED_AHEAD`] frames waiting is slower than the
@@ -2866,14 +3277,30 @@ mod tests {
         }
         assert_eq!(passed.composed(1, Instant::now()), Vec::new(), "five wait");
         assert_eq!(passed.composed(2, Instant::now()), Vec::new(), "four wait");
-        assert_eq!(passed.composed(3, Instant::now()), vec![(1, 1)], "three wait: one for one");
+        assert_eq!(
+            passed.composed(3, Instant::now()),
+            vec![(1, 1)],
+            "three wait: one for one"
+        );
         // The host draws another on that acknowledgement.
         passed.handed(0, Some(7), Instant::now());
         assert_eq!(passed.composed(4, Instant::now()), vec![(2, 2)]);
         // It draws none, and the caller catches up.
-        assert_eq!(passed.composed(5, Instant::now()), vec![(3, 3), (4, 4)], "two wait");
-        assert_eq!(passed.composed(6, Instant::now()), vec![(5, 5), (6, 6)], "one waits");
-        assert_eq!(passed.composed(7, Instant::now()), vec![(7, 7)], "none waits, and none is kept");
+        assert_eq!(
+            passed.composed(5, Instant::now()),
+            vec![(3, 3), (4, 4)],
+            "two wait"
+        );
+        assert_eq!(
+            passed.composed(6, Instant::now()),
+            vec![(5, 5), (6, 6)],
+            "one waits"
+        );
+        assert_eq!(
+            passed.composed(7, Instant::now()),
+            vec![(7, 7)],
+            "none waits, and none is kept"
+        );
         assert!(passed.owed.is_empty() && passed.kept.is_empty());
     }
 
@@ -2881,11 +3308,18 @@ mod tests {
     /// and each only when the session asked for what rides on it.
     #[test]
     fn only_the_channels_asked_for_are_taken_and_every_other_is_refused_by_name() {
-        let mut dynamics = Dynamics { resize: true, egfx: true, ..Dynamics::default() };
+        let mut dynamics = Dynamics {
+            resize: true,
+            egfx: true,
+            ..Dynamics::default()
+        };
         let create = |name| dvc::Message::Create { channel: 11, name };
         let reply = answer(create("AUDIO_PLAYBACK_DVC"), &mut dynamics).unwrap();
         assert_eq!(reply, vec![dvc::create_response(11, dvc::NO_LISTENER)]);
-        assert_eq!(dynamics.control, None, "a channel nothing listens on is not remembered");
+        assert_eq!(
+            dynamics.control, None,
+            "a channel nothing listens on is not remembered"
+        );
 
         let reply = answer(create(display::CHANNEL_NAME), &mut dynamics).unwrap();
         assert_eq!(reply, vec![dvc::create_response(11, dvc::ACCEPTED)]);
@@ -2893,26 +3327,79 @@ mod tests {
 
         // The graphics channel is accepted and, in the same breath, told what this
         // client can take: a server draws nothing until it has heard that.
-        let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut dynamics).unwrap();
+        let reply = answer(
+            dvc::Message::Create {
+                channel: 12,
+                name: gfx_proto::CHANNEL_NAME,
+            },
+            &mut dynamics,
+        )
+        .unwrap();
         assert_eq!(reply.len(), 2);
         assert_eq!(reply[0], dvc::create_response(12, dvc::ACCEPTED));
-        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Large)).unwrap());
+        assert_eq!(
+            reply[1],
+            dvc::data(
+                12,
+                &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Large)
+            )
+            .unwrap()
+        );
         assert_eq!(dynamics.graphics, Some(12));
 
         // Only a session that passes its pipeline to a page that decodes H.264
         // tells the host it may draw with it.
-        let mut takes = Dynamics { egfx: true, h264: gfx_proto::H264::ByRegion, ..Dynamics::default() };
-        let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut takes).unwrap();
-        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::ByRegion, gfx_proto::BitmapCache::Large)).unwrap());
+        let mut takes = Dynamics {
+            egfx: true,
+            h264: gfx_proto::H264::ByRegion,
+            ..Dynamics::default()
+        };
+        let reply = answer(
+            dvc::Message::Create {
+                channel: 12,
+                name: gfx_proto::CHANNEL_NAME,
+            },
+            &mut takes,
+        )
+        .unwrap();
+        assert_eq!(
+            reply[1],
+            dvc::data(
+                12,
+                &gfx_proto::caps_advertise(
+                    gfx_proto::H264::ByRegion,
+                    gfx_proto::BitmapCache::Large
+                )
+            )
+            .unwrap()
+        );
         assert_ne!(
             gfx_proto::caps_advertise(gfx_proto::H264::ByRegion, gfx_proto::BitmapCache::Large),
             gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Large)
         );
 
         // A page with less memory than a desktop's is kept to the small cache.
-        let mut small = Dynamics { egfx: true, cache: gfx_proto::BitmapCache::Small, ..Dynamics::default() };
-        let reply = answer(dvc::Message::Create { channel: 12, name: gfx_proto::CHANNEL_NAME }, &mut small).unwrap();
-        assert_eq!(reply[1], dvc::data(12, &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Small)).unwrap());
+        let mut small = Dynamics {
+            egfx: true,
+            cache: gfx_proto::BitmapCache::Small,
+            ..Dynamics::default()
+        };
+        let reply = answer(
+            dvc::Message::Create {
+                channel: 12,
+                name: gfx_proto::CHANNEL_NAME,
+            },
+            &mut small,
+        )
+        .unwrap();
+        assert_eq!(
+            reply[1],
+            dvc::data(
+                12,
+                &gfx_proto::caps_advertise(gfx_proto::H264::Refused, gfx_proto::BitmapCache::Small)
+            )
+            .unwrap()
+        );
 
         // A session that asked for neither refuses both by name.
         let mut none = Dynamics::default();
@@ -2940,7 +3427,9 @@ mod tests {
         let list = cliprdr::format_list(&[13, 1]);
         let (reply, event) = answer_clipboard(&list).unwrap();
         assert_eq!(reply, Some(cliprdr::format_list_response()));
-        let Some(Event::ClipboardFormats(formats)) = event else { panic!("{event:?}") };
+        let Some(Event::ClipboardFormats(formats)) = event else {
+            panic!("{event:?}")
+        };
         assert_eq!(formats, vec![13, 1]);
     }
 
@@ -2961,7 +3450,9 @@ mod tests {
         let bytes = vec![b'h', 0, b'i', 0, 0, 0];
         let (reply, event) = answer_clipboard(&cliprdr::data_response(Some(&bytes))).unwrap();
         assert_eq!(reply, None);
-        let Some(Event::ClipboardData(data)) = event else { panic!("{event:?}") };
+        let Some(Event::ClipboardData(data)) = event else {
+            panic!("{event:?}")
+        };
         assert_eq!(data, bytes);
 
         let (_, event) = answer_clipboard(&cliprdr::data_response(None)).unwrap();
@@ -2973,7 +3464,10 @@ mod tests {
     #[test]
     fn the_clipboard_pdus_this_client_asked_for_none_of_are_answered_with_nothing() {
         // A file contents request, and the response to a list this end sent.
-        for pdu in [clipboard_pdu(0x0008, 0, &[0; 24]), clipboard_pdu(0x0003, 0x0002, &[])] {
+        for pdu in [
+            clipboard_pdu(0x0008, 0, &[0; 24]),
+            clipboard_pdu(0x0003, 0x0002, &[]),
+        ] {
             let (reply, event) = answer_clipboard(&pdu).unwrap();
             assert_eq!(reply, None);
             assert!(event.is_none(), "{event:?}");
@@ -3003,35 +3497,72 @@ mod tests {
     /// fit its area together; one that does not fit at all is not sent.
     #[test]
     fn a_layout_is_held_to_the_hosts_monitor_count_and_area() {
-        let roomy = display::Capabilities { monitors: 16, area: 8192 * 8192 * 16 };
+        let roomy = display::Capabilities {
+            monitors: 16,
+            area: 8192 * 8192 * 16,
+        };
         let two = [(1280, 800), (1280, 800)];
         assert_eq!(monitors_within(&two, roomy), Some(2));
         assert_eq!(monitors_within(&two[..1], roomy), Some(1));
-        let one = display::Capabilities { monitors: 1, area: 8192 * 8192 };
-        assert_eq!(monitors_within(&two, one), Some(1), "a host that lays out one");
+        let one = display::Capabilities {
+            monitors: 1,
+            area: 8192 * 8192,
+        };
+        assert_eq!(
+            monitors_within(&two, one),
+            Some(1),
+            "a host that lays out one"
+        );
         // Room for one of these, not two.
-        let tight = display::Capabilities { monitors: 16, area: 1280 * 800 + 1 };
+        let tight = display::Capabilities {
+            monitors: 16,
+            area: 1280 * 800 + 1,
+        };
         assert_eq!(monitors_within(&two, tight), Some(1));
-        assert_eq!(monitors_within(&[(1281, 800), (1280, 800)], tight), Some(1), "at the size the layout carries");
+        assert_eq!(
+            monitors_within(&[(1281, 800), (1280, 800)], tight),
+            Some(1),
+            "at the size the layout carries"
+        );
         // A smaller second monitor fits where an equal one would not.
-        let room = display::Capabilities { monitors: 16, area: 1280 * 800 + 640 * 400 };
+        let room = display::Capabilities {
+            monitors: 16,
+            area: 1280 * 800 + 640 * 400,
+        };
         assert_eq!(monitors_within(&[(1280, 800), (640, 400)], room), Some(2));
         // Room for neither.
-        let none = display::Capabilities { monitors: 16, area: 1280 * 800 - 1 };
+        let none = display::Capabilities {
+            monitors: 16,
+            area: 1280 * 800 - 1,
+        };
         assert_eq!(monitors_within(&two, none), None);
         // A zero monitor count from a host is read as one rather than as nothing.
-        let zero = display::Capabilities { monitors: 0, area: u64::MAX };
+        let zero = display::Capabilities {
+            monitors: 0,
+            area: u64::MAX,
+        };
         assert_eq!(monitors_within(&two, zero), Some(1));
     }
 
     #[test]
     fn closing_display_control_forgets_what_it_said_it_would_do() {
-        let said = display::Capabilities { monitors: 1, area: 4 };
-        let mut dynamics =
-            Dynamics { resize: true, control: Some(11), caps: Some(said), ..Dynamics::default() };
+        let said = display::Capabilities {
+            monitors: 1,
+            area: 4,
+        };
+        let mut dynamics = Dynamics {
+            resize: true,
+            control: Some(11),
+            caps: Some(said),
+            ..Dynamics::default()
+        };
         let elsewhere = dvc::Message::Close { channel: 12 };
         assert!(answer(elsewhere, &mut dynamics).unwrap().is_empty());
-        assert_eq!(dynamics.control, Some(11), "another channel closing says nothing about this one");
+        assert_eq!(
+            dynamics.control,
+            Some(11),
+            "another channel closing says nothing about this one"
+        );
         let replies = answer(dvc::Message::Close { channel: 11 }, &mut dynamics).unwrap();
         assert_eq!(replies, vec![dvc::close(11)], "the Close is echoed");
         assert_eq!((dynamics.control, dynamics.caps), (None, None));
@@ -3055,12 +3586,22 @@ mod tests {
         let region = opened(&[gfx_proto::CODEC_CLEARCODEC]);
         for h264 in [H264::WholeDesktop, H264::ByRegion] {
             let refusal = no_h264(h264, &lossless).expect("a Lossless host draws no H.264");
-            assert!(refusal.contains("Lossless") && refusal.contains("Planar"), "{refusal}");
+            assert!(
+                refusal.contains("Lossless") && refusal.contains("Planar"),
+                "{refusal}"
+            );
         }
         assert_eq!(no_h264(H264::WholeDesktop, &whole), None);
         let refusal = no_h264(H264::WholeDesktop, &region).expect("no H.264 for the whole desktop");
-        assert!(refusal.contains("H.264 full screen") && refusal.contains("ClearCodec"), "{refusal}");
-        assert_eq!(no_h264(H264::ByRegion, &region), None, "by region H.264 waits for video");
+        assert!(
+            refusal.contains("H.264 full screen") && refusal.contains("ClearCodec"),
+            "{refusal}"
+        );
+        assert_eq!(
+            no_h264(H264::ByRegion, &region),
+            None,
+            "by region H.264 waits for video"
+        );
         assert_eq!(no_h264(H264::Refused, &lossless), None);
     }
 }

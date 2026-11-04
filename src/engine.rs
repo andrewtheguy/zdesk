@@ -225,7 +225,10 @@ pub fn hold_on_display(point: (i32, i32), displays: &[DisplayRect], from: usize)
         )
     };
     let away = |at: (i32, i32)| {
-        let (dx, dy) = (i64::from(at.0) - i64::from(point.0), i64::from(at.1) - i64::from(point.1));
+        let (dx, dy) = (
+            i64::from(at.0) - i64::from(point.0),
+            i64::from(at.1) - i64::from(point.1),
+        );
         dx * dx + dy * dy
     };
     displays
@@ -246,21 +249,68 @@ mod tests {
     /// that would lie on neither is held on the nearest.
     #[test]
     fn a_position_is_held_on_a_display_and_not_only_inside_their_bounding_rectangle() {
-        let beside = [DisplayRect { x: 0, y: 0, w: 1600, h: 900 }, DisplayRect { x: 1600, y: 0, w: 1024, h: 1200 }];
+        let beside = [
+            DisplayRect {
+                x: 0,
+                y: 0,
+                w: 1600,
+                h: 900,
+            },
+            DisplayRect {
+                x: 1600,
+                y: 0,
+                w: 1024,
+                h: 1200,
+            },
+        ];
         assert_eq!(hold_on_display((800, 450), &beside, 0), (800, 450));
-        assert_eq!(hold_on_display((1700, 1100), &beside, 0), (1700, 1100), "onto the second");
+        assert_eq!(
+            hold_on_display((1700, 1100), &beside, 0),
+            (1700, 1100),
+            "onto the second"
+        );
         // Below the first, which is shorter than the second: on neither.
         assert_eq!(hold_on_display((800, 1100), &beside, 0), (800, 899));
-        assert_eq!(hold_on_display((1500, 1100), &beside, 1), (1600, 1100), "nearer the second");
+        assert_eq!(
+            hold_on_display((1500, 1100), &beside, 1),
+            (1600, 1100),
+            "nearer the second"
+        );
         // Past the arrangement's own edge, at it.
         assert_eq!(hold_on_display((9000, -5), &beside, 0), (2623, 0));
         assert_eq!(hold_on_display((-5, -5), &beside, 1), (0, 0));
         // Stacked, the second narrower: beside it is on neither.
-        let stacked = [DisplayRect { x: 0, y: 700, w: 1600, h: 900 }, DisplayRect { x: 0, y: 0, w: 1024, h: 700 }];
+        let stacked = [
+            DisplayRect {
+                x: 0,
+                y: 700,
+                w: 1600,
+                h: 900,
+            },
+            DisplayRect {
+                x: 0,
+                y: 0,
+                w: 1024,
+                h: 700,
+            },
+        ];
         assert_eq!(hold_on_display((1300, 650), &stacked, 0), (1300, 700));
         assert_eq!(hold_on_display((1300, 300), &stacked, 1), (1023, 300));
         // As near to both: the one it was made on.
-        let equal = [DisplayRect { x: 0, y: 0, w: 100, h: 100 }, DisplayRect { x: 201, y: 0, w: 100, h: 100 }];
+        let equal = [
+            DisplayRect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+            DisplayRect {
+                x: 201,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+        ];
         assert_eq!(hold_on_display((150, 50), &equal, 0), (99, 50));
         assert_eq!(hold_on_display((150, 50), &equal, 1), (201, 50));
         assert_eq!(hold_on_display((7, 7), &[], 0), (7, 7));
@@ -271,7 +321,10 @@ mod tests {
     fn sink() -> (VideoSink, mpsc::Receiver<ServerMsg>) {
         let (frame_tx, frame_rx) = mpsc::channel(4);
         let feedback = std::sync::Arc::new(crate::feedback::LinkFeedback::new());
-        (VideoSink::new("test", frame_tx, feedback, crate::encode::Oversize::Refuse), frame_rx)
+        (
+            VideoSink::new("test", frame_tx, feedback, crate::encode::Oversize::Refuse),
+            frame_rx,
+        )
     }
 
     // The detection itself is not testable here, and the reason is the same one
@@ -342,21 +395,21 @@ mod tests {
         let (dest, accept) = accepting_listener().await;
         let (sink, mut frame_rx) = sink();
 
-        let value: Option<()> = connect_and_handshake(
-            "test",
-            &dest,
-            Duration::from_millis(50),
-            &sink,
-            |_stream| std::future::pending(),
-        )
-        .await;
+        let value: Option<()> =
+            connect_and_handshake("test", &dest, Duration::from_millis(50), &sink, |_stream| {
+                std::future::pending()
+            })
+            .await;
 
         assert!(value.is_none());
         sink.flush().await;
         let ServerMsg::Error { message } = frame_rx.try_recv().unwrap() else {
             panic!("expected an error for the picker");
         };
-        assert!(message.contains("did not finish the handshake"), "{message}");
+        assert!(
+            message.contains("did not finish the handshake"),
+            "{message}"
+        );
         // Uppercased for the client, as both engines already spelled it.
         assert!(message.starts_with("TEST connect failed:"), "{message}");
         accept.abort();
@@ -371,14 +424,11 @@ mod tests {
         drop(listener);
         let (sink, mut frame_rx) = sink();
 
-        let value: Option<()> = connect_and_handshake(
-            "test",
-            &dest,
-            HANDSHAKE_TIMEOUT,
-            &sink,
-            |_stream| std::future::ready(Ok(())),
-        )
-        .await;
+        let value: Option<()> =
+            connect_and_handshake("test", &dest, HANDSHAKE_TIMEOUT, &sink, |_stream| {
+                std::future::ready(Ok(()))
+            })
+            .await;
 
         assert!(value.is_none());
         sink.flush().await;

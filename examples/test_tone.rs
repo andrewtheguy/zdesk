@@ -94,7 +94,11 @@ async fn main() {
         |_target, _choices, input_rx, frame_tx, audio: Option<Arc<AudioBridge>>, _camera| {
             std::thread::spawn(move || {
                 let mut input_rx = input_rx;
-                let size = ServerMsg::Resize { w: 640, h: 480, scale: UNSCALED };
+                let size = ServerMsg::Resize {
+                    w: 640,
+                    h: 480,
+                    scale: UNSCALED,
+                };
                 if frame_tx.blocking_send(size.clone()).is_err() {
                     return;
                 }
@@ -156,7 +160,9 @@ async fn main() {
     let config = zdesk::config::AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         targets: vec![target],
-        auth: zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::with_password("admin", "hunter22").unwrap()),
+        auth: zdesk::auth::GatewayAuth::Login(
+            zdesk::auth::SiteLogin::with_password("admin", "hunter22").unwrap(),
+        ),
         branding: zdesk::config::Branding {
             text: "audio tone harness".to_owned(),
             logo: None,
@@ -168,14 +174,21 @@ async fn main() {
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = zdesk::server::router_with_sessions(config, sessions, zdesk::throughput::Throughput::default(), None);
+    let app = zdesk::server::router_with_sessions(
+        config,
+        sessions,
+        zdesk::throughput::Throughput::default(),
+        None,
+    );
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
 
     // println! rather than log: this is the harness's whole user interface.
     println!("\n  Open  http://{addr}/   (admin / hunter22)");
-    println!("  Open \"test-tone\", choose Opus under Sound and Start. 440 Hz for 5s, quiet for 5s.");
+    println!(
+        "  Open \"test-tone\", choose Opus under Sound and Start. 440 Hz for 5s, quiet for 5s."
+    );
     println!("  The tone must arrive on its own, go away, and come back, untouched,");
     println!("  and ☰ → Mute and Unmute must stop and start it.");
     println!("  Serving Opus through WebCodecs. A line under the button instead");

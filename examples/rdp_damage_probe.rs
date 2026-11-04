@@ -38,9 +38,11 @@ use std::time::{Duration, Instant};
 
 use std::collections::VecDeque;
 
-use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
-use zdesk::rdp_client::{AudioSink, Compositor, Connect, Event, Framebuffer, Input, MouseButton, Session};
 use tokio::sync::mpsc::Receiver;
+use zdesk::rdp_client::proto::gfx::{BitmapCache, H264};
+use zdesk::rdp_client::{
+    AudioSink, Compositor, Connect, Event, Framebuffer, Input, MouseButton, Session,
+};
 
 const TARGET_ENV: &str = "ZDESK_UAT_TARGET";
 const RUN_ENV: &str = "ZDESK_DAMAGE_RUN_SECS";
@@ -61,12 +63,16 @@ const STREAK: u32 = 30;
 const TOLERANCE: i32 = 8;
 
 fn run_secs() -> u64 {
-    std::env::var(RUN_ENV).ok().and_then(|v| v.parse().ok()).unwrap_or(45)
+    std::env::var(RUN_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(45)
 }
 
 fn connect() -> (Session, Page) {
-    let name = std::env::var(TARGET_ENV)
-        .unwrap_or_else(|_| panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml"));
+    let name = std::env::var(TARGET_ENV).unwrap_or_else(|_| {
+        panic!("set {TARGET_ENV} to the name of an rdp target in tmp/test_uat.toml")
+    });
     let target = common::uat_target(&name);
     // Everything the picker offers for the target, chosen.
     let offers = target.offers();
@@ -95,7 +101,9 @@ fn connect() -> (Session, Page) {
         autodetect: false,
         multitransport: false,
         paced: false,
-        audio: offers.audio.then(|| Box::new(Silence) as Box<dyn AudioSink>),
+        audio: offers
+            .audio
+            .then(|| Box::new(Silence) as Box<dyn AudioSink>),
         // A camera draws nothing, and one the browser never plugs costs the host a
         // channel and nothing else.
         camera: None,
@@ -134,12 +142,23 @@ impl Page {
                 // A pipeline begins: whoever composes it starts from nothing.
                 Event::FramesMarked => self.compositor = Compositor::new(),
                 Event::Graphics { wrapped, frame } => {
-                    let commands = self.compositor.unwrap(&wrapped).expect("the passed message unwraps");
-                    let composed = self.compositor.compose(&commands).expect("the passed commands compose");
+                    let commands = self
+                        .compositor
+                        .unwrap(&wrapped)
+                        .expect("the passed message unwraps");
+                    let composed = self
+                        .compositor
+                        .compose(&commands)
+                        .expect("the passed commands compose");
                     if let Some((width, height)) = composed.resized {
-                        self.composed.push_back(Event::Resize { width, height, monitors: Vec::new() });
+                        self.composed.push_back(Event::Resize {
+                            width,
+                            height,
+                            monitors: Vec::new(),
+                        });
                     }
-                    self.composed.extend(composed.painted.into_iter().map(Event::Paint));
+                    self.composed
+                        .extend(composed.painted.into_iter().map(Event::Paint));
                     if let Some(frame) = frame {
                         self.input.frame_composed(frame);
                     }
@@ -154,11 +173,16 @@ impl Page {
     /// The picture the rectangles are reported against: the compositor's under the
     /// pipeline, the session's framebuffer on the bitmap path.
     fn picture<'a>(&'a self, session: &'a Session) -> &'a Framebuffer {
-        if self.egfx { self.compositor.framebuffer() } else { session.framebuffer() }
+        if self.egfx {
+            self.compositor.framebuffer()
+        } else {
+            session.framebuffer()
+        }
     }
 
     fn snapshot(&self, session: &Session) -> (u32, u32, Vec<u8>) {
-        self.picture(session).with(|frame| (frame.width, frame.height, frame.pixels.clone()))
+        self.picture(session)
+            .with(|frame| (frame.width, frame.height, frame.pixels.clone()))
     }
 }
 
@@ -188,7 +212,15 @@ impl Shadow {
     fn new(width: u32, height: u32, pixels: Vec<u8>) -> Self {
         let cols = width.div_ceil(CELL) as usize;
         let rows = height.div_ceil(CELL) as usize;
-        Self { width, height, pixels, cols, rows, streak: vec![0; cols * rows], worst: vec![0; cols * rows] }
+        Self {
+            width,
+            height,
+            pixels,
+            cols,
+            rows,
+            streak: vec![0; cols * rows],
+            worst: vec![0; cols * rows],
+        }
     }
 
     fn stride(&self) -> usize {
@@ -228,7 +260,12 @@ impl Shadow {
                     let width = (x1 - x0) as usize;
                     let mine = &self.pixels[at..at + width * 4];
                     let theirs = &frame[at..at + width * 4];
-                    for (a, b) in mine.as_chunks::<4>().0.iter().zip(theirs.as_chunks::<4>().0) {
+                    for (a, b) in mine
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(theirs.as_chunks::<4>().0)
+                    {
                         if (0..3).any(|c| (i32::from(a[c]) - i32::from(b[c])).abs() > TOLERANCE) {
                             differs += 1;
                         }
@@ -252,7 +289,9 @@ impl Shadow {
 }
 
 fn dump(name: &str, width: u32, height: u32, pixels: &[u8]) {
-    let Ok(dir) = std::env::var(DUMP_ENV) else { return };
+    let Ok(dir) = std::env::var(DUMP_ENV) else {
+        return;
+    };
     std::fs::create_dir_all(&dir).expect("creating the dump directory");
     let path = std::path::Path::new(&dir).join(format!("{name}.png"));
     let mut rgba = pixels.to_vec();
@@ -279,7 +318,10 @@ async fn a_real_host_reports_every_pixel_it_paints() {
     let mut frames = 0u64;
     while frames < 3 {
         let left = deadline.saturating_duration_since(Instant::now());
-        let event = tokio::time::timeout(left, events.recv()).await.expect("a first frame").expect("an event");
+        let event = tokio::time::timeout(left, events.recv())
+            .await
+            .expect("a first frame")
+            .expect("an event");
         match event {
             Event::Frame => frames += 1,
             Event::Ended(result) => panic!("the session ended: {result:?}"),
@@ -297,7 +339,9 @@ async fn a_real_host_reports_every_pixel_it_paints() {
     let mut peak = (0usize, 0u64);
     while Instant::now() < until {
         let left = until.saturating_duration_since(Instant::now());
-        let Ok(event) = tokio::time::timeout(left, events.recv()).await else { break };
+        let Ok(event) = tokio::time::timeout(left, events.recv()).await else {
+            break;
+        };
         match event.expect("an event") {
             Event::Paint(rect) => {
                 paints += 1;
@@ -348,10 +392,20 @@ async fn a_real_host_reports_every_pixel_it_paints() {
     );
     let leaked: Vec<_> = (0..shadow.rows * shadow.cols)
         .filter(|&i| shadow.worst[i] >= STREAK)
-        .map(|i| ((i % shadow.cols) as u32 * CELL, (i / shadow.cols) as u32 * CELL, shadow.worst[i]))
+        .map(|i| {
+            (
+                (i % shadow.cols) as u32 * CELL,
+                (i / shadow.cols) as u32 * CELL,
+                shadow.worst[i],
+            )
+        })
         .collect();
     println!("  peak leak: {} cells, {} pixels", peak.0, peak.1);
-    println!("  {} of {} cells ever leaked for {STREAK}+ frames", leaked.len(), shadow.streak.len());
+    println!(
+        "  {} of {} cells ever leaked for {STREAK}+ frames",
+        leaked.len(),
+        shadow.streak.len()
+    );
     for (x, y, worst) in leaked.iter().take(40) {
         println!("    cell at {x},{y} disagreed for up to {worst} frames");
     }
@@ -369,7 +423,11 @@ async fn a_real_host_reports_every_pixel_it_paints() {
     for (i, out) in mask.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (a, b) = (&shadow.pixels[i * 4..i * 4 + 3], &frame[i * 4..i * 4 + 3]);
         let differs = (0..3).any(|c| (i32::from(a[c]) - i32::from(b[c])).abs() > TOLERANCE);
-        *out = if differs { [0xFF, 0, 0, 0xFF] } else { [0, 0, 0, 0xFF] };
+        *out = if differs {
+            [0xFF, 0, 0, 0xFF]
+        } else {
+            [0, 0, 0, 0xFF]
+        };
     }
     dump("leak-mask", shadow.width, shadow.height, &mask);
 }
@@ -427,7 +485,9 @@ fn differing_cells(width: u32, height: u32, a: &[u8], b: &[u8]) -> Vec<(u32, u32
             for y in y0..(y0 + CELL).min(height) {
                 for x in x0..(x0 + CELL).min(width) {
                     let at = y as usize * stride + x as usize * 4;
-                    if (0..3).any(|c| (i32::from(a[at + c]) - i32::from(b[at + c])).abs() > TOLERANCE) {
+                    if (0..3)
+                        .any(|c| (i32::from(a[at + c]) - i32::from(b[at + c])).abs() > TOLERANCE)
+                    {
                         differs += 1;
                     }
                 }
@@ -476,7 +536,11 @@ async fn a_host_redraw_matches_what_was_decoded() {
         let mut step = 0u64;
         while Instant::now() < until {
             // Three notches a tick, reversing every twenty ticks: down a page and back.
-            let delta = if (step / 20).is_multiple_of(2) { -360 } else { 360 };
+            let delta = if (step / 20).is_multiple_of(2) {
+                -360
+            } else {
+                360
+            };
             session.input().wheel(delta, false, x, y);
             step += 1;
             let tick = Instant::now() + Duration::from_millis(120);
@@ -494,7 +558,10 @@ async fn a_host_redraw_matches_what_was_decoded() {
         let (x, y) = at.split_once(',').expect("ZDESK_DAMAGE_DRAG is x,y");
         let (x, y): (i32, i32) = (x.parse().expect("drag x"), y.parse().expect("drag y"));
         let point = |px: i32, py: i32| {
-            (px.clamp(0, SIZE.0 as i32 - 1) as u16, py.clamp(0, SIZE.1 as i32 - 1) as u16)
+            (
+                px.clamp(0, SIZE.0 as i32 - 1) as u16,
+                py.clamp(0, SIZE.1 as i32 - 1) as u16,
+            )
         };
         let input = session.input();
         let chord = |keys: &[(u8, bool)]| {
@@ -515,7 +582,10 @@ async fn a_host_redraw_matches_what_was_decoded() {
             input.mouse_button(MouseButton::Left, true, sx, sy);
             for step in 1..=32 {
                 let angle = f64::from(step) * std::f64::consts::TAU / 32.0;
-                let (px, py) = point(x + (260.0 * angle.sin()) as i32, y + (160.0 * (1.0 - angle.cos())) as i32);
+                let (px, py) = point(
+                    x + (260.0 * angle.sin()) as i32,
+                    y + (160.0 * (1.0 - angle.cos())) as i32,
+                );
                 input.mouse_move(px, py);
                 pump(&mut events, Duration::from_millis(25)).await;
             }
@@ -534,7 +604,8 @@ async fn a_host_redraw_matches_what_was_decoded() {
     } else {
         while Instant::now() < until {
             let left = until.saturating_duration_since(Instant::now());
-            if let Ok(Some(Event::Ended(result))) = tokio::time::timeout(left, events.recv()).await {
+            if let Ok(Some(Event::Ended(result))) = tokio::time::timeout(left, events.recv()).await
+            {
                 panic!("the session ended: {result:?}");
             }
         }
@@ -556,8 +627,15 @@ async fn a_host_redraw_matches_what_was_decoded() {
         session.input().refresh();
         let (frames, quiet) = settle(&mut events, Duration::from_secs(20)).await;
         let (w, h, pixels) = events.snapshot(&session);
-        assert_eq!((w, h), (width, height), "the desktop resized during the probe");
-        println!("  host redraw took {frames} frames; {}", if quiet { "settled" } else { "NEVER SETTLED" });
+        assert_eq!(
+            (w, h),
+            (width, height),
+            "the desktop resized during the probe"
+        );
+        println!(
+            "  host redraw took {frames} frames; {}",
+            if quiet { "settled" } else { "NEVER SETTLED" }
+        );
         // A redraw that drew nothing is the decoded picture compared with itself, and
         // one that never went quiet is a picture caught mid-change.
         if !quiet || frames == 0 {
@@ -568,7 +646,10 @@ async fn a_host_redraw_matches_what_was_decoded() {
     }
 
     let unsteady: std::collections::HashSet<_> =
-        differing_cells(width, height, &redraws[0], &redraws[1]).into_iter().map(|(x, y, _)| (x, y)).collect();
+        differing_cells(width, height, &redraws[0], &redraws[1])
+            .into_iter()
+            .map(|(x, y, _)| (x, y))
+            .collect();
     let wrong: Vec<_> = differing_cells(width, height, &decoded, &redraws[0])
         .into_iter()
         .filter(|(x, y, _)| !unsteady.contains(&(*x, *y)))
@@ -587,20 +668,30 @@ async fn a_host_redraw_matches_what_was_decoded() {
 }
 
 /// The cases this runs, named on its command line, in the order named.
-const CASES: &[&str] = &["a_real_host_reports_every_pixel_it_paints", "a_host_redraw_matches_what_was_decoded"];
+const CASES: &[&str] = &[
+    "a_real_host_reports_every_pixel_it_paints",
+    "a_host_redraw_matches_what_was_decoded",
+];
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let named: Vec<String> = std::env::args().skip(1).collect();
     if named.is_empty() || named.iter().any(|case| !CASES.contains(&case.as_str())) {
-        eprintln!("usage: cargo run --example rdp_damage_probe -- CASE...\ncases: {}", CASES.join(", "));
+        eprintln!(
+            "usage: cargo run --example rdp_damage_probe -- CASE...\ncases: {}",
+            CASES.join(", ")
+        );
         std::process::exit(2);
     }
     for case in named {
         println!("== {case}");
         match case.as_str() {
-            "a_real_host_reports_every_pixel_it_paints" => a_real_host_reports_every_pixel_it_paints().await,
-            "a_host_redraw_matches_what_was_decoded" => a_host_redraw_matches_what_was_decoded().await,
+            "a_real_host_reports_every_pixel_it_paints" => {
+                a_real_host_reports_every_pixel_it_paints().await
+            }
+            "a_host_redraw_matches_what_was_decoded" => {
+                a_host_redraw_matches_what_was_decoded().await
+            }
             _ => unreachable!("checked above"),
         }
     }

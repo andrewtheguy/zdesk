@@ -65,11 +65,17 @@ impl Composition {
     /// it from the Mac's pixels, counted as the Mac sent them.
     pub fn of(regions: &[MosaicRegion], density: f32) -> Option<Self> {
         let draws = draws(regions, density);
-        let downscales = draws.iter().all(|d| d.dst.w <= d.src.w && d.dst.h <= d.src.h);
+        let downscales = draws
+            .iter()
+            .all(|d| d.dst.w <= d.src.w && d.dst.h <= d.src.h);
         if draws.is_empty() || !downscales {
             return None;
         }
-        Some(Self { size: extent(&draws), scale: density, draws })
+        Some(Self {
+            size: extent(&draws),
+            scale: density,
+            draws,
+        })
     }
 
     /// The composed desktop, in its own pixels.
@@ -95,10 +101,14 @@ impl Composition {
                 && (dy..=dy + d.dst.h as i32).contains(&y)
         })?;
         let map = |at: i32, dst: u32, dst_len: u32, src: u32, src_len: u32| {
-            let mapped = f64::from(src) + f64::from(at - dst as i32) * f64::from(src_len) / f64::from(dst_len);
+            let mapped = f64::from(src)
+                + f64::from(at - dst as i32) * f64::from(src_len) / f64::from(dst_len);
             (mapped.round() as i32).clamp(src as i32, (src + src_len) as i32 - 1)
         };
-        Some((map(x, d.dst.x, d.dst.w, d.src.x, d.src.w), map(y, d.dst.y, d.dst.h, d.src.y, d.src.h)))
+        Some((
+            map(x, d.dst.x, d.dst.w, d.src.x, d.src.w),
+            map(y, d.dst.y, d.dst.h, d.src.y, d.src.h),
+        ))
     }
 
     /// The parts of the composed view no screen covers, which the page is sent as
@@ -115,7 +125,10 @@ impl Composition {
             edges.dedup();
         }
         let covered = |x: u32, y: u32| {
-            self.draws.iter().any(|d| (d.dst.x..d.dst.x + d.dst.w).contains(&x) && (d.dst.y..d.dst.y + d.dst.h).contains(&y))
+            self.draws.iter().any(|d| {
+                (d.dst.x..d.dst.x + d.dst.w).contains(&x)
+                    && (d.dst.y..d.dst.y + d.dst.h).contains(&y)
+            })
         };
         let mut gaps = Vec::new();
         for row in ys.windows(2) {
@@ -138,7 +151,11 @@ impl Composition {
 /// Every region at its points at `density`, as `mosaicView` places them: edges
 /// from rounded corners, so neighbours share their boundary pixel.
 fn draws(regions: &[MosaicRegion], density: f32) -> Vec<Draw> {
-    let scale = if density.is_finite() && density > 0.0 { f64::from(density) } else { 1.0 };
+    let scale = if density.is_finite() && density > 0.0 {
+        f64::from(density)
+    } else {
+        1.0
+    };
     let at = |points: u32| (f64::from(points) * scale).round() as u32;
     regions
         .iter()
@@ -146,7 +163,12 @@ fn draws(regions: &[MosaicRegion], density: f32) -> Vec<Draw> {
             let (points, pixels) = (region.points, region.pixels);
             let (x, y) = (at(u32::from(points.x)), at(u32::from(points.y)));
             Draw {
-                src: Area { x: pixels.x.into(), y: pixels.y.into(), w: pixels.w.into(), h: pixels.h.into() },
+                src: Area {
+                    x: pixels.x.into(),
+                    y: pixels.y.into(),
+                    w: pixels.w.into(),
+                    h: pixels.h.into(),
+                },
                 dst: Area {
                     x,
                     y,
@@ -160,7 +182,9 @@ fn draws(regions: &[MosaicRegion], density: f32) -> Vec<Draw> {
 
 /// The view `draws` span, at least a pixel each way.
 fn extent(draws: &[Draw]) -> (u16, u16) {
-    let side = |end: fn(&Draw) -> u32| u16::try_from(draws.iter().map(end).max().unwrap_or(1).max(1)).unwrap_or(u16::MAX);
+    let side = |end: fn(&Draw) -> u32| {
+        u16::try_from(draws.iter().map(end).max().unwrap_or(1).max(1)).unwrap_or(u16::MAX)
+    };
     (side(|d| d.dst.x + d.dst.w), side(|d| d.dst.y + d.dst.h))
 }
 
@@ -175,7 +199,10 @@ pub struct Compositor {
 impl Compositor {
     /// A compositor for `composition` of a `framebuffer`-sized combined view.
     pub fn new(composition: Composition, framebuffer: (u16, u16)) -> anyhow::Result<Self> {
-        Ok(Self { composition, source: Mirror::new(framebuffer.0, framebuffer.1)? })
+        Ok(Self {
+            composition,
+            source: Mirror::new(framebuffer.0, framebuffer.1)?,
+        })
     }
 
     /// Whether this compositor draws `composition` of a `framebuffer`-sized view.
@@ -202,16 +229,25 @@ impl Compositor {
             }
             // The composed pixels whose boxes reach into the changed part.
             let down = |at: u32, from: u32, len: u32, to_len: u32| (at - from) * to_len / len;
-            let up = |at: u32, from: u32, len: u32, to_len: u32| ((at - from) * to_len).div_ceil(len);
-            let (dx0, dx1) = (down(sx0, src.x, src.w, dst.w), up(sx1, src.x, src.w, dst.w).min(dst.w));
-            let (dy0, dy1) = (down(sy0, src.y, src.h, dst.h), up(sy1, src.y, src.h, dst.h).min(dst.h));
+            let up =
+                |at: u32, from: u32, len: u32, to_len: u32| ((at - from) * to_len).div_ceil(len);
+            let (dx0, dx1) = (
+                down(sx0, src.x, src.w, dst.w),
+                up(sx1, src.x, src.w, dst.w).min(dst.w),
+            );
+            let (dy0, dy1) = (
+                down(sy0, src.y, src.h, dst.h),
+                up(sy1, src.y, src.h, dst.h).min(dst.h),
+            );
             if dx0 >= dx1 || dy0 >= dy1 {
                 continue;
             }
             // The box of the Mac's pixels one composed pixel covers, along one side.
             let span = |i: u32, from: u32, len: u32, to_len: u32| {
                 let start = from + i * len / to_len;
-                let end = (from + (i + 1) * len / to_len).max(start + 1).min(from + len);
+                let end = (from + (i + 1) * len / to_len)
+                    .max(start + 1)
+                    .min(from + len);
                 (start, end)
             };
             let mut pixels = Vec::with_capacity(((dx1 - dx0) * (dy1 - dy0) * 3) as usize);
@@ -258,8 +294,14 @@ mod tests {
     /// gateway's mosaic names them.
     fn mixed() -> Vec<MosaicRegion> {
         vec![
-            MosaicRegion { pixels: rect(0, 0, 1280, 800), points: rect(0, 0, 1280, 800) },
-            MosaicRegion { pixels: rect(1280, 0, 2880, 1800), points: rect(1280, 0, 1440, 900) },
+            MosaicRegion {
+                pixels: rect(0, 0, 1280, 800),
+                points: rect(0, 0, 1280, 800),
+            },
+            MosaicRegion {
+                pixels: rect(1280, 0, 2880, 1800),
+                points: rect(1280, 0, 1440, 900),
+            },
         ]
     }
 
@@ -272,9 +314,12 @@ mod tests {
 
     #[test]
     fn a_2x_browser_is_sent_the_macs_pixels() {
-        assert_eq!(Composition::of(&mixed(), 2.0), None, "the 1x screen is never enlarged here");
+        assert_eq!(
+            Composition::of(&mixed(), 2.0),
+            None,
+            "the 1x screen is never enlarged here"
+        );
     }
-
 
     #[test]
     fn the_gap_under_the_shorter_screen_is_filled() {
@@ -285,47 +330,99 @@ mod tests {
 
     #[test]
     fn a_composed_pixel_is_the_mean_of_the_macs_pixels_it_covers() {
-        let regions = vec![MosaicRegion { pixels: rect(0, 0, 4, 2), points: rect(0, 0, 2, 1) }];
-        let mut compositor = Compositor::new(Composition::of(&regions, 1.0).unwrap(), (4, 2)).unwrap();
+        let regions = vec![MosaicRegion {
+            pixels: rect(0, 0, 4, 2),
+            points: rect(0, 0, 2, 1),
+        }];
+        let mut compositor =
+            Compositor::new(Composition::of(&regions, 1.0).unwrap(), (4, 2)).unwrap();
         #[rustfmt::skip]
         let rgb = [
             0, 0, 0,   100, 100, 100,   10, 20, 30,   10, 20, 30,
             200, 200, 200,   100, 100, 100,   10, 20, 30,   50, 60, 70,
         ];
-        let changed = compositor.compose(Rect::from_size(0, 0, 4, 2).unwrap(), &rgb).unwrap();
-        assert_eq!(changed, vec![(Rect::from_size(0, 0, 2, 1).unwrap(), vec![100, 100, 100, 20, 30, 40])]);
+        let changed = compositor
+            .compose(Rect::from_size(0, 0, 4, 2).unwrap(), &rgb)
+            .unwrap();
+        assert_eq!(
+            changed,
+            vec![(
+                Rect::from_size(0, 0, 2, 1).unwrap(),
+                vec![100, 100, 100, 20, 30, 40]
+            )]
+        );
     }
 
     #[test]
     fn a_change_to_one_mac_pixel_recomposes_the_box_it_is_in_from_its_neighbours() {
-        let regions = vec![MosaicRegion { pixels: rect(0, 0, 4, 4), points: rect(0, 0, 2, 2) }];
-        let mut compositor = Compositor::new(Composition::of(&regions, 1.0).unwrap(), (4, 4)).unwrap();
-        compositor.compose(Rect::from_size(0, 0, 4, 4).unwrap(), &[40; 4 * 4 * 3]).unwrap();
-        let changed = compositor.compose(Rect::from_size(3, 2, 1, 1).unwrap(), &[200, 200, 200]).unwrap();
-        assert_eq!(changed, vec![(Rect::from_size(1, 1, 1, 1).unwrap(), vec![80, 80, 80])]);
+        let regions = vec![MosaicRegion {
+            pixels: rect(0, 0, 4, 4),
+            points: rect(0, 0, 2, 2),
+        }];
+        let mut compositor =
+            Compositor::new(Composition::of(&regions, 1.0).unwrap(), (4, 4)).unwrap();
+        compositor
+            .compose(Rect::from_size(0, 0, 4, 4).unwrap(), &[40; 4 * 4 * 3])
+            .unwrap();
+        let changed = compositor
+            .compose(Rect::from_size(3, 2, 1, 1).unwrap(), &[200, 200, 200])
+            .unwrap();
+        assert_eq!(
+            changed,
+            vec![(Rect::from_size(1, 1, 1, 1).unwrap(), vec![80, 80, 80])]
+        );
     }
 
     #[test]
     fn a_1x_screen_is_copied_as_it_came() {
-        let mut compositor = Compositor::new(Composition::of(&mixed(), 1.0).unwrap(), (4160, 1800)).unwrap();
-        let changed = compositor.compose(Rect::from_size(10, 20, 2, 1).unwrap(), &[1, 2, 3, 4, 5, 6]).unwrap();
-        assert_eq!(changed, vec![(Rect::from_size(10, 20, 2, 1).unwrap(), vec![1, 2, 3, 4, 5, 6])]);
+        let mut compositor =
+            Compositor::new(Composition::of(&mixed(), 1.0).unwrap(), (4160, 1800)).unwrap();
+        let changed = compositor
+            .compose(Rect::from_size(10, 20, 2, 1).unwrap(), &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        assert_eq!(
+            changed,
+            vec![(
+                Rect::from_size(10, 20, 2, 1).unwrap(),
+                vec![1, 2, 3, 4, 5, 6]
+            )]
+        );
     }
 
     #[test]
     fn a_rectangle_across_both_screens_changes_each_where_it_draws() {
-        let mut compositor = Compositor::new(Composition::of(&mixed(), 1.0).unwrap(), (4160, 1800)).unwrap();
-        let changed = compositor.compose(Rect::from_size(1278, 0, 4, 2).unwrap(), &[9; 4 * 2 * 3]).unwrap();
+        let mut compositor =
+            Compositor::new(Composition::of(&mixed(), 1.0).unwrap(), (4160, 1800)).unwrap();
+        let changed = compositor
+            .compose(Rect::from_size(1278, 0, 4, 2).unwrap(), &[9; 4 * 2 * 3])
+            .unwrap();
         let areas: Vec<Rect> = changed.into_iter().map(|(area, _)| area).collect();
-        assert_eq!(areas, vec![Rect::from_size(1278, 0, 2, 2).unwrap(), Rect::from_size(1280, 0, 1, 1).unwrap()]);
+        assert_eq!(
+            areas,
+            vec![
+                Rect::from_size(1278, 0, 2, 2).unwrap(),
+                Rect::from_size(1280, 0, 1, 1).unwrap()
+            ]
+        );
     }
 
     #[test]
     fn a_composed_position_reaches_the_mac_in_its_screens_pixels() {
         let composition = Composition::of(&mixed(), 1.0).unwrap();
         assert_eq!(composition.to_framebuffer(100, 100), Some((100, 100)));
-        assert_eq!(composition.to_framebuffer(1280 + 720, 450), Some((1280 + 1440, 900)));
-        assert_eq!(composition.to_framebuffer(100, 850), None, "between the screens");
-        assert_eq!(composition.to_framebuffer(2720, 900), Some((4159, 1799)), "the far edge, widened");
+        assert_eq!(
+            composition.to_framebuffer(1280 + 720, 450),
+            Some((1280 + 1440, 900))
+        );
+        assert_eq!(
+            composition.to_framebuffer(100, 850),
+            None,
+            "between the screens"
+        );
+        assert_eq!(
+            composition.to_framebuffer(2720, 900),
+            Some((4159, 1799)),
+            "the far edge, widened"
+        );
     }
 }

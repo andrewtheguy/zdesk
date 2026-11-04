@@ -140,12 +140,15 @@ mod tests {
     fn the_four_requests_go_out_in_the_order_the_handshake_defines() {
         let pdus = requests(1007, 1002, 0x0001_0021);
         let kinds: Vec<_> = pdus.iter().map(|pdu| decoded(pdu).kind).collect();
-        assert_eq!(kinds, vec![
-            share::SYNCHRONIZE,
-            share::CONTROL,
-            share::CONTROL,
-            share::FONT_LIST
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                share::SYNCHRONIZE,
+                share::CONTROL,
+                share::CONTROL,
+                share::FONT_LIST
+            ]
+        );
         // The two Control PDUs differ only in their action, and the order matters:
         // cooperating before asking to drive is what a server expects.
         assert_eq!(&decoded(&pdus[1]).body[..2], &COOPERATE.to_le_bytes());
@@ -161,7 +164,10 @@ mod tests {
     #[test]
     fn the_font_list_says_it_is_the_whole_list_of_nothing() {
         let pdus = requests(1007, 1002, 1);
-        assert_eq!(decoded(&pdus[3]).body, &[0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x32, 0x00]);
+        assert_eq!(
+            decoded(&pdus[3]).body,
+            &[0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x32, 0x00]
+        );
     }
 
     #[test]
@@ -169,13 +175,25 @@ mod tests {
         let sync = answer(share::SYNCHRONIZE, &[0x01, 0x00, 0xEA, 0x03]);
         assert_eq!(response(&decoded(&sync)).unwrap(), Response::Synchronize);
 
-        let cooperate = answer(share::CONTROL, &[0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let cooperate = answer(
+            share::CONTROL,
+            &[0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        );
         assert_eq!(response(&decoded(&cooperate)).unwrap(), Response::Cooperate);
 
-        let granted = answer(share::CONTROL, &[0x02, 0x00, 0xEF, 0x03, 0xEA, 0x03, 0x00, 0x00]);
-        assert_eq!(response(&decoded(&granted)).unwrap(), Response::ControlGranted);
+        let granted = answer(
+            share::CONTROL,
+            &[0x02, 0x00, 0xEF, 0x03, 0xEA, 0x03, 0x00, 0x00],
+        );
+        assert_eq!(
+            response(&decoded(&granted)).unwrap(),
+            Response::ControlGranted
+        );
 
-        let map = answer(share::FONT_MAP, &[0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00]);
+        let map = answer(
+            share::FONT_MAP,
+            &[0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00],
+        );
         assert_eq!(response(&decoded(&map)).unwrap(), Response::FontMap);
     }
 

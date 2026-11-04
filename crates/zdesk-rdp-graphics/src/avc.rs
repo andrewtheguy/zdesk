@@ -91,7 +91,10 @@ pub(crate) type Paint<'a> = &'a mut dyn FnMut(Rect16, &[u8], usize);
 
 /// Whether a codec is one of the H.264 ones.
 pub(crate) fn carries(codec: u16) -> bool {
-    matches!(codec, gfx::CODEC_AVC420 | gfx::CODEC_AVC444 | gfx::CODEC_AVC444_V2)
+    matches!(
+        codec,
+        gfx::CODEC_AVC420 | gfx::CODEC_AVC444 | gfx::CODEC_AVC444_V2
+    )
 }
 
 /// One command's H.264: the views it carries, each an access unit behind its mask.
@@ -107,11 +110,23 @@ impl<'a> Stream<'a> {
     /// Read a command's payload in one of the codecs [`carries`] names.
     pub(crate) fn read(codec: u16, data: &'a [u8]) -> Result<Self, Malformed> {
         if codec == gfx::CODEC_AVC420 {
-            return Ok(Self { layout: None, luma: Some(avc420(data)?), chroma: None });
+            return Ok(Self {
+                layout: None,
+                luma: Some(avc420(data)?),
+                chroma: None,
+            });
         }
-        let layout = if codec == gfx::CODEC_AVC444 { Layout::V1 } else { Layout::V2 };
+        let layout = if codec == gfx::CODEC_AVC444 {
+            Layout::V1
+        } else {
+            Layout::V2
+        };
         let views = avc444(data)?;
-        Ok(Self { layout: Some(layout), luma: views.luma, chroma: views.chroma })
+        Ok(Self {
+            layout: Some(layout),
+            luma: views.luma,
+            chroma: views.chroma,
+        })
     }
 
     /// Its access units in the order they go through the decoder: the luma view's,
@@ -210,8 +225,15 @@ pub fn scan(commands: &[u8]) -> Result<Vec<Scanned>, Malformed> {
             Message::CreateSurface { surface, .. } | Message::DeleteSurface { surface } => {
                 found.push(Scanned::Gone { surface });
             }
-            Message::WireToSurface1 { surface, codec, data, .. } if carries(codec) => {
-                let Ok(stream) = Stream::read(codec, data) else { continue };
+            Message::WireToSurface1 {
+                surface,
+                codec,
+                data,
+                ..
+            } if carries(codec) => {
+                let Ok(stream) = Stream::read(codec, data) else {
+                    continue;
+                };
                 for view in stream.views() {
                     let headers = access_unit(view.bitstream);
                     // The view's bytes are a slice of the commands'.
@@ -239,12 +261,15 @@ pub fn scan(commands: &[u8]) -> Result<Vec<Scanned>, Malformed> {
 
 /// The rectangle that bounds a mask; `None` for an empty one.
 fn bounds(regions: &[Region]) -> Option<Rect16> {
-    regions.iter().map(|region| region.rect).reduce(|a, b| Rect16 {
-        left: a.left.min(b.left),
-        top: a.top.min(b.top),
-        right: a.right.max(b.right),
-        bottom: a.bottom.max(b.bottom),
-    })
+    regions
+        .iter()
+        .map(|region| region.rect)
+        .reduce(|a, b| Rect16 {
+            left: a.left.min(b.left),
+            top: a.top.min(b.top),
+            right: a.right.max(b.right),
+            bottom: a.bottom.max(b.bottom),
+        })
 }
 
 /// Where a plane's samples are in a picture's bytes: its first, and the bytes
@@ -309,9 +334,18 @@ impl Area {
     fn clip(rect: Rect16, surface: (u32, u32), held: Area) -> Option<Self> {
         let left = usize::from(rect.left).max(held.left);
         let top = usize::from(rect.top).max(held.top);
-        let right = usize::from(rect.right).min(surface.0 as usize).min(held.right);
-        let bottom = usize::from(rect.bottom).min(surface.1 as usize).min(held.bottom);
-        (left < right && top < bottom).then_some(Self { left, top, right, bottom })
+        let right = usize::from(rect.right)
+            .min(surface.0 as usize)
+            .min(held.right);
+        let bottom = usize::from(rect.bottom)
+            .min(surface.1 as usize)
+            .min(held.bottom);
+        (left < right && top < bottom).then_some(Self {
+            left,
+            top,
+            right,
+            bottom,
+        })
     }
 
     /// This rectangle widened to a multiple of `unit` on every side, within the
@@ -320,20 +354,38 @@ impl Area {
         Self {
             left: self.left / unit * unit,
             top: self.top / unit * unit,
-            right: self.right.div_ceil(unit).saturating_mul(unit).min(picture.0),
-            bottom: self.bottom.div_ceil(unit).saturating_mul(unit).min(picture.1),
+            right: self
+                .right
+                .div_ceil(unit)
+                .saturating_mul(unit)
+                .min(picture.0),
+            bottom: self
+                .bottom
+                .div_ceil(unit)
+                .saturating_mul(unit)
+                .min(picture.1),
         }
     }
 
     fn rect(&self) -> Rect {
         let (x, y) = (self.left as u32, self.top as u32);
-        Rect { x, y, width: self.right as u32 - x, height: self.bottom as u32 - y }
+        Rect {
+            x,
+            y,
+            width: self.right as u32 - x,
+            height: self.bottom as u32 - y,
+        }
     }
 
     fn rect16(&self) -> Rect16 {
         // Clipped to a surface whose sides came off the wire as u16.
         let side = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
-        Rect16 { left: side(self.left), top: side(self.top), right: side(self.right), bottom: side(self.bottom) }
+        Rect16 {
+            left: side(self.left),
+            top: side(self.top),
+            right: side(self.right),
+            bottom: side(self.bottom),
+        }
     }
 }
 
@@ -359,7 +411,10 @@ impl<'a> View<'a> {
         let (left, top) = (picture.left as usize, picture.top as usize);
         let (width, height) = (picture.width as usize, picture.height as usize);
         ensure!(width > 0 && height > 0, "a picture with no samples");
-        ensure!(left.is_multiple_of(2) && top.is_multiple_of(2), "a picture cut at an odd corner, {left},{top}");
+        ensure!(
+            left.is_multiple_of(2) && top.is_multiple_of(2),
+            "a picture cut at an odd corner, {left},{top}"
+        );
         let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
         // The plane from its first sample on, with its last row's last byte inside.
         let plane = |plane: Plane, rows: usize, row_bytes: usize| {
@@ -379,10 +434,20 @@ impl<'a> View<'a> {
                 ),
             }
         };
-        let held = Area { left, top, right: left + width, bottom: top + height };
+        let held = Area {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        };
         match picture.samples {
             Samples::I420 { y, u, v } => {
-                ensure!(u.stride == v.stride, "chroma planes {} and {} bytes a row", u.stride, v.stride);
+                ensure!(
+                    u.stride == v.stride,
+                    "chroma planes {} and {} bytes a row",
+                    u.stride,
+                    v.stride
+                );
                 Ok(Self {
                     held,
                     y: plane(y, height, width)?,
@@ -410,7 +475,12 @@ impl<'a> View<'a> {
 
     fn of_planes(planes: &'a Planes) -> Self {
         Self {
-            held: Area { left: 0, top: 0, right: planes.width, bottom: planes.height },
+            held: Area {
+                left: 0,
+                top: 0,
+                right: planes.width,
+                bottom: planes.height,
+            },
             y: &planes.y,
             y_stride: planes.width,
             u: &planes.u,
@@ -433,7 +503,8 @@ impl<'a> View<'a> {
 
     /// Where in the chroma planes the sample over luma pixel `x`, `y` is.
     fn chroma_at(&self, x: usize, y: usize) -> usize {
-        (y / 2 - self.held.top / 2) * self.chroma_stride + (x / 2 - self.held.left / 2) * self.chroma_step
+        (y / 2 - self.held.top / 2) * self.chroma_stride
+            + (x / 2 - self.held.left / 2) * self.chroma_step
     }
 
     /// A luma sample by its place in the plane, if the plane has it.
@@ -443,11 +514,13 @@ impl<'a> View<'a> {
 
     /// A chroma sample by its place in its plane, if the plane has it.
     fn u_at(&self, x: usize, y: usize) -> Option<u8> {
-        self.in_chroma(x, y).then(|| self.u[y * self.chroma_stride + x * self.chroma_step])
+        self.in_chroma(x, y)
+            .then(|| self.u[y * self.chroma_stride + x * self.chroma_step])
     }
 
     fn v_at(&self, x: usize, y: usize) -> Option<u8> {
-        self.in_chroma(x, y).then(|| self.v[y * self.chroma_stride + x * self.chroma_step])
+        self.in_chroma(x, y)
+            .then(|| self.v[y * self.chroma_stride + x * self.chroma_step])
     }
 
     fn in_chroma(&self, x: usize, y: usize) -> bool {
@@ -472,7 +545,13 @@ struct Planes {
 
 impl Planes {
     fn empty() -> Self {
-        Self { width: 0, height: 0, y: Vec::new(), u: Vec::new(), v: Vec::new() }
+        Self {
+            width: 0,
+            height: 0,
+            y: Vec::new(),
+            u: Vec::new(),
+            v: Vec::new(),
+        }
     }
 
     /// Sized to the picture. A picture of another size starts over, black.
@@ -492,7 +571,8 @@ impl Planes {
     fn keep(&mut self, view: &View<'_>, area: Area) {
         let cw = self.width.div_ceil(2);
         for y in area.top..area.bottom {
-            self.y[y * self.width..][area.left..area.right].copy_from_slice(view.y_row(y, area.left, area.right));
+            self.y[y * self.width..][area.left..area.right]
+                .copy_from_slice(view.y_row(y, area.left, area.right));
         }
         for y in (area.top / 2..area.bottom.div_ceil(2)).map(|row| row * 2) {
             for x in (area.left / 2..area.right.div_ceil(2)).map(|column| column * 2) {
@@ -569,7 +649,9 @@ impl Avc {
         surface: (u32, u32),
         paint: Paint<'_>,
     ) -> Result<()> {
-        let Some((avc, view)) = shown(stream.luma.as_ref(), picture)? else { return Ok(()) };
+        let Some((avc, view)) = shown(stream.luma.as_ref(), picture)? else {
+            return Ok(());
+        };
         for region in &avc.regions {
             if let Some(area) = Area::clip(region.rect, surface, view.held) {
                 convert_420(&view, area, &mut self.rows, paint);
@@ -595,9 +677,14 @@ impl Avc {
             let (width, height) = whole(&view)?;
             let kept = self.luma.get_or_insert_with(Planes::empty);
             kept.fit(width, height);
-            let painted_whole = stream.chroma.as_ref().is_some_and(|chroma| same_mask(&chroma.regions, &avc.regions));
+            let painted_whole = stream
+                .chroma
+                .as_ref()
+                .is_some_and(|chroma| same_mask(&chroma.regions, &avc.regions));
             for region in &avc.regions {
-                let Some(area) = Area::clip(region.rect, surface, view.held) else { continue };
+                let Some(area) = Area::clip(region.rect, surface, view.held) else {
+                    continue;
+                };
                 kept.keep(&view, area);
                 cut(&mut self.on_gpu, area.rect());
                 if !painted_whole {
@@ -624,7 +711,9 @@ impl Avc {
             let main = View::of_planes(kept);
             let mut missing = 0;
             for region in &avc.regions {
-                let Some(area) = Area::clip(region.rect, surface, main.held) else { continue };
+                let Some(area) = Area::clip(region.rect, surface, main.held) else {
+                    continue;
+                };
                 if self.on_gpu.iter().any(|shown| shown.overlaps(&area.rect())) {
                     missing += 1;
                     continue;
@@ -633,7 +722,15 @@ impl Avc {
                 // macroblock, and the filter reads across every 2x2.
                 let block = area.aligned(16, picture);
                 combine(&main, &aux, layout, block, &mut self.u444, &mut self.v444);
-                convert_444(&main, block, &self.u444, &self.v444, area, &mut self.rows, paint);
+                convert_444(
+                    &main,
+                    block,
+                    &self.u444,
+                    &self.v444,
+                    area,
+                    &mut self.rows,
+                    paint,
+                );
             }
             ensure!(
                 missing == 0,
@@ -659,7 +756,9 @@ fn shown<'s, 'p>(
     view: Option<&'s Avc420<'_>>,
     picture: Option<&'p Picture>,
 ) -> Result<Option<(&'s Avc420<'s>, View<'p>)>> {
-    let Some(view) = view.filter(|view| !view.regions.is_empty()) else { return Ok(None) };
+    let Some(view) = view.filter(|view| !view.regions.is_empty()) else {
+        return Ok(None);
+    };
     let picture = picture.context("no picture was supplied for its access unit")?;
     Ok(Some((view, View::of(picture)?)))
 }
@@ -686,7 +785,12 @@ fn same_mask(a: &[Region], b: &[Region]) -> bool {
 fn rgbx(y: u8, u: u8, v: u8) -> [u8; 4] {
     let (y, u, v) = (i32::from(y) << 8, i32::from(u) - 128, i32::from(v) - 128);
     let clamp = |n: i32| (n >> 8).clamp(0, 255) as u8;
-    [clamp(y + 403 * v), clamp(y - 48 * u - 120 * v), clamp(y + 475 * u), 0]
+    [
+        clamp(y + 403 * v),
+        clamp(y - 48 * u - 120 * v),
+        clamp(y + 475 * u),
+        0,
+    ]
 }
 
 /// Fill `rows` with `area`'s pixels, a row at a time through `row`, on more than
@@ -696,10 +800,14 @@ fn fill(rows: &mut Vec<u8>, area: Area, row: impl Fn(usize, &mut [u8]) + Sync) {
     rows.clear();
     rows.resize(stride * area.height(), 0);
     if area.pixels() < PARALLEL_FROM {
-        rows.chunks_exact_mut(stride).enumerate().for_each(|(at, out)| row(area.top + at, out));
+        rows.chunks_exact_mut(stride)
+            .enumerate()
+            .for_each(|(at, out)| row(area.top + at, out));
     } else {
         crate::pool::install(|| {
-            rows.par_chunks_exact_mut(stride).enumerate().for_each(|(at, out)| row(area.top + at, out));
+            rows.par_chunks_exact_mut(stride)
+                .enumerate()
+                .for_each(|(at, out)| row(area.top + at, out));
         });
     }
 }
@@ -731,8 +839,16 @@ fn convert_444(
     fill(rows, area, |y, out| {
         let luma = main.y_row(y, area.left, area.right);
         let chroma = (y - block.top) * block.width() + area.left - block.left;
-        let (u, v) = (&u444[chroma..chroma + area.width()], &v444[chroma..chroma + area.width()]);
-        for (px, (luma, (u, v))) in out.as_chunks_mut::<4>().0.iter_mut().zip(luma.iter().zip(u.iter().zip(v))) {
+        let (u, v) = (
+            &u444[chroma..chroma + area.width()],
+            &v444[chroma..chroma + area.width()],
+        );
+        for (px, (luma, (u, v))) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(luma.iter().zip(u.iter().zip(v)))
+        {
             *px = rgbx(*luma, *u, *v);
         }
     });
@@ -748,7 +864,14 @@ fn convert_444(
 /// recovered from the average and the three neighbours just written. A sample the
 /// chroma view would hold past its picture's edge — the last rows of a picture
 /// that is not whole macroblocks — is left at the average.
-fn combine(main: &View<'_>, aux: &View<'_>, layout: Layout, block: Area, u444: &mut Vec<u8>, v444: &mut Vec<u8>) {
+fn combine(
+    main: &View<'_>,
+    aux: &View<'_>,
+    layout: Layout,
+    block: Area,
+    u444: &mut Vec<u8>,
+    v444: &mut Vec<u8>,
+) {
     let width = block.width();
     u444.clear();
     u444.resize(width * block.height(), 0);
@@ -757,7 +880,12 @@ fn combine(main: &View<'_>, aux: &View<'_>, layout: Layout, block: Area, u444: &
     // V2 puts V's samples in the right half of each chroma-view plane.
     let aux_width = aux.held.right;
     let (half, quarter) = (aux_width / 2, aux_width / 4);
-    let averaged = |x: usize, y: usize| (main.u_at(x >> 1, y >> 1).unwrap_or(128), main.v_at(x >> 1, y >> 1).unwrap_or(128));
+    let averaged = |x: usize, y: usize| {
+        (
+            main.u_at(x >> 1, y >> 1).unwrap_or(128),
+            main.v_at(x >> 1, y >> 1).unwrap_or(128),
+        )
+    };
     for y in block.top..block.bottom {
         let row = (y - block.top) * width;
         for x in block.left..block.right {
@@ -801,8 +929,16 @@ fn combine(main: &View<'_>, aux: &View<'_>, layout: Layout, block: Area, u444: &
             let at = row + x - block.left;
             let (u, v) = averaged(x, y);
             let whole = x + 1 < block.right && y + 1 < block.bottom;
-            u444[at] = if whole { unfilter(u, u444[at + 1], u444[at + width], u444[at + width + 1]) } else { u };
-            v444[at] = if whole { unfilter(v, v444[at + 1], v444[at + width], v444[at + width + 1]) } else { v };
+            u444[at] = if whole {
+                unfilter(u, u444[at + 1], u444[at + width], u444[at + width + 1])
+            } else {
+                u
+            };
+            v444[at] = if whole {
+                unfilter(v, v444[at + 1], v444[at + width], v444[at + width + 1])
+            } else {
+                v
+            };
         }
     }
 }
@@ -814,7 +950,11 @@ fn combine(main: &View<'_>, aux: &View<'_>, layout: Layout, block: Area, u444: &
 fn unfilter(average: u8, right: u8, below: u8, diagonal: u8) -> u8 {
     let average = i32::from(average);
     let reversed = average * 4 - i32::from(right) - i32::from(below) - i32::from(diagonal);
-    if (average - reversed).abs() >= FILTER_CUTOFF { reversed.clamp(0, 255) as u8 } else { average as u8 }
+    if (average - reversed).abs() >= FILTER_CUTOFF {
+        reversed.clamp(0, 255) as u8
+    } else {
+        average as u8
+    }
 }
 
 #[cfg(test)]
@@ -840,19 +980,43 @@ pub(crate) mod testing {
         let (w, h) = (width as usize, height as usize);
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
         let samples = Samples::I420 {
-            y: Plane { offset: 0, stride: w },
-            u: Plane { offset: w * h, stride: cw },
-            v: Plane { offset: w * h + cw * ch, stride: cw },
+            y: Plane {
+                offset: 0,
+                stride: w,
+            },
+            u: Plane {
+                offset: w * h,
+                stride: cw,
+            },
+            v: Plane {
+                offset: w * h + cw * ch,
+                stride: cw,
+            },
         };
-        Picture { data, samples, left, top, width, height }
+        Picture {
+            data,
+            samples,
+            left,
+            top,
+            width,
+            height,
+        }
     }
 
     /// The pixel a full-range BT.709 YUV sample is, by [MS-RDPEGFX] 3.3.8.3.1's
     /// matrix in floating point: within a step of the integer form.
     pub(crate) fn rgb_of(yuv: [u8; 3]) -> [u8; 3] {
-        let (y, u, v) = (f64::from(yuv[0]), f64::from(yuv[1]) - 128.0, f64::from(yuv[2]) - 128.0);
+        let (y, u, v) = (
+            f64::from(yuv[0]),
+            f64::from(yuv[1]) - 128.0,
+            f64::from(yuv[2]) - 128.0,
+        );
         let clamp = |n: f64| n.clamp(0.0, 255.0) as u8;
-        [clamp(y + 1.5748 * v), clamp(y - 0.1873 * u - 0.4681 * v), clamp(y + 1.8556 * u)]
+        [
+            clamp(y + 1.5748 * v),
+            clamp(y - 0.1873 * u - 0.4681 * v),
+            clamp(y + 1.8556 * u),
+        ]
     }
 
     /// Whether a painted pixel is the colour expected, to the step the integer
@@ -867,7 +1031,9 @@ mod tests {
     use super::testing::{close, flat, packed, rgb_of};
     use super::*;
     use crate::proto::avc::tests::{metablock, wrap444};
-    use crate::proto::gfx::{CMD_CREATE_SURFACE, CMD_DELETE_SURFACE, CMD_WIRE_TO_SURFACE_1, PIXEL_XRGB_8888, pdu};
+    use crate::proto::gfx::{
+        CMD_CREATE_SURFACE, CMD_DELETE_SURFACE, CMD_WIRE_TO_SURFACE_1, PIXEL_XRGB_8888, pdu,
+    };
     use crate::proto::wire::Writer;
 
     /// A YUV444 picture, and the two YUV420 views a host makes of it under either
@@ -905,7 +1071,13 @@ mod tests {
                     v[y * cw + x] = average(&self.v, x, y);
                 }
             }
-            Planes { width: self.width, height: self.height, y: self.y.clone(), u, v }
+            Planes {
+                width: self.width,
+                height: self.height,
+                y: self.y.clone(),
+                u,
+                v,
+            }
         }
 
         /// The chroma view, under `layout`.
@@ -921,14 +1093,18 @@ mod tests {
                         for mx in (0..w).step_by(16) {
                             for yy in 0..8 {
                                 for xx in 0..16 {
-                                    y[(my + yy) * w + mx + xx] = self.sample(&self.u, mx + xx, my + 2 * yy + 1);
-                                    y[(my + 8 + yy) * w + mx + xx] = self.sample(&self.v, mx + xx, my + 2 * yy + 1);
+                                    y[(my + yy) * w + mx + xx] =
+                                        self.sample(&self.u, mx + xx, my + 2 * yy + 1);
+                                    y[(my + 8 + yy) * w + mx + xx] =
+                                        self.sample(&self.v, mx + xx, my + 2 * yy + 1);
                                 }
                             }
                             for yy in 0..8 {
                                 for xx in 0..8 {
-                                    u[(my / 2 + yy) * cw + mx / 2 + xx] = self.sample(&self.u, mx + 2 * xx + 1, my + 2 * yy);
-                                    v[(my / 2 + yy) * cw + mx / 2 + xx] = self.sample(&self.v, mx + 2 * xx + 1, my + 2 * yy);
+                                    u[(my / 2 + yy) * cw + mx / 2 + xx] =
+                                        self.sample(&self.u, mx + 2 * xx + 1, my + 2 * yy);
+                                    v[(my / 2 + yy) * cw + mx / 2 + xx] =
+                                        self.sample(&self.v, mx + 2 * xx + 1, my + 2 * yy);
                                 }
                             }
                         }
@@ -951,13 +1127,25 @@ mod tests {
                     }
                 }
             }
-            Planes { width: w, height: h, y, u, v }
+            Planes {
+                width: w,
+                height: h,
+                y,
+                u,
+                v,
+            }
         }
     }
 
     /// A view as a decoder would hand it back: the whole picture, packed tight.
     fn decoded(planes: &Planes) -> Picture {
-        packed([&planes.y[..], &planes.u, &planes.v].concat(), 0, 0, planes.width as u32, planes.height as u32)
+        packed(
+            [&planes.y[..], &planes.u, &planes.v].concat(),
+            0,
+            0,
+            planes.width as u32,
+            planes.height as u32,
+        )
     }
 
     /// A 32x32 picture whose chroma varies per pixel but whose every 2x2 averages
@@ -977,13 +1165,26 @@ mod tests {
             }
         }
         let y = (0..width * height).map(|i| (i % 251) as u8).collect();
-        Original { width, height, y, u, v }
+        Original {
+            width,
+            height,
+            y,
+            u,
+            v,
+        }
     }
 
     fn combined(picture: &Original, layout: Layout, block: Area) -> (Vec<u8>, Vec<u8>) {
         let (luma, chroma) = (picture.luma_view(), picture.chroma_view(layout));
         let (mut u444, mut v444) = (Vec::new(), Vec::new());
-        combine(&View::of_planes(&luma), &View::of_planes(&chroma), layout, block, &mut u444, &mut v444);
+        combine(
+            &View::of_planes(&luma),
+            &View::of_planes(&chroma),
+            layout,
+            block,
+            &mut u444,
+            &mut v444,
+        );
         (u444, v444)
     }
 
@@ -993,7 +1194,12 @@ mod tests {
     #[test]
     fn the_two_views_combine_back_into_the_picture_under_either_layout() {
         let picture = textured();
-        let block = Area { left: 0, top: 0, right: 32, bottom: 32 };
+        let block = Area {
+            left: 0,
+            top: 0,
+            right: 32,
+            bottom: 32,
+        };
         for layout in [Layout::V1, Layout::V2] {
             let (u444, v444) = combined(&picture, layout, block);
             // The averaged corner's reverse differs from the average by 6, under the
@@ -1001,8 +1207,16 @@ mod tests {
             for y in 0..32 {
                 for x in 0..32 {
                     let (eu, ev) = (picture.u[y * 32 + x], picture.v[y * 32 + x]);
-                    let (eu, ev) = if x & 1 == 0 && y & 1 == 0 { (eu + 6, ev - 6) } else { (eu, ev) };
-                    assert_eq!((u444[y * 32 + x], v444[y * 32 + x]), (eu, ev), "{layout:?} at {x},{y}");
+                    let (eu, ev) = if x & 1 == 0 && y & 1 == 0 {
+                        (eu + 6, ev - 6)
+                    } else {
+                        (eu, ev)
+                    };
+                    assert_eq!(
+                        (u444[y * 32 + x], v444[y * 32 + x]),
+                        (eu, ev),
+                        "{layout:?} at {x},{y}"
+                    );
                 }
             }
         }
@@ -1013,13 +1227,23 @@ mod tests {
     #[test]
     fn a_block_inside_the_picture_is_combined_in_place() {
         let picture = textured();
-        let block = Area { left: 16, top: 16, right: 32, bottom: 32 };
+        let block = Area {
+            left: 16,
+            top: 16,
+            right: 32,
+            bottom: 32,
+        };
         for layout in [Layout::V1, Layout::V2] {
             let (u444, _) = combined(&picture, layout, block);
             for y in 16..32 {
                 for x in 16..32 {
-                    let expect = picture.u[y * 32 + x] + if x & 1 == 0 && y & 1 == 0 { 6 } else { 0 };
-                    assert_eq!(u444[(y - 16) * 16 + x - 16], expect, "{layout:?} at {x},{y}");
+                    let expect =
+                        picture.u[y * 32 + x] + if x & 1 == 0 && y & 1 == 0 { 6 } else { 0 };
+                    assert_eq!(
+                        u444[(y - 16) * 16 + x - 16],
+                        expect,
+                        "{layout:?} at {x},{y}"
+                    );
                 }
             }
         }
@@ -1045,15 +1269,62 @@ mod tests {
     /// and drops one outside either; alignment widens within the picture.
     #[test]
     fn regions_are_clipped_then_aligned_within_the_picture() {
-        let rect = Rect16 { left: 5, top: 3, right: 40, bottom: 60 };
-        let held = |left, top, right, bottom| Area { left, top, right, bottom };
-        assert_eq!(Area::clip(rect, (32, 100), held(0, 0, 48, 48)), Some(Area { left: 5, top: 3, right: 32, bottom: 48 }));
+        let rect = Rect16 {
+            left: 5,
+            top: 3,
+            right: 40,
+            bottom: 60,
+        };
+        let held = |left, top, right, bottom| Area {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        assert_eq!(
+            Area::clip(rect, (32, 100), held(0, 0, 48, 48)),
+            Some(Area {
+                left: 5,
+                top: 3,
+                right: 32,
+                bottom: 48
+            })
+        );
         assert_eq!(Area::clip(rect, (5, 100), held(0, 0, 48, 48)), None);
-        assert_eq!(Area::clip(rect, (64, 64), held(8, 4, 20, 30)), Some(Area { left: 8, top: 4, right: 20, bottom: 30 }));
+        assert_eq!(
+            Area::clip(rect, (64, 64), held(8, 4, 20, 30)),
+            Some(Area {
+                left: 8,
+                top: 4,
+                right: 20,
+                bottom: 30
+            })
+        );
         assert_eq!(Area::clip(rect, (64, 64), held(40, 0, 48, 48)), None);
-        let area = Area { left: 5, top: 3, right: 31, bottom: 47 };
-        assert_eq!(area.aligned(16, (48, 48)), Area { left: 0, top: 0, right: 32, bottom: 48 });
-        assert_eq!(area.aligned(16, (36, 40)), Area { left: 0, top: 0, right: 32, bottom: 40 });
+        let area = Area {
+            left: 5,
+            top: 3,
+            right: 31,
+            bottom: 47,
+        };
+        assert_eq!(
+            area.aligned(16, (48, 48)),
+            Area {
+                left: 0,
+                top: 0,
+                right: 32,
+                bottom: 48
+            }
+        );
+        assert_eq!(
+            area.aligned(16, (36, 40)),
+            Area {
+                left: 0,
+                top: 0,
+                right: 32,
+                bottom: 40
+            }
+        );
     }
 
     /// The rectangles a paint reports, with their pixels.
@@ -1061,19 +1332,42 @@ mod tests {
         move |rect, rows, stride| {
             let width = usize::from(rect.width());
             let pixels = (0..usize::from(rect.height()))
-                .flat_map(|row| rows[row * stride..row * stride + width * 4].as_chunks::<4>().0.iter().copied())
+                .flat_map(|row| {
+                    rows[row * stride..row * stride + width * 4]
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .copied()
+                })
                 .collect();
             calls.push((rect, pixels));
         }
     }
 
     fn region(rect: (u16, u16, u16, u16)) -> Region {
-        let rect = Rect16 { left: rect.0, top: rect.1, right: rect.2, bottom: rect.3 };
-        Region { rect, qp: 0, progressive: false, quality: 100 }
+        let rect = Rect16 {
+            left: rect.0,
+            top: rect.1,
+            right: rect.2,
+            bottom: rect.3,
+        };
+        Region {
+            rect,
+            qp: 0,
+            progressive: false,
+            quality: 100,
+        }
     }
 
     fn stream_420(regions: Vec<Region>) -> Stream<'static> {
-        Stream { layout: None, luma: Some(Avc420 { regions, bitstream: &[] }), chroma: None }
+        Stream {
+            layout: None,
+            luma: Some(Avc420 {
+                regions,
+                bitstream: &[],
+            }),
+            chroma: None,
+        }
     }
 
     /// The matrix, at its corners: grey stays grey, and each colour difference
@@ -1083,9 +1377,19 @@ mod tests {
         assert_eq!(rgbx(0, 128, 128), [0, 0, 0, 0]);
         assert_eq!(rgbx(255, 128, 128), [255, 255, 255, 0]);
         assert_eq!(rgbx(90, 128, 128), [90, 90, 90, 0]);
-        for yuv in [[140, 90, 170], [60, 200, 100], [200, 30, 240], [16, 128, 240], [235, 240, 16]] {
+        for yuv in [
+            [140, 90, 170],
+            [60, 200, 100],
+            [200, 30, 240],
+            [16, 128, 240],
+            [235, 240, 16],
+        ] {
             let px = rgbx(yuv[0], yuv[1], yuv[2]);
-            assert!(close(&px[..3], rgb_of(yuv)), "{yuv:?}: {px:?} vs {:?}", rgb_of(yuv));
+            assert!(
+                close(&px[..3], rgb_of(yuv)),
+                "{yuv:?}: {px:?} vs {:?}",
+                rgb_of(yuv)
+            );
         }
     }
 
@@ -1097,22 +1401,62 @@ mod tests {
         let picture = flat(32, 32, yuv);
         let mut avc = Avc::default();
         let mut calls = Vec::new();
-        avc.draw(&stream_420(vec![region((3, 5, 20, 30))]), Some(&picture), None, (32, 32), &mut painted(&mut calls))
-            .unwrap();
+        avc.draw(
+            &stream_420(vec![region((3, 5, 20, 30))]),
+            Some(&picture),
+            None,
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, Rect16 { left: 3, top: 5, right: 20, bottom: 30 });
+        assert_eq!(
+            calls[0].0,
+            Rect16 {
+                left: 3,
+                top: 5,
+                right: 20,
+                bottom: 30
+            }
+        );
         assert_eq!(calls[0].1.len(), 17 * 25);
-        assert!(calls[0].1.iter().all(|px| close(&px[..3], rgb_of(yuv)) && px[3] == 0), "{:?}", calls[0].1[0]);
+        assert!(
+            calls[0]
+                .1
+                .iter()
+                .all(|px| close(&px[..3], rgb_of(yuv)) && px[3] == 0),
+            "{:?}",
+            calls[0].1[0]
+        );
 
         // A rectangle outside the surface paints nothing, an empty mask needs no
         // picture, and a mask with no picture is a fault.
         let mut calls = Vec::new();
-        avc.draw(&stream_420(vec![region((40, 0, 50, 8))]), Some(&picture), None, (32, 32), &mut painted(&mut calls))
-            .unwrap();
-        avc.draw(&stream_420(vec![]), None, None, (32, 32), &mut painted(&mut calls)).unwrap();
+        avc.draw(
+            &stream_420(vec![region((40, 0, 50, 8))]),
+            Some(&picture),
+            None,
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
+        avc.draw(
+            &stream_420(vec![]),
+            None,
+            None,
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
         assert!(calls.is_empty());
         let err = avc
-            .draw(&stream_420(vec![region((0, 0, 8, 8))]), None, None, (32, 32), &mut painted(&mut calls))
+            .draw(
+                &stream_420(vec![region((0, 0, 8, 8))]),
+                None,
+                None,
+                (32, 32),
+                &mut painted(&mut calls),
+            )
             .unwrap_err();
         assert!(format!("{err:#}").contains("no picture"), "{err:#}");
     }
@@ -1121,7 +1465,9 @@ mod tests {
     /// chroma by its own.
     fn graded(width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let (cw, ch) = (width / 2, height / 2);
-        let y = (0..width * height).map(|i| (i % width * 3 + i / width * 5) as u8).collect();
+        let y = (0..width * height)
+            .map(|i| (i % width * 3 + i / width * 5) as u8)
+            .collect();
         let u = (0..cw * ch).map(|i| 40 + (i % cw * 7) as u8).collect();
         let v = (0..cw * ch).map(|i| 200 - (i / cw * 9) as u8).collect();
         (y, u, v)
@@ -1140,7 +1486,13 @@ mod tests {
         let paint_with = |picture: &Picture| {
             let mut calls = Vec::new();
             Avc::default()
-                .draw(&stream_420(mask.clone()), Some(picture), None, (32, 24), &mut painted(&mut calls))
+                .draw(
+                    &stream_420(mask.clone()),
+                    Some(picture),
+                    None,
+                    (32, 24),
+                    &mut painted(&mut calls),
+                )
                 .unwrap();
             calls
         };
@@ -1152,10 +1504,22 @@ mod tests {
 
         // The window: the mask widened to whole chroma samples, 8,6 to 28,20.
         let (left, top, w, h) = (8usize, 6usize, 20usize, 14usize);
-        let cut = |plane: &[u8], stride: usize, left: usize, top: usize, w: usize, h: usize| -> Vec<Vec<u8>> {
-            (top..top + h).map(|row| plane[row * stride + left..row * stride + left + w].to_vec()).collect()
+        let cut = |plane: &[u8],
+                   stride: usize,
+                   left: usize,
+                   top: usize,
+                   w: usize,
+                   h: usize|
+         -> Vec<Vec<u8>> {
+            (top..top + h)
+                .map(|row| plane[row * stride + left..row * stride + left + w].to_vec())
+                .collect()
         };
-        let (ys, us, vs) = (cut(&y, 32, left, top, w, h), cut(&u, 16, 4, 3, 10, 7), cut(&v, 16, 4, 3, 10, 7));
+        let (ys, us, vs) = (
+            cut(&y, 32, left, top, w, h),
+            cut(&u, 16, 4, 3, 10, 7),
+            cut(&v, 16, 4, 3, 10, 7),
+        );
 
         // Three planes, each row padded past its samples and the planes apart.
         let mut data = vec![0xEE; 5];
@@ -1167,23 +1531,58 @@ mod tests {
             }
             Plane { offset, stride }
         };
-        let samples = Samples::I420 { y: pad(&mut data, &ys, 24), u: pad(&mut data, &us, 13), v: pad(&mut data, &vs, 13) };
-        let planar = Picture { data, samples, left: 8, top: 6, width: 20, height: 14 };
+        let samples = Samples::I420 {
+            y: pad(&mut data, &ys, 24),
+            u: pad(&mut data, &us, 13),
+            v: pad(&mut data, &vs, 13),
+        };
+        let planar = Picture {
+            data,
+            samples,
+            left: 8,
+            top: 6,
+            width: 20,
+            height: 14,
+        };
         assert_eq!(paint_with(&planar), expected);
 
         // Two planes, the chroma interleaved.
         let mut data = Vec::new();
         let y_plane = pad(&mut data, &ys, 20);
-        let pairs: Vec<Vec<u8>> =
-            us.iter().zip(&vs).map(|(u, v)| u.iter().zip(v).flat_map(|(u, v)| [*u, *v]).collect()).collect();
-        let samples = Samples::Nv12 { y: y_plane, uv: pad(&mut data, &pairs, 22) };
-        let interleaved = Picture { data, samples, left: 8, top: 6, width: 20, height: 14 };
+        let pairs: Vec<Vec<u8>> = us
+            .iter()
+            .zip(&vs)
+            .map(|(u, v)| u.iter().zip(v).flat_map(|(u, v)| [*u, *v]).collect())
+            .collect();
+        let samples = Samples::Nv12 {
+            y: y_plane,
+            uv: pad(&mut data, &pairs, 22),
+        };
+        let interleaved = Picture {
+            data,
+            samples,
+            left: 8,
+            top: 6,
+            width: 20,
+            height: 14,
+        };
         assert_eq!(paint_with(&interleaved), expected);
 
         // A part that does not reach the mask's edge paints what it holds of it.
-        let short = Picture { height: 12, ..planar.clone() };
+        let short = Picture {
+            height: 12,
+            ..planar.clone()
+        };
         let calls = paint_with(&short);
-        assert_eq!(calls[0].0, Rect16 { left: 9, top: 7, right: 27, bottom: 18 });
+        assert_eq!(
+            calls[0].0,
+            Rect16 {
+                left: 9,
+                top: 7,
+                right: 27,
+                bottom: 18
+            }
+        );
         assert_eq!(calls[0].1[..], expected[0].1[..18 * 11]);
     }
 
@@ -1193,17 +1592,41 @@ mod tests {
     fn a_picture_that_does_not_hold_what_it_says_is_refused() {
         let good = flat(16, 16, [1, 2, 3]);
         let draw = |picture: &Picture| {
-            Avc::default().draw(&stream_420(vec![region((0, 0, 16, 16))]), Some(picture), None, (16, 16), &mut |_, _, _| {})
+            Avc::default().draw(
+                &stream_420(vec![region((0, 0, 16, 16))]),
+                Some(picture),
+                None,
+                (16, 16),
+                &mut |_, _, _| {},
+            )
         };
         draw(&good).unwrap();
         let mut short = good.clone();
         short.data.pop();
         assert!(format!("{:#}", draw(&short).unwrap_err()).contains("a plane of"));
-        let tall = Picture { height: 18, ..good.clone() };
+        let tall = Picture {
+            height: 18,
+            ..good.clone()
+        };
         assert!(draw(&tall).is_err());
-        let odd = Picture { left: 1, ..good.clone() };
+        let odd = Picture {
+            left: 1,
+            ..good.clone()
+        };
         assert!(format!("{:#}", draw(&odd).unwrap_err()).contains("odd corner"));
-        let narrow = Picture { samples: Samples::Nv12 { y: Plane { offset: 0, stride: 8 }, uv: Plane { offset: 256, stride: 16 } }, ..good.clone() };
+        let narrow = Picture {
+            samples: Samples::Nv12 {
+                y: Plane {
+                    offset: 0,
+                    stride: 8,
+                },
+                uv: Plane {
+                    offset: 256,
+                    stride: 16,
+                },
+            },
+            ..good.clone()
+        };
         assert!(draw(&narrow).is_err(), "a stride shorter than a row");
         let empty = Picture { width: 0, ..good };
         assert!(draw(&empty).is_err());
@@ -1217,7 +1640,13 @@ mod tests {
         // Chroma the luma view alone would get wrong: a 2x2 checker of two colours
         // averages to a third, and only the combined picture has the right one.
         let (a, b) = ([120u8, 60, 200], [120u8, 200, 60]);
-        let mut picture = Original { width: 32, height: 32, y: vec![120; 32 * 32], u: vec![0; 32 * 32], v: vec![0; 32 * 32] };
+        let mut picture = Original {
+            width: 32,
+            height: 32,
+            y: vec![120; 32 * 32],
+            u: vec![0; 32 * 32],
+            v: vec![0; 32 * 32],
+        };
         for i in 0..32 * 32 {
             let (x, y) = (i % 32, i / 32);
             let c = if (x + y) % 2 == 0 { a } else { b };
@@ -1225,21 +1654,49 @@ mod tests {
             picture.v[i] = c[2];
         }
         let whole = (0, 0, 32, 32);
-        let view = |rect| Some(Avc420 { regions: vec![region(rect)], bitstream: &[][..] });
+        let view = |rect| {
+            Some(Avc420 {
+                regions: vec![region(rect)],
+                bitstream: &[][..],
+            })
+        };
         for layout in [Layout::V1, Layout::V2] {
-            let (luma, chroma) = (decoded(&picture.luma_view()), decoded(&picture.chroma_view(layout)));
-            let stream = |luma, chroma| Stream { layout: Some(layout), luma, chroma };
+            let (luma, chroma) = (
+                decoded(&picture.luma_view()),
+                decoded(&picture.chroma_view(layout)),
+            );
+            let stream = |luma, chroma| Stream {
+                layout: Some(layout),
+                luma,
+                chroma,
+            };
 
             let mut avc = Avc::default();
             let mut calls = Vec::new();
             let err = avc
-                .draw(&stream(None, view(whole)), None, Some(&chroma), (32, 32), &mut painted(&mut calls))
+                .draw(
+                    &stream(None, view(whole)),
+                    None,
+                    Some(&chroma),
+                    (32, 32),
+                    &mut painted(&mut calls),
+                )
                 .unwrap_err();
             assert!(format!("{err}").contains("before any luma view"), "{err}");
 
-            avc.draw(&stream(view(whole), view(whole)), Some(&luma), Some(&chroma), (32, 32), &mut painted(&mut calls))
-                .unwrap();
-            assert_eq!(calls.len(), 1, "one paint for one mask on both views: {layout:?}");
+            avc.draw(
+                &stream(view(whole), view(whole)),
+                Some(&luma),
+                Some(&chroma),
+                (32, 32),
+                &mut painted(&mut calls),
+            )
+            .unwrap();
+            assert_eq!(
+                calls.len(),
+                1,
+                "one paint for one mask on both views: {layout:?}"
+            );
             let (ra, rb) = (rgbx(a[0], a[1], a[2]), rgbx(b[0], b[1], b[2]));
             for (i, px) in calls[0].1.iter().enumerate() {
                 let expected = if (i % 32 + i / 32) % 2 == 0 { ra } else { rb };
@@ -1250,23 +1707,51 @@ mod tests {
             // of the checker — and is kept.
             let mut avc = Avc::default();
             let mut calls = Vec::new();
-            avc.draw(&stream(view(whole), None), Some(&luma), None, (32, 32), &mut painted(&mut calls)).unwrap();
+            avc.draw(
+                &stream(view(whole), None),
+                Some(&luma),
+                None,
+                (32, 32),
+                &mut painted(&mut calls),
+            )
+            .unwrap();
             let mean = |p: u8, q: u8| ((u16::from(p) + u16::from(q)) / 2) as u8;
             let averaged = rgbx(120, mean(a[1], b[1]), mean(a[2], b[2]));
-            assert!(calls[0].1.iter().all(|px| *px == averaged), "{layout:?}: {:?} vs {averaged:?}", calls[0].1[0]);
+            assert!(
+                calls[0].1.iter().all(|px| *px == averaged),
+                "{layout:?}: {:?} vs {averaged:?}",
+                calls[0].1[0]
+            );
             // A luma view for another rectangle in between: its picture is a
             // different one everywhere, but only its rectangle is kept.
             let grey = [200u8, 128, 128];
             let elsewhere = (24, 0, 32, 32);
-            avc.draw(&stream(view(elsewhere), None), Some(&flat(32, 32, grey)), None, (32, 32), &mut painted(&mut calls))
-                .unwrap();
+            avc.draw(
+                &stream(view(elsewhere), None),
+                Some(&flat(32, 32, grey)),
+                None,
+                (32, 32),
+                &mut painted(&mut calls),
+            )
+            .unwrap();
             assert_eq!(calls[1].0, region(elsewhere).rect);
-            assert!(calls[1].1.iter().all(|px| *px == [200, 200, 200, 0]), "{layout:?}: {:?}", calls[1].1[0]);
+            assert!(
+                calls[1].1.iter().all(|px| *px == [200, 200, 200, 0]),
+                "{layout:?}: {:?}",
+                calls[1].1[0]
+            );
             // Then the chroma view for part of the first rectangle, in a later
             // stream: it combines with the luma view that carried that rectangle,
             // not the grey one that came after.
             let part = (4, 4, 20, 24);
-            avc.draw(&stream(None, view(part)), None, Some(&chroma), (32, 32), &mut painted(&mut calls)).unwrap();
+            avc.draw(
+                &stream(None, view(part)),
+                None,
+                Some(&chroma),
+                (32, 32),
+                &mut painted(&mut calls),
+            )
+            .unwrap();
             assert_eq!(calls.len(), 3);
             assert_eq!(calls[2].0, region(part).rect);
             for (i, px) in calls[2].1.iter().enumerate() {
@@ -1276,9 +1761,18 @@ mod tests {
             }
 
             // A part of a picture is no use to a view packed across the whole of it.
-            let cut = Picture { left: 16, ..luma.clone() };
+            let cut = Picture {
+                left: 16,
+                ..luma.clone()
+            };
             let err = Avc::default()
-                .draw(&stream(view(whole), None), Some(&cut), None, (32, 32), &mut painted(&mut calls))
+                .draw(
+                    &stream(view(whole), None),
+                    Some(&cut),
+                    None,
+                    (32, 32),
+                    &mut painted(&mut calls),
+                )
                 .unwrap_err();
             assert!(format!("{err}").contains("the whole of it"), "{err}");
         }
@@ -1289,30 +1783,93 @@ mod tests {
     /// combines as before; a luma view supplied over it is kept again.
     #[test]
     fn a_chroma_view_over_a_luma_view_shown_from_the_gpu_is_not_combined() {
-        let picture = Original { width: 32, height: 32, y: vec![120; 32 * 32], u: vec![60; 32 * 32], v: vec![200; 32 * 32] };
-        let view = |rect| Some(Avc420 { regions: vec![region(rect)], bitstream: &[][..] });
+        let picture = Original {
+            width: 32,
+            height: 32,
+            y: vec![120; 32 * 32],
+            u: vec![60; 32 * 32],
+            v: vec![200; 32 * 32],
+        };
+        let view = |rect| {
+            Some(Avc420 {
+                regions: vec![region(rect)],
+                bitstream: &[][..],
+            })
+        };
         let layout = Layout::V2;
-        let (luma, chroma) = (decoded(&picture.luma_view()), decoded(&picture.chroma_view(layout)));
-        let stream = |luma, chroma| Stream { layout: Some(layout), luma, chroma };
+        let (luma, chroma) = (
+            decoded(&picture.luma_view()),
+            decoded(&picture.chroma_view(layout)),
+        );
+        let stream = |luma, chroma| Stream {
+            layout: Some(layout),
+            luma,
+            chroma,
+        };
         let (left, right) = ((0, 0, 16, 32), (16, 0, 32, 32));
 
         let mut avc = Avc::default();
         let mut calls = Vec::new();
-        avc.draw(&stream(view((0, 0, 32, 32)), None), Some(&luma), None, (32, 32), &mut painted(&mut calls)).unwrap();
-        avc.shown_on_gpu(&stream(view(left), None), &[Rect { x: 0, y: 0, width: 16, height: 32 }]);
+        avc.draw(
+            &stream(view((0, 0, 32, 32)), None),
+            Some(&luma),
+            None,
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
+        avc.shown_on_gpu(
+            &stream(view(left), None),
+            &[Rect {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 32,
+            }],
+        );
         assert!(!avc.chroma_seen());
 
         let err = avc
-            .draw(&stream(None, Some(Avc420 { regions: vec![region(left), region(right)], bitstream: &[][..] })), None, Some(&chroma), (32, 32), &mut painted(&mut calls))
+            .draw(
+                &stream(
+                    None,
+                    Some(Avc420 {
+                        regions: vec![region(left), region(right)],
+                        bitstream: &[][..],
+                    }),
+                ),
+                None,
+                Some(&chroma),
+                (32, 32),
+                &mut painted(&mut calls),
+            )
             .unwrap_err();
         assert!(format!("{err}").contains("shown from the GPU"), "{err}");
         assert_eq!(calls.len(), 2, "the right half alone is combined");
         assert_eq!(calls[1].0, region(right).rect);
         assert!(avc.chroma_seen());
 
-        avc.draw(&stream(view(left), None), Some(&luma), None, (32, 32), &mut painted(&mut calls)).unwrap();
-        avc.draw(&stream(None, view(left)), None, Some(&chroma), (32, 32), &mut painted(&mut calls)).unwrap();
-        assert_eq!(calls.last().unwrap().0, region(left).rect, "kept again, it combines");
+        avc.draw(
+            &stream(view(left), None),
+            Some(&luma),
+            None,
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
+        avc.draw(
+            &stream(None, view(left)),
+            None,
+            Some(&chroma),
+            (32, 32),
+            &mut painted(&mut calls),
+        )
+        .unwrap();
+        assert_eq!(
+            calls.last().unwrap().0,
+            region(left).rect,
+            "kept again, it combines"
+        );
     }
 
     /// A picture that is not whole macroblocks: the first layout's chroma view would
@@ -1320,15 +1877,46 @@ mod tests {
     /// rather than read from there.
     #[test]
     fn a_picture_that_is_not_whole_macroblocks_combines_without_reading_past_it() {
-        let luma = Planes { width: 32, height: 24, y: vec![90; 32 * 24], u: vec![70; 16 * 12], v: vec![180; 16 * 12] };
-        let chroma = Planes { width: 32, height: 24, y: vec![70; 32 * 24], u: vec![70; 16 * 12], v: vec![180; 16 * 12] };
-        let block = Area { left: 0, top: 0, right: 32, bottom: 24 };
+        let luma = Planes {
+            width: 32,
+            height: 24,
+            y: vec![90; 32 * 24],
+            u: vec![70; 16 * 12],
+            v: vec![180; 16 * 12],
+        };
+        let chroma = Planes {
+            width: 32,
+            height: 24,
+            y: vec![70; 32 * 24],
+            u: vec![70; 16 * 12],
+            v: vec![180; 16 * 12],
+        };
+        let block = Area {
+            left: 0,
+            top: 0,
+            right: 32,
+            bottom: 24,
+        };
         for layout in [Layout::V1, Layout::V2] {
             let (mut u444, mut v444) = (Vec::new(), Vec::new());
-            combine(&View::of_planes(&luma), &View::of_planes(&chroma), layout, block, &mut u444, &mut v444);
+            combine(
+                &View::of_planes(&luma),
+                &View::of_planes(&chroma),
+                layout,
+                block,
+                &mut u444,
+                &mut v444,
+            );
             // Rows 16 to 23 are half a macroblock: under the first layout V's odd
             // rows would be in rows 24 to 27 of the chroma view's luma plane.
-            assert_eq!((u444[23 * 32 + 5], v444[23 * 32 + 5]), if layout == Layout::V1 { (70, 180) } else { (70, 70) });
+            assert_eq!(
+                (u444[23 * 32 + 5], v444[23 * 32 + 5]),
+                if layout == Layout::V1 {
+                    (70, 180)
+                } else {
+                    (70, 70)
+                }
+            );
         }
     }
 
@@ -1366,11 +1954,22 @@ mod tests {
         };
         let commands = [
             create,
-            wire(3, gfx::CODEC_AVC420, &masked(&[(8, 4, 20, 12), (30, 2, 40, 9)], &key)),
+            wire(
+                3,
+                gfx::CODEC_AVC420,
+                &masked(&[(8, 4, 20, 12), (30, 2, 40, 9)], &key),
+            ),
             // Not H.264, and H.264 that does not read: neither is a unit.
             wire(3, gfx::CODEC_UNCOMPRESSED, &[0; 16]),
             wire(3, gfx::CODEC_AVC420, &[9, 0, 0, 0]),
-            wire(5, gfx::CODEC_AVC444_V2, &wrap444(Some(&masked(&[(0, 0, 16, 16)], &delta)), Some(&masked(&[], &delta)))),
+            wire(
+                5,
+                gfx::CODEC_AVC444_V2,
+                &wrap444(
+                    Some(&masked(&[(0, 0, 16, 16)], &delta)),
+                    Some(&masked(&[], &delta)),
+                ),
+            ),
             pdu(CMD_DELETE_SURFACE, &5u16.to_le_bytes()),
         ]
         .concat();
@@ -1382,13 +1981,31 @@ mod tests {
         assert_eq!(found.len(), 5);
         assert_eq!(found[0], Scanned::Gone { surface: 3 });
         let first = unit(1);
-        assert_eq!((first.surface, first.key, first.profile), (3, true, Some([0x4D, 0x40, 0x20])));
-        assert_eq!(first.window, Window::Part(Rect16 { left: 8, top: 2, right: 40, bottom: 12 }));
+        assert_eq!(
+            (first.surface, first.key, first.profile),
+            (3, true, Some([0x4D, 0x40, 0x20]))
+        );
+        assert_eq!(
+            first.window,
+            Window::Part(Rect16 {
+                left: 8,
+                top: 2,
+                right: 40,
+                bottom: 12
+            })
+        );
         assert_eq!(&commands[first.start..first.end], &key);
         let (luma, chroma) = (unit(2), unit(3));
-        assert_eq!((luma.surface, luma.key, luma.profile, luma.window), (5, false, None, Window::Whole));
+        assert_eq!(
+            (luma.surface, luma.key, luma.profile, luma.window),
+            (5, false, None, Window::Whole)
+        );
         assert_eq!(&commands[luma.start..luma.end], &delta);
-        assert_eq!(chroma.window, Window::Nothing, "an empty mask shows nothing, and is still decoded");
+        assert_eq!(
+            chroma.window,
+            Window::Nothing,
+            "an empty mask shows nothing, and is still decoded"
+        );
         assert_eq!(&commands[chroma.start..chroma.end], &delta);
         assert!(chroma.start > luma.end);
         assert_eq!(found[4], Scanned::Gone { surface: 5 });

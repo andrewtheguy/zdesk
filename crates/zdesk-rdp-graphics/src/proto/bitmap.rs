@@ -154,7 +154,16 @@ fn rectangle<'a>(r: &mut Reader<'a>) -> Result<Bitmap<'a>, Malformed> {
     if usize::from(width) * usize::from(height) > MAX_DESKTOP_BYTES / PIXEL {
         return Err(r.refuse("a bitmap larger than any desktop this client holds", width));
     }
-    Ok(Bitmap { x, y, paint_width, paint_height, width, height, compressed, data })
+    Ok(Bitmap {
+        x,
+        y,
+        paint_width,
+        paint_height,
+        width,
+        height,
+        compressed,
+        data,
+    })
 }
 
 impl Bitmap<'_> {
@@ -186,7 +195,12 @@ impl Bitmap<'_> {
         let stride = usize::from(self.width) * PIXEL;
         let need = stride * usize::from(self.height);
         if pixels.len() < need {
-            return Err(Malformed::Short { what: WHAT, len: pixels.len(), at: pixels.len(), need });
+            return Err(Malformed::Short {
+                what: WHAT,
+                len: pixels.len(),
+                at: pixels.len(),
+                need,
+            });
         }
         out.clear();
         out.reserve(self.painted_bytes());
@@ -244,7 +258,14 @@ mod tests {
     }
 
     fn plain(x: u16, y: u16, paint: (u16, u16), size: (u16, u16), data: &[u8]) -> Rectangle<'_> {
-        Rectangle { x, y, paint, size, flags: 0, data }
+        Rectangle {
+            x,
+            y,
+            paint,
+            size,
+            flags: 0,
+            data,
+        }
     }
 
     #[test]
@@ -256,7 +277,10 @@ mod tests {
         let rectangles = update(&body).expect("a Bitmap Update");
         assert_eq!(rectangles.len(), 2);
         assert_eq!((rectangles[1].x, rectangles[1].y), (64, 32));
-        assert_eq!((rectangles[1].paint_width, rectangles[1].paint_height), (2, 1));
+        assert_eq!(
+            (rectangles[1].paint_width, rectangles[1].paint_height),
+            (2, 1)
+        );
     }
 
     /// Both of the details that produce a picture that is nearly right: the rows
@@ -271,11 +295,16 @@ mod tests {
         let rectangle = update(&body).unwrap()[0];
 
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-        rectangle.decode(&mut scratch, &mut out).expect("an uncompressed rectangle");
-        assert_eq!(out, vec![
-            60, 50, 40, 0, 61, 51, 41, 0, //
-            30, 20, 10, 0, 31, 21, 11, 0,
-        ]);
+        rectangle
+            .decode(&mut scratch, &mut out)
+            .expect("an uncompressed rectangle");
+        assert_eq!(
+            out,
+            vec![
+                60, 50, 40, 0, 61, 51, 41, 0, //
+                30, 20, 10, 0, 31, 21, 11, 0,
+            ]
+        );
         assert_eq!(out.len(), rectangle.painted_bytes());
     }
 
@@ -293,7 +322,9 @@ mod tests {
         let rectangle = update(&body).unwrap()[0];
 
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-        rectangle.decode(&mut scratch, &mut out).expect("an uncompressed rectangle");
+        rectangle
+            .decode(&mut scratch, &mut out)
+            .expect("an uncompressed rectangle");
         // The top row — which arrived last — and only its first two pixels.
         assert_eq!(out, vec![0, 1, 0, 0, 0, 1, 1, 0]);
     }
@@ -305,13 +336,22 @@ mod tests {
         let mut data = vec![0xFF; usize::from(COMPRESSION_HEADER)];
         // A planar stream of one flat 2x2 plane per colour, written out plainly.
         data.extend_from_slice(&[0x20, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 0]);
-        let rectangle = Rectangle { x: 0, y: 0, paint: (2, 2), size: (2, 2), flags: COMPRESSED, data: &data };
+        let rectangle = Rectangle {
+            x: 0,
+            y: 0,
+            paint: (2, 2),
+            size: (2, 2),
+            flags: COMPRESSED,
+            data: &data,
+        };
         let body = pdu(&[rectangle]);
         let rectangle = update(&body).unwrap()[0];
         assert!(rectangle.compressed);
 
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-        rectangle.decode(&mut scratch, &mut out).expect("a compressed rectangle");
+        rectangle
+            .decode(&mut scratch, &mut out)
+            .expect("a compressed rectangle");
         assert_eq!(out, [1, 2, 3, 0].repeat(4));
 
         // And the same stream with the header left out, as this client asked for.
@@ -326,7 +366,9 @@ mod tests {
         let body = pdu(&[rectangle]);
         let rectangle = update(&body).unwrap()[0];
         let mut again = Vec::new();
-        rectangle.decode(&mut scratch, &mut again).expect("a compressed rectangle");
+        rectangle
+            .decode(&mut scratch, &mut again)
+            .expect("a compressed rectangle");
         assert_eq!(again, out);
     }
 

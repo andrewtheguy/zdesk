@@ -244,12 +244,13 @@ pub fn provide(text: &str) -> anyhow::Result<Vec<u8>> {
     let mut payload = (wire.len() as u32).to_be_bytes().to_vec();
     payload.extend_from_slice(&wire);
 
-    let mut encoder =
-        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     encoder
         .write_all(&payload)
         .context("deflating the clipboard payload")?;
-    let deflated = encoder.finish().context("finishing the clipboard deflate")?;
+    let deflated = encoder
+        .finish()
+        .context("finishing the clipboard deflate")?;
 
     let mut body = flags(ACTION_PROVIDE, FORMAT_TEXT).to_vec();
     body.extend_from_slice(&deflated);
@@ -515,7 +516,10 @@ mod tests {
         let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
         e.write_all(&payload).unwrap();
         let deflated = e.finish().unwrap();
-        assert!(deflated.len() < 10_000, "the bomb should be small on the wire");
+        assert!(
+            deflated.len() < 10_000,
+            "the bomb should be small on the wire"
+        );
 
         let mut body = flags(ACTION_PROVIDE, FORMAT_TEXT).to_vec();
         body.extend_from_slice(&deflated);
@@ -523,6 +527,9 @@ mod tests {
         // the front is what names the size — so a bomb is refused as merely
         // oversized rather than inflated or swallowed whole. The number is the
         // peer's own claim, which is only ever displayed.
-        assert_eq!(parse(&body).expect("parse"), Incoming::Oversized(huge.len() as u64));
+        assert_eq!(
+            parse(&body).expect("parse"),
+            Incoming::Oversized(huge.len() as u64)
+        );
     }
 }

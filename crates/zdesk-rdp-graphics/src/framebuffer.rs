@@ -39,7 +39,12 @@ impl Rect {
         let (x, y) = (self.x.min(other.x), self.y.min(other.y));
         let right = (self.x + self.width).max(other.x + other.width);
         let bottom = (self.y + self.height).max(other.y + other.height);
-        Rect { x, y, width: right - x, height: bottom - y }
+        Rect {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        }
     }
 
     /// The part of this rectangle inside `bounds`, or `None` when nothing is.
@@ -47,8 +52,14 @@ impl Rect {
         let x = self.x.max(bounds.x);
         let y = self.y.max(bounds.y);
         let right = (self.x.saturating_add(self.width)).min(bounds.x.saturating_add(bounds.width));
-        let bottom = (self.y.saturating_add(self.height)).min(bounds.y.saturating_add(bounds.height));
-        (right > x && bottom > y).then(|| Rect { x, y, width: right - x, height: bottom - y })
+        let bottom =
+            (self.y.saturating_add(self.height)).min(bounds.y.saturating_add(bounds.height));
+        (right > x && bottom > y).then(|| Rect {
+            x,
+            y,
+            width: right - x,
+            height: bottom - y,
+        })
     }
 
     /// What is left of this rectangle with `cut` taken out: none of it, all of it,
@@ -60,9 +71,24 @@ impl Rect {
             None => pieces[0] = Some(self),
             Some(inside) => {
                 let (right, bottom) = (self.x + self.width, self.y + self.height);
-                let (inside_right, inside_bottom) = (inside.x + inside.width, inside.y + inside.height);
-                let band = |y: u32, height: u32| (height > 0).then_some(Rect { x: self.x, y, width: self.width, height });
-                let side = |x: u32, width: u32| (width > 0).then_some(Rect { x, y: inside.y, width, height: inside.height });
+                let (inside_right, inside_bottom) =
+                    (inside.x + inside.width, inside.y + inside.height);
+                let band = |y: u32, height: u32| {
+                    (height > 0).then_some(Rect {
+                        x: self.x,
+                        y,
+                        width: self.width,
+                        height,
+                    })
+                };
+                let side = |x: u32, width: u32| {
+                    (width > 0).then_some(Rect {
+                        x,
+                        y: inside.y,
+                        width,
+                        height: inside.height,
+                    })
+                };
                 pieces = [
                     band(self.y, inside.y - self.y),
                     band(inside_bottom, bottom - inside_bottom),
@@ -126,7 +152,11 @@ impl Frame {
     pub fn rows(&self, rect: Rect) -> impl Iterator<Item = &[u8]> {
         let fits = rect.x.saturating_add(rect.width) <= self.width
             && rect.y.saturating_add(rect.height) <= self.height;
-        let (start, count) = if fits { (rect.y as usize, rect.height as usize) } else { (0, 0) };
+        let (start, count) = if fits {
+            (rect.y as usize, rect.height as usize)
+        } else {
+            (0, 0)
+        };
         let left = rect.x as usize * 4;
         let right = left + rect.width as usize * 4;
         (start..start + count).map(move |row| {
@@ -201,7 +231,14 @@ impl Default for Framebuffer {
 
 impl Framebuffer {
     pub fn new() -> Self {
-        Self { frame: Mutex::new(Frame { width: 0, height: 0, stride: 0, pixels: Vec::new() }) }
+        Self {
+            frame: Mutex::new(Frame {
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixels: Vec::new(),
+            }),
+        }
     }
 
     /// Read the frame. The lock is held for the duration of `f`.
@@ -217,7 +254,9 @@ impl Framebuffer {
     /// stale rectangle in it. Propagating the poison instead would turn one panic in
     /// a caller's `with` closure into a session that can never paint again.
     fn lock(&self) -> MutexGuard<'_, Frame> {
-        self.frame.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.frame
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Resize and clear. Called on connect and on every desktop resize.
@@ -310,20 +349,53 @@ mod tests {
     /// of it, and none of it.
     #[test]
     fn a_rectangle_minus_another_leaves_exactly_the_rest() {
-        let whole = Rect { x: 2, y: 3, width: 10, height: 8 };
+        let whole = Rect {
+            x: 2,
+            y: 3,
+            width: 10,
+            height: 8,
+        };
         for cut in [
-            Rect { x: 5, y: 5, width: 2, height: 2 },
-            Rect { x: 0, y: 0, width: 6, height: 20 },
-            Rect { x: 0, y: 0, width: 30, height: 30 },
-            Rect { x: 20, y: 20, width: 2, height: 2 },
+            Rect {
+                x: 5,
+                y: 5,
+                width: 2,
+                height: 2,
+            },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 6,
+                height: 20,
+            },
+            Rect {
+                x: 0,
+                y: 0,
+                width: 30,
+                height: 30,
+            },
+            Rect {
+                x: 20,
+                y: 20,
+                width: 2,
+                height: 2,
+            },
         ] {
             let pieces: Vec<Rect> = whole.minus(cut).collect();
             for y in 0..16 {
                 for x in 0..16 {
-                    let pixel = Rect { x, y, width: 1, height: 1 };
+                    let pixel = Rect {
+                        x,
+                        y,
+                        width: 1,
+                        height: 1,
+                    };
                     let left = usize::from(whole.overlaps(&pixel) && !cut.overlaps(&pixel));
                     let covered = pieces.iter().filter(|piece| piece.overlaps(&pixel)).count();
-                    assert_eq!(covered, left, "pixel {x},{y} with {cut:?} cut out, in {pieces:?}");
+                    assert_eq!(
+                        covered, left,
+                        "pixel {x},{y} with {cut:?} cut out, in {pieces:?}"
+                    );
                 }
             }
         }
@@ -334,7 +406,15 @@ mod tests {
         let fb = Framebuffer::new();
         fb.resize(4, 4);
         let src = vec![0xAB; 8];
-        assert!(fb.blit(&src, Rect { x: 1, y: 2, width: 2, height: 1 }));
+        assert!(fb.blit(
+            &src,
+            Rect {
+                x: 1,
+                y: 2,
+                width: 2,
+                height: 1
+            }
+        ));
 
         fb.with(|frame| {
             // Row 2, columns 1 and 2 — and nothing else.
@@ -353,7 +433,15 @@ mod tests {
         let fb = Framebuffer::new();
         fb.resize(2, 2);
         let src = vec![0xFF; 4 * 4 * 4];
-        assert!(!fb.blit(&src, Rect { x: 0, y: 0, width: 4, height: 4 }));
+        assert!(!fb.blit(
+            &src,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4
+            }
+        ));
         fb.with(|frame| assert!(frame.pixels.iter().all(|b| *b == 0)));
     }
 
@@ -364,8 +452,24 @@ mod tests {
         let fb = Framebuffer::new();
         fb.resize(4, 4);
         // Two rows of four pixels, from a buffer that holds one row.
-        assert!(!fb.blit(&[0; 16], Rect { x: 0, y: 0, width: 4, height: 2 }));
-        assert!(!fb.blit(&[0; 48], Rect { x: 0, y: 0, width: 4, height: 2 }));
+        assert!(!fb.blit(
+            &[0; 16],
+            Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2
+            }
+        ));
+        assert!(!fb.blit(
+            &[0; 48],
+            Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2
+            }
+        ));
     }
 
     /// A surface is wider than the rectangle taken out of it, so row `n` of the
@@ -382,27 +486,90 @@ mod tests {
             }
         }
         // Its (1, 1)..(3, 3) lands at the framebuffer's (1, 0).
-        assert!(fb.blit_from(&surface, 16, (1, 1), Rect { x: 1, y: 0, width: 2, height: 2 }));
+        assert!(fb.blit_from(
+            &surface,
+            16,
+            (1, 1),
+            Rect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 2
+            }
+        ));
         fb.with(|frame| {
-            let rows: Vec<_> = frame.rows(Rect { x: 1, y: 0, width: 2, height: 2 }).collect();
+            let rows: Vec<_> = frame
+                .rows(Rect {
+                    x: 1,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                })
+                .collect();
             assert_eq!(rows[0], &[1, 1, 0, 0, 2, 1, 0, 0]);
             assert_eq!(rows[1], &[1, 2, 0, 0, 2, 2, 0, 0]);
         });
         // And a source that runs out is not a panic.
-        assert!(!fb.blit_from(&surface[..40], 16, (1, 1), Rect { x: 1, y: 0, width: 2, height: 2 }));
+        assert!(!fb.blit_from(
+            &surface[..40],
+            16,
+            (1, 1),
+            Rect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 2
+            }
+        ));
     }
 
     #[test]
     fn rectangles_overlap_union_and_clip_by_their_edges() {
-        let a = Rect { x: 0, y: 0, width: 10, height: 10 };
-        let b = Rect { x: 5, y: 5, width: 10, height: 10 };
-        let c = Rect { x: 10, y: 0, width: 1, height: 1 };
+        let a = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        let b = Rect {
+            x: 5,
+            y: 5,
+            width: 10,
+            height: 10,
+        };
+        let c = Rect {
+            x: 10,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
         assert!(a.overlaps(&b));
         assert!(!a.overlaps(&c), "an edge in common is not an overlap");
-        assert_eq!(a.union(b), Rect { x: 0, y: 0, width: 15, height: 15 });
-        assert_eq!(b.clipped(a), Some(Rect { x: 5, y: 5, width: 5, height: 5 }));
+        assert_eq!(
+            a.union(b),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 15,
+                height: 15
+            }
+        );
+        assert_eq!(
+            b.clipped(a),
+            Some(Rect {
+                x: 5,
+                y: 5,
+                width: 5,
+                height: 5
+            })
+        );
         assert_eq!(c.clipped(a), None);
-        let huge = Rect { x: u32::MAX - 1, y: 0, width: 4, height: 1 };
+        let huge = Rect {
+            x: u32::MAX - 1,
+            y: 0,
+            width: 4,
+            height: 1,
+        };
         assert_eq!(huge.clipped(a), None, "the arithmetic does not wrap");
     }
 
@@ -427,11 +594,28 @@ mod tests {
         let fb = Framebuffer::new();
         fb.resize(3, 2);
         fb.with(|frame| {
-            let rows: Vec<_> = frame.rows(Rect { x: 1, y: 0, width: 2, height: 2 }).collect();
+            let rows: Vec<_> = frame
+                .rows(Rect {
+                    x: 1,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                })
+                .collect();
             assert_eq!(rows.len(), 2);
             assert!(rows.iter().all(|row| row.len() == 8));
             // And a rectangle hanging off the edge yields nothing rather than panicking.
-            assert_eq!(frame.rows(Rect { x: 2, y: 0, width: 2, height: 1 }).count(), 0);
+            assert_eq!(
+                frame
+                    .rows(Rect {
+                        x: 2,
+                        y: 0,
+                        width: 2,
+                        height: 1
+                    })
+                    .count(),
+                0
+            );
         });
     }
 }

@@ -72,7 +72,12 @@ pub const LEVELS: usize = 1 + COARSE_QUALITIES.len();
 /// What a changed tile is taken to cost at each level before a round at it has been
 /// coded: what [`Tiles::changed_bytes`] weighs a round by until it has a measure.
 /// The ratios are the photograph's above.
-const CHANGED_GUESS: [u64; LEVELS] = [LOSSLESS_GUESS, LOSSLESS_GUESS / 5, LOSSLESS_GUESS * 12 / 100, LOSSLESS_GUESS / 12];
+const CHANGED_GUESS: [u64; LEVELS] = [
+    LOSSLESS_GUESS,
+    LOSSLESS_GUESS / 5,
+    LOSSLESS_GUESS * 12 / 100,
+    LOSSLESS_GUESS / 12,
+];
 
 /// The image a coded rectangle is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +113,6 @@ impl Format {
         }
     }
 }
-
 
 /// What the browser is owed of one tile.
 #[derive(Debug, Clone, Copy, Default)]
@@ -210,7 +214,9 @@ impl Tiles {
     /// path, which ends the session with the message attached.
     fn mirror_mut(&mut self) -> anyhow::Result<&mut Mirror> {
         if self.mirror.is_none() {
-            let (w, h) = self.size.ok_or_else(|| anyhow::anyhow!("the tiles were asked for pixels before a desktop size"))?;
+            let (w, h) = self.size.ok_or_else(|| {
+                anyhow::anyhow!("the tiles were asked for pixels before a desktop size")
+            })?;
             let mirror = Mirror::new(w, h)?;
             self.cols = usize::from(w.div_ceil(TILE));
             self.rows = usize::from(h.div_ceil(TILE));
@@ -224,8 +230,14 @@ impl Tiles {
     /// it touches owed: changed, so not still, and owed no refresh of what it was.
     pub fn blit(&mut self, rect: Rect, rgb: &[u8]) -> anyhow::Result<()> {
         self.mirror_mut()?.blit(rect, rgb)?;
-        let (first_col, last_col) = (usize::from(rect.left / TILE), usize::from(rect.right / TILE));
-        let (first_row, last_row) = (usize::from(rect.top / TILE), usize::from(rect.bottom / TILE));
+        let (first_col, last_col) = (
+            usize::from(rect.left / TILE),
+            usize::from(rect.right / TILE),
+        );
+        let (first_row, last_row) = (
+            usize::from(rect.top / TILE),
+            usize::from(rect.bottom / TILE),
+        );
         for row in first_row..=last_row {
             for tile in &mut self.grid[row * self.cols + first_col..=row * self.cols + last_col] {
                 if !tile.dirty {
@@ -248,7 +260,10 @@ impl Tiles {
     pub fn reset(&mut self) {
         self.start_owed = true;
         if self.mirror.is_some() {
-            self.grid.fill(Tile { dirty: true, ..Tile::default() });
+            self.grid.fill(Tile {
+                dirty: true,
+                ..Tile::default()
+            });
             (self.dirty, self.refresh) = (self.grid.len(), 0);
         }
     }
@@ -308,7 +323,11 @@ impl Tiles {
         }
         let mirror = self.mirror.as_ref()?;
         let lossless = self.dirty == 0;
-        let mut allowed = if lossless { (budget / self.lossless_bytes.max(1)).max(1) } else { u64::MAX };
+        let mut allowed = if lossless {
+            (budget / self.lossless_bytes.max(1)).max(1)
+        } else {
+            u64::MAX
+        };
         let (w, h) = mirror.size();
         let mut runs = Vec::new();
         for row in 0..self.rows {
@@ -317,7 +336,11 @@ impl Tiles {
                 let start = col;
                 while col < self.cols && allowed > 0 {
                     let tile = &mut self.grid[row * self.cols + col];
-                    let taken = if lossless { std::mem::take(&mut tile.refresh) } else { std::mem::take(&mut tile.dirty) };
+                    let taken = if lossless {
+                        std::mem::take(&mut tile.refresh)
+                    } else {
+                        std::mem::take(&mut tile.dirty)
+                    };
                     if !taken {
                         break;
                     }
@@ -334,8 +357,16 @@ impl Tiles {
                 let height = TILE.min(h - y);
                 let rect = Rect::from_size(x, y, width, height).expect("a run of tiles has a size");
                 let mut rgb = Vec::new();
-                mirror.crop_into(rect, &mut rgb).expect("a run of tiles is inside the desktop");
-                runs.push(Run { row, col: start, cols: col - start, rect, rgb });
+                mirror
+                    .crop_into(rect, &mut rgb)
+                    .expect("a run of tiles is inside the desktop");
+                runs.push(Run {
+                    row,
+                    col: start,
+                    cols: col - start,
+                    rect,
+                    rgb,
+                });
             }
         }
         let tiles: usize = runs.iter().map(|run| run.cols).sum();
@@ -351,7 +382,14 @@ impl Tiles {
             0 => self.quality,
             coarse => COARSE_QUALITIES[coarse - 1].min(self.quality),
         };
-        Some(Round { runs, lossless, level, quality, epoch: self.epoch, start })
+        Some(Round {
+            runs,
+            lossless,
+            level,
+            quality,
+            epoch: self.epoch,
+            start,
+        })
     }
 
     /// Bring back what a round took, with what it was coded as: a tile sent as JPEG is
@@ -383,7 +421,8 @@ impl Tiles {
         // mostly is not, and says what [`Self::lossless_bytes`] is alone.
         let tiles: usize = coded.iter().map(|part| part.cols).sum();
         if !round.lossless && tiles > 0 {
-            let per_tile = coded.iter().map(|part| part.data.len() as u64).sum::<u64>() / tiles as u64;
+            let per_tile =
+                coded.iter().map(|part| part.data.len() as u64).sum::<u64>() / tiles as u64;
             let cost = &mut self.changed_costs[round.level];
             *cost = (*cost * 3 + per_tile) / 4;
         }
@@ -445,7 +484,11 @@ impl Round {
     /// Code every run, on every core, in the order the browser draws them: rows top
     /// to bottom, each left to right. Blocking: call it on a worker.
     pub fn code(&self) -> anyhow::Result<Vec<Coded>> {
-        let coded: Vec<Vec<Coded>> = self.runs.par_iter().map(|run| code_run(run, self.lossless, self.coarse(), self.quality)).collect::<anyhow::Result<_>>()?;
+        let coded: Vec<Vec<Coded>> = self
+            .runs
+            .par_iter()
+            .map(|run| code_run(run, self.lossless, self.coarse(), self.quality))
+            .collect::<anyhow::Result<_>>()?;
         Ok(coded.into_iter().flatten().collect())
     }
 }
@@ -474,8 +517,16 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
         .map(|i| {
             let left = i * tile;
             let right = (left + tile).min(width);
-            let colours = || palette(rows(&run.rgb, width, left, right, height)).map(|(colours, _)| colours.len() / 3);
-            let png = lossless || if coarse { colours() == Some(1) } else { colours().is_some() };
+            let colours = || {
+                palette(rows(&run.rgb, width, left, right, height))
+                    .map(|(colours, _)| colours.len() / 3)
+            };
+            let png = lossless
+                || if coarse {
+                    colours() == Some(1)
+                } else {
+                    colours().is_some()
+                };
             if png { Format::Png } else { Format::Jpeg }
         })
         .collect();
@@ -483,17 +534,24 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
     let mut first = 0;
     while first < run.cols {
         let format = formats[first];
-        let last = (first..run.cols).take_while(|&i| formats[i] == format).last().expect("a run of at least one");
+        let last = (first..run.cols)
+            .take_while(|&i| formats[i] == format)
+            .last()
+            .expect("a run of at least one");
         let left = first * tile;
         let right = ((last + 1) * tile).min(width);
-        let rgb: Vec<u8> = rows(&run.rgb, width, left, right, height).flatten().copied().collect();
+        let rgb: Vec<u8> = rows(&run.rgb, width, left, right, height)
+            .flatten()
+            .copied()
+            .collect();
         let (w, h) = ((right - left) as u16, height as u16);
         let data = match format {
             Format::Png => png(w, h, &rgb),
             Format::Jpeg => jpeg(w, h, &rgb, quality),
-            Format::Progressive | Format::Planar | Format::Still => Err(anyhow::anyhow!("this gateway codes no {format:?} tile of its own: it is wlshare's, passed through")),
+            Format::Progressive | Format::Planar | Format::Still => Err(anyhow::anyhow!(
+                "this gateway codes no {format:?} tile of its own: it is wlshare's, passed through"
+            )),
         }
-
         .with_context(|| format!("coding a {w}x{h} tile as {format:?}"))?;
         coded.push(Coded {
             x: run.rect.left + left as u16,
@@ -513,7 +571,13 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
 
 /// The columns `left..right` of each of `height` rows of a `width`-wide RGB888
 /// picture.
-fn rows(rgb: &[u8], width: usize, left: usize, right: usize, height: usize) -> impl Iterator<Item = &[u8]> + Clone {
+fn rows(
+    rgb: &[u8],
+    width: usize,
+    left: usize,
+    right: usize,
+    height: usize,
+) -> impl Iterator<Item = &[u8]> + Clone {
     (0..height).map(move |row| &rgb[(row * width + left) * 3..(row * width + right) * 3])
 }
 
@@ -607,7 +671,12 @@ mod tests {
     }
 
     fn flat(w: u16, h: u16, colour: [u8; 3]) -> Vec<u8> {
-        colour.iter().copied().cycle().take(usize::from(w) * usize::from(h) * 3).collect()
+        colour
+            .iter()
+            .copied()
+            .cycle()
+            .take(usize::from(w) * usize::from(h) * 3)
+            .collect()
     }
 
     /// `w`×`h` of noise, more colours than any palette.
@@ -650,7 +719,10 @@ mod tests {
     /// A JPEG's size, from its baseline frame header.
     fn unjpeg(data: &[u8]) -> (u16, u16) {
         assert_eq!(&data[..2], [0xff, 0xd8], "no JPEG start of image");
-        let at = data.windows(2).position(|pair| pair == [0xff, 0xc0]).expect("a baseline frame header");
+        let at = data
+            .windows(2)
+            .position(|pair| pair == [0xff, 0xc0])
+            .expect("a baseline frame header");
         let field = |i: usize| u16::from_be_bytes([data[at + i], data[at + i + 1]]);
         (field(7), field(5))
     }
@@ -660,13 +732,21 @@ mod tests {
     #[test]
     fn a_round_takes_the_tiles_a_blit_touched_a_rows_run_at_a_time() {
         let mut tiles = tiles(320, 200);
-        tiles.blit(placed(60, 10, 80, 60), &flat(80, 60, [10, 20, 30])).expect("a blit");
+        tiles
+            .blit(placed(60, 10, 80, 60), &flat(80, 60, [10, 20, 30]))
+            .expect("a blit");
         assert!(tiles.owes());
         let (round, coded) = sent(&mut tiles, 0);
         assert!(round.start, "the session's first round starts the picture");
         assert_eq!(round.tiles(), 6, "columns 0–2 of rows 0 and 1");
-        let rects: Vec<_> = coded.iter().map(|part| (part.x, part.y, part.w, part.h, part.format)).collect();
-        assert_eq!(rects, [(0, 0, 192, 64, Format::Png), (0, 64, 192, 64, Format::Png)]);
+        let rects: Vec<_> = coded
+            .iter()
+            .map(|part| (part.x, part.y, part.w, part.h, part.format))
+            .collect();
+        assert_eq!(
+            rects,
+            [(0, 0, 192, 64, Format::Png), (0, 64, 192, 64, Format::Png)]
+        );
         assert!(!tiles.owes(), "a round taken leaves nothing owed");
         assert!(tiles.take_round(0, 0).is_none());
     }
@@ -679,15 +759,32 @@ mod tests {
         let mut picture = flat(256, 64, [200, 200, 200]);
         let photo = noise(64, 64, 7);
         for row in 0..64 {
-            picture[(row * 256 + 64) * 3..(row * 256 + 128) * 3].copy_from_slice(&photo[row * 192..(row + 1) * 192]);
+            picture[(row * 256 + 64) * 3..(row * 256 + 128) * 3]
+                .copy_from_slice(&photo[row * 192..(row + 1) * 192]);
         }
         tiles.blit(placed(0, 0, 256, 64), &picture).expect("a blit");
         let (_, coded) = sent(&mut tiles, 0);
-        let parts: Vec<_> = coded.iter().map(|part| (part.x, part.w, part.format)).collect();
-        assert_eq!(parts, [(0, 64, Format::Png), (64, 64, Format::Jpeg), (128, 128, Format::Png)]);
+        let parts: Vec<_> = coded
+            .iter()
+            .map(|part| (part.x, part.w, part.format))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                (0, 64, Format::Png),
+                (64, 64, Format::Jpeg),
+                (128, 128, Format::Png)
+            ]
+        );
         let (w, h, rgb) = unpng(&coded[2].data);
         assert_eq!((w, h), (128, 64));
-        assert!(rgb.as_chunks::<3>().0.iter().all(|pixel| *pixel == [200, 200, 200]), "the PNG is not the pixels");
+        assert!(
+            rgb.as_chunks::<3>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [200, 200, 200]),
+            "the PNG is not the pixels"
+        );
         assert_eq!(unjpeg(&coded[1].data), (64, 64));
     }
 
@@ -705,19 +802,36 @@ mod tests {
         assert!(tiles.tick(), "a whole tick without a change");
         let (round, coded) = sent(&mut tiles, 0);
         assert!(round.lossless());
-        assert_eq!(coded.iter().map(|part| part.format).collect::<Vec<_>>(), [Format::Png]);
-        assert_eq!(unpng(&coded[0].data).2, photo, "the refresh is not the mirror's pixels");
-        assert!(!tiles.tick() && !tiles.tick(), "a tile sent losslessly is owed nothing");
+        assert_eq!(
+            coded.iter().map(|part| part.format).collect::<Vec<_>>(),
+            [Format::Png]
+        );
+        assert_eq!(
+            unpng(&coded[0].data).2,
+            photo,
+            "the refresh is not the mirror's pixels"
+        );
+        assert!(
+            !tiles.tick() && !tiles.tick(),
+            "a tile sent losslessly is owed nothing"
+        );
 
         // One that changes again before it is still is owed its changed pixels, not a
         // refresh of the old.
-        tiles.blit(placed(0, 0, 64, 64), &noise(64, 64, 4)).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 64, 64), &noise(64, 64, 4))
+            .expect("a blit");
         sent(&mut tiles, 0);
         tiles.tick();
-        tiles.blit(placed(0, 0, 64, 64), &noise(64, 64, 5)).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 64, 64), &noise(64, 64, 5))
+            .expect("a blit");
         assert!(!tiles.tick(), "changed in the tick");
         let (round, _) = sent(&mut tiles, 0);
-        assert!(!round.lossless(), "a changed tile goes ahead of any refresh");
+        assert!(
+            !round.lossless(),
+            "a changed tile goes ahead of any refresh"
+        );
     }
 
     /// Changed tiles go ahead of a refresh, and a refresh takes as many tiles as its
@@ -725,15 +839,24 @@ mod tests {
     #[test]
     fn a_refresh_waits_for_changes_and_keeps_to_its_budget() {
         let mut tiles = tiles(256, 64);
-        tiles.blit(placed(0, 0, 256, 64), &noise(256, 64, 9)).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 256, 64), &noise(256, 64, 9))
+            .expect("a blit");
         sent(&mut tiles, 0);
         tiles.tick();
         assert!(tiles.tick());
         tiles.blit(placed(0, 0, 1, 1), &[1, 2, 3]).expect("a blit");
-        assert!(!tiles.take_round(u64::MAX, 0).expect("owed").lossless(), "a refresh went ahead of a change");
+        assert!(
+            !tiles.take_round(u64::MAX, 0).expect("owed").lossless(),
+            "a refresh went ahead of a change"
+        );
         tiles.round_out = false;
         let one = tiles.take_round(0, 0).expect("owed");
-        assert_eq!((one.lossless(), one.tiles()), (true, 1), "a refresh of no budget is one tile");
+        assert_eq!(
+            (one.lossless(), one.tiles()),
+            (true, 1),
+            "a refresh of no budget is one tile"
+        );
         tiles.round_out = false;
         let two = tiles.take_round(2 * LOSSLESS_GUESS, 0).expect("owed");
         assert_eq!(two.tiles(), 2);
@@ -746,7 +869,15 @@ mod tests {
     fn a_coarse_round_sends_text_as_jpeg_and_makes_it_lossless_once_still() {
         let mut tiles = tiles(128, 64);
         // Two colours in stripes: a palette's, which a fine round sends as PNG.
-        let text: Vec<u8> = (0..64 * 64).flat_map(|i| if (i * 7 / 3) % 5 < 2 { [0, 0, 0] } else { [250, 250, 250] }).collect();
+        let text: Vec<u8> = (0..64 * 64)
+            .flat_map(|i| {
+                if (i * 7 / 3) % 5 < 2 {
+                    [0, 0, 0]
+                } else {
+                    [250, 250, 250]
+                }
+            })
+            .collect();
         let mut picture = flat(128, 64, [40, 40, 40]);
         for row in 0..64 {
             picture[row * 384..row * 384 + 192].copy_from_slice(&text[row * 192..(row + 1) * 192]);
@@ -758,17 +889,36 @@ mod tests {
         let coded = round.code().expect("a round codes");
         tiles.put_back(&round, &coded);
         let parts: Vec<_> = coded.iter().map(|part| (part.x, part.format)).collect();
-        assert_eq!(parts, [(0, Format::Jpeg), (64, Format::Png)], "text coarse, the flat tile lossless");
+        assert_eq!(
+            parts,
+            [(0, Format::Jpeg), (64, Format::Png)],
+            "text coarse, the flat tile lossless"
+        );
         assert_eq!(unjpeg(&coded[0].data), (64, 64));
-        assert_eq!(tiles.changed_costs[0], CHANGED_GUESS[0], "a coarse round weighed what a fine tile costs");
-        assert_ne!(tiles.changed_costs[2], CHANGED_GUESS[2], "a coarse round did not weigh its own level");
+        assert_eq!(
+            tiles.changed_costs[0], CHANGED_GUESS[0],
+            "a coarse round weighed what a fine tile costs"
+        );
+        assert_ne!(
+            tiles.changed_costs[2], CHANGED_GUESS[2],
+            "a coarse round did not weigh its own level"
+        );
 
         tiles.tick();
         assert!(tiles.tick(), "the coarse tile is owed its lossless picture");
         let refresh = tiles.take_round(u64::MAX, 2).expect("owed");
-        assert!(refresh.lossless() && !refresh.coarse(), "a refresh went coarse");
+        assert!(
+            refresh.lossless() && !refresh.coarse(),
+            "a refresh went coarse"
+        );
         let coded = refresh.code().expect("a round codes");
-        assert_eq!(coded.iter().map(|part| (part.x, part.format)).collect::<Vec<_>>(), [(0, Format::Png)]);
+        assert_eq!(
+            coded
+                .iter()
+                .map(|part| (part.x, part.format))
+                .collect::<Vec<_>>(),
+            [(0, Format::Png)]
+        );
         assert_eq!(unpng(&coded[0].data).2, text);
     }
 
@@ -778,27 +928,39 @@ mod tests {
     fn a_coarse_level_is_never_finer_than_the_plan() {
         let mut tiles = Tiles::new(15);
         tiles.want(64, 64);
-        tiles.blit(placed(0, 0, 64, 64), &noise(64, 64, 2)).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 64, 64), &noise(64, 64, 2))
+            .expect("a blit");
         let round = tiles.take_round(0, 1).expect("owed");
         assert_eq!((round.coarse(), round.quality()), (true, 15));
         let coded = round.code().expect("a round codes");
         tiles.put_back(&round, &coded);
-        tiles.blit(placed(0, 0, 64, 64), &noise(64, 64, 3)).expect("a blit");
-        assert_eq!(tiles.take_round(0, LEVELS + 2).expect("owed").quality(), COARSE_QUALITIES[COARSE_QUALITIES.len() - 1]);
+        tiles
+            .blit(placed(0, 0, 64, 64), &noise(64, 64, 3))
+            .expect("a blit");
+        assert_eq!(
+            tiles.take_round(0, LEVELS + 2).expect("owed").quality(),
+            COARSE_QUALITIES[COARSE_QUALITIES.len() - 1]
+        );
     }
 
     /// The whole picture again, for a client starting over: every tile, behind a start.
     #[test]
     fn a_reset_owes_the_whole_picture_from_its_start() {
         let mut tiles = tiles(200, 100);
-        tiles.blit(placed(0, 0, 10, 10), &flat(10, 10, [1, 1, 1])).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 10, 10), &flat(10, 10, [1, 1, 1]))
+            .expect("a blit");
         sent(&mut tiles, 0);
         tiles.reset();
         assert!(tiles.restarting());
         let (round, coded) = sent(&mut tiles, 0);
         assert!(round.start && round.tiles() == 8);
         // An odd desktop's last column and row are cut at its edge.
-        let rects: Vec<_> = coded.iter().map(|part| (part.x, part.y, part.w, part.h)).collect();
+        let rects: Vec<_> = coded
+            .iter()
+            .map(|part| (part.x, part.y, part.w, part.h))
+            .collect();
         assert_eq!(rects, [(0, 0, 200, 64), (0, 64, 200, 36)]);
         assert!(!tiles.restarting());
     }
@@ -808,17 +970,24 @@ mod tests {
     #[test]
     fn a_round_that_outlives_its_desktop_marks_nothing() {
         let mut tiles = tiles(128, 128);
-        tiles.blit(placed(0, 0, 128, 128), &noise(128, 128, 1)).expect("a blit");
+        tiles
+            .blit(placed(0, 0, 128, 128), &noise(128, 128, 1))
+            .expect("a blit");
         let stale = tiles.take_round(0, 0).expect("owed");
         let coded = stale.code().expect("a round codes");
         tiles.want(64, 64);
-        tiles.blit(placed(0, 0, 64, 64), &flat(64, 64, [5, 5, 5])).expect("a blit at the new size");
+        tiles
+            .blit(placed(0, 0, 64, 64), &flat(64, 64, [5, 5, 5]))
+            .expect("a blit at the new size");
         assert!(!tiles.owes(), "nothing while the round is out");
         tiles.put_back(&stale, &coded);
         let (round, coded) = sent(&mut tiles, 0);
         assert!(round.start, "the new desktop's picture starts over");
         assert_eq!(coded.len(), 1);
-        assert!(!tiles.tick() && !tiles.tick(), "the stale round's JPEG marked a tile of the new desktop");
+        assert!(
+            !tiles.tick() && !tiles.tick(),
+            "the stale round's JPEG marked a tile of the new desktop"
+        );
     }
 
     /// Pixels before a size are refused by name, and a desktop past the video
@@ -831,7 +1000,9 @@ mod tests {
         assert!(tiles.blit(placed(0, 0, 1, 1), &[0, 0, 0]).is_err());
         tiles.want(5120, 2880);
         assert_eq!(tiles.size(), Some((5120, 2880)));
-        tiles.blit(placed(0, 0, 1, 1), &[0, 0, 0]).expect("a 5K desktop is tiles like any other");
+        tiles
+            .blit(placed(0, 0, 1, 1), &[0, 0, 0])
+            .expect("a 5K desktop is tiles like any other");
         assert_eq!((tiles.cols, tiles.rows), (80, 45));
     }
 

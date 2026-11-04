@@ -2,7 +2,10 @@
 //! messages flush the pending batch to preserve ordering against the records
 //! around them, and batches are bounded.
 
-use crate::protocol::{self, CacheUnit, CopyUnit, GraphicsUnit, Held, RegionUnit, ServerMsg, StandardUnit, TileUnit, VideoUnit, WireFrame, batch};
+use crate::protocol::{
+    self, CacheUnit, CopyUnit, GraphicsUnit, Held, RegionUnit, ServerMsg, StandardUnit, TileUnit,
+    VideoUnit, WireFrame, batch,
+};
 
 /// Record bytes per batch, below client WebSocket limits and large enough to
 /// amortize per-frame overhead.
@@ -102,11 +105,21 @@ impl Wire {
                         self.in_run = true;
                         for record in records {
                             match record {
-                                ServerMsg::Tile(unit) => self.push(Record::Tile(unit), &mut frames)?,
-                                ServerMsg::Region(unit) => self.push(Record::Region(unit), &mut frames)?,
-                                ServerMsg::Copy(unit) => self.push(Record::Copy(unit), &mut frames)?,
-                                ServerMsg::Cache(unit) => self.push(Record::Cache(unit), &mut frames)?,
-                                other => log::warn!("wire: dropping {other:?}, which is not a record of a run"),
+                                ServerMsg::Tile(unit) => {
+                                    self.push(Record::Tile(unit), &mut frames)?
+                                }
+                                ServerMsg::Region(unit) => {
+                                    self.push(Record::Region(unit), &mut frames)?
+                                }
+                                ServerMsg::Copy(unit) => {
+                                    self.push(Record::Copy(unit), &mut frames)?
+                                }
+                                ServerMsg::Cache(unit) => {
+                                    self.push(Record::Cache(unit), &mut frames)?
+                                }
+                                other => log::warn!(
+                                    "wire: dropping {other:?}, which is not a record of a run"
+                                ),
                             }
                         }
                         self.in_run = continued;
@@ -167,7 +180,11 @@ impl Wire {
             .ok_or(WireError::SequenceExhausted)?;
         let mut frame = Vec::with_capacity(batch::HEADER_LEN + self.pending_bytes);
         frame.push(batch::FRAME_KIND);
-        frame.push(if self.in_run { batch::FLAG_CONTINUED } else { 0 });
+        frame.push(if self.in_run {
+            batch::FLAG_CONTINUED
+        } else {
+            0
+        });
         frame.extend_from_slice(&(self.pending.len() as u16).to_le_bytes());
         frame.extend_from_slice(&sequence.to_le_bytes());
         // Each record's share of the queue budget moves to the batch, which is where
@@ -224,7 +241,12 @@ impl Wire {
         }
         self.pending_bytes = 0;
         self.totals.frame(frame.len());
-        frames.push(WireFrame::Batch { sequence, bytes: frame, held, painted });
+        frames.push(WireFrame::Batch {
+            sequence,
+            bytes: frame,
+            held,
+            painted,
+        });
         Ok(())
     }
 }
@@ -366,11 +388,23 @@ mod tests {
         if let Some(first) = data.first_mut() {
             *first = seed;
         }
-        ServerMsg::Video(VideoUnit { w: 1600, h: 1000, strip: None, keyframe, data, held: Held::default(), painted: Default::default() })
+        ServerMsg::Video(VideoUnit {
+            w: 1600,
+            h: 1000,
+            strip: None,
+            keyframe,
+            data,
+            held: Held::default(),
+            painted: Default::default(),
+        })
     }
 
     fn resize() -> ServerMsg {
-        ServerMsg::Resize { w: 1600, h: 1000, scale: UNSCALED }
+        ServerMsg::Resize {
+            w: 1600,
+            h: 1000,
+            scale: UNSCALED,
+        }
     }
 
     /// A parsed `VIDEO` record: `(flags, w, h, payload)`.
@@ -387,14 +421,24 @@ mod tests {
         while at < frame.len() {
             assert_eq!(frame[at], batch::OP_VIDEO, "unknown record op");
             let le = |o: usize| u16::from_le_bytes([frame[at + o], frame[at + o + 1]]);
-            let len = u32::from_le_bytes([frame[at + 6], frame[at + 7], frame[at + 8], frame[at + 9]])
-                as usize;
+            let len =
+                u32::from_le_bytes([frame[at + 6], frame[at + 7], frame[at + 8], frame[at + 9]])
+                    as usize;
             let start = at + batch::VIDEO_HEADER_LEN;
-            out.push((frame[at + 1], le(2), le(4), frame[start..start + len].to_vec()));
+            out.push((
+                frame[at + 1],
+                le(2),
+                le(4),
+                frame[start..start + len].to_vec(),
+            ));
             at = start + len;
         }
         assert_eq!(at, frame.len(), "records must exactly fill the frame");
-        assert_eq!(out.len(), usize::from(count), "the header's count must match the records present");
+        assert_eq!(
+            out.len(),
+            usize::from(count),
+            "the header's count must match the records present"
+        );
         out
     }
 
@@ -412,7 +456,11 @@ mod tests {
             at += len;
         }
         assert_eq!(at, frame.len(), "packets must exactly fill the frame");
-        assert_eq!(out.len(), usize::from(count), "the header's count must match");
+        assert_eq!(
+            out.len(),
+            usize::from(count),
+            "the header's count must match"
+        );
         out
     }
 
@@ -451,7 +499,10 @@ mod tests {
             assert_eq!((*w, *h), (1600, 1000));
             assert_eq!(payload.len(), 100);
             let keyframe = if i == 0 { batch::VIDEO_KEYFRAME } else { 0 };
-            assert_eq!(*flags, keyframe, "the keyframe bit is the encoder's, and only it");
+            assert_eq!(
+                *flags, keyframe,
+                "the keyframe bit is the encoder's, and only it"
+            );
         }
         assert_eq!(wire.totals.binary_frames, 1);
         assert_eq!(wire.totals.video, 4);
@@ -459,12 +510,22 @@ mod tests {
 
     #[test]
     fn an_exhausted_sequence_returns_an_error_without_wrapping_or_panicking() {
-        let mut wire = Wire { next_sequence: u32::MAX, ..Wire::default() };
+        let mut wire = Wire {
+            next_sequence: u32::MAX,
+            ..Wire::default()
+        };
 
-        assert_eq!(wire.encode(vec![unit(0, 100, true)]).unwrap_err(), WireError::SequenceExhausted);
+        assert_eq!(
+            wire.encode(vec![unit(0, 100, true)]).unwrap_err(),
+            WireError::SequenceExhausted
+        );
         assert_eq!(wire.next_sequence, u32::MAX, "the sequence must not wrap");
         assert_eq!(wire.totals.binary_frames, 0, "no partial frame was emitted");
-        assert_eq!(wire.pending.len(), 1, "the failed flush did not drain records");
+        assert_eq!(
+            wire.pending.len(),
+            1,
+            "the failed flush did not drain records"
+        );
         assert_eq!(
             wire.encode(Vec::new()).unwrap_err(),
             WireError::SequenceExhausted,
@@ -478,9 +539,17 @@ mod tests {
     fn a_control_message_flushes_the_units_that_preceded_it() {
         let mut wire = Wire::default();
         let frames = wire
-            .encode(vec![unit(0, 50, true), unit(1, 50, false), resize(), unit(2, 50, true)])
+            .encode(vec![
+                unit(0, 50, true),
+                unit(1, 50, false),
+                resize(),
+                unit(2, 50, true),
+            ])
             .unwrap();
-        assert!(matches!(frames[0], WireFrame::Batch { .. }), "the first two go out before the resize");
+        assert!(
+            matches!(frames[0], WireFrame::Batch { .. }),
+            "the first two go out before the resize"
+        );
         assert!(matches!(frames[1], WireFrame::Text(_)));
         assert!(matches!(frames[2], WireFrame::Batch { .. }));
         assert_eq!(sequences(&frames), vec![1, 2]);
@@ -531,7 +600,10 @@ mod tests {
         let binary = binary(&frames);
         assert_eq!(binary.len(), 3);
         assert_eq!(packets(binary[0]), vec![vec![1]]);
-        assert_eq!(binary[1][..], [protocol::audio::FRAME_KIND, protocol::audio::GAP, 0, 0]);
+        assert_eq!(
+            binary[1][..],
+            [protocol::audio::FRAME_KIND, protocol::audio::GAP, 0, 0]
+        );
         assert_eq!(packets(binary[2]), vec![vec![2]]);
         assert_eq!(wire.totals.audio_packets, 2);
     }
@@ -550,7 +622,11 @@ mod tests {
             bytes::Bytes::from(vec![9; 300]),
             bytes::Bytes::from(vec![7; 1]),
         ]);
-        assert_eq!(u16::from_le_bytes([frame[2], frame[3]]), 2, "the count, not the byte length");
+        assert_eq!(
+            u16::from_le_bytes([frame[2], frame[3]]),
+            2,
+            "the count, not the byte length"
+        );
         assert_eq!(packets(&frame), vec![vec![9; 300], vec![7; 1]]);
     }
 
@@ -570,8 +646,11 @@ mod tests {
             );
         }
         // Split, not dropped: every unit is still there, in order.
-        let seen: Vec<u8> =
-            binary(&frames).iter().flat_map(|f| records(f)).map(|r| r.3[0]).collect();
+        let seen: Vec<u8> = binary(&frames)
+            .iter()
+            .flat_map(|f| records(f))
+            .map(|r| r.3[0])
+            .collect();
         assert_eq!(seen, (0..6).collect::<Vec<_>>());
     }
 
@@ -580,7 +659,9 @@ mod tests {
     #[test]
     fn a_single_oversized_unit_is_still_sent() {
         let mut wire = Wire::default();
-        let frames = wire.encode(vec![unit(0, MAX_BATCH_BYTES * 2, true)]).unwrap();
+        let frames = wire
+            .encode(vec![unit(0, MAX_BATCH_BYTES * 2, true)])
+            .unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(records(binary(&frames)[0])[0].3.len(), MAX_BATCH_BYTES * 2);
     }
@@ -603,10 +684,22 @@ mod tests {
     #[test]
     fn graphics_runs_are_records_in_their_place() {
         let run = |seed: u8, len: usize| {
-            ServerMsg::Graphics(crate::protocol::GraphicsUnit { data: vec![seed; len], frame: None, held: Held::default() })
+            ServerMsg::Graphics(crate::protocol::GraphicsUnit {
+                data: vec![seed; len],
+                frame: None,
+                held: Held::default(),
+            })
         };
         let mut wire = Wire::default();
-        let frames = wire.encode(vec![ServerMsg::GraphicsStart { engine: 0 }, run(1, 5), run(2, 700), resize(), run(3, 1)]).unwrap();
+        let frames = wire
+            .encode(vec![
+                ServerMsg::GraphicsStart { engine: 0 },
+                run(1, 5),
+                run(2, 700),
+                resize(),
+                run(3, 1),
+            ])
+            .unwrap();
         let WireFrame::Text(text) = &frames[0] else {
             panic!("the start goes out first, as text: {:?}", frames[0]);
         };
@@ -619,17 +712,32 @@ mod tests {
             let mut at = batch::HEADER_LEN;
             for _ in 0..count {
                 assert_eq!(frame[at], 0x04, "a GRAPHICS record");
-                let len = u32::from_le_bytes([frame[at + 1], frame[at + 2], frame[at + 3], frame[at + 4]]) as usize;
+                let len = u32::from_le_bytes([
+                    frame[at + 1],
+                    frame[at + 2],
+                    frame[at + 3],
+                    frame[at + 4],
+                ]) as usize;
                 let commands = &frame[at + 5..at + 5 + len];
-                assert!(commands.iter().all(|b| *b == commands[0]), "the run is whole");
+                assert!(
+                    commands.iter().all(|b| *b == commands[0]),
+                    "the run is whole"
+                );
                 seen.push((commands[0], len));
                 at += 5 + len;
             }
             assert_eq!(at, frame.len(), "records must exactly fill the frame");
         }
         assert_eq!(seen, vec![(1, 5), (2, 700), (3, 1)]);
-        assert_eq!(binary(&frames).len(), 2, "the resize between them flushed the first batch");
-        assert_eq!((wire.totals.graphics, wire.totals.graphics_bytes), (3, 5 + 700 + 1 + 3 * 5));
+        assert_eq!(
+            binary(&frames).len(),
+            2,
+            "the resize between them flushed the first batch"
+        );
+        assert_eq!(
+            (wire.totals.graphics, wire.totals.graphics_bytes),
+            (3, 5 + 700 + 1 + 3 * 5)
+        );
     }
 
     /// A rectangle of a Mac's Adaptive picture is a record in its place, behind the
@@ -648,7 +756,13 @@ mod tests {
             })
         };
         let mut wire = Wire::default();
-        let frames = wire.encode(vec![ServerMsg::StandardStart { engine: 0 }, rect(1, 0, 3), rect(2, 64, 900)]).unwrap();
+        let frames = wire
+            .encode(vec![
+                ServerMsg::StandardStart { engine: 0 },
+                rect(1, 0, 3),
+                rect(2, 64, 900),
+            ])
+            .unwrap();
         let WireFrame::Text(text) = &frames[0] else {
             panic!("the start goes out first, as text: {:?}", frames[0]);
         };
@@ -663,7 +777,8 @@ mod tests {
         let mut seen = Vec::new();
         for _ in 0..2 {
             assert_eq!(frame[at], 0x05, "a STANDARD record");
-            let field = |i: usize| u16::from_le_bytes([frame[at + 1 + 2 * i], frame[at + 2 + 2 * i]]);
+            let field =
+                |i: usize| u16::from_le_bytes([frame[at + 1 + 2 * i], frame[at + 2 + 2 * i]]);
             let geometry = (field(0), field(1), field(2), field(3));
             let len = u32::from_le_bytes(frame[at + 9..at + 13].try_into().unwrap()) as usize;
             let body = &frame[at + 13..at + 13 + len];
@@ -672,8 +787,14 @@ mod tests {
             at += 13 + len;
         }
         assert_eq!(at, frame.len(), "records must exactly fill the frame");
-        assert_eq!(seen, vec![((0, 8, 16, 24), 1, 3), ((64, 8, 16, 24), 2, 900)]);
-        assert_eq!((wire.totals.standard, wire.totals.standard_bytes), (2, 3 + 900 + 2 * 13));
+        assert_eq!(
+            seen,
+            vec![((0, 8, 16, 24), 1, 3), ((64, 8, 16, 24), 2, 900)]
+        );
+        assert_eq!(
+            (wire.totals.standard, wire.totals.standard_bytes),
+            (2, 3 + 900 + 2 * 13)
+        );
     }
 
     /// The run that ends a frame ends its batch, which carries what that frame is
@@ -684,19 +805,36 @@ mod tests {
         use crate::protocol::{GraphicsUnit, Painted};
         let run = |seed: u8, ends: bool| {
             let frame = ends.then(Painted::default);
-            ServerMsg::Graphics(GraphicsUnit { data: vec![seed; 4], frame, held: Held::default() })
+            ServerMsg::Graphics(GraphicsUnit {
+                data: vec![seed; 4],
+                frame,
+                held: Held::default(),
+            })
         };
         let mut wire = Wire::default();
-        let frames =
-            wire.encode(vec![run(1, false), run(2, true), run(3, true), run(4, false), run(5, false)]).unwrap();
+        let frames = wire
+            .encode(vec![
+                run(1, false),
+                run(2, true),
+                run(3, true),
+                run(4, false),
+                run(5, false),
+            ])
+            .unwrap();
         let shape: Vec<(u16, usize)> = frames
             .iter()
             .map(|frame| match frame {
-                WireFrame::Batch { bytes, painted, .. } => (u16::from_le_bytes([bytes[2], bytes[3]]), painted.len()),
+                WireFrame::Batch { bytes, painted, .. } => {
+                    (u16::from_le_bytes([bytes[2], bytes[3]]), painted.len())
+                }
                 other => panic!("expected a batch, got {other:?}"),
             })
             .collect();
-        assert_eq!(shape, vec![(2, 1), (1, 1), (2, 0)], "records, and frames owed, in each batch");
+        assert_eq!(
+            shape,
+            vec![(2, 1), (1, 1), (2, 0)],
+            "records, and frames owed, in each batch"
+        );
     }
 
     /// A unit that owes its paint acknowledgement, an RDP host's frame's last,
@@ -706,20 +844,38 @@ mod tests {
     fn a_unit_that_ends_a_frame_ends_its_batch() {
         use crate::protocol::Painted;
         let video = |seed: u8, painted: Painted| {
-            ServerMsg::Video(VideoUnit { w: 64, h: 64, strip: None, keyframe: false, data: vec![seed; 4], held: Held::default(), painted })
+            ServerMsg::Video(VideoUnit {
+                w: 64,
+                h: 64,
+                strip: None,
+                keyframe: false,
+                data: vec![seed; 4],
+                held: Held::default(),
+                painted,
+            })
         };
         let mut wire = Wire::default();
         let frames = wire
-            .encode(vec![video(0, Painted::default()), video(1, Painted::new(|| {})), video(2, Painted::default())])
+            .encode(vec![
+                video(0, Painted::default()),
+                video(1, Painted::new(|| {})),
+                video(2, Painted::default()),
+            ])
             .unwrap();
         let shape: Vec<(u16, usize)> = frames
             .iter()
             .map(|frame| match frame {
-                WireFrame::Batch { bytes, painted, .. } => (u16::from_le_bytes([bytes[2], bytes[3]]), painted.len()),
+                WireFrame::Batch { bytes, painted, .. } => {
+                    (u16::from_le_bytes([bytes[2], bytes[3]]), painted.len())
+                }
                 other => panic!("expected a batch, got {other:?}"),
             })
             .collect();
-        assert_eq!(shape, vec![(2, 1), (1, 0)], "records, and acknowledgements owed, in each batch");
+        assert_eq!(
+            shape,
+            vec![(2, 1), (1, 0)],
+            "records, and acknowledgements owed, in each batch"
+        );
     }
 
     /// A run of wlshare's tiles ends its batch, as a frame's last run does: one
@@ -741,15 +897,37 @@ mod tests {
         };
         let run = |xs: std::ops::Range<u16>| {
             let mut records: Vec<ServerMsg> = xs.map(|i| tile(i * 64)).collect();
-            records.push(ServerMsg::Copy(CopyUnit { sx: 0, sy: 0, x: 0, y: 64, w: 64, h: 64 }));
-            records.push(ServerMsg::Cache(CacheUnit { store: true, slot: 1, x: 0, y: 0 }));
-            ServerMsg::Run { records, continued: false }
+            records.push(ServerMsg::Copy(CopyUnit {
+                sx: 0,
+                sy: 0,
+                x: 0,
+                y: 64,
+                w: 64,
+                h: 64,
+            }));
+            records.push(ServerMsg::Cache(CacheUnit {
+                store: true,
+                slot: 1,
+                x: 0,
+                y: 0,
+            }));
+            ServerMsg::Run {
+                records,
+                continued: false,
+            }
         };
         let mut wire = Wire::default();
         let frames = wire.encode(vec![run(0..20), run(20..23)]).unwrap();
-        let counts: Vec<u16> = binary(&frames).iter().map(|bytes| u16::from_le_bytes([bytes[2], bytes[3]])).collect();
+        let counts: Vec<u16> = binary(&frames)
+            .iter()
+            .map(|bytes| u16::from_le_bytes([bytes[2], bytes[3]]))
+            .collect();
         assert_eq!(counts, vec![22, 5], "records in each batch");
-        assert_eq!(wire.totals.tile, 23 + 4, "the tiles, the copies and the caches");
+        assert_eq!(
+            wire.totals.tile,
+            23 + 4,
+            "the tiles, the copies and the caches"
+        );
     }
 
     /// An update of wlshare's tiles past a batch's worth is shown whole: every batch
@@ -770,7 +948,10 @@ mod tests {
             })
         };
         let big = MAX_BATCH_BYTES / 2;
-        let run = |xs: std::ops::Range<u16>, continued: bool| ServerMsg::Run { records: xs.map(|x| tile(x * 64, big)).collect(), continued };
+        let run = |xs: std::ops::Range<u16>, continued: bool| ServerMsg::Run {
+            records: xs.map(|x| tile(x * 64, big)).collect(),
+            continued,
+        };
         let mut wire = Wire::default();
         let frames = wire
             .encode(vec![
@@ -783,12 +964,24 @@ mod tests {
         let shape: Vec<String> = frames
             .iter()
             .map(|frame| match frame {
-                WireFrame::Batch { bytes, .. } => format!("{}{}", u16::from_le_bytes([bytes[2], bytes[3]]), if bytes[1] == batch::FLAG_CONTINUED { "+" } else { "" }),
+                WireFrame::Batch { bytes, .. } => format!(
+                    "{}{}",
+                    u16::from_le_bytes([bytes[2], bytes[3]]),
+                    if bytes[1] == batch::FLAG_CONTINUED {
+                        "+"
+                    } else {
+                        ""
+                    }
+                ),
                 WireFrame::Text(_) => "text".into(),
                 other => panic!("unexpected {other:?}"),
             })
             .collect();
-        assert_eq!(shape, ["1+", "1+", "1+", "1+", "1+", "1", "text", "1"], "records in each batch, + where continued");
+        assert_eq!(
+            shape,
+            ["1+", "1+", "1+", "1+", "1+", "1", "text", "1"],
+            "records in each batch, + where continued"
+        );
     }
 
     /// A unit's share of the queue budget rides the batch it went out in.

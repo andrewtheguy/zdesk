@@ -238,11 +238,17 @@ impl RecordWriter {
         let total = BODY_LEN + body.len() + filler_len(body.len()) + TRAILER;
         // The outer length prefix, which is *not* encrypted and *not* covered by
         // the trailer.
-        self.buf
-            .extend_from_slice(&u16::try_from(total).expect("record within u16").to_be_bytes());
+        self.buf.extend_from_slice(
+            &u16::try_from(total)
+                .expect("record within u16")
+                .to_be_bytes(),
+        );
         let plaintext = self.buf.len();
-        self.buf
-            .extend_from_slice(&u16::try_from(body.len()).expect("body within u16").to_be_bytes());
+        self.buf.extend_from_slice(
+            &u16::try_from(body.len())
+                .expect("body within u16")
+                .to_be_bytes(),
+        );
         self.buf.extend_from_slice(body);
         self.buf.resize(plaintext + total - TRAILER, 0);
         let trailer = self.cbc.trailer(&self.buf[plaintext..]);
@@ -447,7 +453,11 @@ impl<R: AsyncRead + Unpin> AsyncRead for RecordReader<R> {
                     }
                 }
                 Phase::Ciphertext { len } => {
-                    let n = ready!(poll_fill(&mut me.inner, cx, &mut me.staging[me.filled..len]))?;
+                    let n = ready!(poll_fill(
+                        &mut me.inner,
+                        cx,
+                        &mut me.staging[me.filled..len]
+                    ))?;
                     if n == 0 {
                         return Poll::Ready(Err(truncated()));
                     }
@@ -472,9 +482,12 @@ impl<R: AsyncRead + Unpin> AsyncRead for RecordReader<R> {
 /// Read exactly `REKEY_LEN` bytes as a rekey blob. A free function because the
 /// caller reads it off a *cleartext* stream, before any of this exists.
 pub fn rekey_body(bytes: &[u8]) -> anyhow::Result<[u8; REKEY_LEN]> {
-    bytes
-        .try_into()
-        .with_context(|| format!("a rekey rectangle carried {} bytes, not {REKEY_LEN}", bytes.len()))
+    bytes.try_into().with_context(|| {
+        format!(
+            "a rekey rectangle carried {} bytes, not {REKEY_LEN}",
+            bytes.len()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -539,7 +552,11 @@ mod tests {
             (300, 14),
         ] {
             assert_eq!(filler_len(body), filler, "body {body}");
-            assert_eq!((BODY_LEN + body + filler + TRAILER) % BLOCK, 0, "body {body}");
+            assert_eq!(
+                (BODY_LEN + body + filler + TRAILER) % BLOCK,
+                0,
+                "body {body}"
+            );
         }
     }
 
@@ -558,7 +575,10 @@ mod tests {
         let framed = writer.frame(&[]);
         assert_eq!(u16::from_be_bytes([framed[0], framed[1]]), 32);
         assert_eq!(MIN_CIPHERTEXT, 32);
-        assert_eq!(usize::from(u16::from_be_bytes([framed[0], framed[1]])), MIN_CIPHERTEXT);
+        assert_eq!(
+            usize::from(u16::from_be_bytes([framed[0], framed[1]])),
+            MIN_CIPHERTEXT
+        );
     }
 
     #[test]
@@ -784,7 +804,14 @@ mod tests {
             lens.push(len);
             at += 2 + len;
         }
-        assert_eq!(lens, [MAX_CIPHERTEXT, MAX_CIPHERTEXT, 2 + 5 + filler_len(5) + TRAILER]);
+        assert_eq!(
+            lens,
+            [
+                MAX_CIPHERTEXT,
+                MAX_CIPHERTEXT,
+                2 + 5 + filler_len(5) + TRAILER
+            ]
+        );
 
         // The writer's chain and counter carry on past the split.
         wire.extend_from_slice(writer.frame(b"next"));

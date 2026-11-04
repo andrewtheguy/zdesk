@@ -20,13 +20,13 @@ use std::time::Duration;
 
 use common::{Ws, connect_ws};
 use futures_util::{SinkExt as _, StreamExt as _};
-use zdesk::config::{AppConfig, Protocol, TargetConfig};
-use zdesk::protocol::MAX_CLIPBOARD_BYTES;
-use zdesk::server;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+use zdesk::config::{AppConfig, Protocol, TargetConfig};
+use zdesk::protocol::MAX_CLIPBOARD_BYTES;
+use zdesk::server;
 
 const FAKE_DESKTOP: u16 = 16;
 
@@ -89,7 +89,10 @@ const WLSHARE_VERSION: u8 = 0;
 /// the first time: as wlshare does, first and unasked; or as a wlshare from
 /// before the versions did, with its density report.
 #[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "wlshare"), expect(dead_code, reason = "a plain gateway lists no version"))]
+#[cfg_attr(
+    not(feature = "wlshare"),
+    expect(dead_code, reason = "a plain gateway lists no version")
+)]
 enum Answer {
     Version(u8),
     Unversioned,
@@ -115,14 +118,24 @@ async fn spawn_fake_vnc_with_clipboard(
         while let Ok((stream, _)) = listener.accept().await {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let _ = serve_fake_vnc(stream, (FAKE_DESKTOP, FAKE_DESKTOP), cut_text, Answer::Version(WLSHARE_VERSION), tx).await;
+                let _ = serve_fake_vnc(
+                    stream,
+                    (FAKE_DESKTOP, FAKE_DESKTOP),
+                    cut_text,
+                    Answer::Version(WLSHARE_VERSION),
+                    tx,
+                )
+                .await;
             });
         }
     });
     (port, rx)
 }
 
-#[cfg_attr(not(feature = "wlshare"), expect(unused_variables, reason = "a plain gateway lists no version"))]
+#[cfg_attr(
+    not(feature = "wlshare"),
+    expect(unused_variables, reason = "a plain gateway lists no version")
+)]
 async fn serve_fake_vnc(
     mut stream: TcpStream,
     (w, h): (u16, u16),
@@ -165,12 +178,27 @@ async fn serve_fake_vnc(
                 stream.read_exact(&mut encodings).await?;
                 #[cfg(feature = "wlshare")]
                 {
-                    let encodings: Vec<i32> = encodings.as_chunks::<4>().0.iter().map(|&c| i32::from_be_bytes(c)).collect();
-                    if !answered && wlshare_proto::version::listed(&encodings).is_ok_and(|v| v.is_some()) {
+                    let encodings: Vec<i32> = encodings
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&c| i32::from_be_bytes(c))
+                        .collect();
+                    if !answered
+                        && wlshare_proto::version::listed(&encodings).is_ok_and(|v| v.is_some())
+                    {
                         answered = true;
                         match answer {
-                            Answer::Version(version) => stream.write_all(&wlshare_proto::version::answer(version)).await?,
-                            Answer::Unversioned => stream.write_all(&wlshare_proto::density::output_scale(w, h, 1.0)).await?,
+                            Answer::Version(version) => {
+                                stream
+                                    .write_all(&wlshare_proto::version::answer(version))
+                                    .await?
+                            }
+                            Answer::Unversioned => {
+                                stream
+                                    .write_all(&wlshare_proto::density::output_scale(w, h, 1.0))
+                                    .await?
+                            }
                         }
                     }
                 }
@@ -247,11 +275,23 @@ const SCROLL_W: u16 = FAKE_DESKTOP / 2;
 #[derive(Debug, PartialEq, Eq)]
 enum ScrollRequest {
     /// Whether the client advertised the two pseudo-encodings this depends on.
-    Encodings { continuous: bool, fence: bool },
-    UpdateRequest { incremental: bool },
-    EnableContinuousUpdates { enable: bool, w: u16, h: u16 },
+    Encodings {
+        continuous: bool,
+        fence: bool,
+    },
+    UpdateRequest {
+        incremental: bool,
+    },
+    EnableContinuousUpdates {
+        enable: bool,
+        w: u16,
+        h: u16,
+    },
     /// A fence handed back, with the flags and payload the client returned.
-    Fence { flags: u32, payload: Vec<u8> },
+    Fence {
+        flags: u32,
+        payload: Vec<u8>,
+    },
 }
 
 /// A scripted RFB 3.8 server that supports Continuous Updates and pushes.
@@ -316,8 +356,12 @@ async fn serve_scrolling_vnc(
                 let count = usize::from(u16::from_be_bytes([head[1], head[2]]));
                 let mut body = vec![0u8; count * 4];
                 stream.read_exact(&mut body).await?;
-                let advertised: Vec<i32> =
-                    body.as_chunks::<4>().0.iter().map(|&c| i32::from_be_bytes(c)).collect();
+                let advertised: Vec<i32> = body
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&c| i32::from_be_bytes(c))
+                    .collect();
                 let _ = seen.send(ScrollRequest::Encodings {
                     continuous: advertised.contains(&ENCODING_CONTINUOUS_UPDATES),
                     fence: advertised.contains(&ENCODING_FENCE),
@@ -328,7 +372,9 @@ async fn serve_scrolling_vnc(
             3 => {
                 let mut req = [0u8; 9];
                 stream.read_exact(&mut req).await?;
-                let _ = seen.send(ScrollRequest::UpdateRequest { incremental: req[0] != 0 });
+                let _ = seen.send(ScrollRequest::UpdateRequest {
+                    incremental: req[0] != 0,
+                });
                 if req[0] != 0 {
                     continue;
                 }
@@ -459,7 +505,9 @@ const MAC_DESKTOP: u16 = 32;
 /// The client messages the enhanced ServerInit says the Mac accepts, one bit each,
 /// most significant first: macvm's (macOS 26.6.2), which lists
 /// `SetDisplayConfiguration` (`0x1d`, byte 3's `0x04`).
-const MAC_COMMANDS: [u8; 16] = [0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+const MAC_COMMANDS: [u8; 16] = [
+    0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
 /// The fake client's screen, named in its `connect`. With no pinned config
 /// size, this is what the virtual display opens at — the unified opening rule.
 /// At least the 800x600 points a Mac's virtual display is asked for: a screen
@@ -485,14 +533,22 @@ enum MacRequest {
     AutoFramebuffer((u16, u16)),
     /// A media-stream offer, and whether the encodings last listed had the media
     /// stream first, which is what stops a Mac's pixels.
-    Offer { media_first: bool },
+    Offer {
+        media_first: bool,
+    },
     IncrementalFramebuffer,
     /// An incremental request for the single pixel at the origin: polling held
     /// while a display change is out.
     HeldFramebuffer,
-    Fence { flags: u32, payload: Vec<u8> },
+    Fence {
+        flags: u32,
+        payload: Vec<u8>,
+    },
     ClipboardFetch(u32),
-    ClipboardSend { session_id: u32, text: String },
+    ClipboardSend {
+        session_id: u32,
+        text: String,
+    },
     /// A PointerEvent's button mask.
     Pointer(u8),
 }
@@ -597,7 +653,11 @@ async fn fake_mac_authenticate(stream: &mut TcpStream) -> std::io::Result<[u8; 1
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         };
         assert_eq!(field(0), MAC_USER, "the gateway named the wrong account");
-        assert_eq!(field(64), MAC_PASSWORD, "the gateway sent the wrong password");
+        assert_eq!(
+            field(64),
+            MAC_PASSWORD,
+            "the gateway sent the wrong password"
+        );
     }
     stream.write_all(&0u32.to_be_bytes()).await?; // SecurityResult: ok
     Ok(key)
@@ -662,9 +722,7 @@ fn fake_mac_read_configuration(body: &[u8]) -> ((u16, u16), u16, bool) {
     assert_eq!(body.len(), D + DESCRIPTOR_HEAD + MODES * MODE_ENTRY);
 
     let be16 = |at: usize| u16::from_be_bytes([body[at], body[at + 1]]);
-    let be32 = |at: usize| {
-        u32::from_be_bytes([body[at], body[at + 1], body[at + 2], body[at + 3]])
-    };
+    let be32 = |at: usize| u32::from_be_bytes([body[at], body[at + 1], body[at + 2], body[at + 3]]);
     assert_eq!(be16(0), 1, "display configuration version");
     assert_eq!(be16(2), 1, "one display descriptor");
     assert_eq!(be32(4), 0, "configuration flags");
@@ -672,16 +730,34 @@ fn fake_mac_read_configuration(body: &[u8]) -> ((u16, u16), u16, bool) {
     assert_eq!(usize::from(be16(D + 0x9a)), MODES, "mode count");
     assert_eq!(usize::from(be16(D)), DESCRIPTOR_HEAD + MODES * MODE_ENTRY);
     let flags = be32(D + 0x7a);
-    assert!(flags <= 1, "display_flags {flags:#x}: dynamic resolution at most");
-    assert_eq!(be32(D + 0x7e), 0, "display_type, unset as Apple's viewer leaves it");
+    assert!(
+        flags <= 1,
+        "display_flags {flags:#x}: dynamic resolution at most"
+    );
+    assert_eq!(
+        be32(D + 0x7e),
+        0,
+        "display_type, unset as Apple's viewer leaves it"
+    );
     let largest = |at: usize| {
-        (0..MODES).map(|mode| be32(D + DESCRIPTOR_HEAD + mode * MODE_ENTRY + at)).max().unwrap()
+        (0..MODES)
+            .map(|mode| be32(D + DESCRIPTOR_HEAD + mode * MODE_ENTRY + at))
+            .max()
+            .unwrap()
     };
     let (max_w, max_h) = (largest(0), largest(4));
-    assert_eq!((be32(D + 0x8a), be32(D + 0x8e)), (max_w, max_h), "maximum: the largest mode");
+    assert_eq!(
+        (be32(D + 0x8a), be32(D + 0x8e)),
+        (max_w, max_h),
+        "maximum: the largest mode"
+    );
     let mm = |at: usize| f32::from_be_bytes(body[at..at + 4].try_into().unwrap());
     let at_264_dpi = |px: u32| (f64::from(px) * 25.4 / 264.0) as f32;
-    assert_eq!((mm(D + 0x82), mm(D + 0x86)), (at_264_dpi(max_w), at_264_dpi(max_h)), "millimetres");
+    assert_eq!(
+        (mm(D + 0x82), mm(D + 0x86)),
+        (at_264_dpi(max_w), at_264_dpi(max_h)),
+        "millimetres"
+    );
     assert_eq!(be16(D + 0x92), 0, "current mode");
     assert_eq!(be16(D + 0x94), 0, "preferred mode");
     assert_eq!(be32(D + 0x96), 7, "native dynamic rotations value");
@@ -705,11 +781,19 @@ fn fake_mac_read_configuration(body: &[u8]) -> ((u16, u16), u16, bool) {
     );
     for (index, preset) in PRESETS.into_iter().enumerate() {
         let at = mode + (1 + index) * MODE_ENTRY;
-        assert_eq!((be32(at), be32(at + 4), be32(at + 8), be32(at + 12)), preset, "preset {index}");
+        assert_eq!(
+            (be32(at), be32(at + 4), be32(at + 8), be32(at + 12)),
+            preset,
+            "preset {index}"
+        );
     }
     for index in 0..MODES {
         let at = mode + index * MODE_ENTRY;
-        assert_eq!(&body[at + 16..at + 24], &30.0f64.to_be_bytes(), "mode {index} at 30 Hz");
+        assert_eq!(
+            &body[at + 16..at + 24],
+            &30.0f64.to_be_bytes(),
+            "mode {index} at 30 Hz"
+        );
         assert_eq!(be32(at + 24), 0, "mode {index} flags");
     }
     (points, density, flags == 1)
@@ -750,7 +834,11 @@ fn fake_mac_read_clipboard(header: &[u8; 15], compressed: &[u8]) -> (u32, String
     let session_id = u32::from_be_bytes(header[3..7].try_into().unwrap());
     let inflated_len = u32::from_be_bytes(header[7..11].try_into().unwrap()) as usize;
     let compressed_len = u32::from_be_bytes(header[11..15].try_into().unwrap()) as usize;
-    assert_eq!(compressed.len(), compressed_len, "compressed clipboard length");
+    assert_eq!(
+        compressed.len(),
+        compressed_len,
+        "compressed clipboard length"
+    );
 
     let mut decoder = flate2::Decompress::new(true);
     let mut archive = Vec::with_capacity(inflated_len);
@@ -805,7 +893,8 @@ fn fake_mac_update(
     match standard {
         Some(encoding) => {
             let body = if encoding == zdesk::vnc_apple::ENCODING_ZLIB {
-                zlib.write_all(&vec![shade; usize::from(w) * usize::from(h) * 4]).unwrap();
+                zlib.write_all(&vec![shade; usize::from(w) * usize::from(h) * 4])
+                    .unwrap();
                 zlib.flush().unwrap();
                 std::mem::take(zlib.get_mut())
             } else {
@@ -817,10 +906,7 @@ fn fake_mac_update(
         }
         None => {
             update.extend_from_slice(&0i32.to_be_bytes()); // raw
-            update.extend_from_slice(&vec![
-                shade;
-                usize::from(w) * usize::from(h) * 4
-            ]);
+            update.extend_from_slice(&vec![shade; usize::from(w) * usize::from(h) * 4]);
         }
     }
     update
@@ -836,7 +922,13 @@ fn fake_standard_body(shade: u8) -> Vec<u8> {
 /// the audio and the first video leg enabled. Two ports free on this host, which
 /// nothing is sent to.
 fn fake_mac_ports() -> Vec<u8> {
-    let free = || std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let free = || {
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    };
     let mut rect = vec![0u8; 8]; // x, y, w, h
     rect.extend_from_slice(&1010i32.to_be_bytes());
     rect.extend_from_slice(&36u16.to_be_bytes());
@@ -885,13 +977,16 @@ async fn serve_fake_mac(
     requests: mpsc::UnboundedSender<MacRequest>,
     mut actions: mpsc::UnboundedReceiver<MacAction>,
 ) -> std::io::Result<Vec<((u16, u16), u16)>> {
-    use zdesk::vnc_record::{Keys, RecordReader, RecordWriter};
     use tokio::io::AsyncReadExt as _;
+    use zdesk::vnc_record::{Keys, RecordReader, RecordWriter};
 
     stream.write_all(b"RFB 003.889\n").await?;
     let mut banner = [0u8; 12];
     stream.read_exact(&mut banner).await?;
-    assert_eq!(&banner, b"RFB 003.889\n", "the gateway answered the wrong version");
+    assert_eq!(
+        &banner, b"RFB 003.889\n",
+        "the gateway answered the wrong version"
+    );
 
     // The set a macOS 26 host offers, in its wire order.
     stream.write_all(&[4, 30, 33, 36, 35]).await?;
@@ -1087,7 +1182,10 @@ async fn serve_fake_mac_records(
                 let mut body = [0u8; 19];
                 records.read_exact(&mut body).await?;
                 if media_first {
-                    assert!(sent_layout, "High Performance sets its pixel format at a layout");
+                    assert!(
+                        sent_layout,
+                        "High Performance sets its pixel format at a layout"
+                    );
                     assert_eq!(body[4], 32, "High Performance pixel format depth");
                 }
             }
@@ -1100,16 +1198,30 @@ async fn serve_fake_mac_records(
                 let count = u16::from_be_bytes([head[1], head[2]]);
                 let mut encodings = vec![0u8; usize::from(count) * 4];
                 records.read_exact(&mut encodings).await?;
-                let lists_media = encodings.as_chunks::<4>().0.iter().any(|&e| i32::from_be_bytes(e) == 1010);
-                media_first = encodings.as_chunks::<4>().0.first().is_some_and(|&e| i32::from_be_bytes(e) == 1010);
+                let lists_media = encodings
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|&e| i32::from_be_bytes(e) == 1010);
+                media_first = encodings
+                    .as_chunks::<4>()
+                    .0
+                    .first()
+                    .is_some_and(|&e| i32::from_be_bytes(e) == 1010);
                 standard = encodings
                     .as_chunks::<4>()
                     .0
                     .iter()
                     .map(|&e| i32::from_be_bytes(e))
-                    .find(|&e| e == zdesk::vnc_apple::ENCODING_ADAPTIVE || e == zdesk::vnc_apple::ENCODING_ZLIB);
+                    .find(|&e| {
+                        e == zdesk::vnc_apple::ENCODING_ADAPTIVE
+                            || e == zdesk::vnc_apple::ENCODING_ZLIB
+                    });
                 if standard.is_none() {
-                    assert!(media_first, "High Performance advertises media first from its opening list");
+                    assert!(
+                        media_first,
+                        "High Performance advertises media first from its opening list"
+                    );
                 }
                 if lists_media && !std::mem::replace(&mut media_listed, true) {
                     let mut update = vec![0u8, 0];
@@ -1161,7 +1273,10 @@ async fn serve_fake_mac_records(
                     write_half.write_all(writer.frame(&rect)).await?;
                 }
                 shade = shade.wrapping_add(0x10);
-                let pixels = ((points.0 * density).min(rect[2]), (points.1 * density).min(rect[3]));
+                let pixels = (
+                    (points.0 * density).min(rect[2]),
+                    (points.1 * density).min(rect[3]),
+                );
                 write_half
                     .write_all(writer.frame(&fake_mac_update(shade, pixels, standard, &mut zlib)))
                     .await?;
@@ -1212,9 +1327,7 @@ async fn serve_fake_mac_records(
                 let _ = requests.send(MacRequest::ClipboardFetch(session_id));
                 assert!(!clipboard_fetch_pending, "overlapping clipboard fetches");
                 clipboard_fetch_pending = true;
-                write_half
-                    .write_all(writer.frame(&[0, 0, 0, 0]))
-                    .await?;
+                write_half.write_all(writer.frame(&[0, 0, 0, 0])).await?;
                 let mut fence = vec![MSG_FENCE, 0, 0, 0];
                 fence.extend_from_slice(&(1u32 << 31).to_be_bytes());
                 fence.push(4);
@@ -1277,7 +1390,11 @@ async fn serve_fake_mac_records(
                 let size = usize::from(u16::from_be_bytes([head[1], head[2]]));
                 let mut body = vec![0u8; size];
                 records.read_exact(&mut body).await?;
-                assert_eq!(&body[..2], &3u16.to_be_bytes(), "media-stream configuration version");
+                assert_eq!(
+                    &body[..2],
+                    &3u16.to_be_bytes(),
+                    "media-stream configuration version"
+                );
                 let _ = requests.send(MacRequest::Offer { media_first });
                 let mut update = vec![0u8, 0];
                 update.extend_from_slice(&1u16.to_be_bytes());
@@ -1317,7 +1434,10 @@ async fn spawn_app(target: TargetConfig) -> SocketAddr {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         targets: vec![target],
         auth: common::test_auth(),
-        branding: zdesk::config::Branding { text: "zdesk".to_owned(), logo: None },
+        branding: zdesk::config::Branding {
+            text: "zdesk".to_owned(),
+            logo: None,
+        },
         dev_hostname: None,
         meter: None,
         hevc_wasm: None,
@@ -1405,7 +1525,9 @@ async fn next_mac_request(rx: &mut mpsc::UnboundedReceiver<MacRequest>) -> MacRe
 /// poll is no held one: it comes back as the next request, which fails the
 /// caller's expectation, so a session that stopped holding polls while a
 /// display change was out still fails here.
-async fn next_mac_request_past_held(rx: &mut mpsc::UnboundedReceiver<MacRequest>) -> (MacRequest, usize) {
+async fn next_mac_request_past_held(
+    rx: &mut mpsc::UnboundedReceiver<MacRequest>,
+) -> (MacRequest, usize) {
     let mut held = 0;
     loop {
         match next_mac_request(rx).await {
@@ -1424,10 +1546,11 @@ async fn spawn_app_dead_rdp() -> SocketAddr {
 /// Minimal HTTP/1.1 GET (optionally with the login cookie) returning the
 /// response body as a string.
 async fn http_get(addr: SocketAddr, path: &str, cookie: Option<&str>) -> String {
-    let cookie_line = cookie.map(|c| format!("Cookie: {c}\r\n")).unwrap_or_default();
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: {addr}\r\n{cookie_line}Connection: close\r\n\r\n"
-    );
+    let cookie_line = cookie
+        .map(|c| format!("Cookie: {c}\r\n"))
+        .unwrap_or_default();
+    let req =
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{cookie_line}Connection: close\r\n\r\n");
     let (_status, _head, body) = common::http_request(addr, &req).await;
     body
 }
@@ -1439,7 +1562,10 @@ async fn expect_resize(ws: &mut Ws, w: u16, h: u16) {
         while let Some(msg) = ws.display_socket().next().await {
             match msg.expect("websocket receive") {
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
                     if text.contains(r#""type":"resize""#) {
                         assert_eq!(
                             text,
@@ -1465,7 +1591,10 @@ async fn expect_picker(ws: &mut Ws) {
         while let Some(msg) = ws.session_socket().next().await {
             match msg.expect("websocket receive") {
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
                     if text.contains(r#""type":"picker""#) {
                         return;
                     }
@@ -1492,11 +1621,17 @@ async fn expect_frame(ws: &mut Ws) -> Vec<common::BatchRecord> {
                     // are checked on the way past.
                     let records = common::batch_records(&frame);
                     assert!(!records.is_empty());
-                    ws.display_socket().send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    ws.display_socket()
+                        .send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                     return records;
                 }
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
                 }
                 Message::Close(frame) => panic!("closed while waiting for a frame: {frame:?}"),
                 _ => {}
@@ -1523,13 +1658,21 @@ async fn expect_standard(ws: &mut Ws, starts: bool) -> Vec<common::StandardRect>
                     return rects;
                 }
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
-                    assert!(!text.contains(r#""type":"tilesStart""#), "a Standard picture coded here: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
+                    assert!(
+                        !text.contains(r#""type":"tilesStart""#),
+                        "a Standard picture coded here: {text}"
+                    );
                     if text.contains(r#""type":"standardStart""#) {
                         started = true;
                     }
                 }
-                Message::Close(frame) => panic!("closed while waiting for a Standard picture: {frame:?}"),
+                Message::Close(frame) => {
+                    panic!("closed while waiting for a Standard picture: {frame:?}")
+                }
                 _ => {}
             }
         }
@@ -1555,8 +1698,15 @@ async fn expect_fake_standard(ws: &mut Ws, starts: bool) {
             continue;
         }
         for rect in screen {
-            assert_eq!((rect.x, rect.y, rect.w, rect.h), (0, 0, MAC_DESKTOP, MAC_DESKTOP));
-            assert_eq!(rect.body, fake_standard_body(rect.body[0]), "the body as the Mac sent it");
+            assert_eq!(
+                (rect.x, rect.y, rect.w, rect.h),
+                (0, 0, MAC_DESKTOP, MAC_DESKTOP)
+            );
+            assert_eq!(
+                rect.body,
+                fake_standard_body(rect.body[0]),
+                "the body as the Mac sent it"
+            );
         }
         return;
     }
@@ -1577,19 +1727,38 @@ async fn expect_fake_tiles(ws: &mut Ws, starts: bool) {
                     assert!(!records.is_empty());
                     for record in records {
                         match record {
-                            common::BatchRecord::Tile(tile) => assert!(tile.w > 0 && tile.h > 0, "an empty tile"),
-                            common::BatchRecord::Video(_) => panic!("a passed record in a session of the gateway's tiles"),
-                            common::BatchRecord::Region(_) => panic!("a region in a session of the gateway's tiles"),
-                            common::BatchRecord::Copy(_) => panic!("a copy in a session of the gateway's tiles"),
-                            common::BatchRecord::Cache(_) => panic!("a cache's tile in a session of the gateway's tiles"),
+                            common::BatchRecord::Tile(tile) => {
+                                assert!(tile.w > 0 && tile.h > 0, "an empty tile")
+                            }
+                            common::BatchRecord::Video(_) => {
+                                panic!("a passed record in a session of the gateway's tiles")
+                            }
+                            common::BatchRecord::Region(_) => {
+                                panic!("a region in a session of the gateway's tiles")
+                            }
+                            common::BatchRecord::Copy(_) => {
+                                panic!("a copy in a session of the gateway's tiles")
+                            }
+                            common::BatchRecord::Cache(_) => {
+                                panic!("a cache's tile in a session of the gateway's tiles")
+                            }
                         }
                     }
-                    ws.display_socket().send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    ws.display_socket()
+                        .send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                     return;
                 }
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
-                    assert!(!text.contains(r#""type":"standardStart""#), "a Full-quality picture passed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
+                    assert!(
+                        !text.contains(r#""type":"standardStart""#),
+                        "a Full-quality picture passed: {text}"
+                    );
                     if text.contains(r#""type":"tilesStart""#) {
                         started = true;
                     }
@@ -1643,15 +1812,27 @@ async fn targets_endpoint_lists_targets_but_never_credentials() {
     let addr = spawn_app_dead_rdp().await;
     let cookie = common::login(addr).await;
     let body = http_get(addr, "/api/targets", Some(&cookie)).await;
-    assert!(body.contains("test-target"), "targets should list the name: {body}");
-    assert!(body.contains("127.0.0.1"), "targets should report the host: {body}");
+    assert!(
+        body.contains("test-target"),
+        "targets should list the name: {body}"
+    );
+    assert!(
+        body.contains("127.0.0.1"),
+        "targets should report the host: {body}"
+    );
     // Credentials must never be serialized to the browser.
     assert!(
         !body.contains("s3cr3t-should-not-leak"),
         "targets leaked the password: {body}"
     );
-    assert!(!body.contains("tester"), "targets leaked the username: {body}");
-    assert!(!body.contains("password"), "targets mentions a password field: {body}");
+    assert!(
+        !body.contains("tester"),
+        "targets leaked the username: {body}"
+    );
+    assert!(
+        !body.contains("password"),
+        "targets mentions a password field: {body}"
+    );
 }
 
 #[tokio::test]
@@ -1682,7 +1863,10 @@ async fn websocket_reports_rdp_connect_failure_as_error_message() {
     .await
     .expect("timed out waiting for an error ServerMsg");
 
-    assert!(got_error, "expected an error ServerMsg after a failed RDP connect");
+    assert!(
+        got_error,
+        "expected an error ServerMsg after a failed RDP connect"
+    );
 }
 
 #[tokio::test]
@@ -1710,12 +1894,22 @@ async fn a_display_socket_is_the_claiming_logins_and_shows_only_a_listed_tab() {
     let _token = common::claim_session(addr, &owner).await;
 
     let mut ws = common::connect_display_ws(addr, &other, 1).await;
-    assert_eq!(expect_close(&mut ws).await, Some(4000), "another login holds no session");
+    assert_eq!(
+        expect_close(&mut ws).await,
+        Some(4000),
+        "another login holds no session"
+    );
     let mut ws = common::connect_display_ws(addr, &owner, 2).await;
-    assert_eq!(expect_close(&mut ws).await, Some(4002), "no display is shown in a tab");
+    assert_eq!(
+        expect_close(&mut ws).await,
+        Some(4002),
+        "no display is shown in a tab"
+    );
     let mut ws = common::connect_display_ws(addr, &owner, 1).await;
     assert!(
-        tokio::time::timeout(Duration::from_millis(250), expect_close(&mut ws)).await.is_err(),
+        tokio::time::timeout(Duration::from_millis(250), expect_close(&mut ws))
+            .await
+            .is_err(),
         "the claiming login's first display stays open"
     );
 }
@@ -1765,7 +1959,10 @@ async fn continuous_updates_carry_an_unasked_update_to_the_browser() {
 
     assert_eq!(
         next_scroll_request(&mut seen).await,
-        ScrollRequest::Encodings { continuous: true, fence: true },
+        ScrollRequest::Encodings {
+            continuous: true,
+            fence: true
+        },
         "the extension is only ever offered by advertising the pseudo-encoding"
     );
     assert_eq!(
@@ -1927,7 +2124,8 @@ async fn an_oversize_wlshare_desktop_holds_the_session_without_a_picture() {
 #[tokio::test]
 async fn a_wlshare_of_another_protocol_version_is_refused() {
     let theirs = WLSHARE_VERSION + 1;
-    let vnc_port = spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Version(theirs)).await;
+    let vnc_port =
+        spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Version(theirs)).await;
     let addr = spawn_app(TargetConfig {
         subtype: Some(zdesk::config::Subtype::Wlshare),
         ..target(Protocol::Vnc, vnc_port)
@@ -1939,7 +2137,9 @@ async fn a_wlshare_of_another_protocol_version_is_refused() {
     common::connect_target(&mut ws, "test-target").await;
     let error = expect_error(&mut ws).await;
     assert!(
-        error.contains(&format!("speaks protocol {theirs}, and this gateway {WLSHARE_VERSION}")),
+        error.contains(&format!(
+            "speaks protocol {theirs}, and this gateway {WLSHARE_VERSION}"
+        )),
         "unexpected error: {error}"
     );
 }
@@ -1949,7 +2149,8 @@ async fn a_wlshare_of_another_protocol_version_is_refused() {
 #[cfg(feature = "wlshare")]
 #[tokio::test]
 async fn an_unversioned_wlshare_is_refused() {
-    let vnc_port = spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Unversioned).await;
+    let vnc_port =
+        spawn_fake_vnc_answering((FAKE_DESKTOP, FAKE_DESKTOP), Answer::Unversioned).await;
     let addr = spawn_app(TargetConfig {
         subtype: Some(zdesk::config::Subtype::Wlshare),
         ..target(Protocol::Vnc, vnc_port)
@@ -1960,7 +2161,10 @@ async fn an_unversioned_wlshare_is_refused() {
     let mut ws = connect_ws(addr, &token, &cookie).await;
     common::connect_target(&mut ws, "test-target").await;
     let error = expect_error(&mut ws).await;
-    assert!(error.contains(&format!("not wlshare speaking protocol {WLSHARE_VERSION}")), "unexpected error: {error}");
+    assert!(
+        error.contains(&format!("not wlshare speaking protocol {WLSHARE_VERSION}")),
+        "unexpected error: {error}"
+    );
 }
 
 /// Read for half a second, failing on a binary frame of the desktop, an `error` or
@@ -1970,9 +2174,14 @@ async fn expect_no_picture(ws: &mut Ws) {
     let quiet = tokio::time::timeout(Duration::from_millis(500), async {
         while let Some(msg) = ws.display_socket().next().await {
             match msg.expect("websocket receive") {
-                Message::Binary(frame) => panic!("a held desktop sent a {}-byte frame", frame.len()),
+                Message::Binary(frame) => {
+                    panic!("a held desktop sent a {}-byte frame", frame.len())
+                }
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
                 }
                 Message::Close(frame) => panic!("closed while held: {frame:?}"),
                 _ => {}
@@ -2003,7 +2212,10 @@ async fn an_oversize_vnc_desktop_under_resize_is_refused() {
     let mut ws = connect_ws(addr, &token, &cookie).await;
     common::connect_target_with(&mut ws, "test-target", RESIZE).await;
     let error = expect_error(&mut ws).await;
-    assert!(error.contains("will not show a 3842x2 picture"), "unexpected error: {error}");
+    assert!(
+        error.contains("will not show a 3842x2 picture"),
+        "unexpected error: {error}"
+    );
 }
 
 /// Logging out ends the desktop, and the login after it starts from the picker.
@@ -2120,7 +2332,9 @@ async fn switch_target_returns_to_the_picker_then_reconnects() {
 
     // End session: disconnect returns the slot to the picker over the same
     // socket (no reclaim, no close).
-    ws.send(Message::text(r#"{"type":"disconnect"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"disconnect"}"#))
+        .await
+        .unwrap();
     expect_picker(&mut ws).await;
 
     // Picking again on the same socket starts a fresh engine and repaints.
@@ -2144,7 +2358,10 @@ async fn expect_clipboard(ws: &mut Ws) -> ClipboardMessage {
         while let Some(msg) = ws.session_socket().next().await {
             match msg.expect("websocket receive") {
                 Message::Text(text) => {
-                    assert!(!text.contains(r#""type":"error""#), "session failed: {text}");
+                    assert!(
+                        !text.contains(r#""type":"error""#),
+                        "session failed: {text}"
+                    );
                     if text.contains(r#""type":"clipboard""#) {
                         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
                         return ClipboardMessage {
@@ -2173,8 +2390,7 @@ async fn vnc_clipboard_round_trips() {
     // Latin-1 above ASCII on the way in (0xE9 is é, one byte on the wire), and
     // a character that has no latin-1 form on the way out — the two encoding
     // edges of RFB cut text.
-    let (vnc_port, mut cut_texts) =
-        spawn_fake_vnc_with_clipboard(Some(b"copied on caf\xE9")).await;
+    let (vnc_port, mut cut_texts) = spawn_fake_vnc_with_clipboard(Some(b"copied on caf\xE9")).await;
     let addr = spawn_app(target(Protocol::Vnc, vnc_port)).await;
     let cookie = common::login(addr).await;
 
@@ -2199,20 +2415,27 @@ async fn vnc_clipboard_round_trips() {
 
     // And the same text is still there to be fetched: a browser that attached
     // after the push — or reattached — has to be able to ask.
-    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#))
+        .await
+        .unwrap();
     let fetched = expect_clipboard(&mut ws).await;
     assert_eq!(fetched.text, pushed.text);
     assert_eq!(
         fetched.changed_at_ms, pushed.changed_at_ms,
         "Fetch must preserve the clipboard activity timestamp"
     );
-    assert!(!fetched.unconfirmed, "a server that sent cut text has a clipboard");
+    assert!(
+        !fetched.unconfirmed,
+        "a server that sent cut text has a clipboard"
+    );
     assert!(fetched.requested, "Fetch replies must be marked requested");
 
     // Browser → remote. Latin-1 survives; anything beyond it becomes '?'.
-    ws.send(Message::text(r#"{"type":"clipboard","text":"typed ☕ here"}"#))
-        .await
-        .unwrap();
+    ws.send(Message::text(
+        r#"{"type":"clipboard","text":"typed ☕ here"}"#,
+    ))
+    .await
+    .unwrap();
     let received = tokio::time::timeout(Duration::from_secs(10), cut_texts.recv())
         .await
         .expect("timed out waiting for ClientCutText")
@@ -2232,9 +2455,11 @@ async fn vnc_clipboard_round_trips() {
     // Nothing on the wire for it, and — the reason this is worth asserting over
     // the socket rather than in a unit test — the session is still live
     // afterwards: the next copy goes through on the same connection.
-    ws.send(Message::text(r#"{"type":"clipboard","text":"after refusal"}"#))
-        .await
-        .unwrap();
+    ws.send(Message::text(
+        r#"{"type":"clipboard","text":"after refusal"}"#,
+    ))
+    .await
+    .unwrap();
     // The channel is FIFO, so the next thing on it being this proves the
     // oversized copy produced nothing — whole or truncated — and that the
     // refusal cost the session nothing.
@@ -2266,7 +2491,9 @@ async fn a_fetch_before_the_remote_has_copied_anything_is_still_answered() {
     // filed rather than not having got there yet.
     expect_frame(&mut ws).await;
 
-    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#))
+        .await
+        .unwrap();
     assert_eq!(
         expect_clipboard(&mut ws).await,
         ClipboardMessage {
@@ -2304,7 +2531,11 @@ fn socket_for<'a>(ws: &'a mut Ws, kind: &str) -> &'a mut common::Socket {
         "standardStart",
         "tilesStart",
     ];
-    if DISPLAY.contains(&kind) { ws.display_socket() } else { ws.session_socket() }
+    if DISPLAY.contains(&kind) {
+        ws.display_socket()
+    } else {
+        ws.session_socket()
+    }
 }
 
 async fn expect_control(ws: &mut Ws, kind: &str) -> serde_json::Value {
@@ -2395,7 +2626,10 @@ async fn high_performance_ends_when_the_mac_refuses_the_media_stream() {
             break media_first;
         }
     };
-    assert!(media_first, "the offer went out behind encodings listing the stream first");
+    assert!(
+        media_first,
+        "the offer went out behind encodings listing the stream first"
+    );
     // The gateway hung up on the fake, which reads that as the end of its session.
     fake_mac
         .await
@@ -2421,9 +2655,16 @@ async fn high_performance_ends_when_the_offer_brings_no_picture() {
 
     let started = std::time::Instant::now();
     let error = expect_error(&mut ws).await;
-    assert!(error.contains("no picture came over the Mac's media stream within 10s of its offer"), "{error}");
+    assert!(
+        error.contains("no picture came over the Mac's media stream within 10s of its offer"),
+        "{error}"
+    );
     assert!(error.contains("nothing reached UDP"), "{error}");
-    assert!(started.elapsed() >= Duration::from_secs(9), "ended early: {:?}", started.elapsed());
+    assert!(
+        started.elapsed() >= Duration::from_secs(9),
+        "ended early: {:?}",
+        started.elapsed()
+    );
     fake_mac
         .await
         .expect("the fake Mac task panicked")
@@ -2472,7 +2713,10 @@ async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
 
     // High Performance's opening: the pasteboard enable, the display at Apple's
     // viewer's canonical mode without dynamic resolution, then the arming.
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoPasteboard(true));
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::AutoPasteboard(true)
+    );
     assert_eq!(
         next_mac_request(&mut requests).await,
         MacRequest::Configuration(MAC_NATIVE_OPENING, 2, false)
@@ -2484,19 +2728,28 @@ async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
     // The canonical layout re-arms, and with no media stream to wait for, the
     // session-ready configuration follows it: dynamic, at the client's screen,
     // with polling held until its layout.
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoPasteboard(true));
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::AutoPasteboard(true)
+    );
     assert_eq!(
         next_mac_request(&mut requests).await,
         MacRequest::AutoFramebuffer((MAC_NATIVE_OPENING.0 * 2, MAC_NATIVE_OPENING.1 * 2))
     );
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoFramebuffer((1, 1)));
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::AutoFramebuffer((1, 1))
+    );
     assert_eq!(
         next_mac_request(&mut requests).await,
         MacRequest::Configuration((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1, true)
     );
     let (rearm, held) = next_mac_request_past_held(&mut requests).await;
     assert_eq!(rearm, MacRequest::AutoPasteboard(true));
-    assert!(held > 0, "polling did not hold to one pixel while the display change was out");
+    assert!(
+        held > 0,
+        "polling did not hold to one pixel while the display change was out"
+    );
     assert_eq!(
         next_mac_request(&mut requests).await,
         MacRequest::AutoFramebuffer((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT))
@@ -2514,24 +2767,46 @@ async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
     // `tilesStart`, with no stream up. The arming pushes it, and it is never
     // polled for between updates.
     expect_fake_tiles(&mut ws, true).await;
-    assert!(requests.try_recv().is_err(), "a Standard session polled the Mac");
+    assert!(
+        requests.try_recv().is_err(),
+        "a Standard session polled the Mac"
+    );
 
     // A resize is High Performance's: the narrowed arming, the new configuration,
     // the held poll, and the Mac's answering layout.
-    ws.send(Message::text(format!(r#"{{"type":"viewport","w":{},"h":{}}}"#, MAC_WINDOW.0, MAC_WINDOW.1))).await.unwrap();
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoFramebuffer((1, 1)));
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::Configuration(MAC_WINDOW, 1, true));
+    ws.send(Message::text(format!(
+        r#"{{"type":"viewport","w":{},"h":{}}}"#,
+        MAC_WINDOW.0, MAC_WINDOW.1
+    )))
+    .await
+    .unwrap();
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::AutoFramebuffer((1, 1))
+    );
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::Configuration(MAC_WINDOW, 1, true)
+    );
     let resize = expect_resize_msg(&mut ws).await;
     assert_eq!(resize["w"], MAC_WINDOW.0, "{resize}");
     assert_eq!(resize["h"], MAC_WINDOW.1, "{resize}");
     let (rearm, held) = next_mac_request_past_held(&mut requests).await;
     assert_eq!(rearm, MacRequest::AutoPasteboard(true));
-    assert!(held > 0, "polling did not hold to one pixel while the resize was out");
-    assert_eq!(next_mac_request(&mut requests).await, MacRequest::AutoFramebuffer(MAC_WINDOW));
+    assert!(
+        held > 0,
+        "polling did not hold to one pixel while the resize was out"
+    );
+    assert_eq!(
+        next_mac_request(&mut requests).await,
+        MacRequest::AutoFramebuffer(MAC_WINDOW)
+    );
     // The same zlib goes on over the resize, not started over, and inflates here.
     expect_fake_tiles(&mut ws, false).await;
 
-    ws.send(Message::text(r#"{"type":"disconnect"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"disconnect"}"#))
+        .await
+        .unwrap();
     expect_picker(&mut ws).await;
     let configurations = fake_mac
         .await
@@ -2539,7 +2814,11 @@ async fn standard_on_a_virtual_display_resizes_it_and_offers_no_stream() {
         .expect("the fake Mac task failed");
     assert_eq!(
         configurations,
-        vec![(MAC_NATIVE_OPENING, 2), ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1), (MAC_WINDOW, 1)],
+        vec![
+            (MAC_NATIVE_OPENING, 2),
+            ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1),
+            (MAC_WINDOW, 1)
+        ],
         "unexpected display configurations"
     );
 }
@@ -2566,7 +2845,10 @@ async fn standard_refuses_a_virtual_display_the_mac_does_not_offer() {
     let error = expect_error(&mut ws).await;
     assert!(error.contains("without virtual_display"), "{error}");
     let served = fake_mac.await.unwrap();
-    assert_eq!(served.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        served.unwrap_err().kind(),
+        std::io::ErrorKind::UnexpectedEof
+    );
     assert!(requests.try_recv().is_err(), "the gateway sent a request");
 }
 
@@ -2619,17 +2901,26 @@ async fn standard_speaks_apples_revision_on_the_physical_screen() {
                     other => panic!("expected the {button} button, got {other:?}"),
                 }
             };
-            assert_eq!(mask, if pressed { bit } else { 0 }, "{button} pressed={pressed}");
+            assert_eq!(
+                mask,
+                if pressed { bit } else { 0 },
+                "{button} pressed={pressed}"
+            );
         }
     }
 
-    ws.send(Message::text(r#"{"type":"disconnect"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"disconnect"}"#))
+        .await
+        .unwrap();
     expect_picker(&mut ws).await;
     let configurations = fake_mac
         .await
         .expect("the fake Mac task panicked")
         .expect("the fake Mac task failed");
-    assert!(configurations.is_empty(), "Standard asked for a virtual display: {configurations:?}");
+    assert!(
+        configurations.is_empty(),
+        "Standard asked for a virtual display: {configurations:?}"
+    );
 }
 
 /// High Performance's opening after its canonical configuration, in Apple's
@@ -2656,7 +2947,11 @@ async fn expect_native_opening(
         MacRequest::AutoFramebuffer((1, 1))
     );
     let (offer, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(offer, MacRequest::Offer { media_first: true }, "the stream is offered for the canonical display");
+    assert_eq!(
+        offer,
+        MacRequest::Offer { media_first: true },
+        "the stream is offered for the canonical display"
+    );
     // The answer brings the list again, and the layout the Mac answers that with
     // re-arms on either side of the session-ready change, as on macvm.
     let mut narrowed = false;
@@ -2664,7 +2959,11 @@ async fn expect_native_opening(
         match next_mac_request_past_held(requests).await.0 {
             MacRequest::Configuration(asked, at, dynamic) => {
                 assert!(narrowed, "the region was not narrowed ahead of the change");
-                assert_eq!((asked, at, dynamic), (points, density, true), "the session-ready configuration");
+                assert_eq!(
+                    (asked, at, dynamic),
+                    (points, density, true),
+                    "the session-ready configuration"
+                );
                 break;
             }
             MacRequest::AutoFramebuffer((1, 1)) => narrowed = true,
@@ -2676,8 +2975,14 @@ async fn expect_native_opening(
     loop {
         match next_mac_request_past_held(requests).await.0 {
             MacRequest::Offer { media_first } => {
-                assert!(rearmed, "the session-ready layout did not re-arm its pasteboard");
-                assert!(media_first, "the stream is offered again for the settled display");
+                assert!(
+                    rearmed,
+                    "the session-ready layout did not re-arm its pasteboard"
+                );
+                assert!(
+                    media_first,
+                    "the stream is offered again for the settled display"
+                );
                 break;
             }
             MacRequest::AutoPasteboard(true) => rearmed = true,
@@ -2687,8 +2992,15 @@ async fn expect_native_opening(
     }
     // Its answer brings the list again, whose layout re-arms once more.
     let (rearm, _) = next_mac_request_past_held(requests).await;
-    assert_eq!(rearm, MacRequest::AutoPasteboard(true), "the repeated list's layout did not re-arm");
-    assert_eq!(next_mac_request(requests).await, MacRequest::AutoFramebuffer((1, 1)));
+    assert_eq!(
+        rearm,
+        MacRequest::AutoPasteboard(true),
+        "the repeated list's layout did not re-arm"
+    );
+    assert_eq!(
+        next_mac_request(requests).await,
+        MacRequest::AutoFramebuffer((1, 1))
+    );
 }
 
 /// The whole `ard-high-performance` RFB wire, end to end: authentication, record setup,
@@ -2765,7 +3077,10 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     let (fence, _) = next_mac_request_past_held(&mut requests).await;
     assert_eq!(
         fence,
-        MacRequest::Fence { flags: 0, payload: b"clip".to_vec() },
+        MacRequest::Fence {
+            flags: 0,
+            payload: b"clip".to_vec()
+        },
         "an incremental framebuffer request overtook the clipboard reply"
     );
     actions
@@ -2795,9 +3110,12 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     // Dynamic resize is another full configuration on the same record stream. The
     // fake Mac independently checks that the dynamic flag and the rest of the native
     // descriptor shape remain present, then answers with an authoritative layout.
-    ws.send(Message::text(format!(r#"{{"type":"viewport","w":{},"h":{}}}"#, MAC_WINDOW.0, MAC_WINDOW.1)))
-        .await
-        .unwrap();
+    ws.send(Message::text(format!(
+        r#"{{"type":"viewport","w":{},"h":{}}}"#,
+        MAC_WINDOW.0, MAC_WINDOW.1
+    )))
+    .await
+    .unwrap();
     let (narrowed, _) = next_mac_request_past_held(&mut requests).await;
     assert_eq!(
         narrowed,
@@ -2813,7 +3131,11 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     assert_eq!(resize["h"], MAC_WINDOW.1, "{resize}");
     assert_eq!(resize["scale"], 1.0, "{resize}");
     let (rearm, _) = next_mac_request_past_held(&mut requests).await;
-    assert_eq!(rearm, MacRequest::AutoPasteboard(true), "the dynamic layout did not re-arm its pasteboard");
+    assert_eq!(
+        rearm,
+        MacRequest::AutoPasteboard(true),
+        "the dynamic layout did not re-arm its pasteboard"
+    );
     assert_eq!(
         next_mac_request(&mut requests).await,
         MacRequest::AutoFramebuffer((1, 1)),
@@ -2825,7 +3147,9 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
     let (offer, _) = next_mac_request_past_held(&mut requests).await;
     assert_eq!(offer, MacRequest::Offer { media_first: true });
 
-    ws.send(Message::text(r#"{"type":"disconnect"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"disconnect"}"#))
+        .await
+        .unwrap();
     expect_picker(&mut ws).await;
     let configurations = fake_mac
         .await
@@ -2833,7 +3157,11 @@ async fn high_performance_configures_a_virtual_display_and_round_trips_clipboard
         .expect("the fake Mac task failed");
     assert_eq!(
         configurations,
-        vec![(MAC_NATIVE_OPENING, 2), ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1), (MAC_WINDOW, 1)],
+        vec![
+            (MAC_NATIVE_OPENING, 2),
+            ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 1),
+            (MAC_WINDOW, 1)
+        ],
         "unexpected display configurations"
     );
 }
@@ -2880,7 +3208,9 @@ async fn high_performance_opens_a_retina_client_at_its_screens_density() {
     assert_eq!(resize["h"], MAC_SCREEN_HEIGHT * 2, "{resize}");
     assert_eq!(resize["scale"], 2.0, "{resize}");
 
-    ws.send(Message::text(r#"{"type":"disconnect"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"disconnect"}"#))
+        .await
+        .unwrap();
     expect_picker(&mut ws).await;
     let configurations = fake_mac
         .await
@@ -2888,8 +3218,10 @@ async fn high_performance_opens_a_retina_client_at_its_screens_density() {
         .expect("the fake Mac task failed");
     assert_eq!(
         configurations,
-        vec![(MAC_NATIVE_OPENING, 2), ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 2)],
+        vec![
+            (MAC_NATIVE_OPENING, 2),
+            ((MAC_SCREEN_WIDTH, MAC_SCREEN_HEIGHT), 2)
+        ],
         "unexpected display configurations"
     );
 }
-

@@ -87,8 +87,14 @@ pub struct Mirror {
 impl Mirror {
     /// A mirror for a `w`×`h` desktop. ~6 MB at 1080p.
     pub fn new(w: u16, h: u16) -> anyhow::Result<Self> {
-        anyhow::ensure!(w > 0 && h > 0, "a video mirror cannot hold a {w}x{h} desktop");
-        Ok(Self { size: (w, h), rgb: vec![0; usize::from(w) * usize::from(h) * 3] })
+        anyhow::ensure!(
+            w > 0 && h > 0,
+            "a video mirror cannot hold a {w}x{h} desktop"
+        );
+        Ok(Self {
+            size: (w, h),
+            rgb: vec![0; usize::from(w) * usize::from(h) * 3],
+        })
     }
 
     /// The desktop this mirror is for.
@@ -226,9 +232,15 @@ mod tests {
     fn a_blit_outside_the_desktop_is_refused_rather_than_clipped() {
         let mut mirror = Mirror::new(640, 480).expect("a mirror");
         let too_far = mirror.blit(rect(630, 470, 20, 20), &flat(20, 20, [1, 2, 3]));
-        assert!(too_far.is_err(), "a rectangle off the edge of the desktop was accepted");
+        assert!(
+            too_far.is_err(),
+            "a rectangle off the edge of the desktop was accepted"
+        );
         let wrong_size = mirror.blit(rect(0, 0, 16, 16), &flat(16, 15, [1, 2, 3]));
-        assert!(wrong_size.is_err(), "pixels that are not the rectangle's were accepted");
+        assert!(
+            wrong_size.is_err(),
+            "pixels that are not the rectangle's were accepted"
+        );
     }
 
     #[test]
@@ -238,10 +250,14 @@ mod tests {
             .blit(rect(320, 64, 320, 64), &flat(320, 64, [9, 8, 7]))
             .expect("a blit");
         let mut out = Vec::new();
-        mirror.crop_into(rect(320, 64, 320, 64), &mut out).expect("a crop of that rectangle");
+        mirror
+            .crop_into(rect(320, 64, 320, 64), &mut out)
+            .expect("a crop of that rectangle");
         assert_eq!(out, flat(320, 64, [9, 8, 7]));
         // Its neighbour is untouched, which is the same statement from the other side.
-        mirror.crop_into(rect(0, 64, 320, 64), &mut out).expect("a crop of the rectangle beside it");
+        mirror
+            .crop_into(rect(0, 64, 320, 64), &mut out)
+            .expect("a crop of the rectangle beside it");
         assert_eq!(out, flat(320, 64, [0, 0, 0]));
         // A rectangle the mirror does not hold is refused rather than indexed.
         assert!(mirror.crop_into(rect(600, 400, 64, 128), &mut out).is_err());
@@ -252,7 +268,9 @@ mod tests {
         let mut mirror = Mirror::new(1919, 1079).expect("a mirror");
         assert_eq!(mirror.size(), (1919, 1079));
         assert_eq!(mirror.len(), 1919 * 1079 * 3);
-        mirror.blit(rect(1918, 1078, 1, 1), &[1, 2, 3]).expect("a blit of the last pixel");
+        mirror
+            .blit(rect(1918, 1078, 1, 1), &[1, 2, 3])
+            .expect("a blit of the last pixel");
         assert_eq!(mirror.pixel(1918, 1078), [1, 2, 3]);
     }
 
@@ -265,9 +283,18 @@ mod tests {
             panic!("a 5K picture was accepted");
         };
         let message = format!("{refused:#}");
-        assert!(message.contains("5120x2880"), "the message does not say what was asked for");
-        assert!(message.contains("3840"), "the message does not say what the limit is");
-        assert!(message.contains("resize"), "the message does not say what to do instead");
+        assert!(
+            message.contains("5120x2880"),
+            "the message does not say what was asked for"
+        );
+        assert!(
+            message.contains("3840"),
+            "the message does not say what the limit is"
+        );
+        assert!(
+            message.contains("resize"),
+            "the message does not say what to do instead"
+        );
         // Both 4K panels are pictures: the 16:9 one and the 16:10 one a 1920×1200 laptop
         // is at 2x.
         assert!(check_picture((3840, 2160)).is_ok(), "16:9 4K was refused");
@@ -278,7 +305,10 @@ mod tests {
             check_picture((2400, 3840)).is_ok(),
             "a portrait 4K desktop was refused"
         );
-        assert!(Mirror::new(0, 1080).is_err(), "a desktop with no pixels was accepted");
+        assert!(
+            Mirror::new(0, 1080).is_err(),
+            "a desktop with no pixels was accepted"
+        );
     }
 
     /// The size a resizing engine asks for instead: each axis held, the
@@ -286,14 +316,33 @@ mod tests {
     #[test]
     fn a_desktop_is_held_under_the_ceiling_per_axis() {
         assert_eq!(fit_ceiling((5120, 2880)), (3840, 2400), "a 5K screen");
-        assert_eq!(fit_ceiling((2880, 5120)), (2400, 3840), "the same screen on its side");
-        assert_eq!(fit_ceiling((1920, 1200)), (1920, 1200), "a desktop under the ceiling");
-        assert_eq!(fit_ceiling((3840, 2160)), (3840, 2160), "16:9 4K is under the ceiling");
-        assert_eq!(fit_ceiling((3840, 2400)), (3840, 2400), "the ceiling itself");
+        assert_eq!(
+            fit_ceiling((2880, 5120)),
+            (2400, 3840),
+            "the same screen on its side"
+        );
+        assert_eq!(
+            fit_ceiling((1920, 1200)),
+            (1920, 1200),
+            "a desktop under the ceiling"
+        );
+        assert_eq!(
+            fit_ceiling((3840, 2160)),
+            (3840, 2160),
+            "16:9 4K is under the ceiling"
+        );
+        assert_eq!(
+            fit_ceiling((3840, 2400)),
+            (3840, 2400),
+            "the ceiling itself"
+        );
         for size in [(5120, 2880), (2880, 5120), (4000, 4000), (3840, 2401)] {
             assert!(!within_ceiling(size), "{size:?} is over the ceiling");
             let held = fit_ceiling(size);
-            assert!(within_ceiling(held), "{size:?} held to {held:?} is still over it");
+            assert!(
+                within_ceiling(held),
+                "{size:?} held to {held:?} is still over it"
+            );
             assert!(
                 check_picture((held.0 as u16, held.1 as u16)).is_ok(),
                 "the ceiling refuses the {held:?} the engine was told to ask for"

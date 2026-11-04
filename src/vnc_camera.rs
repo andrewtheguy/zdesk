@@ -44,7 +44,11 @@ const SAMPLE_QUEUE: usize = 16;
 /// a picture with no area or a rate with either half zero, which wlshare takes as
 /// a client that does not speak the extension and ends the whole session over.
 fn plug(format: CameraFormat) -> Option<[u8; 16]> {
-    if format.width == 0 || format.height == 0 || format.fps_numerator == 0 || format.fps_denominator == 0 {
+    if format.width == 0
+        || format.height == 0
+        || format.fps_numerator == 0
+        || format.fps_denominator == 0
+    {
         return None;
     }
     Some(camera::plug(camera::CameraFormat {
@@ -191,8 +195,15 @@ pub fn attach(bridge: &Arc<CameraBridge>) -> (Link, Queues) {
         bridge: Arc::downgrade(bridge),
     }));
     (
-        Link { bridge: Arc::clone(bridge), device: std::sync::Mutex::new(Device::default()) },
-        Queues { commands, samples, generation: 0 },
+        Link {
+            bridge: Arc::clone(bridge),
+            device: std::sync::Mutex::new(Device::default()),
+        },
+        Queues {
+            commands,
+            samples,
+            generation: 0,
+        },
     )
 }
 
@@ -251,11 +262,20 @@ impl CameraControl for Control {
             return false;
         }
         if data.len() > MAX_SAMPLE {
-            warn!("vnc: dropped a {}-byte camera sample, over the {MAX_SAMPLE} bytes wlshare accepts", data.len());
+            warn!(
+                "vnc: dropped a {}-byte camera sample, over the {MAX_SAMPLE} bytes wlshare accepts",
+                data.len()
+            );
             return self.open_gap(keyframe);
         }
         let generation = self.generation.load(Ordering::Relaxed);
-        match self.samples.try_send((generation, Input::Sample { unit: data.to_vec(), keyframe })) {
+        match self.samples.try_send((
+            generation,
+            Input::Sample {
+                unit: data.to_vec(),
+                keyframe,
+            },
+        )) {
             Ok(()) => {
                 self.gap.store(false, Ordering::Relaxed);
                 true
@@ -271,8 +291,18 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::error::TryRecvError;
 
-    const VGA: CameraFormat = CameraFormat { width: 640, height: 480, fps_numerator: 30_000, fps_denominator: 1_001 };
-    const QVGA: CameraFormat = CameraFormat { width: 320, height: 240, fps_numerator: 15, fps_denominator: 1 };
+    const VGA: CameraFormat = CameraFormat {
+        width: 640,
+        height: 480,
+        fps_numerator: 30_000,
+        fps_denominator: 1_001,
+    };
+    const QVGA: CameraFormat = CameraFormat {
+        width: 320,
+        height: 240,
+        fps_numerator: 15,
+        fps_denominator: 1,
+    };
 
     /// A client message as wlshare's docs/architecture.md lays it out, read back without
     /// the builders.
@@ -285,7 +315,9 @@ mod tests {
 
     fn decode(bytes: &[u8]) -> Sent {
         assert_eq!(bytes[0], 0xE2);
-        let be32 = |at: usize| u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+        let be32 = |at: usize| {
+            u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+        };
         match bytes[1] {
             0 => {
                 assert_eq!((bytes.len(), &bytes[2..4]), (16, &[0u8, 0][..]));
@@ -304,7 +336,10 @@ mod tests {
                 assert_eq!(bytes[3], 0, "padding");
                 let len = be32(4) as usize;
                 assert_eq!(bytes.len(), 8 + len, "the message is exactly its unit");
-                Sent::Sample { keyframe: bytes[2] & 1 != 0, unit: bytes[8..].to_vec() }
+                Sent::Sample {
+                    keyframe: bytes[2] & 1 != 0,
+                    unit: bytes[8..].to_vec(),
+                }
             }
             other => panic!("operation {other} is not a client message"),
         }
@@ -313,12 +348,36 @@ mod tests {
     #[test]
     fn client_messages_have_the_documented_layouts() {
         let bytes = plug(VGA).unwrap();
-        assert_eq!(bytes, [0xE2, 0, 0, 0, 0x02, 0x80, 0x01, 0xE0, 0, 0, 0x75, 0x30, 0, 0, 0x03, 0xE9]);
+        assert_eq!(
+            bytes,
+            [
+                0xE2, 0, 0, 0, 0x02, 0x80, 0x01, 0xE0, 0, 0, 0x75, 0x30, 0, 0, 0x03, 0xE9
+            ]
+        );
         assert_eq!(decode(&bytes), Sent::Plug(VGA));
         assert_eq!(decode(&camera::unplug()), Sent::Unplug);
-        assert_eq!(decode(&camera::sample(true, &[0, 0, 1, 0x65])), Sent::Sample { keyframe: true, unit: vec![0, 0, 1, 0x65] });
-        assert_eq!(decode(&camera::sample(false, &[7])), Sent::Sample { keyframe: false, unit: vec![7] });
-        assert_eq!(plug(CameraFormat { width: 70_000, ..VGA }), None, "no geometry past a u16");
+        assert_eq!(
+            decode(&camera::sample(true, &[0, 0, 1, 0x65])),
+            Sent::Sample {
+                keyframe: true,
+                unit: vec![0, 0, 1, 0x65]
+            }
+        );
+        assert_eq!(
+            decode(&camera::sample(false, &[7])),
+            Sent::Sample {
+                keyframe: false,
+                unit: vec![7]
+            }
+        );
+        assert_eq!(
+            plug(CameraFormat {
+                width: 70_000,
+                ..VGA
+            }),
+            None,
+            "no geometry past a u16"
+        );
     }
 
     /// A format with no area or no rate would end the session at wlshare, so it is
@@ -328,16 +387,34 @@ mod tests {
         for format in [
             CameraFormat { width: 0, ..VGA },
             CameraFormat { height: 0, ..VGA },
-            CameraFormat { fps_numerator: 0, ..VGA },
-            CameraFormat { fps_denominator: 0, ..VGA },
+            CameraFormat {
+                fps_numerator: 0,
+                ..VGA
+            },
+            CameraFormat {
+                fps_denominator: 0,
+                ..VGA
+            },
         ] {
             assert_eq!(plug(format), None, "{format:?}");
         }
         let mut device = Device::default();
         assert_eq!(device.announce(), None);
         assert_eq!(decode(&device.plug(VGA).unwrap()), Sent::Plug(VGA));
-        assert_eq!(device.plug(CameraFormat { fps_denominator: 0, ..QVGA }), None);
-        assert_eq!(decode(&device.sample(&[1], true).unwrap()), Sent::Sample { keyframe: true, unit: vec![1] });
+        assert_eq!(
+            device.plug(CameraFormat {
+                fps_denominator: 0,
+                ..QVGA
+            }),
+            None
+        );
+        assert_eq!(
+            decode(&device.sample(&[1], true).unwrap()),
+            Sent::Sample {
+                keyframe: true,
+                unit: vec![1]
+            }
+        );
     }
 
     /// A plug made before the server answers waits for the answer, and goes out
@@ -346,12 +423,26 @@ mod tests {
     fn a_plug_before_the_announcement_goes_out_with_it() {
         let mut device = Device::default();
         assert_eq!(device.plug(VGA), None);
-        assert_eq!(device.sample(&[1], true), None, "nothing is sent to a server that has not answered");
+        assert_eq!(
+            device.sample(&[1], true),
+            None,
+            "nothing is sent to a server that has not answered"
+        );
         assert_eq!(decode(&device.announce().unwrap()), Sent::Plug(VGA));
         assert_eq!(device.announce(), None);
-        assert_eq!(decode(&device.sample(&[1], true).unwrap()), Sent::Sample { keyframe: true, unit: vec![1] });
+        assert_eq!(
+            decode(&device.sample(&[1], true).unwrap()),
+            Sent::Sample {
+                keyframe: true,
+                unit: vec![1]
+            }
+        );
         assert_eq!(decode(&device.unplug().unwrap()), Sent::Unplug);
-        assert_eq!(device.unplug(), None, "an unplugged camera is not unplugged twice");
+        assert_eq!(
+            device.unplug(),
+            None,
+            "an unplugged camera is not unplugged twice"
+        );
         assert_eq!(device.sample(&[1], true), None);
     }
 
@@ -378,7 +469,13 @@ mod tests {
         bridge.plug(VGA);
         assert!(bridge.sample(&[1], true));
         assert_eq!(queues.next().await, Some(Input::Plug(VGA)));
-        assert_eq!(queues.next().await, Some(Input::Sample { unit: vec![1], keyframe: true }));
+        assert_eq!(
+            queues.next().await,
+            Some(Input::Sample {
+                unit: vec![1],
+                keyframe: true
+            })
+        );
 
         for _ in 0..SAMPLE_QUEUE {
             assert!(bridge.sample(&[2], false));
@@ -386,12 +483,26 @@ mod tests {
         assert!(!bridge.sample(&[3], false));
         assert_eq!(signals.try_recv(), Ok(CameraSignal::Keyframe));
         assert!(!bridge.sample(&[4], false));
-        assert_eq!(signals.try_recv(), Err(TryRecvError::Empty), "asked once per gap");
+        assert_eq!(
+            signals.try_recv(),
+            Err(TryRecvError::Empty),
+            "asked once per gap"
+        );
         assert!(!bridge.sample(&[5], true));
-        assert_eq!(signals.try_recv(), Ok(CameraSignal::Keyframe), "a keyframe lost to the queue is owed again");
+        assert_eq!(
+            signals.try_recv(),
+            Ok(CameraSignal::Keyframe),
+            "a keyframe lost to the queue is owed again"
+        );
 
         while let Ok((_, sample)) = queues.samples.try_recv() {
-            assert_eq!(sample, Input::Sample { unit: vec![2], keyframe: false });
+            assert_eq!(
+                sample,
+                Input::Sample {
+                    unit: vec![2],
+                    keyframe: false
+                }
+            );
         }
         assert!(!bridge.sample(&[6], false), "room is not a keyframe");
         assert!(bridge.sample(&[7], true));
@@ -401,7 +512,10 @@ mod tests {
         // stream starts on: without the request the stream would never start.
         assert!(!bridge.sample(&vec![0; MAX_SAMPLE + 1], true));
         assert_eq!(signals.try_recv(), Ok(CameraSignal::Keyframe));
-        assert!(!bridge.sample(&[9], false), "the deltas after it are dropped too");
+        assert!(
+            !bridge.sample(&[9], false),
+            "the deltas after it are dropped too"
+        );
         assert_eq!(signals.try_recv(), Err(TryRecvError::Empty));
         assert!(bridge.sample(&[10], true));
     }
@@ -423,7 +537,13 @@ mod tests {
         assert_eq!(queues.next().await, Some(Input::Plug(VGA)));
         assert_eq!(queues.next().await, Some(Input::Unplug));
         assert_eq!(queues.next().await, Some(Input::Plug(QVGA)));
-        assert_eq!(queues.next().await, Some(Input::Sample { unit: vec![2], keyframe: true }));
+        assert_eq!(
+            queues.next().await,
+            Some(Input::Sample {
+                unit: vec![2],
+                keyframe: true
+            })
+        );
 
         // And a sample from before any plug belongs to no camera at all.
         let bridge = Arc::new(CameraBridge::new());
@@ -432,6 +552,12 @@ mod tests {
         bridge.plug(VGA);
         assert!(bridge.sample(&[4], true));
         assert_eq!(queues.next().await, Some(Input::Plug(VGA)));
-        assert_eq!(queues.next().await, Some(Input::Sample { unit: vec![4], keyframe: true }));
+        assert_eq!(
+            queues.next().await,
+            Some(Input::Sample {
+                unit: vec![4],
+                keyframe: true
+            })
+        );
     }
 }

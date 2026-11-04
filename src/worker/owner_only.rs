@@ -51,7 +51,10 @@ impl SecurityDescriptor {
     /// The same for a directory and everything created in it, with `SYSTEM`
     /// beside the user as root is beside a `0700` directory's owner.
     fn directory() -> io::Result<Self> {
-        Self::from_sddl(&format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{})", current_user_sid()?))
+        Self::from_sddl(&format!(
+            "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{})",
+            current_user_sid()?
+        ))
     }
 
     fn from_sddl(sddl: &str) -> io::Result<Self> {
@@ -87,7 +90,8 @@ impl SecurityDescriptor {
         let mut dacl: *mut ACL = std::ptr::null_mut();
         // SAFETY: the descriptor is valid for as long as `self`, and the DACL
         // pointer it yields points into it.
-        let ok = unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) };
+        let ok =
+            unsafe { GetSecurityDescriptorDacl(self.0, &mut present, &mut dacl, &mut defaulted) };
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -117,12 +121,14 @@ pub fn protect_directory(path: &Path) -> anyhow::Result<()> {
         .context("cannot build an owner-only security descriptor")?;
     set_dacl(
         path,
-        owner_only.dacl().context("cannot read the owner-only security descriptor")?,
+        owner_only
+            .dacl()
+            .context("cannot read the owner-only security descriptor")?,
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
     )
     .with_context(|| format!("cannot make {} private", path.display()))?;
-    let inherit_only = SecurityDescriptor::from_sddl("D:")
-        .context("cannot build an empty security descriptor")?;
+    let inherit_only =
+        SecurityDescriptor::from_sddl("D:").context("cannot build an empty security descriptor")?;
     let inherit_only = inherit_only
         .dacl()
         .context("cannot read the empty security descriptor")?;
@@ -156,7 +162,11 @@ fn reset_under(dir: &Path, inherit_only: *const ACL) -> anyhow::Result<()> {
 }
 
 fn set_dacl(path: &Path, dacl: *const ACL, what: OBJECT_SECURITY_INFORMATION) -> io::Result<()> {
-    let name: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     // SAFETY: `name` is NUL-terminated and `dacl` points into a descriptor the
     // caller holds; the call copies what it needs.
     let status = unsafe {
@@ -245,14 +255,20 @@ mod tests {
 
     /// The DACL's flags (`P` protected, `AI` auto-inherited) and its entries.
     fn split(sddl: &str) -> (String, String) {
-        let body = sddl.strip_prefix("D:").unwrap_or_else(|| panic!("not a DACL: {sddl}"));
+        let body = sddl
+            .strip_prefix("D:")
+            .unwrap_or_else(|| panic!("not a DACL: {sddl}"));
         let entries = body.find('(').unwrap_or(body.len());
         (body[..entries].to_owned(), body[entries..].to_owned())
     }
 
     /// The DACL on `path`, as SDDL.
     fn dacl_sddl(path: &Path) -> String {
-        let name: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let name: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         // SAFETY: `name` is NUL-terminated; the descriptor is LocalAlloc'd and freed below.
         let status = unsafe {
@@ -310,15 +326,23 @@ mod tests {
         let user = current_user_sid().unwrap();
         assert!(user.starts_with("S-1-"), "{user}");
         let (flags, entries) = split(&dacl_sddl(&dir));
-        assert!(flags.contains('P'), "nothing is inherited from above: {flags}");
-        let (_, expected) = split(&canonical(&format!("D:(A;OICI;FA;;;SY)(A;OICI;FA;;;{user})")));
+        assert!(
+            flags.contains('P'),
+            "nothing is inherited from above: {flags}"
+        );
+        let (_, expected) = split(&canonical(&format!(
+            "D:(A;OICI;FA;;;SY)(A;OICI;FA;;;{user})"
+        )));
         assert_eq!(entries, expected);
 
         let config = dir.join("zdesk.toml");
         std::fs::write(&config, "").unwrap();
         let (_, entries) = split(&dacl_sddl(&config));
         let (_, expected) = split(&canonical(&format!("D:(A;ID;FA;;;SY)(A;ID;FA;;;{user})")));
-        assert_eq!(entries, expected, "the config inherits the two entries and nothing else");
+        assert_eq!(
+            entries, expected,
+            "the config inherits the two entries and nothing else"
+        );
     }
 
     /// What was already under the directory with entries of its own — an imported
@@ -345,16 +369,25 @@ mod tests {
             "D:P(A;;FA;;;WD)",
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
         );
-        assert!(dacl_sddl(&config).contains(";;;WD)"), "the setup gives everyone read access");
+        assert!(
+            dacl_sddl(&config).contains(";;;WD)"),
+            "the setup gives everyone read access"
+        );
 
         protect_directory(&dir).unwrap();
 
         let user = current_user_sid().unwrap();
-        let (_, directory) = split(&canonical(&format!("D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;{user})")));
+        let (_, directory) = split(&canonical(&format!(
+            "D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;{user})"
+        )));
         let (_, file) = split(&canonical(&format!("D:(A;ID;FA;;;SY)(A;ID;FA;;;{user})")));
         for (path, expected) in [(&instance, &directory), (&config, &file), (&state, &file)] {
             let (flags, entries) = split(&dacl_sddl(path));
-            assert!(!flags.contains('P'), "{} inherits again: {flags}", path.display());
+            assert!(
+                !flags.contains('P'),
+                "{} inherits again: {flags}",
+                path.display()
+            );
             assert_eq!(&entries, expected, "{}", path.display());
         }
     }
