@@ -1,0 +1,4 @@
+# rustfmt's defaults, held to the 2024 style edition, for every crate under this
+# directory, the wasm modules' outside the workspace included. CI checks them
+# (.github/workflows/rust-format.yml).
+style_edition = "2024"

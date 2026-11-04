@@ -27,6 +27,8 @@ belong in the linked documentation.
 ## Workflow
 
 - Strict no backward-compatibility or legacy paths.
+- Rust is kept as `cargo fmt` formats it under `rustfmt.toml`, the two wasm
+  modules outside the workspace through `--manifest-path`, and CI checks it.
 - For codex only no `cargo fmt` because when it does git diff, it gets stuck after cargo fmt.
 - No squash merges.
 - After Rust changes, run `cargo clippy --all-targets -- -D warnings` and
