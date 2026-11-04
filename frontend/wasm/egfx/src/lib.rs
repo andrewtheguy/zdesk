@@ -42,9 +42,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Mutex, OnceLock};
 
 use rayon::{ThreadBuilder, ThreadPoolBuilder};
+use wasm_bindgen::prelude::*;
 use zdesk_rdp_graphics::avc::{self, Picture, Plane, Samples, Scanned, Window};
 use zdesk_rdp_graphics::{Compositor, GpuArea, Rect};
-use wasm_bindgen::prelude::*;
 
 /// The pool's threads on their way from the pool that makes them to the workers
 /// that run them.
@@ -57,7 +57,10 @@ fn seats() -> &'static Seats {
     static SEATS: OnceLock<Seats> = OnceLock::new();
     SEATS.get_or_init(|| {
         let (offer, take) = channel();
-        Seats { offer: Mutex::new(offer), take: Mutex::new(take) }
+        Seats {
+            offer: Mutex::new(offer),
+            take: Mutex::new(take),
+        }
     })
 }
 
@@ -71,7 +74,11 @@ pub fn module() -> JsValue {
 /// the pool to be started and returns once [`stop_pool`] has stopped it.
 #[wasm_bindgen(js_name = runPoolThread)]
 pub fn run_pool_thread() {
-    let thread = seats().take.lock().expect("no thread panics holding a seat").recv();
+    let thread = seats()
+        .take
+        .lock()
+        .expect("no thread panics holding a seat")
+        .recv();
     if let Ok(thread) = thread {
         thread.run();
     }
@@ -82,12 +89,20 @@ pub fn run_pool_thread() {
 /// while the thread that made it waits.
 #[wasm_bindgen(js_name = startPool)]
 pub fn start_pool(threads: usize) -> Result<(), JsError> {
-    let offer = seats().offer.lock().expect("no thread panics holding a seat").clone();
+    let offer = seats()
+        .offer
+        .lock()
+        .expect("no thread panics holding a seat")
+        .clone();
     let pool = ThreadPoolBuilder::new()
         .num_threads(threads)
         // The thread that was not sent is dropped with the error: it is not `Sync`,
         // which an error is.
-        .spawn_handler(move |thread| offer.send(thread).map_err(|_| io::Error::other("the pool's seats are gone")))
+        .spawn_handler(move |thread| {
+            offer
+                .send(thread)
+                .map_err(|_| io::Error::other("the pool's seats are gone"))
+        })
         .build()
         .map_err(|e| JsError::new(&e.to_string()))?;
     zdesk_rdp_graphics::pool::set(Some(pool));
@@ -128,15 +143,33 @@ const GPU_FIELDS: usize = 7;
 /// A rectangle shown from the GPU, as [`GPU_FIELDS`] numbers: its surface, its
 /// `x, y, width, height` in the surface, and where its top left is on the output.
 fn area_fields(area: &GpuArea) -> [u32; GPU_FIELDS] {
-    let GpuArea { surface, rect, output } = area;
-    [u32::from(*surface), rect.x, rect.y, rect.width, rect.height, output.x, output.y]
+    let GpuArea {
+        surface,
+        rect,
+        output,
+    } = area;
+    [
+        u32::from(*surface),
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        output.x,
+        output.y,
+    ]
 }
 
 #[wasm_bindgen]
 impl Egfx {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Egfx {
-        Egfx { compositor: Compositor::new(), painted: Vec::new(), resized: false, landing: Vec::new(), gpu: Vec::new() }
+        Egfx {
+            compositor: Compositor::new(),
+            painted: Vec::new(),
+            resized: false,
+            landing: Vec::new(),
+            gpu: Vec::new(),
+        }
     }
 
     /// One `GRAPHICS` record's message, as the host sent it, out of its bulk
@@ -146,7 +179,9 @@ impl Egfx {
     ///
     /// Throws for a message that does not unwrap, after which none after it can be.
     pub fn unwrap(&mut self, wrapped: &[u8]) -> Result<Vec<u8>, JsError> {
-        self.compositor.unwrap(wrapped).map_err(|e| JsError::new(&format!("{e:#}")))
+        self.compositor
+            .unwrap(wrapped)
+            .map_err(|e| JsError::new(&format!("{e:#}")))
     }
 
     /// Compose one `GRAPHICS` record's commands, unwrapped, and return how many
@@ -157,15 +192,27 @@ impl Egfx {
     pub fn compose(&mut self, commands: &[u8]) -> Result<u32, JsError> {
         self.painted.clear();
         self.resized = false;
-        let composed = self.compositor.compose(commands).map_err(|e| JsError::new(&format!("{e:#}")))?;
+        let composed = self
+            .compositor
+            .compose(commands)
+            .map_err(|e| JsError::new(&format!("{e:#}")))?;
         self.resized = composed.resized.is_some();
         for rect in composed.painted {
-            self.painted.extend([rect.x, rect.y, rect.width, rect.height]);
+            self.painted
+                .extend([rect.x, rect.y, rect.width, rect.height]);
         }
         self.gpu.clear();
         for paint in composed.gpu {
             let output = paint.output;
-            self.gpu.extend([paint.unit, output.x, output.y, output.width, output.height, paint.source.0, paint.source.1]);
+            self.gpu.extend([
+                paint.unit,
+                output.x,
+                output.y,
+                output.width,
+                output.height,
+                paint.source.0,
+                paint.source.1,
+            ]);
         }
         Ok(composed.frames)
     }
@@ -179,7 +226,10 @@ impl Egfx {
     /// Throws for a command that does not decode, which [`Self::compose`] would
     /// throw for too.
     pub fn plan(&self, commands: &[u8]) -> Result<Vec<u32>, JsError> {
-        let plan = self.compositor.plan(commands).map_err(|e| JsError::new(&e.to_string()))?;
+        let plan = self
+            .compositor
+            .plan(commands)
+            .map_err(|e| JsError::new(&e.to_string()))?;
         let mut out = Vec::with_capacity(1 + plan.gpu.len() + plan.restore.len() * GPU_FIELDS);
         out.push(plan.gpu.len() as u32);
         out.extend(plan.gpu.iter().map(|&gpu| u32::from(gpu)));
@@ -207,7 +257,11 @@ impl Egfx {
     /// page reads back to have the framebuffer whole.
     #[wasm_bindgen(js_name = gpuAreas)]
     pub fn gpu_areas(&self) -> Vec<u32> {
-        self.compositor.gpu_areas().iter().flat_map(area_fields).collect()
+        self.compositor
+            .gpu_areas()
+            .iter()
+            .flat_map(area_fields)
+            .collect()
     }
 
     /// A rectangle shown from the GPU, read back off it: `pixels` is the rows of
@@ -223,7 +277,16 @@ impl Egfx {
         pixels: &[u8],
     ) -> Result<(), JsError> {
         self.compositor
-            .restore(surface, Rect { x, y, width, height }, pixels)
+            .restore(
+                surface,
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                pixels,
+            )
             .map_err(|e| JsError::new(&format!("{e:#}")))
     }
 
@@ -248,15 +311,30 @@ impl Egfx {
             let fields: [u32; UNIT_FIELDS] = match found {
                 Scanned::Gone { surface } => [1, surface.into(), 0, 0, 0, 0, 0, 0, 0, 0],
                 Scanned::Unit(unit) => {
-                    let profile = unit.profile.map_or(0, |[p, c, l]| u32::from_be_bytes([1, p, c, l]));
+                    let profile = unit
+                        .profile
+                        .map_or(0, |[p, c, l]| u32::from_be_bytes([1, p, c, l]));
                     let [left, top, right, bottom] = match unit.window {
                         Window::Nothing => [0; 4],
-                        Window::Part(rect) => [rect.left, rect.top, rect.right, rect.bottom].map(u32::from),
+                        Window::Part(rect) => {
+                            [rect.left, rect.top, rect.right, rect.bottom].map(u32::from)
+                        }
                         Window::Whole => [u32::MAX; 4],
                     };
                     // A record is a WebSocket message, far short of four gigabytes.
                     let (start, end) = (unit.start as u32, unit.end as u32);
-                    [0, unit.surface.into(), start, end, unit.key.into(), profile, left, top, right, bottom]
+                    [
+                        0,
+                        unit.surface.into(),
+                        start,
+                        end,
+                        unit.key.into(),
+                        profile,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    ]
                 }
             };
             out.extend(fields);
@@ -288,14 +366,38 @@ impl Egfx {
         height: u32,
         layout: &[u32],
     ) -> Result<(), JsError> {
-        let plane = |at: usize| Plane { offset: layout[at] as usize, stride: layout[at + 1] as usize };
+        let plane = |at: usize| Plane {
+            offset: layout[at] as usize,
+            stride: layout[at + 1] as usize,
+        };
         let samples = match layout.len() {
-            6 => Samples::I420 { y: plane(0), u: plane(2), v: plane(4) },
-            4 => Samples::Nv12 { y: plane(0), uv: plane(2) },
-            other => return Err(JsError::new(&format!("a picture laid out in {other} numbers"))),
+            6 => Samples::I420 {
+                y: plane(0),
+                u: plane(2),
+                v: plane(4),
+            },
+            4 => Samples::Nv12 {
+                y: plane(0),
+                uv: plane(2),
+            },
+            other => {
+                return Err(JsError::new(&format!(
+                    "a picture laid out in {other} numbers"
+                )));
+            }
         };
         let data = std::mem::take(&mut self.landing);
-        self.compositor.supply(unit, Picture { data, samples, left, top, width, height });
+        self.compositor.supply(
+            unit,
+            Picture {
+                data,
+                samples,
+                left,
+                top,
+                width,
+                height,
+            },
+        );
         Ok(())
     }
 
@@ -323,7 +425,9 @@ impl Egfx {
     /// bytes, `RGBX` — the fourth byte unused — top row first. Good until the next
     /// [`Self::compose`], which may move it.
     pub fn pixels(&self) -> *const u8 {
-        self.compositor.framebuffer().with(|frame| frame.pixels.as_ptr())
+        self.compositor
+            .framebuffer()
+            .with(|frame| frame.pixels.as_ptr())
     }
 }
 
@@ -356,7 +460,15 @@ pub struct WlshareTiles {
 impl WlshareTiles {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WlshareTiles {
-        WlshareTiles { decoder: Default::default(), size: (0, 0), frame: 0, bitmap: Vec::new(), planes: Vec::new(), pixels: Vec::new(), still: None }
+        WlshareTiles {
+            decoder: Default::default(),
+            size: (0, 0),
+            frame: 0,
+            bitmap: Vec::new(),
+            planes: Vec::new(),
+            pixels: Vec::new(),
+            still: None,
+        }
     }
 
     /// The tile `block` is of, decoded against what this holds of it, as `R, G,
@@ -366,14 +478,27 @@ impl WlshareTiles {
     /// Throws for a block that does not decode, or that paints none of the
     /// rectangle, after which the tile holds what it held before.
     #[allow(clippy::too_many_arguments)]
-    pub fn progressive(&mut self, width: u32, height: u32, x: u16, y: u16, w: u16, h: u16, block: &[u8]) -> Result<Vec<u8>, JsError> {
+    pub fn progressive(
+        &mut self,
+        width: u32,
+        height: u32,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        block: &[u8],
+    ) -> Result<Vec<u8>, JsError> {
         if self.size != (width, height) {
             self.decoder = Default::default();
             self.size = (width, height);
         }
         self.frame = self.frame.wrapping_add(1);
         let stream = wlshare_proto::progressive::stream(self.frame, &[(x, y, w, h)], &[block]);
-        let (stride, mut out, mut painted) = (usize::from(w) * 4, vec![0u8; usize::from(w) * usize::from(h) * 4], false);
+        let (stride, mut out, mut painted) = (
+            usize::from(w) * 4,
+            vec![0u8; usize::from(w) * usize::from(h) * 4],
+            false,
+        );
         self.decoder.start_frame();
         self.decoder
             .decompress(1, width, height, &stream, usize::MAX, |rect, rows, from| {
@@ -381,14 +506,21 @@ impl WlshareTiles {
                 let cols = usize::from(rect.right - rect.left);
                 for (row, y_at) in (rect.top..rect.bottom).enumerate() {
                     let to = usize::from(y_at - y) * stride + usize::from(rect.left - x) * 4;
-                    for (px, src) in out[to..to + cols * 4].as_chunks_mut::<4>().0.iter_mut().zip(rows[row * from..].as_chunks::<4>().0) {
+                    for (px, src) in out[to..to + cols * 4]
+                        .as_chunks_mut::<4>()
+                        .0
+                        .iter_mut()
+                        .zip(rows[row * from..].as_chunks::<4>().0)
+                    {
                         px.copy_from_slice(&[src[0], src[1], src[2], 255]);
                     }
                 }
             })
             .map_err(|e| JsError::new(&format!("a progressive tile at {x},{y}: {e}")))?;
         if !painted {
-            return Err(JsError::new(&format!("a progressive tile at {x},{y} painted nothing")));
+            return Err(JsError::new(&format!(
+                "a progressive tile at {x},{y} painted nothing"
+            )));
         }
         Ok(out)
     }
@@ -403,19 +535,36 @@ impl WlshareTiles {
         self.bitmap.clear();
         let most = planar_most(w, h);
         let mut source = body;
-        let frame = ruzstd::decoding::StreamingDecoder::new(&mut source).map_err(|e| fail(e.to_string()))?;
+        let frame = ruzstd::decoding::StreamingDecoder::new(&mut source)
+            .map_err(|e| fail(e.to_string()))?;
         let mut capped = std::io::Read::take(frame, most as u64 + 1);
-        std::io::Read::read_to_end(&mut capped, &mut self.bitmap).map_err(|e| fail(e.to_string()))?;
+        std::io::Read::read_to_end(&mut capped, &mut self.bitmap)
+            .map_err(|e| fail(e.to_string()))?;
         if self.bitmap.len() > most {
             self.bitmap = Vec::new();
-            return Err(fail(format!("a zstd frame of more than the {most} bytes a planar bitmap of it can be")));
+            return Err(fail(format!(
+                "a zstd frame of more than the {most} bytes a planar bitmap of it can be"
+            )));
         }
         drop(capped);
         if !source.is_empty() {
             return Err(fail(format!("{} bytes past its zstd frame", source.len())));
         }
-        zdesk_rdp_graphics::proto::planar::decompress(&self.bitmap, &mut self.planes, &mut self.pixels, w, h).map_err(|e| fail(e.to_string()))?;
-        Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
+        zdesk_rdp_graphics::proto::planar::decompress(
+            &self.bitmap,
+            &mut self.planes,
+            &mut self.pixels,
+            w,
+            h,
+        )
+        .map_err(|e| fail(e.to_string()))?;
+        Ok(self
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|px| [px[2], px[1], px[0], 255])
+            .collect())
     }
 
     /// The pixels of `body`, one of wlshare's lossless tiles where the desktop
@@ -431,11 +580,24 @@ impl WlshareTiles {
             self.still = None;
             return Err(JsError::new(&format!("a {w}x{h} still lossless tile: {e}")));
         }
-        zdesk_rdp_graphics::proto::planar::decompress(&self.bitmap, &mut self.planes, &mut self.pixels, w, h).map_err(|e| {
+        zdesk_rdp_graphics::proto::planar::decompress(
+            &self.bitmap,
+            &mut self.planes,
+            &mut self.pixels,
+            w,
+            h,
+        )
+        .map_err(|e| {
             self.still = None;
             JsError::new(&format!("a {w}x{h} still lossless tile: {e}"))
         })?;
-        Ok(self.pixels.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0], 255]).collect())
+        Ok(self
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|px| [px[2], px[1], px[0], 255])
+            .collect())
     }
 
     /// `body` read on in the still stream into [`Self::bitmap`]: a block at a
@@ -450,9 +612,14 @@ impl WlshareTiles {
             frame.init(&mut source).map_err(|e| e.to_string())?;
             self.still = Some(frame);
         }
-        let frame = self.still.as_mut().ok_or("a body that continues no stream")?;
+        let frame = self
+            .still
+            .as_mut()
+            .ok_or("a body that continues no stream")?;
         // What the bodies before left held back is theirs.
-        frame.collect_to_writer(io::sink()).map_err(|e| e.to_string())?;
+        frame
+            .collect_to_writer(io::sink())
+            .map_err(|e| e.to_string())?;
         let held = |frame: &ruzstd::decoding::FrameDecoder| {
             let (a, b) = frame.peek();
             a.len() + b.len()
@@ -465,15 +632,23 @@ impl WlshareTiles {
                 return Err("a last block, which ends the stream's frame".into());
             }
             // An RLE block's content is its one byte.
-            let content = if (header >> 1) & 3 == 1 { 1 } else { (header >> 3) as usize };
+            let content = if (header >> 1) & 3 == 1 {
+                1
+            } else {
+                (header >> 3) as usize
+            };
             let block = source.get(..3 + content).ok_or("a block cut short")?;
-            let (read, _) = frame.decode_from_to(block, &mut []).map_err(|e| e.to_string())?;
+            let (read, _) = frame
+                .decode_from_to(block, &mut [])
+                .map_err(|e| e.to_string())?;
             if read != block.len() {
                 return Err("a block that does not decode".into());
             }
             source = &source[block.len()..];
             if held(frame) - before > most {
-                return Err(format!("more than the {most} bytes a planar bitmap of it can be"));
+                return Err(format!(
+                    "more than the {most} bytes a planar bitmap of it can be"
+                ));
             }
         }
         // The ring's two parts, in order, past what was there before.
@@ -506,4 +681,3 @@ impl Default for WlshareTiles {
         Self::new()
     }
 }
-
