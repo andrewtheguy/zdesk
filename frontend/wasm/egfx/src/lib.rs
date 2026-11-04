@@ -126,8 +126,11 @@ pub struct Egfx {
     painted: Vec<u32>,
     resized: bool,
     /// Where a decoded picture's samples land on their way to the compositor:
-    /// reserved, written by the page, then supplied.
+    /// reserved, written by the page, then supplied. Empty but for its capacity
+    /// until [`Self::supply`] gives it the [`Self::reserved`] bytes the page wrote.
     landing: Vec<u8>,
+    /// How many bytes the last [`Self::reserve`] made room for.
+    reserved: usize,
     /// What the last run left the page to draw from the pictures it shows from its
     /// GPU: [`GPU_FIELDS`] numbers each.
     gpu: Vec<u32>,
@@ -168,6 +171,7 @@ impl Egfx {
             painted: Vec::new(),
             resized: false,
             landing: Vec::new(),
+            reserved: 0,
             gpu: Vec::new(),
         }
     }
@@ -344,9 +348,14 @@ impl Egfx {
 
     /// Room for one decoded picture's samples, `bytes` of them, in this module's
     /// memory: where the page has its decoder copy them. Good until the next call
-    /// here or to [`Self::supply`].
+    /// here or to [`Self::supply`], which the page makes only once the copy has
+    /// written every one of the bytes.
+    ///
+    /// The room is not zeroed first, since the copy writes all of it: a picture's
+    /// worth of zeroes, about 3 MB at 1080p, written for nothing every picture.
     pub fn reserve(&mut self, bytes: usize) -> *mut u8 {
-        self.landing = vec![0; bytes];
+        self.landing = Vec::with_capacity(bytes);
+        self.reserved = bytes;
         self.landing.as_mut_ptr()
     }
 
@@ -386,7 +395,11 @@ impl Egfx {
                 )));
             }
         };
-        let data = std::mem::take(&mut self.landing);
+        let mut data = std::mem::take(&mut self.landing);
+        // SAFETY: `reserve` made room for `reserved` bytes, and the page supplies
+        // the picture only once its copy into that room has written all of them.
+        // A supply with no reserve before it takes an empty room of none.
+        unsafe { data.set_len(std::mem::take(&mut self.reserved)) };
         self.compositor.supply(
             unit,
             Picture {
