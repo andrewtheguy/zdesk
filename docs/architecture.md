@@ -581,8 +581,9 @@ wlshare does wherever the picture starts over and after the cache-empty every
 repaint sends. Each is a rectangle inside the desktop of any size, passed as a
 `TILE` record of its own format (`TILE_PLANAR` framed, `TILE_STILL` streamed),
 and the page decodes it in wire order with the progressive ones, its zstd by
-ruzstd, a zstd decoder in Rust — the fork that adds `FrameDecoder::peek`, the
-still stream's newest bytes, which ruzstd keeps back while a frame goes on —
+ruzstd, a zstd decoder in Rust — the fork that hands out every byte as soon as
+its block is decoded, the still stream's newest among them, which ruzstd keeps
+back while a frame goes on —
 fed a block at a time and stopped past what a planar bitmap of the rectangle can
 be, and its bitmap by the same module's planar codec, the one that draws a
 Windows host's lossless pipeline; one that does not decode asks for the whole

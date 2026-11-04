@@ -618,8 +618,8 @@ impl WlshareTiles {
 
     /// `body` read on in the still stream into [`Self::bitmap`]: a block at a
     /// time, the frame held to [`STILL_WINDOW_MOST`] and the body to what a planar
-    /// bitmap of the rectangle can be, the bitmap what the frame holds back past
-    /// what the bodies before left ([`ruzstd::decoding::FrameDecoder::peek`]).
+    /// bitmap of the rectangle can be, the bitmap what the body's blocks decode
+    /// to, which the frame hands out as soon as they are decoded.
     /// One that does not read loses the stream.
     fn read_still(&mut self, w: u16, h: u16, body: &[u8]) -> Result<(), String> {
         let read = self.read_still_blocks(w, h, body);
@@ -640,15 +640,8 @@ impl WlshareTiles {
             return Err("a body that continues no stream".into());
         }
         let frame = &mut self.still;
-        // What the bodies before left held back is theirs.
-        frame
-            .collect_to_writer(io::sink())
-            .map_err(|e| e.to_string())?;
-        let held = |frame: &ruzstd::decoding::FrameDecoder| {
-            let (a, b) = frame.peek();
-            a.len() + b.len()
-        };
-        let (before, most) = (held(frame), planar_most(w, h));
+        // The bodies before collected all theirs, so all there is to collect is this one's.
+        let most = planar_most(w, h);
         while !source.is_empty() {
             let header = source.get(..3).ok_or("a block header cut short")?;
             let header = u32::from_le_bytes([header[0], header[1], header[2], 0]);
@@ -669,18 +662,16 @@ impl WlshareTiles {
                 return Err("a block that does not decode".into());
             }
             source = &source[block.len()..];
-            if held(frame) - before > most {
+            if frame.can_collect() > most {
                 return Err(format!(
                     "more than the {most} bytes a planar bitmap of it can be"
                 ));
             }
         }
-        // The ring's two parts, in order, past what was there before.
-        let (a, b) = frame.peek();
-        let in_a = before.min(a.len());
         self.bitmap.clear();
-        self.bitmap.extend_from_slice(&a[in_a..]);
-        self.bitmap.extend_from_slice(&b[before - in_a..]);
+        frame
+            .collect_to_writer(&mut self.bitmap)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
