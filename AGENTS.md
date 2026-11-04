@@ -33,7 +33,8 @@ belong in the linked documentation.
   `cargo test --lib`, once each. Run `cargo test --tests` only when the change
   reaches what those tests drive, and a test marked `#[ignore = "slow: …"]` only
   when it reaches what that test checks. Mark a test that waits seconds that way.
-  A change to Rust comments alone runs `cargo test --doc` instead.
+  A change to Rust comments alone runs `cargo test --doc` instead, and a
+  `cargo fmt` reformat alone runs neither.
 - After frontend JS/TS changes, run the Biome checks in `frontend/`.
 - Before browser QA of a frontend change, rebuild the gateway and say so: the
   bundle is compiled into the binary, and the gateway is the only thing that
