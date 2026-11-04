@@ -209,7 +209,7 @@ export interface Abilities {
   appleH264: boolean;
   /**
    * Whether its `VideoDecoder` takes wlshare's H.264, its video and its tiles'
-   * moving regions, in both profiles wlshare codes (videoCodecs.ts).
+   * moving regions, at High profile, which wlshare codes (videoCodecs.ts).
    */
   wlshareH264: boolean;
   /** Whether this browser has an audio decoder, which every sound needs. */
