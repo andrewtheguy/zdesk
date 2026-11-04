@@ -98,8 +98,16 @@ pub struct MicrophoneFeed {
 
 impl MicrophoneFeed {
     pub(super) fn new() -> (Self, MicrophoneQueue) {
-        let shared = Arc::new(Shared { state: Mutex::new(State::default()), ready: Notify::new() });
-        (Self { shared: Arc::clone(&shared) }, MicrophoneQueue { shared })
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State::default()),
+            ready: Notify::new(),
+        });
+        (
+            Self {
+                shared: Arc::clone(&shared),
+            },
+            MicrophoneQueue { shared },
+        )
     }
 
     /// Interleaved 16-bit little-endian PCM in the format the host opened. The session
@@ -145,7 +153,11 @@ mod tests {
         for n in 0..=SAMPLE_QUEUE {
             assert!(feed.sample(vec![n as u8]));
         }
-        assert_eq!(queue.next().await, MicrophoneInput::Pcm(vec![1]), "the oldest was dropped");
+        assert_eq!(
+            queue.next().await,
+            MicrophoneInput::Pcm(vec![1]),
+            "the oldest was dropped"
+        );
         drop(queue);
         assert!(!feed.sample(vec![0]), "an ended session takes nothing");
     }

@@ -84,7 +84,10 @@ impl Frame {
         let port = u16::from_be_bytes([head[1], head[2]]);
         let len = usize::from(u16::from_be_bytes([head[3], head[4]]));
         let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload).await.context("reading a frame's payload")?;
+        reader
+            .read_exact(&mut payload)
+            .await
+            .context("reading a frame's payload")?;
         match head[0] {
             KIND_OPEN => Ok(Some(Frame::Open { port })),
             KIND_DATAGRAM => Ok(Some(Frame::Datagram { port, payload })),
@@ -110,7 +113,9 @@ async fn read_line<S: AsyncRead + Unpin>(stream: &mut S) -> anyhow::Result<Strin
 
 /// The relay's answer to a request: what follows `ok`, or its error.
 async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> anyhow::Result<String> {
-    let line = read_line(stream).await.context("reading the relay's answer")?;
+    let line = read_line(stream)
+        .await
+        .context("reading the relay's answer")?;
     if let Some(rest) = line.strip_prefix("ok") {
         return Ok(rest.trim_start().to_owned());
     }
@@ -123,13 +128,19 @@ async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> anyhow::Result<Str
 /// Ask the relay at the far end of `stream` to connect to `dest`, a `host:port`.
 /// On success the stream carries `dest`'s bytes, and the token returned names
 /// the connection to [`MediaLink::connect`].
-pub async fn open<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, dest: &str) -> anyhow::Result<String> {
+pub async fn open<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    dest: &str,
+) -> anyhow::Result<String> {
     stream
         .write_all(format!("{VERSION} connect {dest}\n").as_bytes())
         .await
         .context("asking the relay to connect")?;
     let token = read_answer(stream).await?;
-    anyhow::ensure!(!token.is_empty(), "the relay connected without naming the connection");
+    anyhow::ensure!(
+        !token.is_empty(),
+        "the relay connected without naming the connection"
+    );
     Ok(token)
 }
 
@@ -179,7 +190,11 @@ impl MediaLink {
             loop {
                 match Frame::read(&mut reader).await {
                     Ok(Some(Frame::Datagram { port, payload })) => {
-                        let tx = incoming.lock().unwrap().get(&port).map(|queue| queue.tx.clone());
+                        let tx = incoming
+                            .lock()
+                            .unwrap()
+                            .get(&port)
+                            .map(|queue| queue.tx.clone());
                         // A full queue drops the datagram, as a full socket buffer would.
                         if let Some(tx) = tx {
                             let _ = tx.try_send(payload);
@@ -207,7 +222,10 @@ impl MediaLink {
     /// Resolves once the relay has bound every one of `ports`, which the Mac must
     /// not be asked to send to before: what it sends to a port not yet bound is
     /// lost. Fails if the media connection closes first.
-    pub fn opened(&self, ports: &[u16]) -> impl Future<Output = std::io::Result<()>> + Send + use<> {
+    pub fn opened(
+        &self,
+        ports: &[u16],
+    ) -> impl Future<Output = std::io::Result<()>> + Send + use<> {
         let mut opened = self.opened.clone();
         let ports = ports.to_vec();
         async move {
@@ -229,11 +247,18 @@ impl MediaLink {
             .entry(port)
             .or_insert_with(|| {
                 let (tx, rx) = mpsc::channel(PORT_QUEUE);
-                Queue { tx, rx: Arc::new(tokio::sync::Mutex::new(rx)) }
+                Queue {
+                    tx,
+                    rx: Arc::new(tokio::sync::Mutex::new(rx)),
+                }
             })
             .clone();
         let _ = self.out.send(Frame::Open { port }.encode());
-        Port { port, out: self.out.clone(), rx: queue.rx }
+        Port {
+            port,
+            out: self.out.clone(),
+            rx: queue.rx,
+        }
     }
 }
 
@@ -248,7 +273,11 @@ pub struct Port {
 impl Port {
     /// Send `datagram` to the Mac's port.
     pub async fn send(&self, datagram: &[u8]) -> std::io::Result<usize> {
-        let frame = Frame::Datagram { port: self.port, payload: datagram.to_vec() }.encode();
+        let frame = Frame::Datagram {
+            port: self.port,
+            payload: datagram.to_vec(),
+        }
+        .encode();
         self.out.send(frame).map_err(|_| closed())?;
         Ok(datagram.len())
     }
@@ -264,7 +293,10 @@ impl Port {
 }
 
 fn closed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "the relay's media connection closed")
+    std::io::Error::new(
+        std::io::ErrorKind::ConnectionAborted,
+        "the relay's media connection closed",
+    )
 }
 
 #[cfg(test)]
@@ -275,13 +307,22 @@ mod tests {
     async fn frames_read_back_as_written() {
         let frames = [
             Frame::Open { port: 5901 },
-            Frame::Datagram { port: 5900, payload: vec![1, 2, 3] },
-            Frame::Datagram { port: 65535, payload: vec![] },
+            Frame::Datagram {
+                port: 5900,
+                payload: vec![1, 2, 3],
+            },
+            Frame::Datagram {
+                port: 65535,
+                payload: vec![],
+            },
         ];
         let written: Vec<u8> = frames.iter().flat_map(Frame::encode).collect();
         let mut reader = &written[..];
         for frame in &frames {
-            assert_eq!(Frame::read(&mut reader).await.unwrap().as_ref(), Some(frame));
+            assert_eq!(
+                Frame::read(&mut reader).await.unwrap().as_ref(),
+                Some(frame)
+            );
         }
         assert_eq!(Frame::read(&mut reader).await.unwrap(), None);
     }

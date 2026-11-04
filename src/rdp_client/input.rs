@@ -23,7 +23,10 @@ pub(super) enum Command {
     /// Ask the server for a keyframe of its H.264.
     Keyframe,
     /// Ask the server for a new desktop size, over Display Control.
-    Resize { sizes: Vec<(u32, u32)>, scales: Vec<u32> },
+    Resize {
+        sizes: Vec<(u32, u32)>,
+        scales: Vec<u32>,
+    },
     /// Something for the clipboard channel, in the three shapes a clipboard has.
     Clipboard(Clipboard),
     /// A frame of a passed graphics pipeline has been composed.
@@ -64,7 +67,10 @@ pub struct Input {
 
 impl Input {
     pub(super) fn new(commands: mpsc::UnboundedSender<Command>) -> Self {
-        Self { commands, stop: Arc::new(watch::channel(false).0) }
+        Self {
+            commands,
+            stop: Arc::new(watch::channel(false).0),
+        }
     }
 
     /// Watches for [`Input::shutdown`], for the session thread.
@@ -104,7 +110,12 @@ impl Input {
     /// flag bits and turn a scroll into some other event.
     pub fn wheel(&self, delta: i16, horizontal: bool, x: u16, y: u16) {
         let rotation = delta.clamp(-MAX_ROTATION, MAX_ROTATION);
-        self.push(Command::Input(Event::Wheel { rotation, horizontal, x, y }));
+        self.push(Command::Input(Event::Wheel {
+            rotation,
+            horizontal,
+            x,
+            y,
+        }));
     }
 
     /// Press or release a key, by RDP scancode.
@@ -113,7 +124,11 @@ impl Input {
     /// Enter and slash, and the Windows keys — which the fast-path keyboard event
     /// carries as a flag beside the code.
     pub fn key(&self, scancode: u8, extended: bool, down: bool) {
-        self.push(Command::Input(Event::Key { scancode, extended, down }));
+        self.push(Command::Input(Event::Key {
+            scancode,
+            extended,
+            down,
+        }));
     }
 
     /// Ask the server to repaint the whole desktop.
@@ -167,8 +182,14 @@ impl Input {
     /// desktop, and a row of [`Connect::monitors`](super::Connect::monitors) for a
     /// session that asked for more, in which each may be its own size.
     pub fn resize(&self, sizes: &[(u32, u32)], scales: &[u32]) {
-        let sizes = sizes.iter().map(|&(width, height)| sanitise_size(width, height)).collect();
-        let scales = scales.iter().map(|&percent| sanitise_scale(percent)).collect();
+        let sizes = sizes
+            .iter()
+            .map(|&(width, height)| sanitise_size(width, height))
+            .collect();
+        let scales = scales
+            .iter()
+            .map(|&percent| sanitise_scale(percent))
+            .collect();
         self.push(Command::Resize { sizes, scales });
     }
 
@@ -290,14 +311,26 @@ mod tests {
 
     #[test]
     fn a_call_becomes_the_event_the_wire_has_a_shape_for() {
-        assert_eq!(queued(|input| input.mouse_move(7, 9)), Event::Move { x: 7, y: 9 });
+        assert_eq!(
+            queued(|input| input.mouse_move(7, 9)),
+            Event::Move { x: 7, y: 9 }
+        );
         assert_eq!(
             queued(|input| input.key(0x48, true, false)),
-            Event::Key { scancode: 0x48, extended: true, down: false }
+            Event::Key {
+                scancode: 0x48,
+                extended: true,
+                down: false
+            }
         );
         assert_eq!(
             queued(|input| input.mouse_button(MouseButton::X2, true, 5, 6)),
-            Event::Button { button: Button::X2, down: true, x: 5, y: 6 }
+            Event::Button {
+                button: Button::X2,
+                down: true,
+                x: 5,
+                y: 6
+            }
         );
     }
 
@@ -311,8 +344,15 @@ mod tests {
             else {
                 panic!("not a wheel event")
             };
-            assert!(rotation.abs() <= MAX_ROTATION, "delta {delta} became {rotation}");
-            assert_eq!(rotation.signum(), delta.signum(), "delta {delta} changed direction");
+            assert!(
+                rotation.abs() <= MAX_ROTATION,
+                "delta {delta} became {rotation}"
+            );
+            assert_eq!(
+                rotation.signum(),
+                delta.signum(),
+                "delta {delta} changed direction"
+            );
         }
         // And the two axes are different events, not the same one with a sign.
         let Event::Wheel { horizontal, .. } = queued(|input| input.wheel(120, true, 0, 0)) else {
@@ -325,11 +365,27 @@ mod tests {
     /// the one that fails *silently* on a Windows host.
     #[test]
     fn a_requested_size_is_brought_inside_what_the_protocol_allows() {
-        assert_eq!(sanitise_size(1281, 800), (1280, 800), "an odd width rounds down");
-        assert_eq!(sanitise_size(1920, 1080), (1920, 1080), "a legal size is left alone");
+        assert_eq!(
+            sanitise_size(1281, 800),
+            (1280, 800),
+            "an odd width rounds down"
+        );
+        assert_eq!(
+            sanitise_size(1920, 1080),
+            (1920, 1080),
+            "a legal size is left alone"
+        );
         assert_eq!(sanitise_size(0, 0), (200, 200), "below the minimum");
-        assert_eq!(sanitise_size(u32::MAX, u32::MAX), (8192, 8192), "above the maximum");
-        for (width, _) in [sanitise_size(0, 600), sanitise_size(u32::MAX, 600), sanitise_size(1, 1)] {
+        assert_eq!(
+            sanitise_size(u32::MAX, u32::MAX),
+            (8192, 8192),
+            "above the maximum"
+        );
+        for (width, _) in [
+            sanitise_size(0, 600),
+            sanitise_size(u32::MAX, 600),
+            sanitise_size(1, 1),
+        ] {
             assert_eq!(width % 2, 0, "the clamp produced an odd width");
         }
     }
@@ -344,15 +400,25 @@ mod tests {
         let stop = input.stopped();
         assert!(!*stop.borrow(), "nothing has asked this session to stop");
         input.shutdown();
-        assert!(*stop.borrow(), "a thread with no room to send is told anyway");
-        assert!(matches!(rx.try_recv(), Ok(Command::Shutdown)), "and the command still goes to the loop");
+        assert!(
+            *stop.borrow(),
+            "a thread with no room to send is told anyway"
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(Command::Shutdown)),
+            "and the command still goes to the loop"
+        );
     }
 
     #[test]
     fn a_scale_factor_cannot_leave_the_range_that_makes_it_legal() {
         assert_eq!(sanitise_scale(100), 100);
         assert_eq!(sanitise_scale(200), 200);
-        assert_eq!(sanitise_scale(0), 100, "\"unset\" is the same request, badly spelled");
+        assert_eq!(
+            sanitise_scale(0),
+            100,
+            "\"unset\" is the same request, badly spelled"
+        );
         assert_eq!(sanitise_scale(u32::MAX), 500);
     }
 }

@@ -125,7 +125,10 @@ impl SiteLogin {
     /// never right.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
-        let password_ok = self.key.as_ref().is_some_and(|key| key.verify(password, &self.hash));
+        let password_ok = self
+            .key
+            .as_ref()
+            .is_some_and(|key| key.verify(password, &self.hash));
         username_ok & password_ok & long_enough(password)
     }
 }
@@ -385,7 +388,10 @@ mod tests {
         assert!(login.verify("admin", "hunter22"));
         assert!(!login.verify("admin", "wrong"));
         assert!(!login.verify("admin", "hunter2"), "a prefix");
-        assert!(!login.verify("mallory", "hunter22"), "username must match too");
+        assert!(
+            !login.verify("mallory", "hunter22"),
+            "username must match too"
+        );
         assert!(SiteLogin::with_password("", "hunter22").is_err());
     }
 
@@ -406,12 +412,23 @@ mod tests {
         for _ in 0..FREE_FAILURES {
             assert_eq!(throttle.attempt(start, || false), Ok(false));
         }
-        assert_eq!(throttle.attempt(start, || false), Ok(false), "the sixth is checked");
-        assert_eq!(throttle.attempt(start, || true), Err(Duration::from_secs(1)), "then locked");
+        assert_eq!(
+            throttle.attempt(start, || false),
+            Ok(false),
+            "the sixth is checked"
+        );
+        assert_eq!(
+            throttle.attempt(start, || true),
+            Err(Duration::from_secs(1)),
+            "then locked"
+        );
 
         let later = start + Duration::from_secs(1);
         assert_eq!(throttle.attempt(later, || false), Ok(false));
-        assert_eq!(throttle.attempt(later, || unreachable!()), Err(Duration::from_secs(2)));
+        assert_eq!(
+            throttle.attempt(later, || unreachable!()),
+            Err(Duration::from_secs(2))
+        );
 
         let mut now = later;
         for _ in 0..20 {
@@ -423,7 +440,11 @@ mod tests {
         now += MAX_LOCKOUT;
         assert_eq!(throttle.attempt(now, || true), Ok(true));
         for _ in 0..FREE_FAILURES {
-            assert_eq!(throttle.attempt(now, || false), Ok(false), "a success clears the count");
+            assert_eq!(
+                throttle.attempt(now, || false),
+                Ok(false),
+                "a success clears the count"
+            );
         }
     }
 
@@ -443,18 +464,30 @@ mod tests {
     fn a_short_password_is_refused() {
         assert!(check_password_length("hunter2").is_err());
         assert!(check_password_length("hunter22").is_ok());
-        assert!(check_password_length("密码密码密码密码").is_ok(), "eight characters");
-        assert!(check_password_length("密码密码密码密").is_err(), "seven, in 21 bytes");
+        assert!(
+            check_password_length("密码密码密码密码").is_ok(),
+            "eight characters"
+        );
+        assert!(
+            check_password_length("密码密码密码密").is_err(),
+            "seven, in 21 bytes"
+        );
         assert!(SiteLogin::with_password("admin", "hunter2").is_err());
         let key = LoginKey::generate();
         let short = SiteLogin::new("admin", key.hash("short"), Some(key)).unwrap();
-        assert!(!short.verify("admin", "short"), "a short hash made in code still lets nobody in");
+        assert!(
+            !short.verify("admin", "short"),
+            "a short hash made in code still lets nobody in"
+        );
     }
 
     #[test]
     fn a_login_is_not_in_its_debug_output() {
         let rendered = format!("{:?}", GatewayAuth::Login(login("hunter22", true)));
-        assert!(rendered.contains("admin") && !rendered.contains("hunter22"), "{rendered}");
+        assert!(
+            rendered.contains("admin") && !rendered.contains("hunter22"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -471,7 +504,10 @@ mod tests {
     fn expired_sessions_are_rejected() {
         let sessions = AuthSessions::with_ttl(Duration::ZERO);
         let token = sessions.create();
-        assert!(!sessions.validate(&token), "a zero-TTL session is born expired");
+        assert!(
+            !sessions.validate(&token),
+            "a zero-TTL session is born expired"
+        );
     }
 
     /// A minted token matches itself and nothing else, including the near misses a
@@ -483,9 +519,18 @@ mod tests {
         let token = WorkerToken::generate();
         assert!(token.matches(token.as_str()));
         assert!(!token.matches(""));
-        assert!(!token.matches(&token.as_str()[..token.as_str().len() - 1]), "a prefix");
-        assert!(!token.matches(&format!("{}x", token.as_str())), "an extension");
-        assert!(!token.matches(WorkerToken::generate().as_str()), "another token");
+        assert!(
+            !token.matches(&token.as_str()[..token.as_str().len() - 1]),
+            "a prefix"
+        );
+        assert!(
+            !token.matches(&format!("{}x", token.as_str())),
+            "an extension"
+        );
+        assert!(
+            !token.matches(WorkerToken::generate().as_str()),
+            "another token"
+        );
     }
 
     /// Two launches never share a secret, and the encoding is URL-safe base64 so

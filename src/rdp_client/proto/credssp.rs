@@ -50,8 +50,10 @@ pub async fn authenticate(
 ) -> Result<()> {
     let username = Username::new(credentials.username, credentials.domain)
         .with_context(|| format!("{:?} is not a user name", credentials.username))?;
-    let identity =
-        AuthIdentity { username, password: credentials.password.to_owned().into() };
+    let identity = AuthIdentity {
+        username,
+        password: credentials.password.to_owned().into(),
+    };
 
     let mut client = CredSspClient::new(
         server_public_key,
@@ -89,8 +91,13 @@ pub async fn authenticate(
 
 async fn send(stream: &mut Stream, request: &TsRequest) -> Result<()> {
     let mut bytes = Vec::with_capacity(usize::from(request.buffer_len()));
-    request.encode_ts_request(&mut bytes).context("encoding a CredSSP request")?;
-    stream.write_all(&bytes).await.context("sending a CredSSP request")?;
+    request
+        .encode_ts_request(&mut bytes)
+        .context("encoding a CredSSP request")?;
+    stream
+        .write_all(&bytes)
+        .await
+        .context("sending a CredSSP request")?;
     stream.flush().await.context("sending a CredSSP request")?;
     Ok(())
 }
@@ -111,7 +118,12 @@ async fn receive(stream: &mut Stream) -> Result<TsRequest> {
     let mut bytes = Vec::with_capacity(512);
     let length = loop {
         let mut byte = [0_u8; 1];
-        if stream.read(&mut byte).await.context("reading a CredSSP response")? == 0 {
+        if stream
+            .read(&mut byte)
+            .await
+            .context("reading a CredSSP response")?
+            == 0
+        {
             bail!(
                 "the server closed the connection during the logon attempt, after {} bytes",
                 bytes.len()
@@ -135,6 +147,9 @@ async fn receive(stream: &mut Stream) -> Result<TsRequest> {
 
     let already = bytes.len();
     bytes.resize(length, 0);
-    stream.read_exact(&mut bytes[already..]).await.context("reading a CredSSP response")?;
+    stream
+        .read_exact(&mut bytes[already..])
+        .await
+        .context("reading a CredSSP response")?;
     TsRequest::from_buffer(&bytes).context("decoding a CredSSP response")
 }

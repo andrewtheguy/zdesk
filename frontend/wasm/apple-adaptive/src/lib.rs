@@ -17,7 +17,9 @@ pub struct Standard {
 impl Standard {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Standard {
-        Standard { decoder: Box::default() }
+        Standard {
+            decoder: Box::default(),
+        }
     }
 
     /// A black framebuffer of the desktop's new size.
@@ -29,7 +31,9 @@ impl Standard {
     /// for a rectangle that does not decode, whose pixels the framebuffer keeps
     /// as far as they were drawn.
     pub fn decode(&mut self, x: u16, y: u16, w: u16, h: u16, body: &[u8]) -> Result<bool, JsError> {
-        self.decoder.decode(x, y, w, h, body).map_err(|error| JsError::new(&error.to_string()))
+        self.decoder
+            .decode(x, y, w, h, body)
+            .map_err(|error| JsError::new(&error.to_string()))
     }
 
     /// Where the framebuffer is in the module's memory: its width times its

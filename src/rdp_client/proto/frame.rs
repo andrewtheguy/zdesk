@@ -38,7 +38,10 @@ pub struct Frames<S> {
 
 impl<S: AsyncRead + Unpin> Frames<S> {
     pub fn new(stream: S) -> Self {
-        Self { stream, buffer: Vec::with_capacity(READ) }
+        Self {
+            stream,
+            buffer: Vec::with_capacity(READ),
+        }
     }
 
     /// Read one whole frame into `out`, which is cleared first.

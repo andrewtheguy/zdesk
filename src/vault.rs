@@ -38,8 +38,8 @@
 //! gateway, the keychain for the TUI (`crate::keychain`). This module only turns
 //! it into a [`Key`] and uses that key.
 
-use aes_gcm::aead::{Aead as _, KeyInit as _};
 use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead as _, KeyInit as _};
 use anyhow::Context as _;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -89,9 +89,16 @@ impl MasterSection {
     /// The salt and check decode to what they should, so a damaged block is
     /// refused when the file is read rather than told as a wrong password later.
     pub fn validate(&self) -> anyhow::Result<()> {
-        let salt = BASE64.decode(&self.salt).context("[master].salt is not base64")?;
-        anyhow::ensure!(salt.len() == SALT_LEN, "[master].salt is not {SALT_LEN} bytes");
-        let check = BASE64.decode(&self.check).context("[master].check is not base64")?;
+        let salt = BASE64
+            .decode(&self.salt)
+            .context("[master].salt is not base64")?;
+        anyhow::ensure!(
+            salt.len() == SALT_LEN,
+            "[master].salt is not {SALT_LEN} bytes"
+        );
+        let check = BASE64
+            .decode(&self.check)
+            .context("[master].check is not base64")?;
         anyhow::ensure!(check.len() == 32, "[master].check is not 32 bytes");
         Ok(())
     }
@@ -200,8 +207,12 @@ impl Key {
     /// from.
     pub fn derive(master: &MasterPassword, section: &MasterSection) -> anyhow::Result<Self> {
         section.validate()?;
-        let salt = BASE64.decode(&section.salt).context("[master].salt is not base64")?;
-        let check = BASE64.decode(&section.check).context("[master].check is not base64")?;
+        let salt = BASE64
+            .decode(&section.salt)
+            .context("[master].salt is not base64")?;
+        let check = BASE64
+            .decode(&section.check)
+            .context("[master].check is not base64")?;
         let key = Self::stretch(master, &salt)?;
         let mut mac = key.mac();
         mac.update(CHECK_MESSAGE);
@@ -253,16 +264,13 @@ impl Key {
         let blob = decode_value(field, value)?;
         let (nonce, sealed) = blob.split_at(NONCE_LEN);
         let nonce: [u8; NONCE_LEN] = nonce.try_into().expect("split at the nonce's length");
-        let plain = self
-            .cipher()
-            .decrypt(&nonce.into(), sealed)
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "{field} does not open under this config's master password; \
+        let plain = self.cipher().decrypt(&nonce.into(), sealed).map_err(|_| {
+            anyhow::anyhow!(
+                "{field} does not open under this config's master password; \
                      it was encrypted under another [master] — encrypt it again with \
                      `zdesk password encrypt`"
-                )
-            })?;
+            )
+        })?;
         String::from_utf8(plain).with_context(|| format!("{field} is not UTF-8"))
     }
 
@@ -276,7 +284,10 @@ impl Key {
 
     /// A `[server].site_passwd_hash` value for `password`.
     pub fn hash(&self, password: &str) -> String {
-        format!("{HASH_PREFIX}{}", BASE64.encode(self.login_key().hash(password).0))
+        format!(
+            "{HASH_PREFIX}{}",
+            BASE64.encode(self.login_key().hash(password).0)
+        )
     }
 
     /// The key as one line, for a control plane to hand its worker down a pipe.
@@ -286,7 +297,9 @@ impl Key {
 
     /// The key [`Self::to_line`] wrote.
     pub fn from_line(line: &str) -> anyhow::Result<Self> {
-        let bytes = BASE64.decode(line.trim()).context("the key is not base64")?;
+        let bytes = BASE64
+            .decode(line.trim())
+            .context("the key is not base64")?;
         let key: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("the key is not 32 bytes"))?;
@@ -393,7 +406,9 @@ pub fn valid_name(name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         !name.is_empty()
             && name.len() <= 64
-            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
         "password name {name:?} must be 1 to 64 letters, digits, '-' or '_'"
     );
     Ok(())
@@ -419,10 +434,16 @@ pub fn init_file(path: &Path, master: &MasterPassword) -> anyhow::Result<()> {
 
 /// Encrypt `password` into `[passwords].<name>` of the config at `path`, under the
 /// key its `[master]` block and `master` give, replacing any value of that name.
-pub fn set_file(path: &Path, name: &str, password: &str, master: &MasterPassword) -> anyhow::Result<()> {
+pub fn set_file(
+    path: &Path,
+    name: &str,
+    password: &str,
+    master: &MasterPassword,
+) -> anyhow::Result<()> {
     valid_name(name)?;
     anyhow::ensure!(!password.is_empty(), "the password is empty");
-    let key = Key::derive(master, &master_of(path)?).with_context(|| format!("in {}", path.display()))?;
+    let key =
+        Key::derive(master, &master_of(path)?).with_context(|| format!("in {}", path.display()))?;
     let mut doc = read_document(path)?;
     let value = key.encrypt(password)?;
     let passwords = doc
@@ -441,17 +462,19 @@ pub fn master_of(path: &Path) -> anyhow::Result<MasterSection> {
     struct Only {
         master: Option<MasterSection>,
     }
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
-    let only: Only = toml::from_str(&text)
-        .with_context(|| format!("{} is not valid TOML", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let only: Only =
+        toml::from_str(&text).with_context(|| format!("{} is not valid TOML", path.display()))?;
     let section = only.master.with_context(|| {
         format!(
             "{} has no [master] block — paste the one `zdesk password master show` or `create` prints",
             path.display()
         )
     })?;
-    section.validate().with_context(|| format!("invalid [master] in {}", path.display()))?;
+    section
+        .validate()
+        .with_context(|| format!("invalid [master] in {}", path.display()))?;
     Ok(section)
 }
 
@@ -467,8 +490,8 @@ pub fn master_file_of(path: &Path) -> anyhow::Result<Option<PathBuf>> {
 }
 
 fn read_document(path: &Path) -> anyhow::Result<toml_edit::DocumentMut> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     text.parse()
         .with_context(|| format!("{} is not valid TOML", path.display()))
 }
@@ -515,10 +538,17 @@ mod tests {
         let value = key.encrypt("hunter2").unwrap();
         assert!(value.starts_with(PREFIX), "{value}");
         check_value("[passwords].win11", &value).unwrap();
-        assert_ne!(key.encrypt("hunter2").unwrap(), value, "every value has its own nonce");
+        assert_ne!(
+            key.encrypt("hunter2").unwrap(),
+            value,
+            "every value has its own nonce"
+        );
 
         let again = Key::derive(&master("correct horse"), &section).unwrap();
-        assert_eq!(again.decrypt("[passwords].win11", &value).unwrap(), "hunter2");
+        assert_eq!(
+            again.decrypt("[passwords].win11", &value).unwrap(),
+            "hunter2"
+        );
 
         let err = Key::derive(&master("battery staple"), &section).unwrap_err();
         assert!(format!("{err:#}").contains("does not open"), "{err:#}");
@@ -529,23 +559,39 @@ mod tests {
         let (section, key) = Key::create(&master("correct horse")).unwrap();
         let value = key.hash("hunter2");
         assert!(value.starts_with(HASH_PREFIX), "{value}");
-        assert_eq!(key.hash("hunter2"), value, "one key hashes a password one way");
+        assert_eq!(
+            key.hash("hunter2"),
+            value,
+            "one key hashes a password one way"
+        );
         let hash = LoginHash::parse("[server].site_passwd_hash", &value).unwrap();
 
-        let login = Key::derive(&master("correct horse"), &section).unwrap().login_key();
+        let login = Key::derive(&master("correct horse"), &section)
+            .unwrap()
+            .login_key();
         assert!(login.verify("hunter2", &hash));
         assert!(!login.verify("hunter", &hash));
         assert!(!login.verify("", &hash));
 
         let (_, other) = Key::create(&master("correct horse")).unwrap();
-        assert!(!other.login_key().verify("hunter2", &hash), "another config's key");
-        assert_ne!(key.check(), key.login_key().0, "the login key is not the key's check");
+        assert!(
+            !other.login_key().verify("hunter2", &hash),
+            "another config's key"
+        );
+        assert_ne!(
+            key.check(),
+            key.login_key().0,
+            "the login key is not the key's check"
+        );
     }
 
     #[test]
     fn a_plaintext_login_hash_is_refused_by_shape() {
         let err = LoginHash::parse("[server].site_passwd_hash", "hunter2").unwrap_err();
-        assert!(format!("{err:#}").contains("zdesk password hash"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("zdesk password hash"),
+            "{err:#}"
+        );
         let (_, key) = Key::create(&master("m")).unwrap();
         let encrypted = key.encrypt("hunter2").unwrap();
         assert!(LoginHash::parse("[server].site_passwd_hash", &encrypted).is_err());
@@ -565,13 +611,22 @@ mod tests {
         let value = key.encrypt("b").unwrap();
         let line = key.to_line();
         assert!(!line.contains('\n'));
-        assert_eq!(Key::from_line(&format!("{line}\n")).unwrap().decrypt("a", &value).unwrap(), "b");
+        assert_eq!(
+            Key::from_line(&format!("{line}\n"))
+                .unwrap()
+                .decrypt("a", &value)
+                .unwrap(),
+            "b"
+        );
     }
 
     #[test]
     fn a_plaintext_value_is_refused_by_shape() {
         let err = check_value("[passwords].win11", "hunter2").unwrap_err();
-        assert!(format!("{err:#}").contains("zdesk password encrypt"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("zdesk password encrypt"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -579,9 +634,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("master");
         std::fs::write(&path, "pass word \r\n").unwrap();
-        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word ");
+        assert_eq!(
+            MasterPassword::read_file(&path).unwrap().as_str(),
+            "pass word "
+        );
         std::fs::write(&path, "\n").unwrap();
-        assert!(MasterPassword::read_file(&path).is_err(), "an empty password is refused");
+        assert!(
+            MasterPassword::read_file(&path).is_err(),
+            "an empty password is refused"
+        );
     }
 
     #[test]
@@ -599,15 +660,28 @@ mod tests {
             let _ = path;
         };
         master("pass word").write_file(&path, false).unwrap();
-        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word");
+        assert_eq!(
+            MasterPassword::read_file(&path).unwrap().as_str(),
+            "pass word"
+        );
         private(&path);
         assert!(master("another").write_file(&path, false).is_err());
-        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "pass word");
+        assert_eq!(
+            MasterPassword::read_file(&path).unwrap().as_str(),
+            "pass word"
+        );
 
         master("another").write_file(&path, true).unwrap();
-        assert_eq!(MasterPassword::read_file(&path).unwrap().as_str(), "another");
+        assert_eq!(
+            MasterPassword::read_file(&path).unwrap().as_str(),
+            "another"
+        );
         private(&path);
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary is left");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "no temporary is left"
+        );
     }
 
     #[test]
@@ -617,11 +691,15 @@ mod tests {
         let text = "# kept\n[[targets]]\nname = \"win\" # also kept\nprotocol = \"rdp\"\nhost = \"h\"\nusername = \"u\"\npassword_ref = \"win11\"\n";
         std::fs::write(&path, text).unwrap();
         #[cfg(unix)]
-        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .unwrap();
 
         let master = master("one master");
         init_file(&path, &master).unwrap();
-        assert!(init_file(&path, &master).is_err(), "a second [master] would orphan [passwords]");
+        assert!(
+            init_file(&path, &master).is_err(),
+            "a second [master] would orphan [passwords]"
+        );
         set_file(&path, "win11", "hunter2", &master).unwrap();
         assert!(set_file(&path, "win11", "x", &self::master("another")).is_err());
 
@@ -631,13 +709,18 @@ mod tests {
         assert!(!written.contains("hunter2"), "{written}");
         #[cfg(unix)]
         assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&path).unwrap().permissions()) & 0o777,
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(&path).unwrap().permissions()
+            ) & 0o777,
             0o600
         );
 
         let mut file = crate::config::ConfigFile::parse(&written).unwrap();
         assert!(file.needs_master());
-        assert!(file.unlock(None).is_err(), "a file naming passwords needs its key");
+        assert!(
+            file.unlock(None).is_err(),
+            "a file naming passwords needs its key"
+        );
         let key = file.key(&master).unwrap();
         file.unlock(Some(&key)).unwrap();
         assert_eq!(file.targets[0].password, "hunter2");

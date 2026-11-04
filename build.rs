@@ -82,7 +82,9 @@ fn build_frontend(root: &Path, output: &Path) -> Result<()> {
 
     let frontend_dir = root.join("frontend");
     let mut bun = Command::new("bun");
-    bun.args(["run", "build"]).current_dir(&frontend_dir).env("ZDESK_FRONTEND_OUT_DIR", output);
+    bun.args(["run", "build"])
+        .current_dir(&frontend_dir)
+        .env("ZDESK_FRONTEND_OUT_DIR", output);
     // The frontend's build runs Cargo for its WebAssembly modules, and that Cargo
     // must not take this one's for its own: the flags and wrappers this build was
     // given are for the gateway's target — under `cargo clippy` the wrapper *is*
@@ -136,8 +138,8 @@ fn replace_dir(source: &Path, destination: &Path) -> Result<()> {
 fn copy_dir(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination)
         .with_context(|| format!("failed to create {}", destination.display()))?;
-    for entry in fs::read_dir(source)
-        .with_context(|| format!("failed to read {}", source.display()))?
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
     {
         let entry =
             entry.with_context(|| format!("failed to read an entry in {}", source.display()))?;

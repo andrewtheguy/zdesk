@@ -18,15 +18,17 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
 use super::proto::autodetect::{Answer, Detector};
-use super::proto::multitransport;
 use super::proto::capabilities::{ConfirmActive, DemandActive};
 use super::proto::credssp::{self, Credentials};
 use super::proto::finalization::{self, Response};
 use super::proto::frame::Frames;
 use super::proto::gcc::{Channel, ConferenceCreateRequest, ConferenceCreateResponse};
 use super::proto::info::ClientInfo;
+use super::proto::multitransport;
 use super::proto::share::{self, Pdu};
-use super::proto::x224::{ConfirmFlags, ConnectionConfirm, ConnectionRequest, Security, TPKT_HEADER};
+use super::proto::x224::{
+    ConfirmFlags, ConnectionConfirm, ConnectionRequest, Security, TPKT_HEADER,
+};
 use super::proto::{display, fastpath, license, mcs, tls, x224};
 use super::session::{Connect, PassedSocket};
 use crate::engine;
@@ -102,7 +104,10 @@ impl Connected {
         self.channels
             .iter()
             .find(|(channel, _)| *channel == wanted)
-            .map(|(channel, number)| Joined { number: *number, flags: channel.chunk_flags() })
+            .map(|(channel, number)| Joined {
+                number: *number,
+                flags: channel.chunk_flags(),
+            })
     }
 }
 
@@ -122,7 +127,11 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
     let client_address = tcp.local_addr().context("reading the local address")?.ip();
     // The name TLS and CredSSP are checked against. A bracketed IPv6 literal is how
     // `host_port` writes one, not a name either check understands.
-    let server_name = config.host.trim_start_matches('[').trim_end_matches(']').to_owned();
+    let server_name = config
+        .host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
 
     // 1. The security negotiation, in the clear. Only NLA is offered, so only NLA
     //    can be chosen — see the module doc on `proto`.
@@ -130,8 +139,12 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
         cookie: Some(config.username.clone()),
         protocols: Security::HYBRID,
     };
-    tcp.write_all(&request.encode()).await.context("sending the X.224 Connection Request")?;
-    let frame = read_frame(&mut tcp).await.context("reading the X.224 Connection Confirm")?;
+    tcp.write_all(&request.encode())
+        .await
+        .context("sending the X.224 Connection Request")?;
+    let frame = read_frame(&mut tcp)
+        .await
+        .context("reading the X.224 Connection Confirm")?;
     let (protocol, confirmed) = match ConnectionConfirm::decode(&frame)? {
         ConnectionConfirm::Negotiated { protocol, flags } if protocol == Security::HYBRID => {
             (protocol, flags)
@@ -191,7 +204,11 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
         // Its message channel rides an extended block, as the monitors do.
         autodetect: config.autodetect && extended,
         // So does its claim of UDP.
-        multitransport: if config.multitransport && extended { multitransport::OFFERED } else { 0 },
+        multitransport: if config.multitransport && extended {
+            multitransport::OFFERED
+        } else {
+            0
+        },
     }
     .encode();
     writer
@@ -201,8 +218,13 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
     frames.next(&mut frame).await?;
     let answer = mcs::connect_response(&frame)?;
     let answer = ConferenceCreateResponse::decode(answer)?;
-    let ConferenceCreateResponse { io_channel, channels, requested_protocols, message_channel, multitransport } =
-        answer;
+    let ConferenceCreateResponse {
+        io_channel,
+        channels,
+        requested_protocols,
+        message_channel,
+        multitransport,
+    } = answer;
     if let Some(flags) = multitransport {
         info!("rdp: the host takes multitransport {flags:#x}");
     }
@@ -218,24 +240,40 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
     }
     if channels.len() != wanted.len() {
         let asked = wanted.len();
-        bail!("the host numbered {} channels, and {asked} were asked for", channels.len());
+        bail!(
+            "the host numbered {} channels, and {asked} were asked for",
+            channels.len()
+        );
     }
     // Paired with the names in the order both sides listed them, which is the only
     // thing that says which number is which channel.
-    let numbered: Vec<(Channel, u16)> =
-        wanted.iter().copied().zip(channels.iter().copied()).collect();
+    let numbered: Vec<(Channel, u16)> = wanted
+        .iter()
+        .copied()
+        .zip(channels.iter().copied())
+        .collect();
     for (channel, number) in &numbered {
         debug!("rdp: the host numbered {} channel {number}", channel.name);
     }
 
     // 5. Erect the domain — which is not answered — and attach a user to it.
-    writer.write_all(&mcs::erect_domain_request()).await.context("sending the MCS Erect Domain")?;
-    writer.write_all(&mcs::attach_user_request()).await.context("sending the MCS Attach User")?;
+    writer
+        .write_all(&mcs::erect_domain_request())
+        .await
+        .context("sending the MCS Erect Domain")?;
+    writer
+        .write_all(&mcs::attach_user_request())
+        .await
+        .context("sending the MCS Attach User")?;
     frames.next(&mut frame).await?;
     let user = mcs::attach_user_confirm(&frame)?;
 
     // 6. Join every channel, the user's own first. Each is its own round trip.
-    for channel in [user, io_channel].into_iter().chain(channels).chain(message_channel) {
+    for channel in [user, io_channel]
+        .into_iter()
+        .chain(channels)
+        .chain(message_channel)
+    {
         writer
             .write_all(&mcs::channel_join_request(user, channel))
             .await
@@ -259,7 +297,9 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
         keyboard_layout: KEYBOARD_LAYOUT,
     }
     .encode()?;
-    send(&mut writer, user, io_channel, &logon).await.context("sending the Client Info PDU")?;
+    send(&mut writer, user, io_channel, &logon)
+        .await
+        .context("sending the Client Info PDU")?;
 
     // 8. Connect-time network detection, for a session that claimed it, answered on
     //    the message channel until the licensing arrives, and an offer of UDP after
@@ -268,11 +308,27 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
     let mut answering = message_channel.map(|channel| (channel, &mut detector));
 
     // 9. Licensing, which on a host like this one is one PDU saying there is none.
-    let payload = receive(&mut frames, &mut writer, &mut frame, user, io_channel, &mut answering).await?;
+    let payload = receive(
+        &mut frames,
+        &mut writer,
+        &mut frame,
+        user,
+        io_channel,
+        &mut answering,
+    )
+    .await?;
     license::accept(payload)?;
 
     // 10. The capability exchange, and 11. the four PDUs that make the share live.
-    let payload = receive(&mut frames, &mut writer, &mut frame, user, io_channel, &mut answering).await?;
+    let payload = receive(
+        &mut frames,
+        &mut writer,
+        &mut frame,
+        user,
+        io_channel,
+        &mut answering,
+    )
+    .await?;
     let Pdu::DemandActive { source, body } = share::decode(payload)? else {
         bail!("the host did not demand a share once licensing was done");
     };
@@ -281,10 +337,28 @@ pub(super) async fn connect(config: &Connect) -> Result<Connected> {
         "rdp: the host opened a {}x{} desktop, share {:#x}",
         demand.width, demand.height, demand.share_id
     );
-    let deferred =
-        activate(&mut frames, &mut writer, &mut frame, user, io_channel, &demand).await?;
+    let deferred = activate(
+        &mut frames,
+        &mut writer,
+        &mut frame,
+        user,
+        io_channel,
+        &demand,
+    )
+    .await?;
 
-    Ok(Connected { frames, writer, socket, user, io_channel, message_channel, channels: numbered, demand, deferred, detector })
+    Ok(Connected {
+        frames,
+        writer,
+        socket,
+        user,
+        io_channel,
+        message_channel,
+        channels: numbered,
+        demand,
+        deferred,
+        detector,
+    })
 }
 
 /// The capability exchange and the handshake after it: everything between a Demand
@@ -316,13 +390,18 @@ pub(super) async fn activate(
     }
     .encode();
     let confirm = share::confirm_active(user, &confirm);
-    send(writer, user, io_channel, &confirm).await.context("sending the Confirm Active PDU")?;
+    send(writer, user, io_channel, &confirm)
+        .await
+        .context("sending the Confirm Active PDU")?;
 
     // All four go out without waiting; the server's four come back in its own time,
     // with session PDUs among them.
     for request in finalization::requests(user, demand.server_channel, demand.share_id) {
         let framed = mcs::send_data_request(user, io_channel, &request)?;
-        writer.write_all(&framed).await.context("sending a finalization PDU")?;
+        writer
+            .write_all(&framed)
+            .await
+            .context("sending a finalization PDU")?;
     }
     let mut deferred = Vec::new();
     loop {
@@ -370,14 +449,19 @@ pub(super) fn turned_down(detector: &mut Detector, payload: &[u8]) -> Result<Opt
     // A continuous measurement counts it as well, past its security header.
     detector.received(payload.len().saturating_sub(4));
     let (request, reply) = multitransport::decline(payload).context("reading an offer of UDP")?;
-    info!("rdp: the host offered transport {} as request {:#x}, turned down", request.protocol, request.id);
+    info!(
+        "rdp: the host offered transport {} as request {:#x}, turned down",
+        request.protocol, request.id
+    );
     Ok(Some(reply))
 }
 
 /// One network-detection PDU, with what was measured and what the host concluded
 /// logged on the way.
 pub(super) fn heard(detector: &mut Detector, payload: &[u8]) -> Result<Answer> {
-    let answer = detector.answer(payload, Instant::now()).context("reading network detection")?;
+    let answer = detector
+        .answer(payload, Instant::now())
+        .context("reading network detection")?;
     match &answer {
         Answer::Measured { millis, bytes, .. } => {
             debug!("rdp: network detection measured {bytes} bytes in {millis} ms");
@@ -412,19 +496,28 @@ async fn receive<'a>(
 ) -> Result<&'a [u8]> {
     loop {
         frames.next(frame).await?;
-        let Some((message, detector)) = answering else { break };
-        let mcs::Indication::Data(data) = mcs::send_data_indication(frame)? else { break };
+        let Some((message, detector)) = answering else {
+            break;
+        };
+        let mcs::Indication::Data(data) = mcs::send_data_indication(frame)? else {
+            break;
+        };
         if data.channel != *message {
             break;
         }
         if let Some(reply) = on_message(detector, data.payload)? {
-            send(writer, user, *message, &reply).await.context("answering on the message channel")?;
+            send(writer, user, *message, &reply)
+                .await
+                .context("answering on the message channel")?;
         }
     }
     match mcs::send_data_indication(frame)? {
         mcs::Indication::Data(data) if data.channel == channel => Ok(data.payload),
         mcs::Indication::Data(data) => {
-            bail!("the host sent a PDU on channel {}, where {channel} was expected", data.channel)
+            bail!(
+                "the host sent a PDU on channel {}, where {channel} was expected",
+                data.channel
+            )
         }
         mcs::Indication::Disconnect(reason) => {
             bail!("the host ended the connection before the desktop was ready: {reason}")

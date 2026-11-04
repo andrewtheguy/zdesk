@@ -114,11 +114,24 @@ impl ClientInfo<'_> {
         let address = utf16(&self.address.to_string());
         let directory = utf16(CLIENT_DIR);
 
-        let total = 4 + 4 + 4 + 5 * 2 + 5 * 2
-            + domain.len() + username.len() + password.len()
-            + 2 + 2 + address.len() + 2
-            + 2 + directory.len() + 2
-            + TIME_ZONE + 4 + 4;
+        let total = 4
+            + 4
+            + 4
+            + 5 * 2
+            + 5 * 2
+            + domain.len()
+            + username.len()
+            + password.len()
+            + 2
+            + 2
+            + address.len()
+            + 2
+            + 2
+            + directory.len()
+            + 2
+            + TIME_ZONE
+            + 4
+            + 4;
         if u16::try_from(total).is_err() {
             return Err(TooLong(total));
         }
@@ -198,7 +211,12 @@ mod tests {
     #[test]
     fn the_audio_capture_flag_follows_whether_a_microphone_was_asked_for() {
         let flags = |microphone: bool| {
-            let bytes = ClientInfo { microphone, ..logon() }.encode().unwrap();
+            let bytes = ClientInfo {
+                microphone,
+                ..logon()
+            }
+            .encode()
+            .unwrap();
             u32::from_le_bytes(bytes[8..12].try_into().unwrap())
         };
         assert_eq!(flags(false) & AUDIO_CAPTURE, 0);
@@ -252,10 +270,15 @@ mod tests {
 
     #[test]
     fn an_ipv6_client_says_so_in_the_family_rather_than_in_the_address() {
-        let info = ClientInfo { address: IpAddr::from([0xfd, 0, 0, 0, 0, 0, 0, 1]), ..logon() };
+        let info = ClientInfo {
+            address: IpAddr::from([0xfd, 0, 0, 0, 0, 0, 0, 1]),
+            ..logon()
+        };
         let bytes = info.encode().unwrap();
         assert!(
-            bytes.windows(2).any(|pair| pair == ADDRESS_INET6.to_le_bytes()),
+            bytes
+                .windows(2)
+                .any(|pair| pair == ADDRESS_INET6.to_le_bytes()),
             "the family field says INET6"
         );
     }
@@ -264,7 +287,10 @@ mod tests {
     fn the_session_looks_the_way_mstsc_would_leave_it() {
         let bytes = logon().encode().unwrap();
         let performance = u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap());
-        assert_eq!(performance, 0x180, "font smoothing and composition on, nothing disabled");
+        assert_eq!(
+            performance, 0x180,
+            "font smoothing and composition on, nothing disabled"
+        );
         // And the time zone before it is the server's, not ours.
         let zone = bytes.len() - 4 - 4 - TIME_ZONE;
         assert!(bytes[zone..zone + TIME_ZONE].iter().all(|byte| *byte == 0));

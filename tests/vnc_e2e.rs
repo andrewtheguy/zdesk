@@ -25,10 +25,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use zdesk::config::{AppConfig, Protocol, TargetConfig};
-use zdesk::server;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
+use zdesk::config::{AppConfig, Protocol, TargetConfig};
+use zdesk::server;
 
 /// Xtigervnc's own desktop, which a plain target is shown at: it is never asked
 /// for another.
@@ -46,7 +46,9 @@ async fn wait_for_vnc_port(port: u16) {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let attempt = async {
-                let mut stream = TcpStream::connect((common::container_host(), port)).await.ok()?;
+                let mut stream = TcpStream::connect((common::container_host(), port))
+                    .await
+                    .ok()?;
                 let mut greeting = [0u8; 12];
                 stream.read_exact(&mut greeting).await.ok()?;
                 greeting.starts_with(b"RFB ").then_some(())
@@ -66,7 +68,10 @@ async fn spawn_app(vnc_port: u16) -> SocketAddr {
     let config = AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         auth: common::test_auth(),
-        branding: zdesk::config::Branding { text: "zdesk".to_owned(), logo: None },
+        branding: zdesk::config::Branding {
+            text: "zdesk".to_owned(),
+            logo: None,
+        },
         dev_hostname: None,
         meter: None,
         hevc_wasm: None,
@@ -141,7 +146,9 @@ fn check_cursor_msg(text: &str) {
     let (w, h) = (msg["w"].as_u64().unwrap(), msg["h"].as_u64().unwrap());
     // `get`, not indexing: a missing field must not pass as an explicit null —
     // the browser distinguishes "no image" from a field the server forgot.
-    let image = msg.get("image").expect("cursor message carries an image field");
+    let image = msg
+        .get("image")
+        .expect("cursor message carries an image field");
     let Some(image) = image.as_str() else {
         assert!(image.is_null(), "image must be a string or null: {text}");
         assert_eq!((w, h), (0, 0), "a hidden pointer has no dimensions: {text}");
@@ -155,9 +162,18 @@ fn check_cursor_msg(text: &str) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(&bytes))
         .read_info()
         .expect("image is a PNG");
-    let mut buf = vec![0; reader.output_buffer_size().expect("PNG size fits in memory")];
+    let mut buf = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .expect("PNG size fits in memory")
+    ];
     let info = reader.next_frame(&mut buf).expect("PNG decodes");
-    assert_eq!(info.color_type, png::ColorType::Rgba, "cursors carry alpha: {text}");
+    assert_eq!(
+        info.color_type,
+        png::ColorType::Rgba,
+        "cursors carry alpha: {text}"
+    );
     assert_eq!(
         (u64::from(info.width), u64::from(info.height)),
         (w, h),
@@ -216,7 +232,9 @@ async fn vnc_session_streams_the_full_desktop_at_the_servers_own_size() {
                 Message::Binary(frame) => {
                     assert!(got_resize, "a frame arrived before resize");
                     check_tile_frame(&frame, &mut painted);
-                    ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    ws.send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                     // Once every tile of the desktop has arrived, the ZRLE->tile
                     // path is proven. The Cursor pseudo-encoding rides the
                     // opening update, so wait for the pointer shape too.
@@ -262,7 +280,12 @@ async fn vnc_session_streams_the_full_desktop_at_the_servers_own_size() {
                         "session failed: {text}"
                     );
                     if text.contains(r#""type":"resize""#) {
-                        assert_resize(&text, DESKTOP_W, DESKTOP_H, "reattach must announce the session's current size");
+                        assert_resize(
+                            &text,
+                            DESKTOP_W,
+                            DESKTOP_H,
+                            "reattach must announce the session's current size",
+                        );
                         reannounced = true;
                     }
                     if text.contains(r#""type":"cursor""#) {
@@ -281,7 +304,9 @@ async fn vnc_session_streams_the_full_desktop_at_the_servers_own_size() {
                         continue;
                     }
                     check_tile_frame(&frame, &mut repainted);
-                    ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    ws.send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                     if repainted.whole() && replayed_cursor {
                         return;
                     }
@@ -306,7 +331,9 @@ async fn vnc_session_streams_the_full_desktop_at_the_servers_own_size() {
     ws.send(Message::text(r#"{"type":"clipboard","text":"zdesk e2e"}"#))
         .await
         .unwrap();
-    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#)).await.unwrap();
+    ws.send(Message::text(r#"{"type":"clipboardRequest"}"#))
+        .await
+        .unwrap();
 
     tokio::time::timeout(Duration::from_secs(60), async {
         while let Some(msg) = ws.next().await {

@@ -252,7 +252,9 @@ impl DemandActive {
             server_channel: source,
             width,
             height,
-            multifragment: multifragment.unwrap_or(DEFAULT_MULTIFRAGMENT).max(LARGE_POINTER_REQUEST),
+            multifragment: multifragment
+                .unwrap_or(DEFAULT_MULTIFRAGMENT)
+                .max(LARGE_POINTER_REQUEST),
             chunk: chunk.unwrap_or(channel::MIN_CHUNK),
             refresh_rect: repaint.0,
             suppress_output: repaint.1,
@@ -287,7 +289,8 @@ impl ConfirmActive {
         w.u16_le(SERVER_CHANNEL);
         w.u16_le(u16::try_from(SOURCE.len()).expect("a source descriptor of eight bytes"));
         w.u16_le(
-            u16::try_from(sets.len() + 4).expect("this client's capability list is under a kilobyte"),
+            u16::try_from(sets.len() + 4)
+                .expect("this client's capability list is under a kilobyte"),
         );
         w.bytes(SOURCE);
         w.u16_le(COUNT);
@@ -559,7 +562,10 @@ mod tests {
             (ORDER, vec![0; 84]),
             input(WINDOWS_INPUT),
             (MULTIFRAGMENT, 0x0010_0000_u32.to_le_bytes().to_vec()),
-            (VIRTUAL_CHANNEL, [0_u32.to_le_bytes(), 16_256_u32.to_le_bytes()].concat()),
+            (
+                VIRTUAL_CHANNEL,
+                [0_u32.to_le_bytes(), 16_256_u32.to_le_bytes()].concat(),
+            ),
             (0x1D, vec![0; 40]),
         ]);
         assert_eq!(
@@ -634,7 +640,9 @@ mod tests {
         for flags in [0x0001_u16, 0x0001 | 0x0004 | 0x0100] {
             let pdu = demand(&[bitmap(1920, 1080), input(flags)]);
             assert_eq!(
-                DemandActive::decode(SERVER_CHANNEL, &pdu).unwrap_err().to_string(),
+                DemandActive::decode(SERVER_CHANNEL, &pdu)
+                    .unwrap_err()
+                    .to_string(),
                 format!(
                     "an RDP Demand Active PDU carries input flags admitting no fast-path input, \
                      {flags:#x}, which this client does not accept"
@@ -663,7 +671,9 @@ mod tests {
             let chunk = [0_u32.to_le_bytes(), named.to_le_bytes()].concat();
             let pdu = demand(&[bitmap(1920, 1080), (VIRTUAL_CHANNEL, chunk)]);
             assert_eq!(
-                DemandActive::decode(SERVER_CHANNEL, &pdu).unwrap_err().to_string(),
+                DemandActive::decode(SERVER_CHANNEL, &pdu)
+                    .unwrap_err()
+                    .to_string(),
                 format!(
                     "a server Virtual Channel capability set carries a channel chunk size \
                      {named:#x}, which this client does not accept"
@@ -676,7 +686,9 @@ mod tests {
     fn a_share_with_no_desktop_in_it_is_an_error_rather_than_a_guess() {
         let pdu = demand(&[(GENERAL, vec![0; 20])]);
         assert_eq!(
-            DemandActive::decode(SERVER_CHANNEL, &pdu).unwrap_err().to_string(),
+            DemandActive::decode(SERVER_CHANNEL, &pdu)
+                .unwrap_err()
+                .to_string(),
             "an RDP Demand Active PDU does not carry a Bitmap capability set"
         );
     }
@@ -690,7 +702,9 @@ mod tests {
         let at = 4 + 2 + 2 + 4 + 2 + 2 + 4;
         pdu[at..at + 2].copy_from_slice(&16_u16.to_le_bytes());
         assert_eq!(
-            DemandActive::decode(SERVER_CHANNEL, &pdu).unwrap_err().to_string(),
+            DemandActive::decode(SERVER_CHANNEL, &pdu)
+                .unwrap_err()
+                .to_string(),
             "a server Bitmap capability set carries a colour depth 0x10, which this client does \
              not accept"
         );
@@ -703,7 +717,9 @@ mod tests {
         let at = 4 + 2 + 2 + 4 + 2 + 2 + 2;
         pdu[at..at + 2].copy_from_slice(&2_u16.to_le_bytes());
         assert_eq!(
-            DemandActive::decode(SERVER_CHANNEL, &pdu).unwrap_err().to_string(),
+            DemandActive::decode(SERVER_CHANNEL, &pdu)
+                .unwrap_err()
+                .to_string(),
             "an RDP Demand Active PDU carries a capability set length 0x2, which this client does \
              not accept"
         );

@@ -52,9 +52,13 @@ impl Rect {
     pub fn intersect(&self, other: &Self) -> Option<Self> {
         let (left, top) = (self.left.max(other.left), self.top.max(other.top));
         let (right, bottom) = (self.right.min(other.right), self.bottom.min(other.bottom));
-        (left <= right && top <= bottom).then_some(Self { left, top, right, bottom })
+        (left <= right && top <= bottom).then_some(Self {
+            left,
+            top,
+            right,
+            bottom,
+        })
     }
-
 }
 
 /// The pixels the client was last sent, as packed RGB888, and which of them are
@@ -176,7 +180,12 @@ impl Shadow {
             let unknown = (self.unknown > 0)
                 .then(|| self.first_unknown(rect.left, y, w))
                 .flatten()
-                .map(|lo| (lo * 3, self.last_unknown(rect.left, y, w).unwrap_or(lo) * 3 + 2));
+                .map(|lo| {
+                    (
+                        lo * 3,
+                        self.last_unknown(rect.left, y, w).unwrap_or(lo) * 3 + 2,
+                    )
+                });
 
             let (lo, hi) = match (differs, unknown) {
                 (None, None) => continue,
@@ -202,7 +211,10 @@ impl Shadow {
             self.row_mut(rect.left, y, row_bytes).copy_from_slice(src);
             let at = usize::from(y) * usize::from(self.w) + usize::from(rect.left);
             if self.unknown > 0 {
-                self.unknown -= self.known[at..at + w].iter().filter(|known| !**known).count();
+                self.unknown -= self.known[at..at + w]
+                    .iter()
+                    .filter(|known| !**known)
+                    .count();
             }
             self.known[at..at + w].fill(true);
         }
@@ -223,7 +235,11 @@ impl Shadow {
     /// changed part cropped out of it, which is row copies where a repack from the
     /// source would be another swizzle over the same pixels. What an engine hands
     /// the video sink, from ZRLE and from RDP's bitmap path alike.
-    pub fn changed<'a>(&mut self, rect: Rect, rgb: &'a [u8]) -> Option<(Rect, std::borrow::Cow<'a, [u8]>)> {
+    pub fn changed<'a>(
+        &mut self,
+        rect: Rect,
+        rgb: &'a [u8],
+    ) -> Option<(Rect, std::borrow::Cow<'a, [u8]>)> {
         let changed = self.accept(rect, rgb)?;
         if changed == rect {
             return Some((rect, std::borrow::Cow::Borrowed(rgb)));
@@ -290,9 +306,7 @@ impl Shadow {
 
     fn last_unknown(&self, x: u16, y: u16, w: usize) -> Option<usize> {
         let at = usize::from(y) * usize::from(self.w) + usize::from(x);
-        self.known[at..at + w]
-            .iter()
-            .rposition(|known| !known)
+        self.known[at..at + w].iter().rposition(|known| !known)
     }
 }
 
@@ -334,7 +348,11 @@ fn crop(src: &[u8], rect: Rect, sub: Rect, out: &mut Vec<u8>) {
 /// this replaces ran the full width of every changed row, and the reverse one
 /// defeated autovectorization outright.
 fn differing_bytes(a: &[u8], b: &[u8]) -> (usize, usize) {
-    debug_assert_eq!(a.len(), b.len(), "differing_bytes compares two rows of one width");
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "differing_bytes compares two rows of one width"
+    );
     if a.len() != b.len() {
         return (0, a.len().saturating_sub(1));
     }
@@ -342,7 +360,13 @@ fn differing_bytes(a: &[u8], b: &[u8]) -> (usize, usize) {
     let word = |chunk: &[u8]| u64::from_ne_bytes(chunk.try_into().expect("an 8-byte chunk"));
 
     let mut first = a.len();
-    for (i, (x, y)) in a.as_chunks::<WORD>().0.iter().zip(b.as_chunks::<WORD>().0).enumerate() {
+    for (i, (x, y)) in a
+        .as_chunks::<WORD>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<WORD>().0)
+        .enumerate()
+    {
         if word(x) != word(y) {
             first = i * WORD + x.iter().zip(y).position(|(p, q)| p != q).unwrap_or(0);
             break;
@@ -361,7 +385,12 @@ fn differing_bytes(a: &[u8], b: &[u8]) -> (usize, usize) {
     for (i, (x, y)) in a.rchunks_exact(WORD).zip(b.rchunks_exact(WORD)).enumerate() {
         if word(x) != word(y) {
             let end = a.len() - i * WORD;
-            let back = x.iter().rev().zip(y.iter().rev()).position(|(p, q)| p != q).unwrap_or(0);
+            let back = x
+                .iter()
+                .rev()
+                .zip(y.iter().rev())
+                .position(|(p, q)| p != q)
+                .unwrap_or(0);
             last = Some(end - 1 - back);
             break;
         }
@@ -611,7 +640,11 @@ mod tests {
     #[test]
     fn an_intersection_is_the_pixels_two_rectangles_share() {
         let a = rect(10, 10, 29, 29);
-        assert_eq!(a.intersect(&a), Some(a), "a rectangle does not intersect itself");
+        assert_eq!(
+            a.intersect(&a),
+            Some(a),
+            "a rectangle does not intersect itself"
+        );
         assert_eq!(
             a.intersect(&rect(20, 20, 39, 39)),
             Some(rect(20, 20, 29, 29)),
@@ -623,8 +656,16 @@ mod tests {
             "a rectangle wholly inside another is the whole of the overlap"
         );
         // right/bottom are inclusive, so 29 and 30 are neighbours, not overlaps.
-        assert_eq!(a.intersect(&rect(29, 10, 40, 29)), Some(rect(29, 10, 29, 29)), "one column");
-        assert_eq!(a.intersect(&rect(30, 10, 40, 29)), None, "touching edges are not an overlap");
+        assert_eq!(
+            a.intersect(&rect(29, 10, 40, 29)),
+            Some(rect(29, 10, 29, 29)),
+            "one column"
+        );
+        assert_eq!(
+            a.intersect(&rect(30, 10, 40, 29)),
+            None,
+            "touching edges are not an overlap"
+        );
         assert_eq!(a.intersect(&rect(0, 0, 5, 5)), None, "disjoint");
     }
 }

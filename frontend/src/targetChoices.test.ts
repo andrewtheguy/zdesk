@@ -762,7 +762,7 @@ test("how the host draws the pipeline is one of three, high quality until anothe
     ["adaptive-region", false],
   ]);
   const [, fullScreen, region] = options.pipelines ?? [];
-  assert.match(fullScreen?.label ?? "", /^H\.264 full screen \(alpha\)/);
+  assert.match(fullScreen?.label ?? "", /^H\.264 full screen \(beta\)/);
   assert.match(region?.label ?? "", /^H\.264 region \(alpha\)/);
   // Full screen is the one suggested for a phone, and the region is not.
   assert.match(fullScreen?.note ?? "", /Recommended on a phone or tablet/);

@@ -91,17 +91,27 @@ mod tests {
         let pdu = request(REQUEST, 0x1234_5678, 1, &[0xAB; 16]);
         assert!(is_request(&pdu));
         let (said, reply) = decline(&pdu).unwrap();
-        assert_eq!(said, Request { id: 0x1234_5678, protocol: 1 });
+        assert_eq!(
+            said,
+            Request {
+                id: 0x1234_5678,
+                protocol: 1
+            }
+        );
         assert_eq!(
             reply,
-            [0x04, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12, 0x04, 0x40, 0x00, 0x80],
+            [
+                0x04, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12, 0x04, 0x40, 0x00, 0x80
+            ],
             "SEC_TRANSPORT_RSP, the id, and E_ABORT"
         );
     }
 
     #[test]
     fn network_detection_is_not_a_request() {
-        assert!(!is_request(&[0x00, 0x10, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x01, 0x10]));
+        assert!(!is_request(&[
+            0x00, 0x10, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x01, 0x10
+        ]));
         assert!(!is_request(&[0x02]), "too short for a security header");
     }
 

@@ -122,7 +122,9 @@ impl Default for Cache {
 
 impl Cache {
     pub fn new() -> Self {
-        Self { entries: vec![None; CACHE_ENTRIES].into_boxed_slice() }
+        Self {
+            entries: vec![None; CACHE_ENTRIES].into_boxed_slice(),
+        }
     }
 
     /// One pointer update, by the fast-path code it arrived under.
@@ -134,15 +136,24 @@ impl Cache {
             fastpath::POINTER_HIDDEN => Ok(Pointer::Hidden),
             fastpath::POINTER_DEFAULT => Ok(Pointer::Default),
             fastpath::POINTER_POSITION => position(body),
-            fastpath::COLOR_POINTER => {
-                self.store(attribute("a Colour Pointer Update", body, Some(RGB), Width::Narrow)?)
-            }
-            fastpath::NEW_POINTER => {
-                self.store(attribute("a New Pointer Update", body, None, Width::Narrow)?)
-            }
-            fastpath::LARGE_POINTER => {
-                self.store(attribute("a Large Pointer Update", body, None, Width::Wide)?)
-            }
+            fastpath::COLOR_POINTER => self.store(attribute(
+                "a Colour Pointer Update",
+                body,
+                Some(RGB),
+                Width::Narrow,
+            )?),
+            fastpath::NEW_POINTER => self.store(attribute(
+                "a New Pointer Update",
+                body,
+                None,
+                Width::Narrow,
+            )?),
+            fastpath::LARGE_POINTER => self.store(attribute(
+                "a Large Pointer Update",
+                body,
+                None,
+                Width::Wide,
+            )?),
             fastpath::CACHED_POINTER => self.cached(body),
             _ => Err(Malformed::Refused {
                 what: "a fast-path update",
@@ -153,11 +164,14 @@ impl Cache {
     }
 
     fn store(&mut self, (index, shape): (u16, Shape)) -> Result<Pointer, Malformed> {
-        let slot = self.entries.get_mut(usize::from(index)).ok_or(Malformed::Refused {
-            what: "a pointer update",
-            field: "a cache index past the cache this client claimed",
-            value: index.into(),
-        })?;
+        let slot = self
+            .entries
+            .get_mut(usize::from(index))
+            .ok_or(Malformed::Refused {
+                what: "a pointer update",
+                field: "a cache index past the cache this client claimed",
+                value: index.into(),
+            })?;
         *slot = Some(shape.clone());
         Ok(Pointer::Shape(shape))
     }
@@ -166,16 +180,26 @@ impl Cache {
         const WHAT: &str = "a Cached Pointer Update";
         let mut r = Reader::new(WHAT, body);
         let index = r.u16_le()?;
-        match self.entries.get(usize::from(index)).and_then(Option::as_ref) {
+        match self
+            .entries
+            .get(usize::from(index))
+            .and_then(Option::as_ref)
+        {
             Some(shape) => Ok(Pointer::Shape(shape.clone())),
-            None => Err(Malformed::Missing { what: WHAT, field: "a shape at the index it names" }),
+            None => Err(Malformed::Missing {
+                what: WHAT,
+                field: "a shape at the index it names",
+            }),
         }
     }
 }
 
 fn position(body: &[u8]) -> Result<Pointer, Malformed> {
     let mut r = Reader::new("a Pointer Position Update", body);
-    Ok(Pointer::Position { x: r.u16_le()?, y: r.u16_le()? })
+    Ok(Pointer::Position {
+        x: r.u16_le()?,
+        y: r.u16_le()?,
+    })
 }
 
 /// How wide the two mask lengths are. A Large Pointer Update is the same structure as
@@ -224,12 +248,18 @@ fn attribute(
     let xor_stride = stride(u32::from(shape_width) * u32::from(bpp));
     let and_stride = stride(u32::from(shape_width));
     if xor_length != xor_stride * u32::from(shape_height) {
-        return Err(r.refuse("an xorMask that is not the length its own size asks for", xor_length));
+        return Err(r.refuse(
+            "an xorMask that is not the length its own size asks for",
+            xor_length,
+        ));
     }
     // An absent andMask is a shape that is opaque wherever its colours are, which is
     // how a 32-bit shape that says everything in its alpha channel arrives.
     if and_length != 0 && and_length != and_stride * u32::from(shape_height) {
-        return Err(r.refuse("an andMask that is not the length its own size asks for", and_length));
+        return Err(r.refuse(
+            "an andMask that is not the length its own size asks for",
+            and_length,
+        ));
     }
 
     // On the wire the masks are the other way round from their lengths.
@@ -237,7 +267,16 @@ fn attribute(
     let and = r.bytes(and_length as usize)?;
 
     let rgba = pixels(bpp, shape_width, shape_height, xor, and);
-    Ok((index, Shape { width: shape_width, height: shape_height, hotspot_x, hotspot_y, rgba }))
+    Ok((
+        index,
+        Shape {
+            width: shape_width,
+            height: shape_height,
+            hotspot_x,
+            hotspot_y,
+            rgba,
+        },
+    ))
 }
 
 /// The length of one scanline, which is padded out to a two-byte boundary whatever
@@ -252,12 +291,20 @@ fn stride(bits: u32) -> u32 {
 /// what is left is the row order, the three-way rule, and the depths.
 fn pixels(bpp: u16, width: u16, height: u16, xor: &[u8], and: &[u8]) -> Vec<u8> {
     let xor_stride = stride(u32::from(width) * u32::from(bpp)) as usize;
-    let and_stride = if and.is_empty() { 0 } else { stride(u32::from(width)) as usize };
+    let and_stride = if and.is_empty() {
+        0
+    } else {
+        stride(u32::from(width)) as usize
+    };
     let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
     for row in 0..height {
         // A colour mask is stored last row first; a monochrome one, and the andMask
         // that goes with it, are not.
-        let source = usize::from(if bpp == MONOCHROME { row } else { height - 1 - row });
+        let source = usize::from(if bpp == MONOCHROME {
+            row
+        } else {
+            height - 1 - row
+        });
         let xor_row = &xor[source * xor_stride..][..xor_stride];
         let and_row = &and[source * and_stride..][..and_stride];
         for column in 0..width {
@@ -276,13 +323,22 @@ fn pixels(bpp: u16, width: u16, height: u16, xor: &[u8], and: &[u8]) -> Vec<u8> 
 /// One pixel of an `xorMask` scanline, as `RGBA`. The wire order is blue first.
 fn colour(bpp: u16, row: &[u8], at: u16) -> [u8; 4] {
     if bpp == MONOCHROME {
-        return if bit(row, at) == 1 { [0xFF; 4] } else { [0x00, 0x00, 0x00, 0xFF] };
+        return if bit(row, at) == 1 {
+            [0xFF; 4]
+        } else {
+            [0x00, 0x00, 0x00, 0xFF]
+        };
     }
     let at = usize::from(at);
     if bpp == RGB {
         [row[at * 3 + 2], row[at * 3 + 1], row[at * 3], 0xFF]
     } else {
-        [row[at * 4 + 2], row[at * 4 + 1], row[at * 4], row[at * 4 + 3]]
+        [
+            row[at * 4 + 2],
+            row[at * 4 + 1],
+            row[at * 4],
+            row[at * 4 + 3],
+        ]
     }
 }
 
@@ -302,7 +358,11 @@ fn bit(row: &[u8], at: u16) -> u8 {
 /// them black loses a caret over black text, and painting them white loses it over a
 /// white page; alternating loses neither.
 fn invert(row: u16, column: u16) -> [u8; 4] {
-    if (row + column).is_multiple_of(2) { [0xFF; 4] } else { [0x00, 0x00, 0x00, 0xFF] }
+    if (row + column).is_multiple_of(2) {
+        [0xFF; 4]
+    } else {
+        [0x00, 0x00, 0x00, 0xFF]
+    }
 }
 
 #[cfg(test)]
@@ -400,7 +460,9 @@ mod tests {
         };
         assert_eq!(
             shape.rgba,
-            vec![0x30, 0x20, 0x10, 0xFF, 0x31, 0x21, 0x11, 0xFF, 0x32, 0x22, 0x12, 0xFF]
+            vec![
+                0x30, 0x20, 0x10, 0xFF, 0x31, 0x21, 0x11, 0xFF, 0x32, 0x22, 0x12, 0xFF
+            ]
         );
     }
 
@@ -410,8 +472,14 @@ mod tests {
         // Row 0 is one white pixel then seven black; row 1 is the reverse.
         let xor = [0b1000_0000, 0x00, 0b0111_1111, 0x00];
         let shape = shape(&new_pointer(MONOCHROME, 0, (8, 2), &xor, &[0x00; 4]));
-        assert_eq!(&shape.rgba[..8], &[0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF]);
-        assert_eq!(&shape.rgba[32..40], &[0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            &shape.rgba[..8],
+            &[0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF]
+        );
+        assert_eq!(
+            &shape.rgba[32..40],
+            &[0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
     }
 
     /// A 32-bit shape may say everything in its alpha and send no andMask at all.
@@ -443,10 +511,18 @@ mod tests {
     #[test]
     fn the_shapes_without_a_bitmap_are_read_from_the_code_alone() {
         let mut cache = Cache::new();
-        assert_eq!(cache.update(fastpath::POINTER_HIDDEN, &[]).unwrap(), Pointer::Hidden);
-        assert_eq!(cache.update(fastpath::POINTER_DEFAULT, &[]).unwrap(), Pointer::Default);
         assert_eq!(
-            cache.update(fastpath::POINTER_POSITION, &[0x01, 0x00, 0x02, 0x00]).unwrap(),
+            cache.update(fastpath::POINTER_HIDDEN, &[]).unwrap(),
+            Pointer::Hidden
+        );
+        assert_eq!(
+            cache.update(fastpath::POINTER_DEFAULT, &[]).unwrap(),
+            Pointer::Default
+        );
+        assert_eq!(
+            cache
+                .update(fastpath::POINTER_POSITION, &[0x01, 0x00, 0x02, 0x00])
+                .unwrap(),
             Pointer::Position { x: 1, y: 2 }
         );
     }
@@ -454,14 +530,23 @@ mod tests {
     #[test]
     fn a_shape_is_kept_and_handed_back_by_its_index() {
         let mut cache = Cache::new();
-        let sent = cache.update(fastpath::NEW_POINTER, &new_pointer(RGBA, 5, (1, 1), &[0x10, 0x20, 0x30, 0xFF], &[0x00, 0x00])).unwrap();
-        let cached = cache.update(fastpath::CACHED_POINTER, &5_u16.to_le_bytes()).unwrap();
+        let sent = cache
+            .update(
+                fastpath::NEW_POINTER,
+                &new_pointer(RGBA, 5, (1, 1), &[0x10, 0x20, 0x30, 0xFF], &[0x00, 0x00]),
+            )
+            .unwrap();
+        let cached = cache
+            .update(fastpath::CACHED_POINTER, &5_u16.to_le_bytes())
+            .unwrap();
         assert_eq!(cached, sent);
     }
 
     #[test]
     fn an_index_nothing_was_stored_at_is_not_a_shape() {
-        let error = Cache::new().update(fastpath::CACHED_POINTER, &5_u16.to_le_bytes()).unwrap_err();
+        let error = Cache::new()
+            .update(fastpath::CACHED_POINTER, &5_u16.to_le_bytes())
+            .unwrap_err();
         assert_eq!(
             error,
             Malformed::Missing {
@@ -475,14 +560,18 @@ mod tests {
     fn an_index_past_the_cache_this_client_claimed_is_refused() {
         let past = u16::try_from(CACHE_ENTRIES).unwrap();
         let update = new_pointer(RGBA, past, (1, 1), &[0x10, 0x20, 0x30, 0xFF], &[0x00, 0x00]);
-        let error = Cache::new().update(fastpath::NEW_POINTER, &update).unwrap_err();
+        let error = Cache::new()
+            .update(fastpath::NEW_POINTER, &update)
+            .unwrap_err();
         assert!(matches!(error, Malformed::Refused { value, .. } if value == u64::from(past)));
     }
 
     #[test]
     fn a_depth_this_client_cannot_unpack_is_refused_by_name() {
         let update = new_pointer(16, 0, (1, 1), &[0x10, 0x20], &[0x00, 0x00]);
-        let error = Cache::new().update(fastpath::NEW_POINTER, &update).unwrap_err();
+        let error = Cache::new()
+            .update(fastpath::NEW_POINTER, &update)
+            .unwrap_err();
         assert_eq!(
             error,
             Malformed::Refused {
@@ -506,7 +595,9 @@ mod tests {
     #[test]
     fn a_shape_bigger_than_rdp_allows_is_refused_before_it_is_measured() {
         let update = new_pointer(RGBA, 0, (MAX_DIMENSION + 1, 1), &[], &[]);
-        let error = Cache::new().update(fastpath::NEW_POINTER, &update).unwrap_err();
+        let error = Cache::new()
+            .update(fastpath::NEW_POINTER, &update)
+            .unwrap_err();
         assert_eq!(
             error,
             Malformed::Refused {

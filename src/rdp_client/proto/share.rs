@@ -93,7 +93,10 @@ pub const MONITOR_LAYOUT: u8 = 0x37;
 pub enum Pdu<'a> {
     /// The server's capabilities and the share identifier every later PDU names, and
     /// the MCS channel the server sent them from. See [`super::capabilities`].
-    DemandActive { source: u16, body: &'a [u8] },
+    DemandActive {
+        source: u16,
+        body: &'a [u8],
+    },
     /// The share is being torn down. Either a Demand Active follows and the session
     /// is rebuilt around a new size, or the connection is ending.
     DeactivateAll,
@@ -180,7 +183,11 @@ fn share_data(body: &[u8]) -> Result<Data<'_>, Malformed> {
         return Err(r.refuse("its compression flags", compression));
     }
     r.skip(2)?;
-    Ok(Data { share_id, kind, body: r.rest() })
+    Ok(Data {
+        share_id,
+        kind,
+        body: r.rest(),
+    })
 }
 
 fn control_header(w: &mut Writer, kind: u16, source: u16, total: usize) {
@@ -228,9 +235,16 @@ mod tests {
     fn the_declared_length_bounds_the_body_rather_than_the_buffer() {
         // Windows pads a PDU out past its own length. The padding is not the body,
         // and reading it as body would put a decoder four bytes into nothing.
-        let mut frame = data(FONT_MAP, 1007, 1, &[0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00, 0x00]);
+        let mut frame = data(
+            FONT_MAP,
+            1007,
+            1,
+            &[0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00, 0x00],
+        );
         frame.extend_from_slice(&[0xFF; 4]);
-        let Pdu::Data(pdu) = decode(&frame).unwrap() else { panic!("a data PDU") };
+        let Pdu::Data(pdu) = decode(&frame).unwrap() else {
+            panic!("a data PDU")
+        };
         assert_eq!(pdu.body.len(), 8);
     }
 
@@ -247,7 +261,10 @@ mod tests {
         let frame = [0x0A, 0x00, 0x11, 0x00, 0xEA, 0x03, 0xAB, 0xCD, 0xEF, 0x01];
         assert_eq!(
             decode(&frame).unwrap(),
-            Pdu::DemandActive { source: 0x03EA, body: &[0xAB, 0xCD, 0xEF, 0x01] }
+            Pdu::DemandActive {
+                source: 0x03EA,
+                body: &[0xAB, 0xCD, 0xEF, 0x01]
+            }
         );
     }
 

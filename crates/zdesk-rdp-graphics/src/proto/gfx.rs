@@ -146,7 +146,10 @@ pub struct Placed {
 
 impl Placed {
     fn overlaps(self, other: Self) -> bool {
-        self.x < other.x + other.w && other.x < self.x + self.w && self.y < other.y + other.h && other.y < self.y + self.h
+        self.x < other.x + other.w
+            && other.x < self.x + self.w
+            && self.y < other.y + other.h
+            && other.y < self.y + self.h
     }
 }
 
@@ -159,21 +162,39 @@ impl Placed {
 /// caller can cut the output along: none or one, an empty one, two that overlap,
 /// or a union that is not the output.
 pub fn arrangement(width: u32, height: u32, monitors: &[MonitorDef]) -> Vec<Placed> {
-    let whole = vec![Placed { x: 0, y: 0, w: width, h: height }];
+    let whole = vec![Placed {
+        x: 0,
+        y: 0,
+        w: width,
+        h: height,
+    }];
     if monitors.len() <= 1 || width == 0 || height == 0 {
         return whole;
     }
     let edges = |pick: fn(&MonitorDef) -> i32| monitors.iter().map(move |def| i64::from(pick(def)));
-    let (left, top) = (edges(|def| def.left).min().unwrap_or(0), edges(|def| def.top).min().unwrap_or(0));
-    let (right, bottom) = (edges(|def| def.right).max().unwrap_or(0), edges(|def| def.bottom).max().unwrap_or(0));
+    let (left, top) = (
+        edges(|def| def.left).min().unwrap_or(0),
+        edges(|def| def.top).min().unwrap_or(0),
+    );
+    let (right, bottom) = (
+        edges(|def| def.right).max().unwrap_or(0),
+        edges(|def| def.bottom).max().unwrap_or(0),
+    );
     if right - left + 1 != i64::from(width) || bottom - top + 1 != i64::from(height) {
         return whole;
     }
     let mut placed = Vec::with_capacity(monitors.len());
-    let primary = monitors.iter().filter(|def| def.flags & MONITOR_PRIMARY != 0);
-    let rest = monitors.iter().filter(|def| def.flags & MONITOR_PRIMARY == 0);
+    let primary = monitors
+        .iter()
+        .filter(|def| def.flags & MONITOR_PRIMARY != 0);
+    let rest = monitors
+        .iter()
+        .filter(|def| def.flags & MONITOR_PRIMARY == 0);
     for def in primary.chain(rest) {
-        let (w, h) = (i64::from(def.right) - i64::from(def.left) + 1, i64::from(def.bottom) - i64::from(def.top) + 1);
+        let (w, h) = (
+            i64::from(def.right) - i64::from(def.left) + 1,
+            i64::from(def.bottom) - i64::from(def.top) + 1,
+        );
         if w <= 0 || h <= 0 {
             return whole;
         }
@@ -222,34 +243,95 @@ pub struct Point16 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message<'a> {
     /// Pixels for one rectangle of a surface, in `codec`.
-    WireToSurface1 { surface: u16, codec: u16, format: u8, rect: Rect16, data: &'a [u8] },
+    WireToSurface1 {
+        surface: u16,
+        codec: u16,
+        format: u8,
+        rect: Rect16,
+        data: &'a [u8],
+    },
     /// Pixels for a surface in a codec that carries its own regions — RemoteFX
     /// Progressive — under an encoding context the server names.
-    WireToSurface2 { surface: u16, codec: u16, context: u32, format: u8, data: &'a [u8] },
-    DeleteEncodingContext { surface: u16, context: u32 },
+    WireToSurface2 {
+        surface: u16,
+        codec: u16,
+        context: u32,
+        format: u8,
+        data: &'a [u8],
+    },
+    DeleteEncodingContext {
+        surface: u16,
+        context: u32,
+    },
     /// Fill these rectangles of a surface with one colour, `[b, g, r, a]`.
-    SolidFill { surface: u16, color: [u8; 4], rects: Vec<Rect16> },
+    SolidFill {
+        surface: u16,
+        color: [u8; 4],
+        rects: Vec<Rect16>,
+    },
     /// Copy one rectangle of `src` to each point of `dst`.
-    SurfaceToSurface { src: u16, dst: u16, rect: Rect16, points: Vec<Point16> },
-    SurfaceToCache { surface: u16, key: u64, slot: u16, rect: Rect16 },
-    CacheToSurface { slot: u16, surface: u16, points: Vec<Point16> },
-    EvictCacheEntry { slot: u16 },
-    CreateSurface { surface: u16, width: u16, height: u16, format: u8 },
-    DeleteSurface { surface: u16 },
-    StartFrame { timestamp: u32, frame: u32 },
-    EndFrame { frame: u32 },
+    SurfaceToSurface {
+        src: u16,
+        dst: u16,
+        rect: Rect16,
+        points: Vec<Point16>,
+    },
+    SurfaceToCache {
+        surface: u16,
+        key: u64,
+        slot: u16,
+        rect: Rect16,
+    },
+    CacheToSurface {
+        slot: u16,
+        surface: u16,
+        points: Vec<Point16>,
+    },
+    EvictCacheEntry {
+        slot: u16,
+    },
+    CreateSurface {
+        surface: u16,
+        width: u16,
+        height: u16,
+        format: u8,
+    },
+    DeleteSurface {
+        surface: u16,
+    },
+    StartFrame {
+        timestamp: u32,
+        frame: u32,
+    },
+    EndFrame {
+        frame: u32,
+    },
     /// The output is now this size. Answered to a monitor layout in place of a
     /// Deactivation-Reactivation Sequence.
     ///
     /// `monitors` is the session's monitor layout as the host states it, which may
     /// be anything a Windows desktop can be; [`row`] says how many of them make the
     /// row of equal columns this client asks for.
-    ResetGraphics { width: u32, height: u32, monitors: Vec<MonitorDef> },
-    MapSurfaceToOutput { surface: u16, x: u32, y: u32 },
+    ResetGraphics {
+        width: u32,
+        height: u32,
+        monitors: Vec<MonitorDef>,
+    },
+    MapSurfaceToOutput {
+        surface: u16,
+        x: u32,
+        y: u32,
+    },
     /// The one capability set the server chose out of those advertised.
-    CapsConfirm { version: u32, flags: u32 },
+    CapsConfirm {
+        version: u32,
+        flags: u32,
+    },
     /// A command this client has no reading for, skipped by its header's length.
-    Other { command: u16, length: u32 },
+    Other {
+        command: u16,
+        length: u32,
+    },
 }
 
 /// One PDU of a decompressed channel buffer, by its header alone: where it lies in
@@ -266,7 +348,10 @@ pub struct Command {
 /// reader that passes them on rather than acting on them. A header that does not
 /// fit the buffer ends the iteration, as it ends [`messages`].
 pub fn commands(buffer: &[u8]) -> Commands<'_> {
-    Commands { r: Reader::new(WHAT, buffer), failed: false }
+    Commands {
+        r: Reader::new(WHAT, buffer),
+        failed: false,
+    }
 }
 
 pub struct Commands<'a> {
@@ -282,7 +367,11 @@ impl Iterator for Commands<'_> {
             return None;
         }
         let start = self.r.at();
-        let next = header(&mut self.r).map(|(id, _, _)| Command { id, start, end: self.r.at() });
+        let next = header(&mut self.r).map(|(id, _, _)| Command {
+            id,
+            start,
+            end: self.r.at(),
+        });
         self.failed = next.is_err();
         Some(next)
     }
@@ -306,7 +395,10 @@ fn header<'a>(r: &mut Reader<'a>) -> Result<(u16, u32, &'a [u8]), Malformed> {
 /// A PDU that does not decode ends the iteration: the buffer's remainder is at an
 /// offset the failing header named, and nothing after a bad header is trustworthy.
 pub fn messages(buffer: &[u8]) -> Messages<'_> {
-    Messages { r: Reader::new(WHAT, buffer), failed: false }
+    Messages {
+        r: Reader::new(WHAT, buffer),
+        failed: false,
+    }
 }
 
 pub struct Messages<'a> {
@@ -339,7 +431,13 @@ impl<'a> Messages<'a> {
                 let rect = rect16(&mut r)?;
                 let length = r.u32_le()?;
                 let data = r.bytes(usize::try_from(length).unwrap_or(usize::MAX))?;
-                Message::WireToSurface1 { surface, codec, format, rect, data }
+                Message::WireToSurface1 {
+                    surface,
+                    codec,
+                    format,
+                    rect,
+                    data,
+                }
             }
             CMD_WIRE_TO_SURFACE_2 => {
                 let surface = r.u16_le()?;
@@ -348,39 +446,70 @@ impl<'a> Messages<'a> {
                 let format = r.u8()?;
                 let length = r.u32_le()?;
                 let data = r.bytes(usize::try_from(length).unwrap_or(usize::MAX))?;
-                Message::WireToSurface2 { surface, codec, context, format, data }
+                Message::WireToSurface2 {
+                    surface,
+                    codec,
+                    context,
+                    format,
+                    data,
+                }
             }
-            CMD_DELETE_ENCODING_CONTEXT => {
-                Message::DeleteEncodingContext { surface: r.u16_le()?, context: r.u32_le()? }
-            }
+            CMD_DELETE_ENCODING_CONTEXT => Message::DeleteEncodingContext {
+                surface: r.u16_le()?,
+                context: r.u32_le()?,
+            },
             CMD_SOLID_FILL => {
                 let surface = r.u16_le()?;
                 let color = [r.u8()?, r.u8()?, r.u8()?, r.u8()?];
                 let count = r.u16_le()?;
-                let rects = (0..count).map(|_| rect16(&mut r)).collect::<Result<_, _>>()?;
-                Message::SolidFill { surface, color, rects }
+                let rects = (0..count)
+                    .map(|_| rect16(&mut r))
+                    .collect::<Result<_, _>>()?;
+                Message::SolidFill {
+                    surface,
+                    color,
+                    rects,
+                }
             }
             CMD_SURFACE_TO_SURFACE => {
                 let src = r.u16_le()?;
                 let dst = r.u16_le()?;
                 let rect = rect16(&mut r)?;
                 let count = r.u16_le()?;
-                let points = (0..count).map(|_| point16(&mut r)).collect::<Result<_, _>>()?;
-                Message::SurfaceToSurface { src, dst, rect, points }
+                let points = (0..count)
+                    .map(|_| point16(&mut r))
+                    .collect::<Result<_, _>>()?;
+                Message::SurfaceToSurface {
+                    src,
+                    dst,
+                    rect,
+                    points,
+                }
             }
             CMD_SURFACE_TO_CACHE => {
                 let surface = r.u16_le()?;
                 let key = u64::from(r.u32_le()?) | (u64::from(r.u32_le()?) << 32);
                 let slot = r.u16_le()?;
                 let rect = rect16(&mut r)?;
-                Message::SurfaceToCache { surface, key, slot, rect }
+                Message::SurfaceToCache {
+                    surface,
+                    key,
+                    slot,
+                    rect,
+                }
             }
             CMD_CACHE_TO_SURFACE => {
                 let slot = r.u16_le()?;
                 let surface = r.u16_le()?;
                 let count = r.u16_le()?;
-                let points = (0..count).map(|_| point16(&mut r)).collect::<Result<_, _>>()?;
-                Message::CacheToSurface { slot, surface, points }
+                let points = (0..count)
+                    .map(|_| point16(&mut r))
+                    .collect::<Result<_, _>>()?;
+                Message::CacheToSurface {
+                    slot,
+                    surface,
+                    points,
+                }
             }
             CMD_EVICT_CACHE_ENTRY => Message::EvictCacheEntry { slot: r.u16_le()? },
             CMD_CREATE_SURFACE => {
@@ -394,10 +523,20 @@ impl<'a> Messages<'a> {
                 if u32::from(width) > MAX_DIMENSION || u32::from(height) > MAX_DIMENSION {
                     return Err(r.refuse("a surface dimension", width.max(height)));
                 }
-                Message::CreateSurface { surface, width, height, format }
+                Message::CreateSurface {
+                    surface,
+                    width,
+                    height,
+                    format,
+                }
             }
-            CMD_DELETE_SURFACE => Message::DeleteSurface { surface: r.u16_le()? },
-            CMD_START_FRAME => Message::StartFrame { timestamp: r.u32_le()?, frame: r.u32_le()? },
+            CMD_DELETE_SURFACE => Message::DeleteSurface {
+                surface: r.u16_le()?,
+            },
+            CMD_START_FRAME => Message::StartFrame {
+                timestamp: r.u32_le()?,
+                frame: r.u32_le()?,
+            },
             CMD_END_FRAME => Message::EndFrame { frame: r.u32_le()? },
             CMD_RESET_GRAPHICS => {
                 let width = r.u32_le()?;
@@ -422,12 +561,20 @@ impl<'a> Messages<'a> {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Message::ResetGraphics { width, height, monitors }
+                Message::ResetGraphics {
+                    width,
+                    height,
+                    monitors,
+                }
             }
             CMD_MAP_SURFACE_TO_OUTPUT => {
                 let surface = r.u16_le()?;
                 r.u16_le()?; // reserved
-                Message::MapSurfaceToOutput { surface, x: r.u32_le()?, y: r.u32_le()? }
+                Message::MapSurfaceToOutput {
+                    surface,
+                    x: r.u32_le()?,
+                    y: r.u32_le()?,
+                }
             }
             CMD_CAPS_CONFIRM => {
                 let version = r.u32_le()?;
@@ -448,25 +595,42 @@ impl<'a> Messages<'a> {
                 };
                 Message::CapsConfirm { version, flags }
             }
-            other => Message::Other { command: other, length },
+            other => Message::Other {
+                command: other,
+                length,
+            },
         };
         Ok(message)
     }
 }
 
 pub(crate) fn rect16(r: &mut Reader<'_>) -> Result<Rect16, Malformed> {
-    let rect = Rect16 { left: r.u16_le()?, top: r.u16_le()?, right: r.u16_le()?, bottom: r.u16_le()? };
+    let rect = Rect16 {
+        left: r.u16_le()?,
+        top: r.u16_le()?,
+        right: r.u16_le()?,
+        bottom: r.u16_le()?,
+    };
     if rect.left >= rect.right {
-        return Err(r.refuse("a rectangle whose right edge is not past its left, at", rect.right));
+        return Err(r.refuse(
+            "a rectangle whose right edge is not past its left, at",
+            rect.right,
+        ));
     }
     if rect.top >= rect.bottom {
-        return Err(r.refuse("a rectangle whose bottom edge is not past its top, at", rect.bottom));
+        return Err(r.refuse(
+            "a rectangle whose bottom edge is not past its top, at",
+            rect.bottom,
+        ));
     }
     Ok(rect)
 }
 
 fn point16(r: &mut Reader<'_>) -> Result<Point16, Malformed> {
-    Ok(Point16 { x: r.u16_le()?, y: r.u16_le()? })
+    Ok(Point16 {
+        x: r.u16_le()?,
+        y: r.u16_le()?,
+    })
 }
 
 /// One PDU with its header, ready for [`super::zgfx::wrap`]. Crate-visible so the
@@ -573,7 +737,10 @@ pub fn caps_advertise(h264: H264, cache: BitmapCache) -> Vec<u8> {
         H264::Refused => &[
             (CAPVERSION_8, Some(small)),
             (CAPVERSION_10, Some(small | CAPS_AVC_DISABLED)),
-            (CAPVERSION_107, Some(small | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE)),
+            (
+                CAPVERSION_107,
+                Some(small | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE),
+            ),
         ],
         H264::ByRegion | H264::WholeDesktop => &[
             (CAPVERSION_8, Some(small)),
@@ -728,11 +895,20 @@ mod tests {
         buffer.extend(server(0x0019, &[0xAA; 5])); // ProtectSurface, unread
         buffer.extend(server(CMD_END_FRAME, &[7, 0, 0, 0]));
         let decoded: Vec<_> = messages(&buffer).map(|m| m.unwrap()).collect();
-        assert_eq!(decoded, vec![
-            Message::StartFrame { timestamp: 1, frame: 7 },
-            Message::Other { command: 0x0019, length: 13 },
-            Message::EndFrame { frame: 7 },
-        ]);
+        assert_eq!(
+            decoded,
+            vec![
+                Message::StartFrame {
+                    timestamp: 1,
+                    frame: 7
+                },
+                Message::Other {
+                    command: 0x0019,
+                    length: 13
+                },
+                Message::EndFrame { frame: 7 },
+            ]
+        );
     }
 
     /// The same buffer by its headers alone: each PDU's place, whatever it holds.
@@ -742,11 +918,26 @@ mod tests {
         buffer.extend(server(0x0019, &[0xAA; 5]));
         buffer.extend(server(CMD_END_FRAME, &[7, 0, 0, 0]));
         let found: Vec<_> = commands(&buffer).map(|c| c.unwrap()).collect();
-        assert_eq!(found, vec![
-            Command { id: CMD_START_FRAME, start: 0, end: 16 },
-            Command { id: 0x0019, start: 16, end: 29 },
-            Command { id: CMD_END_FRAME, start: 29, end: 41 },
-        ]);
+        assert_eq!(
+            found,
+            vec![
+                Command {
+                    id: CMD_START_FRAME,
+                    start: 0,
+                    end: 16
+                },
+                Command {
+                    id: 0x0019,
+                    start: 16,
+                    end: 29
+                },
+                Command {
+                    id: CMD_END_FRAME,
+                    start: 29,
+                    end: 41
+                },
+            ]
+        );
     }
 
     /// A header naming more bytes than the buffer holds ends the walk with the
@@ -757,7 +948,14 @@ mod tests {
         let cut = server(CMD_START_FRAME, &[1, 0, 0, 0, 7, 0, 0, 0]);
         buffer.extend(&cut[..cut.len() - 1]);
         let mut walk = commands(&buffer);
-        assert_eq!(walk.next(), Some(Ok(Command { id: CMD_END_FRAME, start: 0, end: 12 })));
+        assert_eq!(
+            walk.next(),
+            Some(Ok(Command {
+                id: CMD_END_FRAME,
+                start: 0,
+                end: 12
+            }))
+        );
         assert!(matches!(walk.next(), Some(Err(Malformed::Short { .. }))));
         assert!(walk.next().is_none());
     }
@@ -772,17 +970,38 @@ mod tests {
         body.u32_le(3);
         body.bytes(&[9, 8, 7]);
         let bytes = server(CMD_WIRE_TO_SURFACE_1, &body.finish());
-        let Message::WireToSurface1 { surface, codec, format, rect, data } = one(&bytes) else {
+        let Message::WireToSurface1 {
+            surface,
+            codec,
+            format,
+            rect,
+            data,
+        } = one(&bytes)
+        else {
             panic!("a WireToSurface1");
         };
         assert_eq!((surface, codec, format), (3, CODEC_PLANAR, PIXEL_XRGB_8888));
-        assert_eq!(rect, Rect16 { left: 10, top: 20, right: 14, bottom: 22 });
+        assert_eq!(
+            rect,
+            Rect16 {
+                left: 10,
+                top: 20,
+                right: 14,
+                bottom: 22
+            }
+        );
         assert_eq!((rect.width(), rect.height()), (4, 2));
         assert_eq!(data, &[9, 8, 7]);
     }
 
     fn monitor(left: i32, top: i32, right: i32, bottom: i32) -> MonitorDef {
-        MonitorDef { left, top, right, bottom, flags: 0 }
+        MonitorDef {
+            left,
+            top,
+            right,
+            bottom,
+            flags: 0,
+        }
     }
 
     #[test]
@@ -802,7 +1021,10 @@ mod tests {
             Message::ResetGraphics {
                 width: 1600,
                 height: 900,
-                monitors: vec![MonitorDef { flags: 1, ..monitor(0, 0, 1599, 899) }]
+                monitors: vec![MonitorDef {
+                    flags: 1,
+                    ..monitor(0, 0, 1599, 899)
+                }]
             }
         );
     }
@@ -814,53 +1036,151 @@ mod tests {
     fn an_output_is_cut_along_its_monitors_and_anything_else_is_one_display() {
         let at = |x, y, w, h| Placed { x, y, w, h };
         let two = [monitor(0, 0, 1279, 799), monitor(1280, 0, 2559, 799)];
-        assert_eq!(arrangement(2560, 800, &two), vec![at(0, 0, 1280, 800), at(1280, 0, 1280, 800)]);
-        assert_eq!(arrangement(2560, 800, &two[..1]), vec![at(0, 0, 2560, 800)], "one definition is one display");
-        assert_eq!(arrangement(2560, 800, &[]), vec![at(0, 0, 2560, 800)], "no definitions is one display");
+        assert_eq!(
+            arrangement(2560, 800, &two),
+            vec![at(0, 0, 1280, 800), at(1280, 0, 1280, 800)]
+        );
+        assert_eq!(
+            arrangement(2560, 800, &two[..1]),
+            vec![at(0, 0, 2560, 800)],
+            "one definition is one display"
+        );
+        assert_eq!(
+            arrangement(2560, 800, &[]),
+            vec![at(0, 0, 2560, 800)],
+            "no definitions is one display"
+        );
         // Unequal, top-aligned, the output as tall as its tallest.
         let unequal = [monitor(0, 0, 1599, 899), monitor(1600, 0, 2879, 767)];
-        assert_eq!(arrangement(2880, 900, &unequal), vec![at(0, 0, 1600, 900), at(1600, 0, 1280, 768)]);
+        assert_eq!(
+            arrangement(2880, 900, &unequal),
+            vec![at(0, 0, 1600, 900), at(1600, 0, 1280, 768)]
+        );
         // The second to the left of the primary, or above it: negative edges, and
         // the output starts at the second.
-        let primary = MonitorDef { flags: MONITOR_PRIMARY, ..monitor(0, 0, 1599, 899) };
+        let primary = MonitorDef {
+            flags: MONITOR_PRIMARY,
+            ..monitor(0, 0, 1599, 899)
+        };
         let left = [primary, monitor(-1280, 0, -1, 767)];
-        assert_eq!(arrangement(2880, 900, &left), vec![at(1280, 0, 1600, 900), at(0, 0, 1280, 768)]);
+        assert_eq!(
+            arrangement(2880, 900, &left),
+            vec![at(1280, 0, 1600, 900), at(0, 0, 1280, 768)]
+        );
         let above = [primary, monitor(0, -768, 1279, -1)];
-        assert_eq!(arrangement(1600, 1668, &above), vec![at(0, 768, 1600, 900), at(0, 0, 1280, 768)]);
+        assert_eq!(
+            arrangement(1600, 1668, &above),
+            vec![at(0, 768, 1600, 900), at(0, 0, 1280, 768)]
+        );
         let below = [primary, monitor(0, 900, 1279, 1667)];
-        assert_eq!(arrangement(1600, 1668, &below), vec![at(0, 0, 1600, 900), at(0, 900, 1280, 768)]);
+        assert_eq!(
+            arrangement(1600, 1668, &below),
+            vec![at(0, 0, 1600, 900), at(0, 900, 1280, 768)]
+        );
         // The primary leads whatever order the host lists them in.
-        assert_eq!(arrangement(2880, 900, &[left[1], left[0]]), arrangement(2880, 900, &left));
+        assert_eq!(
+            arrangement(2880, 900, &[left[1], left[0]]),
+            arrangement(2880, 900, &left)
+        );
         // Not filling the output, overlapping, or empty.
-        assert_eq!(arrangement(2561, 800, &two), vec![at(0, 0, 2561, 800)], "narrower than the output");
-        assert_eq!(arrangement(2560, 800, &[monitor(0, 0, 1279, 767), monitor(1280, 0, 2559, 767)]), vec![at(0, 0, 2560, 800)]);
-        assert_eq!(arrangement(2560, 800, &[monitor(0, 0, 2559, 799), monitor(1280, 0, 2559, 799)]), vec![at(0, 0, 2560, 800)]);
-        assert_eq!(arrangement(2560, 800, &[monitor(0, 0, 2559, 799), monitor(100, 0, 99, 799)]), vec![at(0, 0, 2560, 800)]);
-        let three = [monitor(0, 0, 999, 599), monitor(1000, 0, 1999, 599), monitor(2000, 0, 2999, 599)];
+        assert_eq!(
+            arrangement(2561, 800, &two),
+            vec![at(0, 0, 2561, 800)],
+            "narrower than the output"
+        );
+        assert_eq!(
+            arrangement(
+                2560,
+                800,
+                &[monitor(0, 0, 1279, 767), monitor(1280, 0, 2559, 767)]
+            ),
+            vec![at(0, 0, 2560, 800)]
+        );
+        assert_eq!(
+            arrangement(
+                2560,
+                800,
+                &[monitor(0, 0, 2559, 799), monitor(1280, 0, 2559, 799)]
+            ),
+            vec![at(0, 0, 2560, 800)]
+        );
+        assert_eq!(
+            arrangement(
+                2560,
+                800,
+                &[monitor(0, 0, 2559, 799), monitor(100, 0, 99, 799)]
+            ),
+            vec![at(0, 0, 2560, 800)]
+        );
+        let three = [
+            monitor(0, 0, 999, 599),
+            monitor(1000, 0, 1999, 599),
+            monitor(2000, 0, 2999, 599),
+        ];
         assert_eq!(arrangement(3000, 600, &three).len(), 3);
     }
 
     #[test]
     fn the_surface_lifecycle_pdus_decode_to_their_fields() {
-        let create = server(CMD_CREATE_SURFACE, &[1, 0, 0x00, 0x05, 0x84, 0x03, PIXEL_XRGB_8888]);
-        assert_eq!(one(&create), Message::CreateSurface {
-            surface: 1,
-            width: 1280,
-            height: 900,
-            format: PIXEL_XRGB_8888
-        });
-        let map = server(CMD_MAP_SURFACE_TO_OUTPUT, &[1, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0]);
-        assert_eq!(one(&map), Message::MapSurfaceToOutput { surface: 1, x: 0, y: 32 });
-        assert_eq!(one(&server(CMD_DELETE_SURFACE, &[1, 0])), Message::DeleteSurface { surface: 1 });
-        let confirm = server(CMD_CAPS_CONFIRM, &[0x02, 0x00, 0x0A, 0x00, 4, 0, 0, 0, 0x22, 0, 0, 0]);
-        assert_eq!(one(&confirm), Message::CapsConfirm { version: CAPVERSION_10, flags: 0x22 });
+        let create = server(
+            CMD_CREATE_SURFACE,
+            &[1, 0, 0x00, 0x05, 0x84, 0x03, PIXEL_XRGB_8888],
+        );
+        assert_eq!(
+            one(&create),
+            Message::CreateSurface {
+                surface: 1,
+                width: 1280,
+                height: 900,
+                format: PIXEL_XRGB_8888
+            }
+        );
+        let map = server(
+            CMD_MAP_SURFACE_TO_OUTPUT,
+            &[1, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0],
+        );
+        assert_eq!(
+            one(&map),
+            Message::MapSurfaceToOutput {
+                surface: 1,
+                x: 0,
+                y: 32
+            }
+        );
+        assert_eq!(
+            one(&server(CMD_DELETE_SURFACE, &[1, 0])),
+            Message::DeleteSurface { surface: 1 }
+        );
+        let confirm = server(
+            CMD_CAPS_CONFIRM,
+            &[0x02, 0x00, 0x0A, 0x00, 4, 0, 0, 0, 0x22, 0, 0, 0],
+        );
+        assert_eq!(
+            one(&confirm),
+            Message::CapsConfirm {
+                version: CAPVERSION_10,
+                flags: 0x22
+            }
+        );
         // A host that settles on 10.1 confirms it with the set's sixteen reserved bytes.
         let mut body = vec![0x00, 0x01, 0x0A, 0x00, 16, 0, 0, 0];
         body.extend_from_slice(&[0; 16]);
-        assert_eq!(one(&server(CMD_CAPS_CONFIRM, &body)), Message::CapsConfirm { version: CAPVERSION_101, flags: 0 });
-        let short = server(CMD_CAPS_CONFIRM, &[0x00, 0x01, 0x0A, 0x00, 4, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            one(&server(CMD_CAPS_CONFIRM, &body)),
+            Message::CapsConfirm {
+                version: CAPVERSION_101,
+                flags: 0
+            }
+        );
+        let short = server(
+            CMD_CAPS_CONFIRM,
+            &[0x00, 0x01, 0x0A, 0x00, 4, 0, 0, 0, 0, 0, 0, 0],
+        );
         let refused = messages(&short).next().expect("one PDU");
-        assert!(matches!(refused, Err(Malformed::Refused { .. })), "{refused:?}");
+        assert!(
+            matches!(refused, Err(Malformed::Refused { .. })),
+            "{refused:?}"
+        );
     }
 
     #[test]
@@ -873,7 +1193,12 @@ mod tests {
         body.bytes(&rect(8, 8, 9, 9));
         let bytes = server(CMD_SOLID_FILL, &body.finish());
         let fill = one(&bytes);
-        let Message::SolidFill { surface: 1, color: [10, 20, 30, 0xFF], rects } = fill else {
+        let Message::SolidFill {
+            surface: 1,
+            color: [10, 20, 30, 0xFF],
+            rects,
+        } = fill
+        else {
             panic!("{fill:?}");
         };
         assert_eq!(rects.len(), 2);
@@ -887,7 +1212,13 @@ mod tests {
         body.u16_le(200);
         let bytes = server(CMD_SURFACE_TO_SURFACE, &body.finish());
         let copy = one(&bytes);
-        let Message::SurfaceToSurface { src: 1, dst: 2, rect: _, points } = copy else {
+        let Message::SurfaceToSurface {
+            src: 1,
+            dst: 2,
+            rect: _,
+            points,
+        } = copy
+        else {
             panic!("{copy:?}");
         };
         assert_eq!(points, vec![Point16 { x: 100, y: 200 }]);
@@ -900,10 +1231,18 @@ mod tests {
         body.bytes(&rect(0, 0, 4, 4));
         let bytes = server(CMD_SURFACE_TO_CACHE, &body.finish());
         let cache = one(&bytes);
-        let Message::SurfaceToCache { key: 0x0403_0201_DDCC_BBAA, slot: 7, .. } = cache else {
+        let Message::SurfaceToCache {
+            key: 0x0403_0201_DDCC_BBAA,
+            slot: 7,
+            ..
+        } = cache
+        else {
             panic!("{cache:?}");
         };
-        assert_eq!(one(&server(CMD_EVICT_CACHE_ENTRY, &[7, 0])), Message::EvictCacheEntry { slot: 7 });
+        assert_eq!(
+            one(&server(CMD_EVICT_CACHE_ENTRY, &[7, 0])),
+            Message::EvictCacheEntry { slot: 7 }
+        );
     }
 
     /// A rectangle with nothing inside it is not a rectangle a server draws.
@@ -930,7 +1269,13 @@ mod tests {
         let mut all = messages(&buffer);
         assert!(all.next().unwrap().is_ok());
         let err = all.next().unwrap().unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "a PDU length shorter than its header", .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "a PDU length shorter than its header",
+                ..
+            }
+        ));
         assert!(all.next().is_none(), "nothing after a bad header is read");
 
         let mut truncated = server(CMD_END_FRAME, &[7, 0, 0, 0]);
@@ -951,8 +1296,14 @@ mod tests {
         assert_eq!(cache_bytes(CAPVERSION_10, CAPS_AVC_DISABLED), LARGE);
         assert_eq!(cache_bytes(CAPVERSION_101, 0), LARGE);
         assert_eq!(cache_bytes(CAPVERSION_103, 0), SMALL);
-        assert_eq!(cache_bytes(CAPVERSION_107, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE), SMALL);
-        assert_eq!(cache_bytes(CAPVERSION_107, CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT), LARGE);
+        assert_eq!(
+            cache_bytes(CAPVERSION_107, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE),
+            SMALL
+        );
+        assert_eq!(
+            cache_bytes(CAPVERSION_107, CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT),
+            LARGE
+        );
     }
 
     /// The two PDUs this client writes, byte for byte.
@@ -964,10 +1315,26 @@ mod tests {
         assert_eq!(r.u16_le().unwrap(), 0);
         assert_eq!(r.u32_le().unwrap() as usize, caps.len());
         assert_eq!(r.u16_le().unwrap(), 3);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
-        assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED));
-        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE));
+        assert_eq!(
+            set(),
+            (CAPVERSION_10, 4, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED)
+        );
+        assert_eq!(
+            set(),
+            (
+                CAPVERSION_107,
+                4,
+                CAPS_SMALL_CACHE | CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE
+            )
+        );
         assert!(r.is_empty());
 
         // With H.264: every set a host may settle on, none of them refusing it, but
@@ -978,15 +1345,27 @@ mod tests {
         assert_eq!(r.u16_le().unwrap(), 0);
         assert_eq!(r.u32_le().unwrap() as usize, caps.len());
         assert_eq!(r.u16_le().unwrap(), 7);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
-        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert_eq!(
+            set(),
+            (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)
+        );
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_102, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_103, 4, 0));
         assert_eq!(set(), (CAPVERSION_104, 4, CAPS_SMALL_CACHE));
         // Not 10.5 or 10.6: they would let the host use the scaled mappings.
-        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE));
+        assert_eq!(
+            set(),
+            (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE)
+        );
         assert!(r.is_empty());
 
         // For the whole desktop: the same sets, the ones from 10.3 preferring it.
@@ -994,14 +1373,33 @@ mod tests {
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
         assert_eq!(r.u16_le().unwrap(), 7);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, CAPS_SMALL_CACHE));
-        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert_eq!(
+            set(),
+            (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)
+        );
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_102, 4, CAPS_SMALL_CACHE));
         assert_eq!(set(), (CAPVERSION_103, 4, CAPS_AVC_THINCLIENT));
-        assert_eq!(set(), (CAPVERSION_104, 4, CAPS_SMALL_CACHE | CAPS_AVC_THINCLIENT));
-        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT));
+        assert_eq!(
+            set(),
+            (CAPVERSION_104, 4, CAPS_SMALL_CACHE | CAPS_AVC_THINCLIENT)
+        );
+        assert_eq!(
+            set(),
+            (
+                CAPVERSION_107,
+                4,
+                CAPS_SMALL_CACHE | CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT
+            )
+        );
         assert!(r.is_empty());
 
         // The large cache: the same sets, 10.1 among them, none of them asking for
@@ -1010,27 +1408,65 @@ mod tests {
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
         assert_eq!(r.u16_le().unwrap(), 3);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
         assert_eq!(set(), (CAPVERSION_10, 4, CAPS_AVC_DISABLED));
-        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE));
+        assert_eq!(
+            set(),
+            (
+                CAPVERSION_107,
+                4,
+                CAPS_AVC_DISABLED | CAPS_SCALEDMAP_DISABLE
+            )
+        );
         assert!(r.is_empty());
         let caps = caps_advertise(H264::WholeDesktop, BitmapCache::Large);
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
         assert_eq!(r.u16_le().unwrap(), 8);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
         // 8.1 allows AVC420 only beside the small cache.
-        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert_eq!(
+            set(),
+            (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)
+        );
         assert_eq!(set(), (CAPVERSION_10, 4, 0));
-        assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
+        assert_eq!(
+            (r.u32_le().unwrap(), r.u32_le().unwrap()),
+            (CAPVERSION_101, 16)
+        );
         r.skip(16).unwrap();
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_102, 4, 0));
         assert_eq!(set(), (CAPVERSION_103, 4, CAPS_AVC_THINCLIENT));
         assert_eq!(set(), (CAPVERSION_104, 4, CAPS_AVC_THINCLIENT));
-        assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT));
+        assert_eq!(
+            set(),
+            (
+                CAPVERSION_107,
+                4,
+                CAPS_SCALEDMAP_DISABLE | CAPS_AVC_THINCLIENT
+            )
+        );
         assert!(r.is_empty());
         // By region, not 10.3 either, which would keep a host that knows nothing
         // newer to the small cache.
@@ -1038,24 +1474,45 @@ mod tests {
         let mut r = Reader::new("a test", &caps);
         r.skip(8).unwrap();
         assert_eq!(r.u16_le().unwrap(), 7);
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_8, 4, 0));
-        assert_eq!(set(), (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert_eq!(
+            set(),
+            (CAPVERSION_81, 4, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED)
+        );
         assert_eq!(set(), (CAPVERSION_10, 4, 0));
-        assert_eq!((r.u32_le().unwrap(), r.u32_le().unwrap()), (CAPVERSION_101, 16));
+        assert_eq!(
+            (r.u32_le().unwrap(), r.u32_le().unwrap()),
+            (CAPVERSION_101, 16)
+        );
         r.skip(16).unwrap();
-        let mut set = || (r.u32_le().unwrap(), r.u32_le().unwrap(), r.u32_le().unwrap());
+        let mut set = || {
+            (
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+                r.u32_le().unwrap(),
+            )
+        };
         assert_eq!(set(), (CAPVERSION_102, 4, 0));
         assert_eq!(set(), (CAPVERSION_104, 4, 0));
         assert_eq!(set(), (CAPVERSION_107, 4, CAPS_SCALEDMAP_DISABLE));
         assert!(r.is_empty());
 
-        assert_eq!(frame_acknowledge(7, 3), vec![
-            0x0D, 0x00, 0x00, 0x00, 20, 0, 0, 0, // header
-            0, 0, 0, 0, // queueDepth
-            7, 0, 0, 0, // frameId
-            3, 0, 0, 0, // totalFramesDecoded
-        ]);
+        assert_eq!(
+            frame_acknowledge(7, 3),
+            vec![
+                0x0D, 0x00, 0x00, 0x00, 20, 0, 0, 0, // header
+                0, 0, 0, 0, // queueDepth
+                7, 0, 0, 0, // frameId
+                3, 0, 0, 0, // totalFramesDecoded
+            ]
+        );
     }
 
     /// A confirmed set leaves H.264 by its version and flags: none in version 8,
@@ -1064,8 +1521,14 @@ mod tests {
     fn a_confirmed_set_says_whether_it_leaves_h264() {
         assert!(!confirms_h264(CAPVERSION_8, CAPS_SMALL_CACHE));
         assert!(!confirms_h264(CAPVERSION_81, CAPS_SMALL_CACHE));
-        assert!(confirms_h264(CAPVERSION_81, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
-        assert!(!confirms_h264(CAPVERSION_10, CAPS_SMALL_CACHE | CAPS_AVC_DISABLED));
+        assert!(confirms_h264(
+            CAPVERSION_81,
+            CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED
+        ));
+        assert!(!confirms_h264(
+            CAPVERSION_10,
+            CAPS_SMALL_CACHE | CAPS_AVC_DISABLED
+        ));
         assert!(confirms_h264(CAPVERSION_10, CAPS_SMALL_CACHE));
         assert!(confirms_h264(CAPVERSION_101, 0));
         // What a Lossless Windows host confirmed to each adaptive advertise.
@@ -1082,6 +1545,9 @@ mod tests {
         assert!(!confirms_whole_desktop(CAPVERSION_107, 0x82));
         assert!(!confirms_whole_desktop(CAPVERSION_102, CAPS_SMALL_CACHE));
         assert!(!confirms_whole_desktop(CAPVERSION_101, 0));
-        assert!(!confirms_whole_desktop(CAPVERSION_81, CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED));
+        assert!(!confirms_whole_desktop(
+            CAPVERSION_81,
+            CAPS_SMALL_CACHE | CAPS_AVC420_ENABLED
+        ));
     }
 }

@@ -8,9 +8,9 @@ mod common;
 
 use std::net::SocketAddr;
 
+use tokio::net::TcpListener;
 use zdesk::config::{AppConfig, Protocol, TargetConfig};
 use zdesk::server;
-use tokio::net::TcpListener;
 
 /// Start the server with the shared test credential. The target is never
 /// dialed by these tests.
@@ -18,7 +18,10 @@ async fn spawn_app() -> SocketAddr {
     let config = AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         auth: common::test_auth(),
-        branding: zdesk::config::Branding { text: "zdesk".to_owned(), logo: None },
+        branding: zdesk::config::Branding {
+            text: "zdesk".to_owned(),
+            logo: None,
+        },
         dev_hostname: None,
         meter: None,
         hevc_wasm: None,
@@ -60,10 +63,11 @@ async fn post_login(addr: SocketAddr, body: &str) -> (u16, String, String) {
 }
 
 async fn get(addr: SocketAddr, path: &str, cookie: Option<&str>) -> (u16, String) {
-    let cookie_line = cookie.map(|c| format!("Cookie: {c}\r\n")).unwrap_or_default();
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: {addr}\r\n{cookie_line}Connection: close\r\n\r\n"
-    );
+    let cookie_line = cookie
+        .map(|c| format!("Cookie: {c}\r\n"))
+        .unwrap_or_default();
+    let req =
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\n{cookie_line}Connection: close\r\n\r\n");
     let (status, _head, body) = common::http_request(addr, &req).await;
     (status, body)
 }

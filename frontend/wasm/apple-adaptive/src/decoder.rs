@@ -61,9 +61,10 @@ const FIRST_PAIR: (u32, u32) = (0xffff_ffff, 0xffb5_d5fe);
 /// JPEG's zigzag order: the natural position of the `k`th coefficient, with
 /// sixteen entries past the end for a run that reads beyond it.
 const NATURAL: [usize; 80] = [
-    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21,
-    28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54,
-    47, 55, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63,
+    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
+    13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59,
+    52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63,
+    63, 63, 63, 63, 63, 63,
 ];
 
 /// Why a rectangle could not be decoded. The framebuffer keeps whatever the
@@ -79,7 +80,14 @@ pub enum Error {
     /// A picture before the quantization tables.
     NoTables,
     /// A rectangle that does not fit in the framebuffer.
-    Bounds { x: u16, y: u16, w: u16, h: u16, width: usize, height: usize },
+    Bounds {
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        width: usize,
+        height: usize,
+    },
     /// A full update's data stream said to start past its end.
     Offset { offset: usize, len: usize },
     /// A stream read past its body without reaching the rectangle's last tile.
@@ -96,18 +104,41 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Short { kind, len } => write!(f, "a body of kind {kind} in {len} bytes, under its header"),
-            Self::Kind(kind) => write!(f, "a body of kind {kind}, which is no update"),
-            Self::Tables(len) => write!(f, "quantization tables in {len} bytes, where they are {TABLES_LEN}"),
-            Self::NoTables => write!(f, "a picture before the quantization tables"),
-            Self::Bounds { x, y, w, h, width, height } => {
-                write!(f, "a rectangle {w}x{h} at {x},{y} on a {width}x{height} framebuffer")
+            Self::Short { kind, len } => {
+                write!(f, "a body of kind {kind} in {len} bytes, under its header")
             }
-            Self::Offset { offset, len } => write!(f, "a data stream at {offset} of a {len}-byte body"),
+            Self::Kind(kind) => write!(f, "a body of kind {kind}, which is no update"),
+            Self::Tables(len) => write!(
+                f,
+                "quantization tables in {len} bytes, where they are {TABLES_LEN}"
+            ),
+            Self::NoTables => write!(f, "a picture before the quantization tables"),
+            Self::Bounds {
+                x,
+                y,
+                w,
+                h,
+                width,
+                height,
+            } => {
+                write!(
+                    f,
+                    "a rectangle {w}x{h} at {x},{y} on a {width}x{height} framebuffer"
+                )
+            }
+            Self::Offset { offset, len } => {
+                write!(f, "a data stream at {offset} of a {len}-byte body")
+            }
             Self::Overrun => write!(f, "an update that ran past its body"),
-            Self::Mark { want, got } => write!(f, "an update that ended on {got:#04x}, where {want:#04x} ends it"),
+            Self::Mark { want, got } => write!(
+                f,
+                "an update that ended on {got:#04x}, where {want:#04x} ends it"
+            ),
             Self::Coefficients => write!(f, "a tile's coefficients that do not read"),
-            Self::Unrefinable => write!(f, "a refinement of a tile the last full update did not code"),
+            Self::Unrefinable => write!(
+                f,
+                "a refinement of a tile the last full update did not code"
+            ),
         }
     }
 }
@@ -126,7 +157,12 @@ struct Bits<'a> {
 
 impl<'a> Bits<'a> {
     fn new(data: &'a [u8], at: usize) -> Self {
-        Self { data, next: at, window: 0, held: 0 }
+        Self {
+            data,
+            next: at,
+            window: 0,
+            held: 0,
+        }
     }
 
     /// The next `n` bits, at most 24.
@@ -197,7 +233,11 @@ fn signed_number(bits: &mut Bits) -> Result<i16, Error> {
         k => ((8 * (k - 2) + bits.get(3)), bits.bit()),
     };
     let magnitude = magnitude as i16;
-    Ok(if negative { magnitude.wrapping_neg() } else { magnitude })
+    Ok(if negative {
+        magnitude.wrapping_neg()
+    } else {
+        magnitude
+    })
 }
 
 /// JPEG's standard Huffman table for luminance AC coefficients, which a
@@ -211,15 +251,17 @@ struct Huffman {
 
 const AC_LUMINANCE_BITS: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
 const AC_LUMINANCE_VALUES: [u8; 162] = [
-    0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14,
-    0x32, 0x81, 0x91, 0xa1, 0x08, 0x23, 0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0, 0x24, 0x33, 0x62, 0x72, 0x82, 0x09,
-    0x0a, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a,
-    0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65,
-    0x66, 0x67, 0x68, 0x69, 0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
-    0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9,
-    0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca,
-    0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea,
-    0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa,
+    0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07,
+    0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xa1, 0x08, 0x23, 0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0,
+    0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0a, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+    0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
+    0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+    0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+    0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5,
+    0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2,
+    0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+    0xf9, 0xfa,
 ];
 
 impl Huffman {
@@ -266,7 +308,11 @@ struct Block {
 }
 
 impl Block {
-    const ZERO: Self = Self { y: [0; 64], cb: [0; 64], cr: [0; 64] };
+    const ZERO: Self = Self {
+        y: [0; 64],
+        cb: [0; 64],
+        cr: [0; 64],
+    };
 }
 
 /// What the viewer keeps for each tile of the framebuffer.
@@ -294,7 +340,12 @@ struct Coded {
 
 impl Tile {
     const BLANK: Self = Self {
-        coded: Coded { precision: 0, y: [0; 64], cr: None, cb: None },
+        coded: Coded {
+            precision: 0,
+            y: [0; 64],
+            cr: None,
+            cb: None,
+        },
         update: 0,
         copied: None,
     };
@@ -409,28 +460,55 @@ impl Decoder {
             luminance[i] = i32::from(body[1 + i]);
             chrominance[i] = i32::from(body[65 + i]);
         }
-        self.tables = Some(Tables { luminance, chrominance });
+        self.tables = Some(Tables {
+            luminance,
+            chrominance,
+        });
         Ok(())
     }
 
     fn rect(&self, x: u16, y: u16, w: u16, h: u16) -> Result<Rect, Error> {
-        let (x0, y0, w0, h0) = (usize::from(x), usize::from(y), usize::from(w), usize::from(h));
-        let fits = x0 < self.width && x0 + w0 <= self.width && y0 < self.height && y0 + h0 <= self.height;
+        let (x0, y0, w0, h0) = (
+            usize::from(x),
+            usize::from(y),
+            usize::from(w),
+            usize::from(h),
+        );
+        let fits =
+            x0 < self.width && x0 + w0 <= self.width && y0 < self.height && y0 + h0 <= self.height;
         if !fits {
-            return Err(Error::Bounds { x, y, w, h, width: self.width, height: self.height });
+            return Err(Error::Bounds {
+                x,
+                y,
+                w,
+                h,
+                width: self.width,
+                height: self.height,
+            });
         }
-        Ok(Rect { x: x0, y: y0, w: w0, h: h0 })
+        Ok(Rect {
+            x: x0,
+            y: y0,
+            w: w0,
+            h: h0,
+        })
     }
 
     fn full(&mut self, rect: Rect, body: &[u8]) -> Result<(), Error> {
         if body.len() < 6 {
-            return Err(Error::Short { kind: FULL, len: body.len() });
+            return Err(Error::Short {
+                kind: FULL,
+                len: body.len(),
+            });
         }
         let tables = self.tables.clone().ok_or(Error::NoTables)?;
         let precisions = [body[1], body[2]];
         let offset = usize::from(body[3]) << 16 | usize::from(body[4]) << 8 | usize::from(body[5]);
         if offset > body.len() {
-            return Err(Error::Offset { offset, len: body.len() });
+            return Err(Error::Offset {
+                offset,
+                len: body.len(),
+            });
         }
         let mut commands = Bits::new(body, 6);
         let mut data = Bits::new(body, offset);
@@ -495,7 +573,12 @@ impl Decoder {
                         }
                     }
                     5 => {
-                        let (block, coded) = expand_block(&mut data, &previous, precisions, last_coded.map(|i| self.tiles[i]))?;
+                        let (block, coded) = expand_block(
+                            &mut data,
+                            &previous,
+                            precisions,
+                            last_coded.map(|i| self.tiles[i]),
+                        )?;
                         match coded {
                             Saved::Coded(coded) => self.tiles[index].coded = coded,
                             Saved::Last(last) => self.tiles[index] = last,
@@ -534,7 +617,10 @@ impl Decoder {
 
     fn partial(&mut self, rect: Rect, body: &[u8]) -> Result<(), Error> {
         if body.len() < 3 {
-            return Err(Error::Short { kind: PARTIAL, len: body.len() });
+            return Err(Error::Short {
+                kind: PARTIAL,
+                len: body.len(),
+            });
         }
         let tables = self.tables.clone().ok_or(Error::NoTables)?;
         let cr_count = body[1].min(64);
@@ -565,7 +651,10 @@ impl Decoder {
                     // The copy the full update made, while the tile it copied is
                     // still that update's.
                     if let Some((from, at)) = tile.copied
-                        && self.tiles.get(from).is_some_and(|source| source.update == tile.update)
+                        && self
+                            .tiles
+                            .get(from)
+                            .is_some_and(|source| source.update == tile.update)
                     {
                         let mut drawn = self.read_tile(&scan);
                         self.copy_into(&mut drawn, at as isize);
@@ -573,7 +662,11 @@ impl Decoder {
                     }
                 }
                 _ => {
-                    let entry = if bits.bit() { self.drawn.wrapping_add(1) } else { bits.get(16) as u16 };
+                    let entry = if bits.bit() {
+                        self.drawn.wrapping_add(1)
+                    } else {
+                        bits.get(16) as u16
+                    };
                     let mut drawn = self.read_tile(&scan);
                     self.draw_cached(entry, &tables, &mut drawn);
                     self.write_tile(&scan, &drawn);
@@ -657,10 +750,15 @@ impl Decoder {
 
     fn cache_entry(&mut self, entry: Refined) {
         if self.cache.is_empty() {
-            self.cache = vec![[0; CACHED_Y + CACHED_CR + CACHED_CB]; usize::from(CACHE_READ_MAX) + 1];
+            self.cache =
+                vec![[0; CACHED_Y + CACHED_CR + CACHED_CB]; usize::from(CACHE_READ_MAX) + 1];
         }
         self.cached = self.cached.wrapping_add(1);
-        self.written = if self.written == CACHE_WRITE_MAX { 1 } else { self.written + 1 };
+        self.written = if self.written == CACHE_WRITE_MAX {
+            1
+        } else {
+            self.written + 1
+        };
         let slot = &mut self.cache[usize::from(self.written)];
         slot[..CACHED_Y].copy_from_slice(&entry.y);
         slot[CACHED_Y..CACHED_Y + CACHED_CR].copy_from_slice(&entry.cr);
@@ -691,7 +789,14 @@ struct Scan {
 impl Scan {
     fn new(rect: Rect, across: usize) -> Self {
         let index = (rect.y >> 3) * across + (rect.x >> 3);
-        Self { rect, dx: 0, dy: 0, index, row: index, across }
+        Self {
+            rect,
+            dx: 0,
+            dy: 0,
+            index,
+            row: index,
+            across,
+        }
     }
 
     fn x(&self) -> usize {
@@ -709,7 +814,10 @@ impl Scan {
 
     /// How much of the tile the rectangle covers.
     fn clipped(&self) -> (usize, usize) {
-        ((self.rect.w - self.dx).min(8), (self.rect.h - self.dy).min(8))
+        (
+            (self.rect.w - self.dx).min(8),
+            (self.rect.h - self.dy).min(8),
+        )
     }
 
     /// On to the next tile. Returns whether the one just done was the last.
@@ -741,7 +849,11 @@ fn masked(data: &mut Bits, tile: &mut [u32; 64], set: u32, clear: u32) {
         }
         let pixels = data.get(8);
         for column in 0..8 {
-            tile[row * 8 + column] = if pixels & (0x80 >> column) != 0 { set } else { clear };
+            tile[row * 8 + column] = if pixels & (0x80 >> column) != 0 {
+                set
+            } else {
+                clear
+            };
         }
     }
 }
@@ -777,7 +889,12 @@ enum Saved {
 
 /// A DCT tile of a full update: the copy bit, the chroma and precision bits, the
 /// chroma's DCs where they are sent, Y's DC, then Y's AC coefficients.
-fn expand_block(data: &mut Bits, previous: &Block, precisions: [u8; 2], last: Option<Tile>) -> Result<(Block, Saved), Error> {
+fn expand_block(
+    data: &mut Bits,
+    previous: &Block,
+    precisions: [u8; 2],
+    last: Option<Tile>,
+) -> Result<(Block, Saved), Error> {
     let mut block = Block::ZERO;
     if data.bit() {
         let Some(last) = last else {
@@ -789,15 +906,23 @@ fn expand_block(data: &mut Bits, previous: &Block, precisions: [u8; 2], last: Op
         return Ok((block, Saved::Last(last)));
     }
     let keep = data.bit();
-    let precision = if data.bit() { precisions[1] } else { precisions[0] };
+    let precision = if data.bit() {
+        precisions[1]
+    } else {
+        precisions[0]
+    };
     if keep {
         block.cb[0] = previous.cb[0];
         block.cr[0] = previous.cr[0];
     } else {
         // Half the previous DC, rounded towards zero, less the number, doubled.
         let halved = |p: i16| p / 2;
-        block.cb[0] = halved(previous.cb[0]).wrapping_sub(signed_number(data)?).wrapping_mul(2);
-        block.cr[0] = halved(previous.cr[0]).wrapping_sub(signed_number(data)?).wrapping_mul(2);
+        block.cb[0] = halved(previous.cb[0])
+            .wrapping_sub(signed_number(data)?)
+            .wrapping_mul(2);
+        block.cr[0] = halved(previous.cr[0])
+            .wrapping_sub(signed_number(data)?)
+            .wrapping_mul(2);
     }
     block.y[0] = previous.y[0].wrapping_sub(signed_number(data)?);
 
@@ -829,7 +954,11 @@ fn expand_block(data: &mut Bits, previous: &Block, precisions: [u8; 2], last: Op
                 }
             }
             let magnitude: i32 = if early {
-                if ones < 4 { 2 + 4 * ones as i32 + data.get(2) as i32 } else { 18 + 8 * (ones as i32 - 4) + data.get(3) as i32 }
+                if ones < 4 {
+                    2 + 4 * ones as i32 + data.get(2) as i32
+                } else {
+                    18 + 8 * (ones as i32 - 4) + data.get(3) as i32
+                }
             } else {
                 match ones {
                     0 => 2 + data.get(1) as i32,
@@ -884,7 +1013,12 @@ fn expand_block(data: &mut Bits, previous: &Block, precisions: [u8; 2], last: Op
     for (k, coefficient) in y.iter_mut().enumerate() {
         *coefficient = block.y[NATURAL[k]] as i8;
     }
-    let coded = Coded { precision, y, cr: Some(block.cr[0] as i8), cb: Some(block.cb[0] as i8) };
+    let coded = Coded {
+        precision,
+        y,
+        cr: Some(block.cr[0] as i8),
+        cb: Some(block.cb[0] as i8),
+    };
     Ok((block, Saved::Coded(coded)))
 }
 
@@ -912,7 +1046,13 @@ impl Refined {
 
 /// A partial update's code 1: the bits the full update left out of a tile's Y
 /// coefficients, and its chrominance as JPEG codes it.
-fn refine(bits: &mut Bits, coded: &Coded, cr_count: u8, cb_count: u8, huffman: &Huffman) -> Result<Refined, Error> {
+fn refine(
+    bits: &mut Bits,
+    coded: &Coded,
+    cr_count: u8,
+    cb_count: u8,
+    huffman: &Huffman,
+) -> Result<Refined, Error> {
     let precision = usize::from(coded.precision);
     let count = bits.get(6) as usize + 1;
     let mut y = [0i8; 64];
@@ -920,13 +1060,21 @@ fn refine(bits: &mut Bits, coded: &Coded, cr_count: u8, cb_count: u8, huffman: &
     // Moved further from zero by `n` more bits.
     let further = |bits: &mut Bits, coefficient: i8, n: u32| {
         let more = bits.get(n) as i8;
-        coefficient.wrapping_add(if coefficient < 0 { more.wrapping_neg() } else { more })
+        coefficient.wrapping_add(if coefficient < 0 {
+            more.wrapping_neg()
+        } else {
+            more
+        })
     };
     let below = count.min(precision);
     for (k, refined) in y.iter_mut().enumerate().take(below).skip(1) {
         let coefficient = coded.y[k];
         *refined = if precision < 15 {
-            if coefficient == 0 { signed_number(bits)? as i8 } else { further(bits, coefficient, 3) }
+            if coefficient == 0 {
+                signed_number(bits)? as i8
+            } else {
+                further(bits, coefficient, 3)
+            }
         } else if coefficient == 0 {
             // Below the precision of a fine tile a zero is near enough: a bit, and
             // when it is set a sign for 1 or −1.
@@ -976,7 +1124,11 @@ fn refine(bits: &mut Bits, coded: &Coded, cr_count: u8, cb_count: u8, huffman: &
             } else {
                 k += run;
                 let value = bits.get(size) as i32;
-                let value = if value < 1 << (size - 1) { value + 1 - (1 << size) } else { value };
+                let value = if value < 1 << (size - 1) {
+                    value + 1 - (1 << size)
+                } else {
+                    value
+                };
                 block[NATURAL[k + 1]] = value as i16;
             }
             k += 1;
@@ -993,7 +1145,13 @@ fn refine(bits: &mut Bits, coded: &Coded, cr_count: u8, cb_count: u8, huffman: &
     for k in 0..CACHED_CB {
         cb[k] = cb_block[NATURAL[k]] as i8;
     }
-    Ok(Refined { y, cr, cb, cr_block, cb_block })
+    Ok(Refined {
+        y,
+        cr,
+        cb,
+        cr_block,
+        cb_block,
+    })
 }
 
 /// The three blocks dequantized, inverted and converted to pixels.
@@ -1054,7 +1212,16 @@ fn idct(coefficients: &[i16; 64], quantization: &[i32; 64]) -> [u8; 64] {
         t1 += z2 + z4;
         t2 += z2 + z3;
         t3 += z1 + z4;
-        [tmp10 + t3, tmp11 + t2, tmp12 + t1, tmp13 + t0, tmp13 - t0, tmp12 - t1, tmp11 - t2, tmp10 - t3]
+        [
+            tmp10 + t3,
+            tmp11 + t2,
+            tmp12 + t1,
+            tmp13 + t0,
+            tmp13 - t0,
+            tmp12 - t1,
+            tmp11 - t2,
+            tmp10 - t3,
+        ]
     }
     // What a sample past 0–255 becomes: the library's table, read through its
     // ten-bit mask.
@@ -1068,7 +1235,9 @@ fn idct(coefficients: &[i16; 64], quantization: &[i32; 64]) -> [u8; 64] {
     }
     let mut workspace = [0i32; 64];
     for column in 0..8 {
-        let at = |row: usize| i64::from(coefficients[row * 8 + column]) * i64::from(quantization[row * 8 + column]);
+        let at = |row: usize| {
+            i64::from(coefficients[row * 8 + column]) * i64::from(quantization[row * 8 + column])
+        };
         if (1..8).all(|row| coefficients[row * 8 + column] == 0) {
             let dc = (at(0) << PASS1_BITS) as i32;
             for row in 0..8 {
@@ -1150,7 +1319,14 @@ mod tests {
         data.put(MARK, 8);
         let (commands, data) = (commands.done(), data.done());
         let offset = 6 + commands.len();
-        let mut body = vec![FULL, 3, 5, (offset >> 16) as u8, (offset >> 8) as u8, offset as u8];
+        let mut body = vec![
+            FULL,
+            3,
+            5,
+            (offset >> 16) as u8,
+            (offset >> 8) as u8,
+            offset as u8,
+        ];
         body.extend(commands);
         body.extend(data);
         body
@@ -1165,7 +1341,9 @@ mod tests {
     }
 
     fn tile(decoder: &Decoder, x: usize, y: usize) -> Vec<u32> {
-        (0..64).map(|i| decoder.pixels()[(y + i / 8) * decoder.width() + x + i % 8]).collect()
+        (0..64)
+            .map(|i| decoder.pixels()[(y + i / 8) * decoder.width() + x + i % 8])
+            .collect()
     }
 
     fn rgb(r: u8, g: u8, b: u8) -> u32 {
@@ -1194,7 +1372,12 @@ mod tests {
         // `1`, four bits of 3: five tiles, the rectangle's six less one, which a
         // second command of one tile finishes.
         let mut commands = Writer::default();
-        commands.bits("0").put(0, 3).bits("1 0011").put(0, 3).bits("0");
+        commands
+            .bits("0")
+            .put(0, 3)
+            .bits("1 0011")
+            .put(0, 3)
+            .bits("0");
         let body = full(&mut commands, &mut Writer::default());
         assert_eq!(decoder.decode(0, 0, 20, 12, &body), Ok(true));
         for y in 0..16 {
@@ -1208,7 +1391,11 @@ mod tests {
     #[test]
     fn a_repeat_of_more_than_sixteen_is_counted_in_seven_bit_groups() {
         let mut bits = Writer::default();
-        bits.bits("0 1 0011 1 1111").put(3, 8).bits("1 1111").put(0x80 | 5, 8).put(2, 8);
+        bits.bits("0 1 0011 1 1111")
+            .put(3, 8)
+            .bits("1 1111")
+            .put(0x80 | 5, 8)
+            .put(2, 8);
         let bytes = bits.done();
         let mut reader = Bits::new(&bytes, 0);
         assert_eq!(tiles_covered(&mut reader), 1);
@@ -1226,7 +1413,10 @@ mod tests {
         let body = full(&mut one(3), &mut data);
         decoder.decode(0, 0, 8, 8, &body).unwrap();
         let pixels = tile(&decoder, 0, 0);
-        assert_eq!(&pixels[..8], &[WHITE, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, WHITE]);
+        assert_eq!(
+            &pixels[..8],
+            &[WHITE, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, WHITE]
+        );
         assert!(pixels[8..].iter().all(|&p| p == WHITE));
     }
 
@@ -1240,7 +1430,13 @@ mod tests {
         // One colour: Y 76, Cb and Cr at the centre, a grey.
         data.bits("0 0").put(76, 8).put(32, 6).put(32, 6);
         // Two, red and blue: every row their mask, the first colour where it is set.
-        data.bits("1 0").put(76, 8).put(21, 6).put(63, 6).put(29, 8).put(63, 6).put(26, 6);
+        data.bits("1 0")
+            .put(76, 8)
+            .put(21, 6)
+            .put(63, 6)
+            .put(29, 8)
+            .put(63, 6)
+            .put(26, 6);
         data.put(0, 8);
         for _ in 0..8 {
             data.put(0b1111_0000, 8);
@@ -1256,7 +1452,10 @@ mod tests {
         let two = tile(&decoder, 8, 0);
         assert_eq!(&two[..8], &[red, red, red, red, blue, blue, blue, blue]);
         assert!(tile(&decoder, 16, 0).iter().all(|&p| p == grey));
-        assert!(tile(&decoder, 24, 0).iter().all(|&p| p == red), "a row whose bit is set is the first colour");
+        assert!(
+            tile(&decoder, 24, 0).iter().all(|&p| p == red),
+            "a row whose bit is set is the first colour"
+        );
     }
 
     #[test]
@@ -1264,7 +1463,16 @@ mod tests {
         let mut decoder = decoder(16, 16);
         let mut commands = Writer::default();
         // White, a copy of it to the right; then a copy from above, and black.
-        commands.bits("0").put(0, 3).bits("0").put(1, 3).bits("0").put(2, 3).bits("0").put(3, 3).bits("0");
+        commands
+            .bits("0")
+            .put(0, 3)
+            .bits("0")
+            .put(1, 3)
+            .bits("0")
+            .put(2, 3)
+            .bits("0")
+            .put(3, 3)
+            .bits("0");
         let mut data = Writer::default();
         data.put(0, 8);
         for _ in 0..8 {
@@ -1295,7 +1503,13 @@ mod tests {
         flat_tile(&mut data);
         let body = full(&mut one(5), &mut data);
         decoder.decode(0, 0, 8, 8, &body).unwrap();
-        assert!(tile(&decoder, 0, 0).iter().all(|&p| p == rgb(127, 127, 127)), "{:x?}", tile(&decoder, 0, 0));
+        assert!(
+            tile(&decoder, 0, 0)
+                .iter()
+                .all(|&p| p == rgb(127, 127, 127)),
+            "{:x?}",
+            tile(&decoder, 0, 0)
+        );
     }
 
     #[test]
@@ -1305,31 +1519,54 @@ mod tests {
         commands.bits("0").put(5, 3).bits("0").put(0, 3).bits("0");
         let mut data = Writer::default();
         flat_tile(&mut data);
-        decoder.decode(0, 0, 16, 8, &full(&mut commands, &mut data)).unwrap();
+        decoder
+            .decode(0, 0, 16, 8, &full(&mut commands, &mut data))
+            .unwrap();
 
         // Refined: one Y coefficient, the DC; each chroma DC left at 0 and its AC
         // coefficients an end of block.
         let mut refinement = Writer::default();
-        refinement.bits("01").put(0, 6).bits("0 1010").bits("0 1010");
+        refinement
+            .bits("01")
+            .put(0, 6)
+            .bits("0 1010")
+            .bits("0 1010");
         refinement.put(0x6d, 8).put(0x76, 8).put(0x73, 8);
         let mut body = vec![PARTIAL, 14, 19];
         body.extend(refinement.done());
         assert_eq!(decoder.decode(0, 0, 8, 8, &body), Ok(true));
-        assert!(tile(&decoder, 0, 0).iter().all(|&p| p == rgb(127, 127, 127)));
+        assert!(
+            tile(&decoder, 0, 0)
+                .iter()
+                .all(|&p| p == rgb(127, 127, 127))
+        );
         assert!(tile(&decoder, 8, 0).iter().all(|&p| p == WHITE));
 
         // The next cached tile after none drawn yet is the first: the refined one.
         let mut later = one(7);
-        assert_eq!(decoder.decode(8, 0, 8, 8, &full(&mut later, &mut Writer::default())), Ok(true));
-        assert!(tile(&decoder, 8, 0).iter().all(|&p| p == rgb(127, 127, 127)));
+        assert_eq!(
+            decoder.decode(8, 0, 8, 8, &full(&mut later, &mut Writer::default())),
+            Ok(true)
+        );
+        assert!(
+            tile(&decoder, 8, 0)
+                .iter()
+                .all(|&p| p == rgb(127, 127, 127))
+        );
     }
 
     #[test]
     fn a_tile_the_full_update_did_not_code_cannot_be_refined() {
         let mut decoder = decoder(8, 8);
-        decoder.decode(0, 0, 8, 8, &full(&mut one(0), &mut Writer::default())).unwrap();
+        decoder
+            .decode(0, 0, 8, 8, &full(&mut one(0), &mut Writer::default()))
+            .unwrap();
         let mut refinement = Writer::default();
-        refinement.bits("01").put(0, 6).bits("0 1010").bits("0 1010");
+        refinement
+            .bits("01")
+            .put(0, 6)
+            .bits("0 1010")
+            .bits("0 1010");
         let mut body = vec![PARTIAL, 14, 19];
         body.extend(refinement.done());
         assert_eq!(decoder.decode(0, 0, 8, 8, &body), Err(Error::Unrefinable));
@@ -1340,7 +1577,9 @@ mod tests {
         let mut decoder = decoder(16, 8);
         let mut commands = Writer::default();
         commands.bits("0").put(0, 3).bits("0").put(1, 3).bits("0");
-        decoder.decode(0, 0, 16, 8, &full(&mut commands, &mut Writer::default())).unwrap();
+        decoder
+            .decode(0, 0, 16, 8, &full(&mut commands, &mut Writer::default()))
+            .unwrap();
         // Something else over the copy, then the partial update's copy again.
         decoder.pixels[8] = BLACK;
         decoder.pixels[0] = rgb(1, 2, 3);
@@ -1350,7 +1589,11 @@ mod tests {
         let mut body = vec![PARTIAL, 14, 19];
         body.extend(refinement.done());
         decoder.decode(0, 0, 16, 8, &body).unwrap();
-        assert_eq!(decoder.pixels()[8], rgb(1, 2, 3), "copied again from where the copy came from");
+        assert_eq!(
+            decoder.pixels()[8],
+            rgb(1, 2, 3),
+            "copied again from where the copy came from"
+        );
     }
 
     #[test]
@@ -1360,12 +1603,21 @@ mod tests {
         let body = full(&mut one(0), &mut Writer::default());
         assert_eq!(decoder.decode(0, 0, 8, 8, &body), Err(Error::NoTables));
         decoder.decode(0, 0, 0, 0, &tables()).unwrap();
-        assert!(matches!(decoder.decode(0, 0, 16, 8, &body), Err(Error::Bounds { .. })));
+        assert!(matches!(
+            decoder.decode(0, 0, 16, 8, &body),
+            Err(Error::Bounds { .. })
+        ));
         let mut cut = body.clone();
         let end = cut.len() - 1;
         cut[end] = 0;
-        assert_eq!(decoder.decode(0, 0, 8, 8, &cut), Err(Error::Mark { want: MARK, got: 0 }));
-        assert_eq!(decoder.decode(0, 0, 0, 0, &[TABLES, 1]), Err(Error::Tables(2)));
+        assert_eq!(
+            decoder.decode(0, 0, 8, 8, &cut),
+            Err(Error::Mark { want: MARK, got: 0 })
+        );
+        assert_eq!(
+            decoder.decode(0, 0, 0, 0, &[TABLES, 1]),
+            Err(Error::Tables(2))
+        );
         assert_eq!(decoder.decode(0, 0, 8, 8, &[7]), Err(Error::Kind(7)));
     }
 
@@ -1382,7 +1634,11 @@ mod tests {
         for row in samples.chunks(8) {
             assert_eq!(row, samples.chunks(8).next().unwrap(), "every row the same");
             for x in 0..4 {
-                assert_eq!(i32::from(row[x]) - 128, 128 - i32::from(row[7 - x]), "odd about the centre");
+                assert_eq!(
+                    i32::from(row[x]) - 128,
+                    128 - i32::from(row[7 - x]),
+                    "odd about the centre"
+                );
             }
             assert!(row[0] > row[3] && row[3] > 128);
         }

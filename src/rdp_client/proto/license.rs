@@ -95,7 +95,9 @@ mod tests {
     fn a_pdu_that_is_not_part_of_the_licensing_exchange_is_refused_at_its_header() {
         // A share control header, which is what arrives if the exchange is already
         // over and this is being read a PDU too late.
-        let pdu = [0x1A, 0x01, 0x11, 0x00, 0xEA, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let pdu = [
+            0x1A, 0x01, 0x11, 0x00, 0xEA, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
         assert_eq!(
             accept(&pdu).unwrap_err().to_string(),
             "a licensing PDU carries its security flags 0x11a, which this client does not accept"

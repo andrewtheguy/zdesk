@@ -83,7 +83,12 @@ pub fn serve(decoder: Option<&HevcDecoder>, request: &Request) -> Response {
     {
         (ISOLATED, [(header::ETAG, etag)], StatusCode::NOT_MODIFIED).into_response()
     } else {
-        (ISOLATED, [(header::CONTENT_TYPE, content_type), (header::ETAG, etag)], body).into_response()
+        (
+            ISOLATED,
+            [(header::CONTENT_TYPE, content_type), (header::ETAG, etag)],
+            body,
+        )
+            .into_response()
     }
 }
 
@@ -184,7 +189,9 @@ mod tests {
     }
 
     async fn body(response: Response) -> String {
-        let bytes = axum::body::to_bytes(response.into_body(), 1 << 24).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 24)
+            .await
+            .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
@@ -214,7 +221,10 @@ mod tests {
             .find(|name| name.ends_with(".css"))
             .expect("the bundle has a stylesheet");
         let response = get(&format!("/{stylesheet}"), None);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/css; charset=utf-8");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/css; charset=utf-8"
+        );
     }
 
     /// The document, a script a worker may start from, and a revalidation of
@@ -225,9 +235,19 @@ mod tests {
             .find(|name| name.starts_with("assets/") && name.ends_with(".js"))
             .expect("the bundle has a script");
         let etag = get("/", None).headers()[header::ETAG].clone();
-        for response in [get("/", None), get(&format!("/{script}"), None), get("/", Some(&etag))] {
-            assert_eq!(response.headers()["cross-origin-opener-policy"], "same-origin");
-            assert_eq!(response.headers()["cross-origin-embedder-policy"], "require-corp");
+        for response in [
+            get("/", None),
+            get(&format!("/{script}"), None),
+            get("/", Some(&etag)),
+        ] {
+            assert_eq!(
+                response.headers()["cross-origin-opener-policy"],
+                "same-origin"
+            );
+            assert_eq!(
+                response.headers()["cross-origin-embedder-policy"],
+                "require-corp"
+            );
         }
     }
 
@@ -250,11 +270,23 @@ mod tests {
         let held = get_with(decoder, "/hevc/hevc.wasm", Some(&wasm_etag));
         assert_eq!(held.status(), StatusCode::NOT_MODIFIED);
         for response in [wasm, script, held] {
-            assert_eq!(response.headers()["cross-origin-opener-policy"], "same-origin");
-            assert_eq!(response.headers()["cross-origin-embedder-policy"], "require-corp");
+            assert_eq!(
+                response.headers()["cross-origin-opener-policy"],
+                "same-origin"
+            );
+            assert_eq!(
+                response.headers()["cross-origin-embedder-policy"],
+                "require-corp"
+            );
         }
-        assert_eq!(get_with(decoder, "/hevc/other", None).status(), StatusCode::NOT_FOUND);
-        assert_eq!(body(get_with(decoder, "/hevc/hevc.js", None)).await, "export default 1;");
+        assert_eq!(
+            get_with(decoder, "/hevc/other", None).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            body(get_with(decoder, "/hevc/hevc.js", None)).await,
+            "export default 1;"
+        );
     }
 
     /// Without it, `/hevc/` is not found, rather than the document, so the page's
@@ -312,6 +344,9 @@ mod tests {
             .uri("/")
             .body(Body::empty())
             .unwrap();
-        assert_eq!(serve(None, &request).status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            serve(None, &request).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
     }
 }

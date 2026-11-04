@@ -20,7 +20,10 @@ pub fn set(pool: Option<ThreadPool>) {
 /// Run `op` in the pool named, where what it runs side by side is spread over
 /// that pool's threads, or here, on rayon's global one.
 pub(crate) fn install<R: Send>(op: impl FnOnce() -> R + Send) -> R {
-    let pool = POOL.read().expect("no thread panics holding the pool").clone();
+    let pool = POOL
+        .read()
+        .expect("no thread panics holding the pool")
+        .clone();
     match pool {
         Some(pool) => pool.install(op),
         None => op(),

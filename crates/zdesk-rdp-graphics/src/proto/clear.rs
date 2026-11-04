@@ -56,7 +56,11 @@ const MAX_VBAR_HEIGHT: usize = 52;
 const MASKS: [u8; 9] = [0x00, 0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F, 0xFF];
 
 fn refuse(field: &'static str, value: u64) -> Malformed {
-    Malformed::Refused { what: WHAT, field, value }
+    Malformed::Refused {
+        what: WHAT,
+        field,
+        value,
+    }
 }
 
 /// One wire colour, `[b, g, r]`, as a surface pixel.
@@ -92,14 +96,20 @@ impl<'a> Canvas<'a> {
     /// `pixels` must hold `width * height` pixels.
     pub fn new(pixels: &'a mut [u8], width: usize, height: usize) -> Self {
         debug_assert_eq!(pixels.len(), width * height * 4);
-        Self { pixels, width, height, columns: None }
+        Self {
+            pixels,
+            width,
+            height,
+            columns: None,
+        }
     }
 
     /// Where band columns were written, as `(x, y, width, height)`: the one layer
     /// that paints past its rectangle, as the reference lets it. Everything else a
     /// decode writes is inside the rectangle it was given.
     pub fn painted(&self) -> Option<(usize, usize, usize, usize)> {
-        self.columns.map(|(left, top, right, bottom)| (left, top, right - left, bottom - top))
+        self.columns
+            .map(|(left, top, right, bottom)| (left, top, right - left, bottom - top))
     }
 
     fn at(&self, x: usize, y: usize) -> usize {
@@ -243,17 +253,28 @@ impl Clear {
             for row in 0..h {
                 pixels.extend_from_slice(dst.row(row));
             }
-            self.glyphs[slot] = Glyph { pixels, count: w * h };
+            self.glyphs[slot] = Glyph {
+                pixels,
+                count: w * h,
+            };
         }
         Ok(())
     }
 
     /// Read the glyph header, and either paint the rectangle from the cache (a hit)
     /// or return the slot the decoded rectangle is to be stored under.
-    fn glyph_prologue(&mut self, r: &mut Reader<'_>, flags: u8, dst: &mut Dst<'_, '_>) -> Result<Glyphish, Malformed> {
+    fn glyph_prologue(
+        &mut self,
+        r: &mut Reader<'_>,
+        flags: u8,
+        dst: &mut Dst<'_, '_>,
+    ) -> Result<Glyphish, Malformed> {
         let (w, h) = (dst.w, dst.h);
         if flags & FLAG_GLYPH_HIT != 0 && flags & FLAG_GLYPH_INDEX == 0 {
-            return Err(refuse("a glyph hit without a glyph index, flags", u64::from(flags)));
+            return Err(refuse(
+                "a glyph hit without a glyph index, flags",
+                u64::from(flags),
+            ));
         }
         if flags & FLAG_GLYPH_INDEX == 0 {
             return Ok(Glyphish::None);
@@ -268,10 +289,14 @@ impl Clear {
         if flags & FLAG_GLYPH_HIT != 0 {
             let entry = &self.glyphs[index];
             if entry.pixels.is_empty() || w * h > entry.count {
-                return Err(refuse("a glyph hit on an entry too small, index", index as u64));
+                return Err(refuse(
+                    "a glyph hit on an entry too small, index",
+                    index as u64,
+                ));
             }
             for row in 0..h {
-                dst.row(row).copy_from_slice(&entry.pixels[row * w * 4..(row + 1) * w * 4]);
+                dst.row(row)
+                    .copy_from_slice(&entry.pixels[row * w * 4..(row + 1) * w * 4]);
             }
             return Ok(Glyphish::Hit);
         }
@@ -318,14 +343,19 @@ impl Clear {
                     }
                     let short_count = yoff - yon;
                     if short_count > MAX_VBAR_HEIGHT {
-                        return Err(refuse("a short vBar taller than 52 rows", short_count as u64));
+                        return Err(refuse(
+                            "a short vBar taller than 52 rows",
+                            short_count as u64,
+                        ));
                     }
                     let mut short_pixels = Vec::with_capacity(short_count * 4);
                     for _ in 0..short_count {
                         let (b, g, red) = (r.u8()?, r.u8()?, r.u8()?);
                         short_pixels.extend_from_slice(&pixel([b, g, red]));
                     }
-                    self.short_vbars[self.short_cursor] = VBar { pixels: short_pixels.clone() };
+                    self.short_vbars[self.short_cursor] = VBar {
+                        pixels: short_pixels.clone(),
+                    };
                     self.short_cursor = (self.short_cursor + 1) % VBAR_SHORT_SIZE;
                     self.store_vbar(build_column(vbar_height, yon, &short_pixels, bkg))
                 } else if header & 0x8000 == 0x8000 {
@@ -346,7 +376,9 @@ impl Clear {
     /// Store a freshly built column under the rolling cursor, and hand it back for
     /// drawing.
     fn store_vbar(&mut self, column: Vec<u8>) -> Vec<u8> {
-        self.vbars[self.vbar_cursor] = VBar { pixels: column.clone() };
+        self.vbars[self.vbar_cursor] = VBar {
+            pixels: column.clone(),
+        };
         self.vbar_cursor = (self.vbar_cursor + 1) % VBAR_SIZE;
         column
     }
@@ -388,13 +420,21 @@ fn subcodec_data(section: &[u8], dst: &mut Dst<'_, '_>, nsc: &mut Nsc) -> Result
         let id = r.u8()?;
         let data = r.bytes(count)?;
         if x0 + sw > dst.w || y0 + sh > dst.h {
-            return Err(refuse("a subcodec rectangle past its tile", (x0 + sw).max(y0 + sh) as u64));
+            return Err(refuse(
+                "a subcodec rectangle past its tile",
+                (x0 + sw).max(y0 + sh) as u64,
+            ));
         }
         match id {
             0 => subcode_raw(data, sw, sh, x0, y0, dst)?,
             1 => nsc.decode(data, sw, sh, |x, y, bgr| dst.put(x0 + x, y0 + y, bgr))?,
             2 => subcode_rlex(data, sw, sh, x0, y0, dst)?,
-            other => return Err(refuse("an unsupported ClearCodec subcodec", u64::from(other))),
+            other => {
+                return Err(refuse(
+                    "an unsupported ClearCodec subcodec",
+                    u64::from(other),
+                ));
+            }
         }
     }
     Ok(())
@@ -410,7 +450,10 @@ fn subcode_raw(
     dst: &mut Dst<'_, '_>,
 ) -> Result<(), Malformed> {
     if data.len() != sw * sh * 3 {
-        return Err(refuse("a raw subcodec of the wrong size", data.len() as u64));
+        return Err(refuse(
+            "a raw subcodec of the wrong size",
+            data.len() as u64,
+        ));
     }
     for (n, bgr) in data.as_chunks::<3>().0.iter().enumerate() {
         dst.put(x0 + n % sw, y0 + n / sw, [bgr[0], bgr[1], bgr[2]]);
@@ -450,7 +493,10 @@ fn subcode_rlex(
         let stop_index = tmp & MASKS[usize::from(num_bits)];
         let start_index = stop_index.wrapping_sub(suite_depth);
         if start_index >= palette_count || stop_index >= palette_count {
-            return Err(refuse("an RLEX index past its palette", u64::from(start_index)));
+            return Err(refuse(
+                "an RLEX index past its palette",
+                u64::from(start_index),
+            ));
         }
 
         // Against what is left, never by adding to `at`: a run is as long as four
@@ -476,7 +522,10 @@ fn subcode_rlex(
         at += suite;
     }
     if at != pixels {
-        return Err(refuse("an RLEX layer short of the rectangle, at", at as u64));
+        return Err(refuse(
+            "an RLEX layer short of the rectangle, at",
+            at as u64,
+        ));
     }
     Ok(())
 }
@@ -510,7 +559,13 @@ fn build_column(height: usize, yon: usize, short_pixels: &[u8], bkg: [u8; 3]) ->
 /// most `h` rows, and clipped to the *surface* rather than to the rectangle — a band
 /// the host places near the rectangle's edge lands on the surface beside it. A column
 /// that would leave the surface refuses the rectangle, as the reference does.
-fn draw_column(dst: &mut Dst<'_, '_>, x_start: usize, y_start: usize, i: usize, column: &[u8]) -> Result<(), Malformed> {
+fn draw_column(
+    dst: &mut Dst<'_, '_>,
+    x_start: usize,
+    y_start: usize,
+    i: usize,
+    column: &[u8],
+) -> Result<(), Malformed> {
     if i >= dst.w {
         return Ok(());
     }
@@ -527,7 +582,12 @@ fn draw_column(dst: &mut Dst<'_, '_>, x_start: usize, y_start: usize, i: usize, 
     if count > 0 {
         let bounds = (x, top, x + 1, top + count);
         dst.canvas.columns = Some(match dst.canvas.columns {
-            Some((l, t, r, b)) => (l.min(bounds.0), t.min(bounds.1), r.max(bounds.2), b.max(bounds.3)),
+            Some((l, t, r, b)) => (
+                l.min(bounds.0),
+                t.min(bounds.1),
+                r.max(bounds.2),
+                b.max(bounds.3),
+            ),
             None => bounds,
         });
     }
@@ -548,7 +608,14 @@ mod tests {
     use super::*;
 
     /// Assemble a ClearCodec rectangle: glyph header, then the composition sections.
-    fn rect(flags: u8, seq: u8, glyph: Option<u16>, residual: &[u8], bands: &[u8], sub: &[u8]) -> Vec<u8> {
+    fn rect(
+        flags: u8,
+        seq: u8,
+        glyph: Option<u16>,
+        residual: &[u8],
+        bands: &[u8],
+        sub: &[u8],
+    ) -> Vec<u8> {
         let mut v = vec![flags, seq];
         if let Some(g) = glyph {
             v.extend_from_slice(&g.to_le_bytes());
@@ -595,11 +662,17 @@ mod tests {
         let mut pixels = surface(4, 3, GREY);
         // One run of four pixels: B=30, G=20, R=10.
         let src = rect(0, 0, None, &[30, 20, 10, 4], &[], &[]);
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 4, 3), 1, 1, 2, 2).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 4, 3), 1, 1, 2, 2)
+            .unwrap();
         for y in 0..3 {
             for x in 0..4 {
                 let inside = (1..3).contains(&x) && (1..3).contains(&y);
-                assert_eq!(at(&pixels, 4, x, y), if inside { [10, 20, 30, 0] } else { GREY }, "{x},{y}");
+                assert_eq!(
+                    at(&pixels, 4, x, y),
+                    if inside { [10, 20, 30, 0] } else { GREY },
+                    "{x},{y}"
+                );
             }
         }
     }
@@ -611,7 +684,9 @@ mod tests {
         let mut clear = Clear::new();
         let mut pixels = surface(2, 1, GREY);
         let src = rect(0, 0, None, &[30, 20, 10, 1], &[], &[]);
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1)
+            .unwrap();
         assert_eq!(pixels, [[10, 20, 30, 0], GREY].concat());
     }
 
@@ -622,7 +697,9 @@ mod tests {
         let mut clear = Clear::new();
         let mut pixels = surface(2, 1, GREY);
         let src = rect(0, 0, None, &[], &[], &raw(1, 0, 1, 1, &[3, 2, 1]));
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1)
+            .unwrap();
         assert_eq!(pixels, [GREY, [1, 2, 3, 0]].concat());
     }
 
@@ -643,7 +720,9 @@ mod tests {
         sub.push(2); // RLEX
         sub.extend_from_slice(&rlex);
         let src = rect(0, 0, None, &[], &[], &sub);
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1)
+            .unwrap();
         assert_eq!(pixels, vec![1, 2, 3, 0, 4, 5, 6, 0]);
     }
 
@@ -692,15 +771,26 @@ mod tests {
     fn a_glyph_is_what_the_surface_showed_and_a_hit_stamps_it() {
         let mut clear = Clear::new();
         let mut pixels = surface(4, 1, GREY);
-        let store = rect(FLAG_GLYPH_INDEX, 0, Some(5), &[], &[], &raw(1, 0, 1, 1, &[3, 2, 1]));
-        clear.decompress(&store, &mut Canvas::new(&mut pixels, 4, 1), 0, 0, 2, 1).unwrap();
+        let store = rect(
+            FLAG_GLYPH_INDEX,
+            0,
+            Some(5),
+            &[],
+            &[],
+            &raw(1, 0, 1, 1, &[3, 2, 1]),
+        );
+        clear
+            .decompress(&store, &mut Canvas::new(&mut pixels, 4, 1), 0, 0, 2, 1)
+            .unwrap();
 
         // Somewhere else, on a different background. A hit carries only the glyph
         // header; the composition sections are absent.
         pixels[8..].copy_from_slice(&[9, 9, 9, 0, 9, 9, 9, 0]);
         let mut hit = vec![FLAG_GLYPH_HIT | FLAG_GLYPH_INDEX, 1];
         hit.extend_from_slice(&5u16.to_le_bytes());
-        clear.decompress(&hit, &mut Canvas::new(&mut pixels, 4, 1), 2, 0, 2, 1).unwrap();
+        clear
+            .decompress(&hit, &mut Canvas::new(&mut pixels, 4, 1), 2, 0, 2, 1)
+            .unwrap();
         assert_eq!(pixels, [GREY, [1, 2, 3, 0], GREY, [1, 2, 3, 0]].concat());
     }
 
@@ -758,7 +848,11 @@ mod tests {
         for y in 0..4 {
             for x in 0..4 {
                 let painted = (2..4).contains(&x) && (2..4).contains(&y);
-                assert_eq!(at(&pixels, 4, x, y), if painted { [1, 2, 3, 0] } else { GREY }, "{x},{y}");
+                assert_eq!(
+                    at(&pixels, 4, x, y),
+                    if painted { [1, 2, 3, 0] } else { GREY },
+                    "{x},{y}"
+                );
             }
         }
     }
@@ -771,7 +865,9 @@ mod tests {
         let mut pixels = surface(1, 2, GREY);
         // A one-row band stores a one-row column under vBar 0.
         let src = rect(0, 0, None, &[], &band(0, 1, 0, 1, [3, 2, 1]), &[]);
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 1, 2), 0, 0, 1, 2).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 1, 2), 0, 0, 1, 2)
+            .unwrap();
 
         // A two-row band hits vBar 0, then the never-stored vBar 5.
         pixels.copy_from_slice(&surface(1, 2, GREY));
@@ -782,7 +878,9 @@ mod tests {
         hits.extend_from_slice(&[0, 0, 0]);
         hits.extend_from_slice(&0x8000u16.to_le_bytes());
         let src = rect(0, 1, None, &[], &hits, &[]);
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 1, 2), 0, 0, 1, 2).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 1, 2), 0, 0, 1, 2)
+            .unwrap();
         assert_eq!(pixels, [[1, 2, 3, 0], GREY].concat());
 
         hits.truncate(11);
@@ -830,11 +928,15 @@ mod tests {
         let mut clear = Clear::new();
         let mut pixels = surface(2, 1, GREY);
         let src = rect(0, 0, None, &[], &[], &subrect(&nsc));
-        clear.decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1).unwrap();
+        clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1)
+            .unwrap();
         assert_eq!(pixels, [GREY, [130, 90, 90, 0]].concat());
 
         let src = rect(0, 1, None, &[], &[], &subrect(&[0]));
-        let err = clear.decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1).unwrap_err();
+        let err = clear
+            .decompress(&src, &mut Canvas::new(&mut pixels, 2, 1), 0, 0, 2, 1)
+            .unwrap_err();
         assert!(matches!(err, Malformed::Short { .. }), "{err}");
     }
 }

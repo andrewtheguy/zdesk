@@ -34,7 +34,7 @@ use sound_opus::walk::BitrateWalk;
 use tokio::sync::{Notify, broadcast, watch};
 
 use crate::config::AudioPlan;
-use crate::opus_stream::{OpusStream, OPUS_CODEC};
+use crate::opus_stream::{OPUS_CODEC, OpusStream};
 
 /// Complete PCM wave buffers retained before the oldest one is dropped.
 ///
@@ -322,7 +322,10 @@ impl AudioListener {
                 // whatever it is, until the queue has drained. Lost here as PCM,
                 // so the encoder goes on and the client needs no word of it.
                 if state.signals.skipping() {
-                    debug!("audio: skipped {} bytes so the link can come back to live", samples.len());
+                    debug!(
+                        "audio: skipped {} bytes so the link can come back to live",
+                        samples.len()
+                    );
                     continue;
                 }
                 let desired = state.signals.desired_bps();
@@ -414,58 +417,74 @@ impl AudioListener {
     /// remote's encoder went on from them and the client's decoder never saw
     /// them. [`EncodedAudio::gap`] is raised when that happens, for the sender
     /// to tell the client before the next batch.
-    pub fn into_passed(self, format: PassedFormat, plan: Option<AudioPlan>) -> EncodedAudio<impl Stream<Item = Vec<Bytes>>> {
+    pub fn into_passed(
+        self,
+        format: PassedFormat,
+        plan: Option<AudioPlan>,
+    ) -> EncodedAudio<impl Stream<Item = Vec<Bytes>>> {
         let signals = plan.map(|plan| Arc::new(AudioSignals::new(plan.bitrate_bps)));
         let gap = Arc::new(AtomicBool::new(false));
-        let unit_length = Duration::from_micros(u64::from(format.packet_frames) * 1_000_000 / u64::from(format.sample_rate));
+        let unit_length = Duration::from_micros(
+            u64::from(format.packet_frames) * 1_000_000 / u64::from(format.sample_rate),
+        );
         // The flag, and whether units were lost after the batch last yielded,
         // which is a gap before the next one rather than before that one; and
         // the walk, whose rate says whether a batch is held.
         let state = (self.waves, Arc::clone(&gap), false, signals.clone());
-        let stream = futures_util::stream::unfold(state, move |(mut units, gap, lost, signals)| async move {
-            if lost {
-                gap.store(true, Ordering::Relaxed);
-            }
-            loop {
-                match units.recv().await {
-                    // Skipped as an RDP host's buffer is, but after its
-                    // encoder: the next unit sent follows a gap.
-                    Ok(_) if signals.as_ref().is_some_and(|signals| signals.skipping()) => {
-                        gap.store(true, Ordering::Relaxed);
-                    }
-                    Ok(unit) => {
-                        let mut batch = vec![unit];
-                        let mut lost = queued(&mut units, &mut batch);
-                        if signals.as_ref().is_some_and(|signals| signals.desired_bps() <= BATCH_BELOW_BPS) {
-                            let until = tokio::time::Instant::now() + BATCH_HOLD;
-                            while !lost && unit_length * (batch.len() as u32) < BATCH_HOLD {
-                                match tokio::time::timeout_at(until, units.recv()).await {
-                                    Ok(Ok(unit)) => {
-                                        batch.push(unit);
-                                        lost = queued(&mut units, &mut batch);
+        let stream = futures_util::stream::unfold(
+            state,
+            move |(mut units, gap, lost, signals)| async move {
+                if lost {
+                    gap.store(true, Ordering::Relaxed);
+                }
+                loop {
+                    match units.recv().await {
+                        // Skipped as an RDP host's buffer is, but after its
+                        // encoder: the next unit sent follows a gap.
+                        Ok(_) if signals.as_ref().is_some_and(|signals| signals.skipping()) => {
+                            gap.store(true, Ordering::Relaxed);
+                        }
+                        Ok(unit) => {
+                            let mut batch = vec![unit];
+                            let mut lost = queued(&mut units, &mut batch);
+                            if signals
+                                .as_ref()
+                                .is_some_and(|signals| signals.desired_bps() <= BATCH_BELOW_BPS)
+                            {
+                                let until = tokio::time::Instant::now() + BATCH_HOLD;
+                                while !lost && unit_length * (batch.len() as u32) < BATCH_HOLD {
+                                    match tokio::time::timeout_at(until, units.recv()).await {
+                                        Ok(Ok(unit)) => {
+                                            batch.push(unit);
+                                            lost = queued(&mut units, &mut batch);
+                                        }
+                                        Ok(Err(broadcast::error::RecvError::Lagged(dropped))) => {
+                                            debug!(
+                                                "audio: listener fell behind, {dropped} passed unit(s) dropped"
+                                            );
+                                            lost = true;
+                                        }
+                                        // Held long enough, or the stream is over:
+                                        // what is held goes, and the next read ends it.
+                                        Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => {
+                                            break;
+                                        }
                                     }
-                                    Ok(Err(broadcast::error::RecvError::Lagged(dropped))) => {
-                                        debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
-                                        lost = true;
-                                    }
-                                    // Held long enough, or the stream is over:
-                                    // what is held goes, and the next read ends it.
-                                    Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => break,
                                 }
                             }
+                            return Some((batch, (units, gap, lost, signals)));
                         }
-                        return Some((batch, (units, gap, lost, signals)));
+                        // As for PCM, skipping forward is the point; unlike PCM,
+                        // what was skipped was coded, and the client is told.
+                        Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                            debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
+                            gap.store(true, Ordering::Relaxed);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
                     }
-                    // As for PCM, skipping forward is the point; unlike PCM,
-                    // what was skipped was coded, and the client is told.
-                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
-                        debug!("audio: listener fell behind, {dropped} passed unit(s) dropped");
-                        gap.store(true, Ordering::Relaxed);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return None,
                 }
-            }
-        });
+            },
+        );
         EncodedAudio {
             codec: format.codec,
             sample_rate: format.sample_rate,
@@ -505,7 +524,10 @@ impl AudioListener {
     /// of its own as wlshare's are, so each decodes alone and a dropped buffer
     /// costs its own samples. No walk and no silence to shed: silence is a few
     /// bytes a frame already. Fails for a format FLAC does not carry.
-    pub fn into_flac(self, format: PcmFormat) -> anyhow::Result<EncodedAudio<impl Stream<Item = Vec<Bytes>>>> {
+    pub fn into_flac(
+        self,
+        format: PcmFormat,
+    ) -> anyhow::Result<EncodedAudio<impl Stream<Item = Vec<Bytes>>>> {
         struct State {
             encoder: sound_flac::Encoder,
             waves: broadcast::Receiver<Bytes>,
@@ -525,10 +547,16 @@ impl AudioListener {
             bits: 16,
             block: (format.sample_rate / 50) as u16,
         };
-        let encoder = sound_flac::Encoder::new(stream).with_context(|| format!("cannot carry {format:?} as FLAC"))?;
+        let encoder = sound_flac::Encoder::new(stream)
+            .with_context(|| format!("cannot carry {format:?} as FLAC"))?;
         let block_bytes = stream.samples() * 2;
 
-        let state = State { encoder, waves: self.waves, pending: Vec::new(), block: Vec::new() };
+        let state = State {
+            encoder,
+            waves: self.waves,
+            pending: Vec::new(),
+            block: Vec::new(),
+        };
         let packets = futures_util::stream::unfold(state, move |mut state| async move {
             loop {
                 let samples = match state.waves.recv().await {
@@ -548,7 +576,13 @@ impl AudioListener {
                 let mut frames = Vec::with_capacity(whole);
                 for bytes in state.pending.chunks_exact(block_bytes) {
                     state.block.clear();
-                    state.block.extend(bytes.as_chunks::<2>().0.iter().map(|&pair| i32::from(i16::from_le_bytes(pair))));
+                    state.block.extend(
+                        bytes
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|&pair| i32::from(i16::from_le_bytes(pair))),
+                    );
                     let mut frame = Vec::new();
                     if let Err(e) = state.encoder.encode(&state.block, &mut frame) {
                         warn!("audio: the FLAC encoder failed, ending the stream: {e}");
@@ -599,7 +633,10 @@ pub struct PassedFormat {
 /// The samples are read as the little-endian 16-bit PCM the rest of this path
 /// already assumes ([`PCM_CD_QUALITY`], [`crate::pcm48`]).
 fn is_silence(pcm: &[u8]) -> bool {
-    pcm.as_chunks::<2>().0.iter().all(|&pair| i16::from_le_bytes(pair).unsigned_abs() <= 2)
+    pcm.as_chunks::<2>()
+        .0
+        .iter()
+        .all(|&pair| i16::from_le_bytes(pair).unsigned_abs() <= 2)
 }
 
 /// A configured stream, and everything the client needs to play it.
@@ -752,7 +789,12 @@ impl AudioWalk {
     /// which every stream with a rate to move has, and `remote` the bridge of
     /// a remote that codes its own Opus.
     pub fn new(ceiling: i32, signals: Arc<AudioSignals>, remote: Option<Arc<AudioBridge>>) -> Self {
-        Self { walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)), signals, remote, skipping_since: None }
+        Self {
+            walk: BitrateWalk::new(u32::try_from(ceiling).unwrap_or(0)),
+            signals,
+            remote,
+            skipping_since: None,
+        }
     }
 
     /// Whether to write a ping now, taken as written at `now` when it is.
@@ -800,7 +842,10 @@ impl AudioWalk {
                 self.skipping_since = Some(Instant::now());
             }
             (Some(since), false) => {
-                info!("audio: back to live after skipping {} ms of sound", since.elapsed().as_millis());
+                info!(
+                    "audio: back to live after skipping {} ms of sound",
+                    since.elapsed().as_millis()
+                );
                 self.skipping_since = None;
             }
             _ => {}
@@ -811,7 +856,11 @@ impl AudioWalk {
             self.signals.set_desired_bps(bps);
             // The encoder here says when it moves; a remote's is only asked.
             if let Some(remote) = &self.remote {
-                info!("audio: asked the remote's opus for {} kbit/s (from {})", bps / 1000, from / 1000);
+                info!(
+                    "audio: asked the remote's opus for {} kbit/s (from {})",
+                    bps / 1000,
+                    from / 1000
+                );
                 remote.ask_rate(bps);
             } else {
                 debug!("audio: the walk asks for {} kbit/s", bps / 1000);
@@ -880,7 +929,10 @@ impl AudioLink {
     pub fn pong(&self, payload: &[u8], now: Instant) {
         let mut state = self.state.lock().unwrap();
         let state = &mut *state;
-        if state.pinged.is_none_or(|number| payload != number.to_be_bytes()) {
+        if state
+            .pinged
+            .is_none_or(|number| payload != number.to_be_bytes())
+        {
             return;
         }
         state.pinged = None;
@@ -1039,7 +1091,10 @@ mod tests {
 
         // And the stream is still live: silence was a gap, not an end.
         bridge.wave(one_frame_of_pcm());
-        assert_eq!(next(&mut stream).await.expect("audio after the gap").len(), 1);
+        assert_eq!(
+            next(&mut stream).await.expect("audio after the gap").len(),
+            1
+        );
     }
 
     /// The remote going quiet and coming back, which is the sequence this exists
@@ -1118,8 +1173,18 @@ mod tests {
     async fn a_passed_opus_stream_walks_the_remotes_rate() {
         let bridge = AudioBridge::new();
         let plan = AudioPlan::default();
-        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(plan));
-        assert_eq!((passed.codec, passed.sample_rate, passed.channels, passed.packet_frames), ("opus", 48_000, 2, 960));
+        let passed = bridge
+            .take_listener()
+            .into_passed(crate::vnc_audio::PASSED_OPUS, Some(plan));
+        assert_eq!(
+            (
+                passed.codec,
+                passed.sample_rate,
+                passed.channels,
+                passed.packet_frames
+            ),
+            ("opus", 48_000, 2, 960)
+        );
         assert_eq!(&passed.head[0..8], b"OpusHead");
         assert!(passed.passthrough);
         let signals = passed.signals.expect("a plan walks");
@@ -1127,14 +1192,28 @@ mod tests {
 
         let bridge = Arc::new(bridge);
         let mut asked = bridge.asked_rate();
-        assert_eq!(*asked.borrow_and_update(), None, "nothing asked until a walk does");
-        let mut walk = AudioWalk::new(plan.bitrate_bps, Arc::clone(&signals), Some(Arc::clone(&bridge)));
+        assert_eq!(
+            *asked.borrow_and_update(),
+            None,
+            "nothing asked until a walk does"
+        );
+        let mut walk = AudioWalk::new(
+            plan.bitrate_bps,
+            Arc::clone(&signals),
+            Some(Arc::clone(&bridge)),
+        );
         let start = Instant::now();
         heard(&mut walk, Duration::ZERO, start);
         heard(&mut walk, LATE, start + BATCH);
-        assert!(!asked.has_changed().unwrap(), "one late pong is not a verdict");
+        assert!(
+            !asked.has_changed().unwrap(),
+            "one late pong is not a verdict"
+        );
         heard(&mut walk, LATE, start + 2 * BATCH);
-        assert!(asked.has_changed().unwrap(), "two give up rate, and the remote is asked");
+        assert!(
+            asked.has_changed().unwrap(),
+            "two give up rate, and the remote is asked"
+        );
         let lower = asked.borrow_and_update().expect("a rate");
         assert!(lower < plan.bitrate_bps, "{lower}");
         assert_eq!(signals.desired_bps(), lower);
@@ -1147,20 +1226,30 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_passed_stream_batches_its_units_while_the_walk_is_low() {
         let bridge = Arc::new(AudioBridge::new());
-        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
+        let passed = bridge
+            .take_listener()
+            .into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
         let signals = passed.signals.clone().expect("a plan walks");
         let mut stream = Box::pin(passed.packets);
         let unit = |n: u8| Bytes::from(vec![n]);
 
         bridge.unit(vec![1]);
-        assert_eq!(next(&mut stream).await.unwrap(), [unit(1)], "at the ceiling, as it comes");
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            [unit(1)],
+            "at the ceiling, as it comes"
+        );
 
         signals.set_desired_bps(BATCH_BELOW_BPS);
         for n in 2..5 {
             bridge.unit(vec![n]);
         }
         let start = tokio::time::Instant::now();
-        assert_eq!(next(&mut stream).await.unwrap(), [unit(2), unit(3), unit(4)], "a hold's worth queued goes at once");
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            [unit(2), unit(3), unit(4)],
+            "a hold's worth queued goes at once"
+        );
         assert_eq!(start.elapsed(), Duration::ZERO);
 
         let later = Arc::clone(&bridge);
@@ -1172,12 +1261,20 @@ mod tests {
         });
         bridge.unit(vec![4]);
         let start = tokio::time::Instant::now();
-        assert_eq!(next(&mut stream).await.unwrap(), [unit(4), unit(5), unit(6)], "units arriving in the hold join it");
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            [unit(4), unit(5), unit(6)],
+            "units arriving in the hold join it"
+        );
         assert_eq!(start.elapsed(), Duration::from_millis(40));
 
         bridge.unit(vec![7]);
         let start = tokio::time::Instant::now();
-        assert_eq!(next(&mut stream).await.unwrap(), [unit(7)], "what arrived by the hold's end goes");
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            [unit(7)],
+            "what arrived by the hold's end goes"
+        );
         assert_eq!(start.elapsed(), BATCH_HOLD);
     }
 
@@ -1187,7 +1284,9 @@ mod tests {
     #[tokio::test]
     async fn a_passed_stream_that_lost_units_raises_the_gap() {
         let bridge = AudioBridge::new();
-        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, None);
+        let passed = bridge
+            .take_listener()
+            .into_passed(crate::vnc_audio::PASSED_OPUS, None);
         let gap = Arc::clone(&passed.gap);
         let mut stream = Box::pin(passed.packets);
 
@@ -1210,18 +1309,35 @@ mod tests {
     #[tokio::test]
     async fn a_passed_stream_hands_on_the_remotes_units_untouched() {
         let bridge = AudioBridge::new();
-        let passed = bridge.take_listener().into_passed(crate::vnc_apple_media::PASSED_SOUND, None);
+        let passed = bridge
+            .take_listener()
+            .into_passed(crate::vnc_apple_media::PASSED_SOUND, None);
         assert_eq!(
-            (passed.codec, passed.sample_rate, passed.channels, passed.packet_frames),
+            (
+                passed.codec,
+                passed.sample_rate,
+                passed.channels,
+                passed.packet_frames
+            ),
             ("mp4a.40.39", 48_000, 2, 480)
         );
-        assert_eq!(passed.head, [0xf8, 0xe6, 0x50, 0x00], "the Mac's AudioSpecificConfig");
-        assert!(passed.signals.is_none(), "a passed stream has no bitrate to walk");
+        assert_eq!(
+            passed.head,
+            [0xf8, 0xe6, 0x50, 0x00],
+            "the Mac's AudioSpecificConfig"
+        );
+        assert!(
+            passed.signals.is_none(),
+            "a passed stream has no bitrate to walk"
+        );
         assert!(passed.passthrough);
         let mut stream = Box::pin(passed.packets);
 
         bridge.unit(vec![1, 2, 3]);
-        assert_eq!(next(&mut stream).await.unwrap(), [Bytes::from_static(&[1, 2, 3])]);
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            [Bytes::from_static(&[1, 2, 3])]
+        );
         bridge.unit(vec![4]);
         bridge.unit(vec![5, 6]);
         assert_eq!(
@@ -1242,9 +1358,17 @@ mod tests {
     #[tokio::test]
     async fn pcm_coded_as_flac_is_whole_frames_on_their_own() {
         let bridge = AudioBridge::new();
-        let flac = bridge.take_listener().into_flac(PCM_CD_QUALITY).expect("flac");
+        let flac = bridge
+            .take_listener()
+            .into_flac(PCM_CD_QUALITY)
+            .expect("flac");
         assert_eq!(
-            (flac.codec, flac.sample_rate, flac.channels, flac.packet_frames),
+            (
+                flac.codec,
+                flac.sample_rate,
+                flac.channels,
+                flac.packet_frames
+            ),
             ("flac", 44_100, 2, 882)
         );
         assert!(flac.head.is_empty(), "a frame states its own shape");
@@ -1254,7 +1378,12 @@ mod tests {
 
         // Two and a half blocks of a tone, in buffers that do not line up with them.
         let block = 882 * 4;
-        let pcm: Vec<u8> = one_frame_of_tone().iter().copied().cycle().take(block * 5 / 2).collect();
+        let pcm: Vec<u8> = one_frame_of_tone()
+            .iter()
+            .copied()
+            .cycle()
+            .take(block * 5 / 2)
+            .collect();
         bridge.wave(pcm[..100].to_vec());
         bridge.wave(pcm[100..block * 2 + 8].to_vec());
         let frames = next(&mut stream).await.expect("frames");
@@ -1265,11 +1394,17 @@ mod tests {
         assert_eq!(frames.len(), 3);
 
         for frame in &frames {
-            assert!(frame.len() <= usize::from(u16::MAX), "a packet's length is a u16 on the wire");
+            assert!(
+                frame.len() <= usize::from(u16::MAX),
+                "a packet's length is a u16 on the wire"
+            );
             // The sync code of a FLAC frame of a fixed block size, 0b11111111111110
             // and the blocking bit 0, then a header that states the block's shape.
             assert_eq!(&frame[..2], &[0xFF, 0xF8], "each packet is one FLAC frame");
-            assert!(frame.len() > 16 && frame.len() < block, "a tone's frame is coded, not verbatim");
+            assert!(
+                frame.len() > 16 && frame.len() < block,
+                "a tone's frame is coded, not verbatim"
+            );
         }
     }
 
@@ -1310,7 +1445,11 @@ mod tests {
             Some((sent - AUDIO_QUEUE_DEPTH) as u64),
             "the reader should be told exactly how much it missed"
         );
-        assert_eq!(survived.len(), AUDIO_QUEUE_DEPTH, "the queue holds its depth");
+        assert_eq!(
+            survived.len(),
+            AUDIO_QUEUE_DEPTH,
+            "the queue holds its depth"
+        );
         assert_eq!(
             survived[0],
             vec![AUDIO_QUEUE_DEPTH as u8],
@@ -1337,7 +1476,9 @@ mod tests {
 
     /// The plan every walk test runs on.
     fn walk_plan() -> AudioPlan {
-        AudioPlan { bitrate_bps: 96_000 }
+        AudioPlan {
+            bitrate_bps: 96_000,
+        }
     }
 
     /// The least round trip in the walk's tests.
@@ -1398,9 +1539,15 @@ mod tests {
             at += batch;
             heard(&mut walk, LATE, at);
         }
-        assert_eq!(signals.desired_bps(), sound_opus::walk::BITRATE_FLOOR as i32);
+        assert_eq!(
+            signals.desired_bps(),
+            sound_opus::walk::BITRATE_FLOOR as i32
+        );
         assert!(signals.behind());
-        assert!(!signals.skipping(), "a lag short of the skip's is the rate's to drain");
+        assert!(
+            !signals.skipping(),
+            "a lag short of the skip's is the rate's to drain"
+        );
 
         // A second of clear pongs clears the behind flag well before any rate returns.
         for _ in 0..6 {
@@ -1408,7 +1555,10 @@ mod tests {
             heard(&mut walk, Duration::ZERO, at);
         }
         assert!(!signals.behind());
-        assert_eq!(signals.desired_bps(), sound_opus::walk::BITRATE_FLOOR as i32);
+        assert_eq!(
+            signals.desired_bps(),
+            sound_opus::walk::BITRATE_FLOOR as i32
+        );
 
         // And a long clear stretch climbs back exactly to the ceiling.
         for _ in 0..20 {
@@ -1467,7 +1617,11 @@ mod tests {
             heard(&mut walk, Duration::ZERO, at);
         }
         assert!(!signals.behind());
-        assert_eq!(signals.desired_bps(), 96_000, "a lag moves no rate by itself");
+        assert_eq!(
+            signals.desired_bps(),
+            96_000,
+            "a lag moves no rate by itself"
+        );
     }
 
     /// The link pings for the walk armed on it alone: a heartbeat's pong, and
@@ -1483,7 +1637,11 @@ mod tests {
         let first = link.ping(start).expect("a walk with none in flight pings");
         assert_eq!(link.ping(start), None, "one in flight");
         link.pong(&[], start + TRIP);
-        assert_eq!(link.ping(start + TRIP), None, "a heartbeat's pong is not the walk's");
+        assert_eq!(
+            link.ping(start + TRIP),
+            None,
+            "a heartbeat's pong is not the walk's"
+        );
         link.pong(&first, start + TRIP);
         // The walk knows the trip now: a ping out past it is overdue.
         let second = link.ping(start + BATCH).expect("its pong came back");
@@ -1491,9 +1649,16 @@ mod tests {
         link.tick(due);
         assert!(signals.behind(), "a ping still out is heard as it lags");
 
-        link.arm(Some(AudioWalk::new(96_000, Arc::new(AudioSignals::new(96_000)), None)));
+        link.arm(Some(AudioWalk::new(
+            96_000,
+            Arc::new(AudioSignals::new(96_000)),
+            None,
+        )));
         link.pong(&second, due);
-        assert!(link.ping(due).is_some(), "the pong of a replaced walk's ping is not this one's");
+        assert!(
+            link.ping(due).is_some(),
+            "the pong of a replaced walk's ping is not this one's"
+        );
     }
 
     /// A pong that leaves the walk skipping wants a ping at once: no batch
@@ -1509,7 +1674,9 @@ mod tests {
         let ping = link.ping(start + BATCH).unwrap();
         link.pong(&ping, start + BATCH + TRIP + Duration::from_millis(500));
         assert!(signals.skipping());
-        tokio::time::timeout(Duration::from_secs(1), link.wanted()).await.expect("a ping is wanted");
+        tokio::time::timeout(Duration::from_secs(1), link.wanted())
+            .await
+            .expect("a ping is wanted");
         assert!(link.ping(start + Duration::from_secs(1)).is_some());
     }
 
@@ -1518,14 +1685,20 @@ mod tests {
     #[tokio::test]
     async fn a_ping_going_out_wakes_the_reader_to_its_deadline() {
         let link = AudioLink::default();
-        link.arm(Some(AudioWalk::new(96_000, Arc::new(AudioSignals::new(96_000)), None)));
+        link.arm(Some(AudioWalk::new(
+            96_000,
+            Arc::new(AudioSignals::new(96_000)),
+            None,
+        )));
         let start = Instant::now();
         let ping = link.ping(start).unwrap();
         link.pong(&ping, start + TRIP);
         link.pinged().await;
         assert_eq!(link.next_tick(), None, "none in flight");
         link.ping(start + BATCH).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), link.pinged()).await.expect("the reader is woken");
+        tokio::time::timeout(Duration::from_secs(1), link.pinged())
+            .await
+            .expect("the reader is woken");
         assert!(link.next_tick().is_some());
     }
 
@@ -1556,11 +1729,16 @@ mod tests {
         let mut decoder =
             opus::Decoder::new(crate::pcm48::SAMPLE_RATE, opus::Channels::Stereo).expect("decoder");
         let mut decoded = vec![0i16; crate::opus_stream::FRAME_FRAMES * 2];
-        decoder.decode(&packets[0], &mut decoded, false).expect("decode");
+        decoder
+            .decode(&packets[0], &mut decoded, false)
+            .expect("decode");
         // The packet that came through is the tone, not the silence: with the
         // silent frame shed, the encoder's first packet carries signal.
         let peak = decoded.iter().map(|s| s.abs()).max().expect("samples");
-        assert!(peak > 1_000, "the surviving packet should carry the tone, peak {peak}");
+        assert!(
+            peak > 1_000,
+            "the surviving packet should carry the tone, peak {peak}"
+        );
     }
 
     /// While the walk is skipping, every buffer is dropped before the encoder,
@@ -1579,12 +1757,18 @@ mod tests {
         bridge.wave(one_frame_of_tone());
         bridge.wave(one_frame_of_tone());
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), next(&mut stream)).await.is_err(),
+            tokio::time::timeout(Duration::from_millis(50), next(&mut stream))
+                .await
+                .is_err(),
             "nothing reaches the stream while skipping"
         );
         signals.set_skipping(false);
         bridge.wave(one_frame_of_tone());
-        assert_eq!(next(&mut stream).await.expect("packets").len(), 1, "the skipped buffers added no packet");
+        assert_eq!(
+            next(&mut stream).await.expect("packets").len(),
+            1,
+            "the skipped buffers added no packet"
+        );
     }
 
     /// A passed stream skips its units as they come, and the one after them
@@ -1592,7 +1776,9 @@ mod tests {
     #[tokio::test]
     async fn a_passed_stream_skips_its_units_behind_a_gap() {
         let bridge = AudioBridge::new();
-        let passed = bridge.take_listener().into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
+        let passed = bridge
+            .take_listener()
+            .into_passed(crate::vnc_audio::PASSED_OPUS, Some(AudioPlan::default()));
         let signals = passed.signals.clone().expect("a plan walks");
         let gap = Arc::clone(&passed.gap);
         let mut stream = Box::pin(passed.packets);
@@ -1600,7 +1786,11 @@ mod tests {
         signals.set_skipping(true);
         bridge.unit(vec![1]);
         bridge.unit(vec![2]);
-        assert!(tokio::time::timeout(Duration::from_millis(50), next(&mut stream)).await.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), next(&mut stream))
+                .await
+                .is_err()
+        );
         assert!(gap.load(Ordering::Relaxed), "the skipped units were coded");
         signals.set_skipping(false);
         bridge.unit(vec![3]);

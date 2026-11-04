@@ -63,7 +63,13 @@ pub enum Answer {
     /// The results of a bandwidth measurement, sent as `reply`. `sequence` and
     /// `results` are the response's own, for a caller that times the measurement
     /// some other way to send [`timed`] instead.
-    Measured { reply: Vec<u8>, sequence: u16, results: u16, millis: u32, bytes: u32 },
+    Measured {
+        reply: Vec<u8>,
+        sequence: u16,
+        results: u16,
+        millis: u32,
+        bytes: u32,
+    },
     /// The host's conclusion.
     Concluded(Characteristics),
 }
@@ -153,10 +159,17 @@ impl Detector {
                 };
                 // The host divides by it (3.3.5.14), so a measurement shorter than a
                 // millisecond is said to have taken one.
-                let millis =
-                    u32::try_from(now.saturating_duration_since(started).as_millis()).unwrap_or(u32::MAX).max(1);
+                let millis = u32::try_from(now.saturating_duration_since(started).as_millis())
+                    .unwrap_or(u32::MAX)
+                    .max(1);
                 let bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
-                Answer::Measured { reply: timed(sequence, results, millis, bytes), sequence, results, millis, bytes }
+                Answer::Measured {
+                    reply: timed(sequence, results, millis, bytes),
+                    sequence,
+                    results,
+                    millis,
+                    bytes,
+                }
             }
             request if NETCHAR_RESULTS.contains(&request) => {
                 let mut said = Characteristics::default();
@@ -195,7 +208,10 @@ impl Detector {
 /// [`Detector::answer`] counts it past its security header, and the Start not at
 /// all. A server's disconnect carries no data.
 pub fn counted(frame: &[u8], message_channel: Option<u16>) -> Result<usize, Malformed> {
-    if frame.first().is_some_and(|&first| fastpath::is_output(first)) {
+    if frame
+        .first()
+        .is_some_and(|&first| fastpath::is_output(first))
+    {
         return Ok(fastpath::body(frame)?.len());
     }
     Ok(match mcs::send_data_indication(frame)? {
@@ -254,15 +270,24 @@ mod tests {
     fn results(reply: &[u8]) -> (u16, u32, u32) {
         assert_eq!(reply[..6], [0x00, 0x20, 0x00, 0x00, 0x0E, TYPE_RESPONSE]);
         let field = |at: usize| u32::from_le_bytes(reply[at..at + 4].try_into().unwrap());
-        (u16::from_le_bytes([reply[8], reply[9]]), field(10), field(14))
+        (
+            u16::from_le_bytes([reply[8], reply[9]]),
+            field(10),
+            field(14),
+        )
     }
 
     #[test]
     fn a_round_trip_is_answered_at_once() {
         let mut detector = Detector::default();
         for kind in [RTT_CONTINUOUS, RTT_CONNECT] {
-            let answer = detector.answer(&request(0x06, kind, 7, &[]), Instant::now()).unwrap();
-            assert_eq!(answer, Answer::Reply(vec![0x00, 0x20, 0x00, 0x00, 0x06, 0x01, 7, 0, 0, 0]));
+            let answer = detector
+                .answer(&request(0x06, kind, 7, &[]), Instant::now())
+                .unwrap();
+            assert_eq!(
+                answer,
+                Answer::Reply(vec![0x00, 0x20, 0x00, 0x00, 0x06, 0x01, 7, 0, 0, 0])
+            );
         }
     }
 
@@ -272,16 +297,36 @@ mod tests {
     fn a_connect_time_measurement_counts_each_payload_with_its_header() {
         let mut detector = Detector::default();
         let start = Instant::now();
-        detector.answer(&request(0x06, BW_START_CONNECT, 1, &[]), start).unwrap();
+        detector
+            .answer(&request(0x06, BW_START_CONNECT, 1, &[]), start)
+            .unwrap();
         detector.received(5000);
-        detector.answer(&with_payload(BW_PAYLOAD, 2, &[0xAB; 1024]), start).unwrap();
-        detector.answer(&request(0x06, RTT_CONNECT, 3, &[]), start).unwrap();
+        detector
+            .answer(&with_payload(BW_PAYLOAD, 2, &[0xAB; 1024]), start)
+            .unwrap();
+        detector
+            .answer(&request(0x06, RTT_CONNECT, 3, &[]), start)
+            .unwrap();
         let stop = with_payload(BW_STOP_CONNECT, 4, &[0xCD; 512]);
-        let answer = detector.answer(&stop, start + Duration::from_millis(10)).unwrap();
-        let Answer::Measured { reply, millis, bytes, .. } = answer else { panic!("{answer:?}") };
+        let answer = detector
+            .answer(&stop, start + Duration::from_millis(10))
+            .unwrap();
+        let Answer::Measured {
+            reply,
+            millis,
+            bytes,
+            ..
+        } = answer
+        else {
+            panic!("{answer:?}")
+        };
         assert_eq!((millis, bytes), (10, 1024 + 8 + 512 + 8));
         assert_eq!(results(&reply), (BW_RESULTS_CONNECT, 10, 1552));
-        assert_eq!(reply[6..8], 4u16.to_le_bytes(), "the Stop's sequence number");
+        assert_eq!(
+            reply[6..8],
+            4u16.to_le_bytes(),
+            "the Stop's sequence number"
+        );
     }
 
     /// Continuous: what arrived off the message channel, and on it everything past
@@ -291,16 +336,36 @@ mod tests {
         let mut detector = Detector::default();
         let start = Instant::now();
         detector.received(999); // before the start: not counted
-        assert_eq!(detector.answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start).unwrap(), Answer::Started);
+        assert_eq!(
+            detector
+                .answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start)
+                .unwrap(),
+            Answer::Started
+        );
         detector.received(1000);
-        detector.answer(&request(0x06, RTT_CONTINUOUS, 2, &[]), start).unwrap();
+        detector
+            .answer(&request(0x06, RTT_CONTINUOUS, 2, &[]), start)
+            .unwrap();
         detector.received(500);
-        let answer = detector.answer(&request(0x06, BW_STOP_CONTINUOUS, 3, &[]), start + Duration::from_millis(250));
-        let Answer::Measured { reply, millis, bytes, .. } = answer.unwrap() else { panic!() };
+        let answer = detector.answer(
+            &request(0x06, BW_STOP_CONTINUOUS, 3, &[]),
+            start + Duration::from_millis(250),
+        );
+        let Answer::Measured {
+            reply,
+            millis,
+            bytes,
+            ..
+        } = answer.unwrap()
+        else {
+            panic!()
+        };
         assert_eq!((millis, bytes), (250, 1000 + 6 + 500 + 6));
         assert_eq!(results(&reply), (BW_RESULTS_CONTINUOUS, 250, 1512));
         detector.received(1000); // after the stop: not counted
-        let late = detector.answer(&request(0x06, BW_STOP_CONTINUOUS, 4, &[]), start).unwrap();
+        let late = detector
+            .answer(&request(0x06, BW_STOP_CONTINUOUS, 4, &[]), start)
+            .unwrap();
         assert_eq!(late, Answer::Nothing, "a Stop with no Start under way");
     }
 
@@ -309,13 +374,22 @@ mod tests {
     fn a_second_start_starts_the_measurement_over() {
         let mut detector = Detector::default();
         let start = Instant::now();
-        detector.answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start).unwrap();
+        detector
+            .answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start)
+            .unwrap();
         detector.received(1000);
         let again = start + Duration::from_millis(5);
-        detector.answer(&request(0x06, BW_START_CONTINUOUS, 2, &[]), again).unwrap();
+        detector
+            .answer(&request(0x06, BW_START_CONTINUOUS, 2, &[]), again)
+            .unwrap();
         detector.received(10);
-        let answer = detector.answer(&request(0x06, BW_STOP_CONTINUOUS, 3, &[]), again + Duration::from_millis(2));
-        let Answer::Measured { millis, bytes, .. } = answer.unwrap() else { panic!() };
+        let answer = detector.answer(
+            &request(0x06, BW_STOP_CONTINUOUS, 3, &[]),
+            again + Duration::from_millis(2),
+        );
+        let Answer::Measured { millis, bytes, .. } = answer.unwrap() else {
+            panic!()
+        };
         assert_eq!((millis, bytes), (2, 16));
     }
 
@@ -324,29 +398,70 @@ mod tests {
     fn a_measurement_under_a_millisecond_says_it_took_one() {
         let mut detector = Detector::default();
         let start = Instant::now();
-        detector.answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start).unwrap();
+        detector
+            .answer(&request(0x06, BW_START_CONTINUOUS, 1, &[]), start)
+            .unwrap();
         detector.received(3000);
-        let answer = detector.answer(&request(0x06, BW_STOP_CONTINUOUS, 2, &[]), start + Duration::from_micros(400));
-        let Answer::Measured { reply, millis, bytes, .. } = answer.unwrap() else { panic!() };
+        let answer = detector.answer(
+            &request(0x06, BW_STOP_CONTINUOUS, 2, &[]),
+            start + Duration::from_micros(400),
+        );
+        let Answer::Measured {
+            reply,
+            millis,
+            bytes,
+            ..
+        } = answer.unwrap()
+        else {
+            panic!()
+        };
         assert_eq!((millis, bytes), (1, 3006));
         assert_eq!(results(&reply), (BW_RESULTS_CONTINUOUS, 1, 3006));
     }
 
     #[test]
     fn the_hosts_conclusion_is_read_in_each_of_its_shapes() {
-        let fields = |values: &[u32]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>();
+        let fields = |values: &[u32]| {
+            values
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>()
+        };
         let cases = [
-            (0x0E, 0x0840, vec![20, 25], Characteristics { base_rtt_ms: Some(20), bandwidth_kbps: None, average_rtt_ms: Some(25) }),
-            (0x0E, 0x0880, vec![2000, 25], Characteristics { base_rtt_ms: None, bandwidth_kbps: Some(2000), average_rtt_ms: Some(25) }),
+            (
+                0x0E,
+                0x0840,
+                vec![20, 25],
+                Characteristics {
+                    base_rtt_ms: Some(20),
+                    bandwidth_kbps: None,
+                    average_rtt_ms: Some(25),
+                },
+            ),
+            (
+                0x0E,
+                0x0880,
+                vec![2000, 25],
+                Characteristics {
+                    base_rtt_ms: None,
+                    bandwidth_kbps: Some(2000),
+                    average_rtt_ms: Some(25),
+                },
+            ),
             (
                 0x12,
                 0x08C0,
                 vec![20, 2000, 25],
-                Characteristics { base_rtt_ms: Some(20), bandwidth_kbps: Some(2000), average_rtt_ms: Some(25) },
+                Characteristics {
+                    base_rtt_ms: Some(20),
+                    bandwidth_kbps: Some(2000),
+                    average_rtt_ms: Some(25),
+                },
             ),
         ];
         for (length, kind, values, said) in cases {
-            let answer = Detector::default().answer(&request(length, kind, 1, &fields(&values)), Instant::now());
+            let answer = Detector::default()
+                .answer(&request(length, kind, 1, &fields(&values)), Instant::now());
             assert_eq!(answer.unwrap(), Answer::Concluded(said), "{kind:#06x}");
         }
     }
@@ -368,10 +483,22 @@ mod tests {
         ];
         for (kind, right, rest) in shapes {
             let mut detector = Detector::default();
-            assert!(detector.answer(&request(right, kind, 1, rest), Instant::now()).is_ok(), "{kind:#06x}");
-            for wrong in [0x00, 0x06, 0x08, 0x0E, 0x12].into_iter().filter(|&wrong| wrong != right) {
-                let refused = Detector::default().answer(&request(wrong, kind, 1, rest), Instant::now());
-                assert!(refused.is_err(), "{kind:#06x} with a header length of {wrong}");
+            assert!(
+                detector
+                    .answer(&request(right, kind, 1, rest), Instant::now())
+                    .is_ok(),
+                "{kind:#06x}"
+            );
+            for wrong in [0x00, 0x06, 0x08, 0x0E, 0x12]
+                .into_iter()
+                .filter(|&wrong| wrong != right)
+            {
+                let refused =
+                    Detector::default().answer(&request(wrong, kind, 1, rest), Instant::now());
+                assert!(
+                    refused.is_err(),
+                    "{kind:#06x} with a header length of {wrong}"
+                );
             }
         }
     }
@@ -382,13 +509,20 @@ mod tests {
     fn a_payload_shorter_than_it_says_is_refused() {
         let mut detector = Detector::default();
         let start = Instant::now();
-        detector.answer(&request(0x06, BW_START_CONNECT, 1, &[]), start).unwrap();
+        detector
+            .answer(&request(0x06, BW_START_CONNECT, 1, &[]), start)
+            .unwrap();
         let mut short = with_payload(BW_PAYLOAD, 2, &[0xAB; 1024]);
         short.truncate(short.len() - 1);
         assert!(detector.answer(&short, start).is_err());
         let stop = with_payload(BW_STOP_CONNECT, 3, &[0xCD; 16]);
-        assert!(detector.answer(&stop[..stop.len() - 16], start).is_err(), "a Stop with none of its payload");
-        let Answer::Measured { bytes, .. } = detector.answer(&stop, start).unwrap() else { panic!() };
+        assert!(
+            detector.answer(&stop[..stop.len() - 16], start).is_err(),
+            "a Stop with none of its payload"
+        );
+        let Answer::Measured { bytes, .. } = detector.answer(&stop, start).unwrap() else {
+            panic!()
+        };
         assert_eq!(bytes, 16 + 8, "only the Stop that arrived whole");
     }
 
@@ -401,7 +535,11 @@ mod tests {
 
     #[test]
     fn an_unknown_request_type_is_refused() {
-        assert!(Detector::default().answer(&request(0x06, 0x0003, 1, &[]), Instant::now()).is_err());
+        assert!(
+            Detector::default()
+                .answer(&request(0x06, 0x0003, 1, &[]), Instant::now())
+                .is_err()
+        );
     }
     /// A Send Data Indication built byte by byte from T.123, X.224 and T.125,
     /// independently of the parser: TPKT, an X.224 data header, then the MCS
@@ -448,10 +586,16 @@ mod tests {
         // message channel answered.
         let feed = |detector: &mut Detector, frame: &[u8], now: Instant| {
             detector.received(counted(frame, Some(MESSAGE)).unwrap());
-            let Ok(mcs::Indication::Data(data)) = mcs::send_data_indication(frame) else { return None };
+            let Ok(mcs::Indication::Data(data)) = mcs::send_data_indication(frame) else {
+                return None;
+            };
             (data.channel == MESSAGE).then(|| detector.answer(data.payload, now).unwrap())
         };
-        let begun = feed(&mut detector, &indication(MESSAGE, &request(0x06, BW_START_CONTINUOUS, 1, &[])), start);
+        let begun = feed(
+            &mut detector,
+            &indication(MESSAGE, &request(0x06, BW_START_CONTINUOUS, 1, &[])),
+            start,
+        );
         assert_eq!(begun, Some(Answer::Started));
         let fast = fast_path(&[0x01; 300]);
         assert_eq!(fast.len(), 303, "a long length");
@@ -460,8 +604,15 @@ mod tests {
         feed(&mut detector, &indication(1003, &[0x03; 200]), start);
         feed(&mut detector, &indication(1004, &[0x04; 20]), start);
         let ended = start + Duration::from_millis(40);
-        let stop = feed(&mut detector, &indication(MESSAGE, &request(0x06, BW_STOP_CONTINUOUS, 2, &[])), ended).unwrap();
-        let Answer::Measured { millis, bytes, .. } = stop else { panic!("{stop:?}") };
+        let stop = feed(
+            &mut detector,
+            &indication(MESSAGE, &request(0x06, BW_STOP_CONTINUOUS, 2, &[])),
+            ended,
+        )
+        .unwrap();
+        let Answer::Measured { millis, bytes, .. } = stop else {
+            panic!("{stop:?}")
+        };
         assert_eq!((millis, bytes), (40, 300 + 40 + 200 + 20 + 6));
     }
 }

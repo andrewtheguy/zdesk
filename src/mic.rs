@@ -45,7 +45,8 @@ impl MicFormat {
         anyhow::ensure!(matches!(self.channels, 1 | 2), "{} channels", self.channels);
         anyhow::ensure!(
             (1..=MAX_RATE).contains(&self.sample_rate)
-                && (GROUP as u64 * u64::from(self.sample_rate)).is_multiple_of(u64::from(DECODE_RATE)),
+                && (GROUP as u64 * u64::from(self.sample_rate))
+                    .is_multiple_of(u64::from(DECODE_RATE)),
             "{} Hz is not a rate of at most {MAX_RATE} Hz with a whole number of frames in 20 ms",
             self.sample_rate
         );
@@ -232,7 +233,11 @@ impl MicBridge {
     }
 
     fn control(&self) -> Option<Arc<dyn MicControl>> {
-        self.upstream.lock().expect("mic control lock").control.clone()
+        self.upstream
+            .lock()
+            .expect("mic control lock")
+            .control
+            .clone()
     }
 }
 
@@ -255,14 +260,23 @@ impl Decoder {
         let group_out = GROUP * format.sample_rate as usize / DECODE_RATE as usize;
         let resampler = (format.sample_rate != DECODE_RATE)
             .then(|| {
-                Fft::<f32>::new(DECODE_RATE as usize, format.sample_rate as usize, GROUP, 1, FixedSync::Input)
-                    .with_context(|| format!("build a 48 kHz -> {} Hz resampler", format.sample_rate))
+                Fft::<f32>::new(
+                    DECODE_RATE as usize,
+                    format.sample_rate as usize,
+                    GROUP,
+                    1,
+                    FixedSync::Input,
+                )
+                .with_context(|| format!("build a 48 kHz -> {} Hz resampler", format.sample_rate))
             })
             .transpose()?;
-        let opus = opus::Decoder::new(DECODE_RATE, opus::Channels::Mono).context("create the opus decoder")?;
+        let opus = opus::Decoder::new(DECODE_RATE, opus::Channels::Mono)
+            .context("create the opus decoder")?;
         // The resampler asks for room past the group's exact size, and says how much of
         // it one call filled.
-        let room = resampler.as_ref().map_or(group_out, Resampler::output_frames_max);
+        let room = resampler
+            .as_ref()
+            .map_or(group_out, Resampler::output_frames_max);
         Ok(Self {
             format,
             opus,
@@ -275,7 +289,10 @@ impl Decoder {
 
     /// Decode one packet and return every whole group it completed, as PCM bytes.
     fn push(&mut self, packet: &[u8]) -> anyhow::Result<Vec<Vec<u8>>> {
-        let frames = self.opus.decode_float(packet, &mut self.decoded, false).context("decode opus")?;
+        let frames = self
+            .opus
+            .decode_float(packet, &mut self.decoded, false)
+            .context("decode opus")?;
         self.pending.extend_from_slice(&self.decoded[..frames]);
         let groups = self.whole_groups();
         if groups.is_err() {
@@ -297,8 +314,9 @@ impl Decoder {
                     let input = SequentialSliceOfSlices::new(&slices, 1, GROUP)
                         .map_err(|e| anyhow::anyhow!("wrap the resampler input: {e}"))?;
                     let room = self.resampled[0].len();
-                    let mut output = SequentialSliceOfVecs::new_mut(&mut self.resampled, 1, room)
-                        .map_err(|e| anyhow::anyhow!("wrap the resampler output: {e}"))?;
+                    let mut output =
+                        SequentialSliceOfVecs::new_mut(&mut self.resampled, 1, room)
+                            .map_err(|e| anyhow::anyhow!("wrap the resampler output: {e}"))?;
                     let (_, written) = resampler
                         .process_into_buffer(&input, &mut output, None)
                         .map_err(|e| anyhow::anyhow!("resample: {e}"))?;
@@ -356,7 +374,10 @@ mod tests {
         }
     }
 
-    const MONO_16K: MicFormat = MicFormat { channels: 1, sample_rate: 16_000 };
+    const MONO_16K: MicFormat = MicFormat {
+        channels: 1,
+        sample_rate: 16_000,
+    };
 
     /// Speech-shaped Opus from a real encoder: a 440 Hz tone, mono, 16 kbit/s, 60 ms
     /// packets — what the browser sends.
@@ -364,9 +385,12 @@ mod tests {
         let mut encoder =
             opus::Encoder::new(48_000, opus::Channels::Mono, opus::Application::Voip).unwrap();
         encoder.set_bitrate(opus::Bitrate::Bits(16_000)).unwrap();
-        let frame: Vec<f32> =
-            (0..2880).map(|n| (n as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5).collect();
-        (0..count).map(|_| encoder.encode_vec_float(&frame, 4000).unwrap()).collect()
+        let frame: Vec<f32> = (0..2880)
+            .map(|n| (n as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+            .collect();
+        (0..count)
+            .map(|_| encoder.encode_vec_float(&frame, 4000).unwrap())
+            .collect()
     }
 
     /// The decoder on its own: every 60 ms packet is three 20 ms groups. A resampled
@@ -385,7 +409,10 @@ mod tests {
         }
         assert_eq!(groups, 60);
         let exact = 60 * 640;
-        assert!(bytes <= exact && bytes + 640 >= exact, "{bytes} bytes for {exact}");
+        assert!(
+            bytes <= exact && bytes + 640 >= exact,
+            "{bytes} bytes for {exact}"
+        );
     }
 
     /// A browser that plugs its microphone in while the engine is still connecting has
@@ -421,8 +448,20 @@ mod tests {
     fn packets_become_the_hosts_pcm() {
         for (format, bytes) in [
             (MONO_16K, 640),
-            (MicFormat { channels: 2, sample_rate: 44_100 }, 882 * 4),
-            (MicFormat { channels: 1, sample_rate: 48_000 }, 1920),
+            (
+                MicFormat {
+                    channels: 2,
+                    sample_rate: 44_100,
+                },
+                882 * 4,
+            ),
+            (
+                MicFormat {
+                    channels: 1,
+                    sample_rate: 48_000,
+                },
+                1920,
+            ),
         ] {
             let bridge = MicBridge::new();
             let recorder = Arc::new(Recorder::default());
@@ -434,7 +473,10 @@ mod tests {
             let buffers = recorder.buffers.lock().unwrap();
             assert_eq!(buffers.len(), 15, "{format:?}");
             let total: usize = buffers.iter().map(Vec::len).sum();
-            assert!(total <= 15 * bytes && total + bytes >= 15 * bytes, "{format:?}: {total} bytes");
+            assert!(
+                total <= 15 * bytes && total + bytes >= 15 * bytes,
+                "{format:?}: {total} bytes"
+            );
             // Past the codec's and resampler's settling, the tone is there.
             let loud = buffers[10]
                 .as_chunks::<2>()
@@ -481,7 +523,10 @@ mod tests {
         recorder.buffers.lock().unwrap().clear();
         bridge.signal(MicSignal::Open(MONO_16K));
         bridge.packet(&packets[2]);
-        assert_eq!(*recorder.buffers.lock().unwrap(), *expected.buffers.lock().unwrap());
+        assert_eq!(
+            *recorder.buffers.lock().unwrap(),
+            *expected.buffers.lock().unwrap()
+        );
     }
 
     #[tokio::test]
@@ -508,11 +553,42 @@ mod tests {
 
     #[test]
     fn a_format_the_engine_would_never_open_is_refused() {
-        assert!(Decoder::new(MicFormat { channels: 1, sample_rate: 11_025 }).is_err());
-        assert!(Decoder::new(MicFormat { channels: 3, sample_rate: 16_000 }).is_err());
+        assert!(
+            Decoder::new(MicFormat {
+                channels: 1,
+                sample_rate: 11_025
+            })
+            .is_err()
+        );
+        assert!(
+            Decoder::new(MicFormat {
+                channels: 3,
+                sample_rate: 16_000
+            })
+            .is_err()
+        );
         // Divides 20 ms evenly, but would size the resampler in gigabytes.
-        assert!(Decoder::new(MicFormat { channels: 1, sample_rate: 4_294_967_250 }).is_err());
-        assert!(Decoder::new(MicFormat { channels: 1, sample_rate: 0 }).is_err());
-        assert!(MicFormat { channels: 2, sample_rate: 192_000 }.producible().is_ok());
+        assert!(
+            Decoder::new(MicFormat {
+                channels: 1,
+                sample_rate: 4_294_967_250
+            })
+            .is_err()
+        );
+        assert!(
+            Decoder::new(MicFormat {
+                channels: 1,
+                sample_rate: 0
+            })
+            .is_err()
+        );
+        assert!(
+            MicFormat {
+                channels: 2,
+                sample_rate: 192_000
+            }
+            .producible()
+            .is_ok()
+        );
     }
 }

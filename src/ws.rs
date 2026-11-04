@@ -98,7 +98,10 @@ use crate::{
     mic::MicSignal,
     protocol::{self, ClientMsg, Held, Painted, ServerMsg, WireFrame},
     server::AppState,
-    session::{AttachEvent, DisplayLetGo, DisplayRefused, DisplayTab, REATTACH_GRACE_PERIOD, SessionManager, UplinkRefused},
+    session::{
+        AttachEvent, DisplayLetGo, DisplayRefused, DisplayTab, REATTACH_GRACE_PERIOD,
+        SessionManager, UplinkRefused,
+    },
     throughput::{Socket, ThroughputMeters},
     wire::Wire,
 };
@@ -132,7 +135,14 @@ const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// Refuse an upgraded socket with `code`, completing the closing handshake.
 async fn refuse(mut socket: WebSocket, code: u16, reason: String) {
-    if socket.send(Message::Close(Some(CloseFrame { code, reason: reason.into() }))).await.is_err() {
+    if socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.into(),
+        })))
+        .await
+        .is_err()
+    {
         return;
     }
     let _ = tokio::time::timeout(CLOSE_GRACE, async {
@@ -383,7 +393,10 @@ struct PaintTracker {
 impl PaintTracker {
     /// A tracker that publishes what it learns through `feedback`.
     fn publishing(feedback: Arc<LinkFeedback>) -> Self {
-        Self { feedback: Some(feedback), ..Self::default() }
+        Self {
+            feedback: Some(feedback),
+            ..Self::default()
+        }
     }
 
     /// Tell the encoders how long the oldest owed batch has been owed — called
@@ -450,8 +463,13 @@ impl PaintTracker {
         if let Some(answered) = self.pinged.iter().position(|(sent, _)| *sent == ping) {
             let (_, at) = self.pinged[answered];
             self.pinged.drain(..=answered);
-            let round_trip = u32::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(u32::MAX);
-            while self.recent_round_trips.front().is_some_and(|(at, _)| now.saturating_duration_since(*at) > BASELINE_WINDOW) {
+            let round_trip =
+                u32::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(u32::MAX);
+            while self
+                .recent_round_trips
+                .front()
+                .is_some_and(|(at, _)| now.saturating_duration_since(*at) > BASELINE_WINDOW)
+            {
                 self.recent_round_trips.pop_front();
             }
             self.recent_round_trips.push_back((now, round_trip));
@@ -465,7 +483,10 @@ impl PaintTracker {
     /// The link's distance: the smallest ping round trip in the window, or `None`
     /// before the first pong.
     fn baseline(&self) -> Option<Duration> {
-        self.recent_round_trips.iter().map(|(_, ms)| Duration::from_millis(u64::from(*ms))).min()
+        self.recent_round_trips
+            .iter()
+            .map(|(_, ms)| Duration::from_millis(u64::from(*ms)))
+            .min()
     }
 
     /// A pong came back carrying `sequence`: everything written up to that batch
@@ -475,7 +496,11 @@ impl PaintTracker {
             self.received = Some((sequence, Instant::now()));
         }
         // Those bytes have left every queue, whatever the painter does next.
-        for paint in self.pending.iter_mut().take_while(|paint| paint.sequence <= sequence) {
+        for paint in self
+            .pending
+            .iter_mut()
+            .take_while(|paint| paint.sequence <= sequence)
+        {
             paint.held.clear();
         }
     }
@@ -492,7 +517,9 @@ impl PaintTracker {
     /// Whether the client is known to hold every batch it owes.
     fn holds_what_it_owes(&self) -> Option<Instant> {
         let newest = self.pending.back()?.sequence;
-        self.received.filter(|(through, _)| *through >= newest).map(|(_, at)| at)
+        self.received
+            .filter(|(through, _)| *through >= newest)
+            .map(|(_, at)| at)
     }
 
     /// When a wait that began at `parked` stops waiting for this client, or `None`
@@ -579,7 +606,11 @@ impl PaintTracker {
     /// that then failed. It is always the newest entry; keeping the operation
     /// explicit avoids counting bytes the browser could never acknowledge.
     fn unsent(&mut self, sequence: u32) {
-        if self.pending.back().is_some_and(|paint| paint.sequence == sequence) {
+        if self
+            .pending
+            .back()
+            .is_some_and(|paint| paint.sequence == sequence)
+        {
             self.pending.pop_back();
             self.sent -= 1;
             self.publish_owed();
@@ -587,12 +618,19 @@ impl PaintTracker {
     }
 
     fn acknowledge(&mut self, sequence: u32, queued_ms: u32, draw_ms: u32) {
-        let Some(position) = self.pending.iter().position(|paint| paint.sequence == sequence) else {
+        let Some(position) = self
+            .pending
+            .iter()
+            .position(|paint| paint.sequence == sequence)
+        else {
             self.stale += 1;
             return;
         };
         let round_trip = self.pending[position].sent.elapsed();
-        self.fastest = Some(self.fastest.map_or(round_trip, |fastest| fastest.min(round_trip)));
+        self.fastest = Some(
+            self.fastest
+                .map_or(round_trip, |fastest| fastest.min(round_trip)),
+        );
         self.last_round_trip = round_trip;
         let elapsed = u64::try_from(round_trip.as_millis()).unwrap_or(u64::MAX);
         // The worker is strictly ordered, so completing this sequence also
@@ -778,7 +816,9 @@ fn metered(
     let (outbound_sessions, outbound_throughput) = (Arc::clone(&sessions), Arc::clone(&throughput));
     let ws_tx = ws_tx.with(move |msg: Message| {
         if let Some(bytes) = data_frame_len(&msg, false) {
-            outbound_throughput.counter(outbound_sessions.selected_target(), kind).sent(bytes);
+            outbound_throughput
+                .counter(outbound_sessions.selected_target(), kind)
+                .sent(bytes);
         }
         std::future::ready(Ok::<_, axum::Error>(msg))
     });
@@ -786,7 +826,9 @@ fn metered(
         if let Ok(msg) = frame
             && let Some(bytes) = data_frame_len(msg, true)
         {
-            throughput.counter(sessions.selected_target(), kind).received(bytes);
+            throughput
+                .counter(sessions.selected_target(), kind)
+                .received(bytes);
         }
     });
     (ws_tx, ws_rx)
@@ -850,9 +892,12 @@ pub async fn handler(
     State(state): State<AppState>,
 ) -> Response {
     let display = match (params.w, params.h, params.scale) {
-        (Some(w), Some(h), Some(scale)) => {
-            Some(protocol::HostDisplay { w, h, scale, fit: params.fit.unwrap_or(false) })
-        }
+        (Some(w), Some(h), Some(scale)) => Some(protocol::HostDisplay {
+            w,
+            h,
+            scale,
+            fit: params.fit.unwrap_or(false),
+        }),
         _ => None,
     };
     ws.on_upgrade(move |socket| {
@@ -882,7 +927,13 @@ pub async fn audio_handler(
     State(state): State<AppState>,
 ) -> Response {
     ws.on_upgrade(move |socket| {
-        audio(socket, state.sessions, params.session, HEARTBEAT_TIMINGS, Arc::clone(&state.throughput.meters))
+        audio(
+            socket,
+            state.sessions,
+            params.session,
+            HEARTBEAT_TIMINGS,
+            Arc::clone(&state.throughput.meters),
+        )
     })
 }
 
@@ -1071,7 +1122,13 @@ pub async fn camera_handler(
     State(state): State<AppState>,
 ) -> Response {
     ws.on_upgrade(move |socket| {
-        camera(socket, state.sessions, params.session, HEARTBEAT_TIMINGS, Arc::clone(&state.throughput.meters))
+        camera(
+            socket,
+            state.sessions,
+            params.session,
+            HEARTBEAT_TIMINGS,
+            Arc::clone(&state.throughput.meters),
+        )
     })
 }
 
@@ -1123,8 +1180,8 @@ async fn camera(
     // concatenates into a replayable elementary stream, so the exact stream a host
     // rejected can be inspected with ffprobe.
     let mut samples_seen: u64 = 0;
-    let mut dump = std::env::var_os("ZDESK_CAMERA_DUMP")
-        .and_then(|path| std::fs::File::create(path).ok());
+    let mut dump =
+        std::env::var_os("ZDESK_CAMERA_DUMP").and_then(|path| std::fs::File::create(path).ok());
     if dump.is_some() {
         info!("ws: dumping camera samples (ZDESK_CAMERA_DUMP)");
     }
@@ -1236,7 +1293,13 @@ pub async fn mic_handler(
     State(state): State<AppState>,
 ) -> Response {
     ws.on_upgrade(move |socket| {
-        mic(socket, state.sessions, params.session, HEARTBEAT_TIMINGS, Arc::clone(&state.throughput.meters))
+        mic(
+            socket,
+            state.sessions,
+            params.session,
+            HEARTBEAT_TIMINGS,
+            Arc::clone(&state.throughput.meters),
+        )
     })
 }
 
@@ -1261,7 +1324,9 @@ async fn mic(
         Err(refused) => {
             let (code, reason) = match refused {
                 UplinkRefused::InvalidToken => (CLOSE_INVALID_TOKEN, "invalid session token"),
-                UplinkRefused::Unsupported => (CLOSE_UNSUPPORTED, "the target carries no microphone"),
+                UplinkRefused::Unsupported => {
+                    (CLOSE_UNSUPPORTED, "the target carries no microphone")
+                }
             };
             warn!("ws: rejected a microphone connection: {reason}");
             refuse(socket, code, reason.into()).await;
@@ -1272,7 +1337,8 @@ async fn mic(
     info!("ws: a microphone socket attached");
 
     let (mut ws_tx, mut ws_rx) = metered(socket, Arc::clone(&sessions), throughput, Socket::Mic);
-    let (mic_id, mut signals, mut evicted) = (attachment.id, attachment.signals, attachment.evicted);
+    let (mic_id, mut signals, mut evicted) =
+        (attachment.id, attachment.signals, attachment.evicted);
     let mut heartbeat = interval(heartbeat_timings.interval);
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut last_heartbeat = Instant::now();
@@ -1365,11 +1431,11 @@ async fn outbound<S>(
 ) where
     S: futures_util::Sink<Message> + Unpin,
 {
-        let mut wire = Wire::default();
-        let mut heartbeat = interval(heartbeat_interval);
-        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        // Whether the loop ended on an eviction, which is owed a close frame.
-        let sending = async {
+    let mut wire = Wire::default();
+    let mut heartbeat = interval(heartbeat_interval);
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // Whether the loop ended on an eviction, which is owed a close frame.
+    let sending = async {
         'outbound: loop {
             let event = tokio::select! {
                 event = events.recv() => {
@@ -1421,7 +1487,12 @@ async fn outbound<S>(
             };
             for frame in frames {
                 match frame {
-                    WireFrame::Batch { sequence, bytes, held, painted } => {
+                    WireFrame::Batch {
+                        sequence,
+                        bytes,
+                        held,
+                        painted,
+                    } => {
                         // The one hop with no backpressure of its own. Waiting
                         // here — before the write, after the encode — is what
                         // makes the browser's paint queue as bounded as every
@@ -1467,24 +1538,33 @@ async fn outbound<S>(
                 break true;
             }
         }
-        };
-        let close = tokio::select! {
-            // The cut first: the slot that lets a socket go also ends its events,
-            // and the cut is what says why.
-            biased;
-            (code, reason) = cut => {
-                info!("ws: {reason}");
-                drop(events);
-                outbound_paint.lock().unwrap().let_go();
-                Some(code)
-            }
-            evicted = sending => evicted.then_some(CLOSE_EVICTED),
-        };
-        if let Some(code) = close {
-            let reason = if code == CLOSE_TAKEN { "display taken over" } else { "session taken over" };
-            let _ = ws_tx.send(Message::Close(Some(CloseFrame { code, reason: reason.into() }))).await;
+    };
+    let close = tokio::select! {
+        // The cut first: the slot that lets a socket go also ends its events,
+        // and the cut is what says why.
+        biased;
+        (code, reason) = cut => {
+            info!("ws: {reason}");
+            drop(events);
+            outbound_paint.lock().unwrap().let_go();
+            Some(code)
         }
-        info!("ws: outbound totals: {}", wire.totals);
+        evicted = sending => evicted.then_some(CLOSE_EVICTED),
+    };
+    if let Some(code) = close {
+        let reason = if code == CLOSE_TAKEN {
+            "display taken over"
+        } else {
+            "session taken over"
+        };
+        let _ = ws_tx
+            .send(Message::Close(Some(CloseFrame {
+                code,
+                reason: reason.into(),
+            })))
+            .await;
+    }
+    info!("ws: outbound totals: {}", wire.totals);
 }
 
 /// The display socket's query string: which display it shows, from one, and for
@@ -1533,9 +1613,12 @@ async fn display(
 ) {
     let attachment = match login {
         Some(login) => {
-            let tab = tab.as_ref().map(|(id, take_over)| DisplayTab { id, take_over: *take_over });
+            let tab = tab.as_ref().map(|(id, take_over)| DisplayTab {
+                id,
+                take_over: *take_over,
+            });
             sessions.attach_display(&login, display, tab)
-        },
+        }
         None => Err(DisplayRefused::NotOwner),
     };
     let attachment = match attachment {
@@ -1567,7 +1650,10 @@ async fn display(
         heartbeat_timings.interval,
         async move {
             match evicted.await {
-                Ok(DisplayLetGo::Taken) => (CLOSE_TAKEN, "a display socket was taken over by another tab"),
+                Ok(DisplayLetGo::Taken) => (
+                    CLOSE_TAKEN,
+                    "a display socket was taken over by another tab",
+                ),
                 Err(_) => (CLOSE_EVICTED, "a display socket was let go"),
             }
         },
@@ -1609,8 +1695,15 @@ async fn display(
         }
         match msg {
             Some(Ok(Message::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(ClientMsg::PaintAck { sequence, queued_ms, draw_ms }) => {
-                    paint.lock().unwrap().acknowledge(sequence, queued_ms, draw_ms);
+                Ok(ClientMsg::PaintAck {
+                    sequence,
+                    queued_ms,
+                    draw_ms,
+                }) => {
+                    paint
+                        .lock()
+                        .unwrap()
+                        .acknowledge(sequence, queued_ms, draw_ms);
                     room.notify_one();
                 }
                 // What is made over a display — the pointer, the keys —
@@ -1628,7 +1721,9 @@ async fn display(
                 // The one session message a display socket carries: the browser
                 // hands its clipboard over to the tab that has focus, and a tab of
                 // its own has no session socket to send it on.
-                Ok(clipboard @ ClientMsg::Clipboard { .. }) => sessions.forward_display_clipboard(id, clipboard),
+                Ok(clipboard @ ClientMsg::Clipboard { .. }) => {
+                    sessions.forward_display_clipboard(id, clipboard)
+                }
                 Ok(other) => warn!("ws: a display socket sent a session message: {other:?}"),
                 Err(e) => warn!("ws: bad client message: {e} (raw: {text})"),
             },
@@ -1664,7 +1759,10 @@ async fn display(
     {
         outbound.abort();
     }
-    info!("ws: display {display} paint totals: {}", paint.lock().unwrap());
+    info!(
+        "ws: display {display} paint totals: {}",
+        paint.lock().unwrap()
+    );
 }
 
 async fn session(
@@ -1694,7 +1792,9 @@ async fn session(
 
     // The session socket carries no picture, so nothing reads what this tracker
     // publishes: it is here for the heartbeat, whose pings it numbers and times.
-    let paint = Arc::new(Mutex::new(PaintTracker::publishing(Arc::new(LinkFeedback::new()))));
+    let paint = Arc::new(Mutex::new(PaintTracker::publishing(Arc::new(
+        LinkFeedback::new(),
+    ))));
     let outbound_paint = Arc::clone(&paint);
     // Woken by the inbound half whenever an acknowledgment advances the window,
     // so a parked batch leaves as soon as there is room rather than on a timer.
@@ -1761,7 +1861,11 @@ async fn session(
                 // Session-control messages act on the slot, not an engine: pick a
                 // target from the picker, or tear the session down and go back to
                 // it ("End session").
-                Ok(ClientMsg::Connect { target, display, choices }) => {
+                Ok(ClientMsg::Connect {
+                    target,
+                    display,
+                    choices,
+                }) => {
                     if let Err(e) = sessions.connect(attach_id, &target, display, choices).await {
                         warn!("ws: connect to {target:?} refused: {e}");
                     }
@@ -1872,7 +1976,10 @@ mod tests {
             (declines.w, declines.h, declines.scale, declines.fit),
             (Some(430), Some(932), Some(300), Some(true))
         );
-        assert!(parse("session=t").is_err(), "a socket that does not say is not a client");
+        assert!(
+            parse("session=t").is_err(),
+            "a socket that does not say is not a client"
+        );
         assert!(
             parse("session=t&page_hevc=true&rdp_graphics=true&rdp_h264=true&rdp_video=true&tight_memory=false").is_err(),
             "nor one that does not say whether it takes the Mac's stream"
@@ -1956,7 +2063,10 @@ mod tests {
         feedback.handed(Instant::now());
         paint.sent(2, Vec::new());
         let lag = feedback.lag(later(500));
-        assert!(lag > Duration::from_millis(400), "expected ~500ms of lag, got {lag:?}");
+        assert!(
+            lag > Duration::from_millis(400),
+            "expected ~500ms of lag, got {lag:?}"
+        );
 
         // Every outstanding ping is timed by its own pong, whichever was sent last;
         // a pong answering none of them — one already answered — measures nothing.
@@ -1964,21 +2074,43 @@ mod tests {
         let newer = paint.pinged(2);
         let before = paint.recent_round_trips.len();
         paint.ponged(&older);
-        assert_eq!(paint.recent_round_trips.len(), before + 1, "a ping displaced by a newer one was not timed");
+        assert_eq!(
+            paint.recent_round_trips.len(),
+            before + 1,
+            "a ping displaced by a newer one was not timed"
+        );
         paint.ponged(&older);
-        assert_eq!(paint.recent_round_trips.len(), before + 1, "an answered ping was timed again");
+        assert_eq!(
+            paint.recent_round_trips.len(),
+            before + 1,
+            "an answered ping was timed again"
+        );
         paint.ponged(&newer);
-        assert_eq!(paint.recent_round_trips.len(), before + 2, "the newer ping was not timed");
+        assert_eq!(
+            paint.recent_round_trips.len(),
+            before + 2,
+            "the newer ping was not timed"
+        );
         assert!(paint.pinged.is_empty());
 
         // The frame handed over owes its own batch alone: no queue ahead of it. A
         // batch owed from before the next frame is handed over is one, which the
         // hold reads whether or not that frame's batch is counted yet.
-        assert_eq!(feedback.hold(later(500)), Duration::ZERO, "a frame owed alone was held");
+        assert_eq!(
+            feedback.hold(later(500)),
+            Duration::ZERO,
+            "a frame owed alone was held"
+        );
         feedback.handed(Instant::now());
-        assert!(feedback.hold(later(500)) > Duration::from_millis(400), "the batch ahead of the frame was not held for");
+        assert!(
+            feedback.hold(later(500)) > Duration::from_millis(400),
+            "the batch ahead of the frame was not held for"
+        );
         paint.sent(3, Vec::new());
-        assert!(feedback.hold(later(500)) > Duration::from_millis(400), "the batch ahead of the frame was not held for");
+        assert!(
+            feedback.hold(later(500)) > Duration::from_millis(400),
+            "the batch ahead of the frame was not held for"
+        );
 
         // Settling the debt settles the lag.
         paint.acknowledge(3, 0, 0);
@@ -2099,7 +2231,9 @@ mod tests {
             let mut heartbeat = window_heartbeat();
             let wait = wait_for_paint_window(&paint, &room, &mut heartbeat, &mut pings);
             assert!(
-                tokio::time::timeout(PAINT_WINDOW_GRACE * 120, wait).await.is_err(),
+                tokio::time::timeout(PAINT_WINDOW_GRACE * 120, wait)
+                    .await
+                    .is_err(),
                 "a batch went out past the window to a client still receiving the last"
             );
         }
@@ -2184,7 +2318,11 @@ mod tests {
         assert_eq!(budget.available_permits(), 1000);
 
         drop(paint);
-        assert_eq!(budget.available_permits(), 1000, "a closed socket owes nothing");
+        assert_eq!(
+            budget.available_permits(),
+            1000,
+            "a closed socket owes nothing"
+        );
     }
 
     /// A client far behind is sent to in lock-step, so it owes nothing at the
@@ -2234,10 +2372,18 @@ mod tests {
         paint.sent(1, Vec::new());
         paint.sent(2, Vec::new());
         let parked = Instant::now();
-        assert_eq!(paint.overdue_at(parked), None, "nothing has been answered for");
+        assert_eq!(
+            paint.overdue_at(parked),
+            None,
+            "nothing has been answered for"
+        );
 
         paint.received_through(1);
-        assert_eq!(paint.overdue_at(parked), None, "batch 2 may still be on the link");
+        assert_eq!(
+            paint.overdue_at(parked),
+            None,
+            "batch 2 may still be on the link"
+        );
 
         paint.received_through(2);
         assert!(paint.overdue_at(parked).is_some());
@@ -2415,7 +2561,15 @@ mod tests {
                 let throughput = Arc::clone(&served_throughput);
                 async move {
                     ws.on_upgrade(move |socket| {
-                        session(socket, sessions, Some(token), None, Decoders::ALL, HEARTBEAT_TIMINGS, throughput)
+                        session(
+                            socket,
+                            sessions,
+                            Some(token),
+                            None,
+                            Decoders::ALL,
+                            HEARTBEAT_TIMINGS,
+                            throughput,
+                        )
                     })
                 }
             }),
@@ -2430,7 +2584,9 @@ mod tests {
             .await
             .unwrap();
         client
-            .send(ClientFrame::text(r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#))
+            .send(ClientFrame::text(
+                r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#,
+            ))
             .await
             .unwrap();
         let (mut input_rx, _frame_tx) = engine_rx.recv().await.unwrap();
@@ -2468,13 +2624,20 @@ mod tests {
             r#"{"type":"paintAck","sequence":1,"queuedMs":7,"drawMs":11}"#,
             r#"{"type":"refresh"}"#,
         ];
-        assert_eq!(received, texts.iter().map(|text| 6 + text.len() as u64).sum::<u64>());
+        assert_eq!(
+            received,
+            texts.iter().map(|text| 6 + text.len() as u64).sum::<u64>()
+        );
         assert!(
-            records.iter().any(|record| record.target.is_none() && record.sent_bytes > 0),
+            records
+                .iter()
+                .any(|record| record.target.is_none() && record.sent_bytes > 0),
             "the picker went out before any target was selected: {records:?}"
         );
         assert!(
-            records.iter().any(|record| record.target.as_deref() == Some("fake") && record.sent_bytes > 0),
+            records
+                .iter()
+                .any(|record| record.target.as_deref() == Some("fake") && record.sent_bytes > 0),
             "the connect status went out under the target it selected: {records:?}"
         );
 
@@ -2500,8 +2663,10 @@ mod tests {
         let reattaching = Arc::clone(&sessions);
         let bridged = token.clone();
         let shown = Arc::clone(&sessions);
-        let timings =
-            HeartbeatTimings { interval: Duration::from_secs(1), timeout: Duration::from_secs(60) };
+        let timings = HeartbeatTimings {
+            interval: Duration::from_secs(1),
+            timeout: Duration::from_secs(60),
+        };
         let app = Router::new()
             .route(
                 "/ws",
@@ -2510,7 +2675,15 @@ mod tests {
                     let token = bridged.clone();
                     async move {
                         ws.on_upgrade(move |socket| {
-                            session(socket, sessions, Some(token), None, Decoders::ALL, timings, Arc::default())
+                            session(
+                                socket,
+                                sessions,
+                                Some(token),
+                                None,
+                                Decoders::ALL,
+                                timings,
+                                Arc::default(),
+                            )
                         })
                     }
                 }),
@@ -2521,7 +2694,15 @@ mod tests {
                     let sessions = Arc::clone(&shown);
                     async move {
                         ws.on_upgrade(move |socket| {
-                            display(socket, sessions, Some("login".to_owned()), 1, None, timings, Arc::default())
+                            display(
+                                socket,
+                                sessions,
+                                Some("login".to_owned()),
+                                1,
+                                None,
+                                timings,
+                                Arc::default(),
+                            )
                         })
                     }
                 }),
@@ -2536,7 +2717,9 @@ mod tests {
             .await
             .unwrap();
         client
-            .send(ClientFrame::text(r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#))
+            .send(ClientFrame::text(
+                r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#,
+            ))
             .await
             .unwrap();
         let (_input_rx, frame_tx) = engine_rx.recv().await.unwrap();
@@ -2548,9 +2731,10 @@ mod tests {
             }
         }
         // The picture's socket, which the pump waits for if it is not attached yet.
-        let (display_client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws/display"))
-            .await
-            .unwrap();
+        let (display_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/ws/display"))
+                .await
+                .unwrap();
 
         // From here the display client is never polled: it acknowledges nothing and answers
         // no ping, which is all the gateway can see of a link that has stopped.
@@ -2576,7 +2760,10 @@ mod tests {
             frame_tx.send(unit(seed).await).await.unwrap();
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(budget.available_permits() <= 60_000, "nothing was parked behind the silent client");
+        assert!(
+            budget.available_permits() <= 60_000,
+            "nothing was parked behind the silent client"
+        );
 
         let mut replacement = reattaching.attach_display("login", 1, None).unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -2620,7 +2807,15 @@ mod tests {
                 let token = token.clone();
                 async move {
                     ws.on_upgrade(move |socket| {
-                        session(socket, sessions, Some(token), None, Decoders::ALL, timings, Arc::default())
+                        session(
+                            socket,
+                            sessions,
+                            Some(token),
+                            None,
+                            Decoders::ALL,
+                            timings,
+                            Arc::default(),
+                        )
                     })
                 }
             }),
@@ -2643,7 +2838,9 @@ mod tests {
             .await
             .unwrap();
         client
-            .send(ClientFrame::text(r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#))
+            .send(ClientFrame::text(
+                r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#,
+            ))
             .await
             .unwrap();
         let (input_rx, _frame_tx) = engine_rx.recv().await.unwrap();
@@ -2656,7 +2853,10 @@ mod tests {
         // therefore cannot enqueue automatic Pong replies.
         tokio::time::advance(REATTACH_GRACE_PERIOD - Duration::from_secs(1)).await;
         tokio::task::yield_now().await;
-        assert!(!input_rx.is_closed(), "engine expired before the heartbeat timeout");
+        assert!(
+            !input_rx.is_closed(),
+            "engine expired before the heartbeat timeout"
+        );
 
         tokio::time::advance(Duration::from_secs(1) + Duration::from_millis(1)).await;
         for _ in 0..10 {
@@ -2665,11 +2865,17 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
-        assert!(input_rx.is_closed(), "heartbeat timeout did not stop the engine");
+        assert!(
+            input_rx.is_closed(),
+            "heartbeat timeout did not stop the engine"
+        );
         let replacement_token = assertions
             .claim(false, None, "login")
             .expect("heartbeat timeout did not release the browser attachment");
-        let mut replacement = assertions.attach(&replacement_token, None, Decoders::ALL).await.unwrap();
+        let mut replacement = assertions
+            .attach(&replacement_token, None, Decoders::ALL)
+            .await
+            .unwrap();
         assert!(matches!(
             replacement.events.recv().await,
             Some(AttachEvent::Msg(ServerMsg::Picker { .. }))
@@ -2684,16 +2890,30 @@ mod tests {
     /// 4001 waits for a takeover its session socket will never report.
     #[tokio::test]
     async fn a_display_socket_whose_heartbeat_runs_out_is_not_told_it_was_evicted() {
-        let sessions = Arc::new(SessionManager::with_test_spawner(vec![fake_target()], |_, _, _, _, _, _| {}));
+        let sessions = Arc::new(SessionManager::with_test_spawner(
+            vec![fake_target()],
+            |_, _, _, _, _, _| {},
+        ));
         sessions.claim(false, None, "login").unwrap();
-        let timings = HeartbeatTimings { interval: Duration::from_millis(50), timeout: Duration::from_millis(200) };
+        let timings = HeartbeatTimings {
+            interval: Duration::from_millis(50),
+            timeout: Duration::from_millis(200),
+        };
         let app = Router::new().route(
             "/ws/display",
             any(move |ws: WebSocketUpgrade| {
                 let sessions = Arc::clone(&sessions);
                 async move {
                     ws.on_upgrade(move |socket| {
-                        display(socket, sessions, Some("login".into()), 1, None, timings, Arc::default())
+                        display(
+                            socket,
+                            sessions,
+                            Some("login".into()),
+                            1,
+                            None,
+                            timings,
+                            Arc::default(),
+                        )
                     })
                 }
             }),
@@ -2709,9 +2929,15 @@ mod tests {
             .unwrap();
         // Unpolled, so nothing answers the pings, until well past the timeout.
         tokio::time::sleep(Duration::from_millis(600)).await;
-        while let Ok(Some(Ok(frame))) = tokio::time::timeout(Duration::from_secs(5), client.next()).await {
+        while let Ok(Some(Ok(frame))) =
+            tokio::time::timeout(Duration::from_secs(5), client.next()).await
+        {
             if let ClientFrame::Close(Some(close)) = frame {
-                assert_ne!(u16::from(close.code), CLOSE_EVICTED, "a heartbeat timeout reported as an eviction");
+                assert_ne!(
+                    u16::from(close.code),
+                    CLOSE_EVICTED,
+                    "a heartbeat timeout reported as an eviction"
+                );
             }
         }
 
@@ -2750,7 +2976,15 @@ mod tests {
                 let token = token.clone();
                 async move {
                     ws.on_upgrade(move |socket| {
-                        session(socket, sessions, Some(token), None, Decoders::ALL, timings, Arc::default())
+                        session(
+                            socket,
+                            sessions,
+                            Some(token),
+                            None,
+                            Decoders::ALL,
+                            timings,
+                            Arc::default(),
+                        )
                     })
                 }
             }),
@@ -2765,7 +2999,9 @@ mod tests {
             .await
             .unwrap();
         client
-            .send(ClientFrame::text(r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#))
+            .send(ClientFrame::text(
+                r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#,
+            ))
             .await
             .unwrap();
         let (input_rx, _frame_tx) = engine_rx.recv().await.unwrap();
@@ -2781,7 +3017,10 @@ mod tests {
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        assert!(!input_rx.is_closed(), "a browser still sending was expired for its missing pongs");
+        assert!(
+            !input_rx.is_closed(),
+            "a browser still sending was expired for its missing pongs"
+        );
 
         drop(client);
         server.abort();
@@ -2804,7 +3043,10 @@ mod tests {
             att.events.recv().await,
             Some(AttachEvent::Msg(ServerMsg::Picker { .. }))
         ));
-        let sound = crate::config::Choices { audio: crate::config::Sound::Opus, ..Default::default() };
+        let sound = crate::config::Choices {
+            audio: crate::config::Sound::Opus,
+            ..Default::default()
+        };
         sessions.connect(att.id, "fake", None, sound).await.unwrap();
         let (input_rx, _frame_tx, bridge) = engine_rx.recv().await.unwrap();
         let bridge = bridge.expect("a session with sound is given a bridge");
@@ -2820,7 +3062,9 @@ mod tests {
                 let sessions = Arc::clone(&served);
                 let token = token.clone();
                 async move {
-                    ws.on_upgrade(move |socket| audio(socket, sessions, Some(token), timings, Arc::default()))
+                    ws.on_upgrade(move |socket| {
+                        audio(socket, sessions, Some(token), timings, Arc::default())
+                    })
                 }
             }),
         );
@@ -2878,7 +3122,10 @@ mod tests {
             att.events.recv().await,
             Some(AttachEvent::Msg(ServerMsg::Picker { .. }))
         ));
-        let sound = crate::config::Choices { audio: crate::config::Sound::Opus, ..Default::default() };
+        let sound = crate::config::Choices {
+            audio: crate::config::Sound::Opus,
+            ..Default::default()
+        };
         sessions.connect(att.id, "fake", None, sound).await.unwrap();
         let (_input_rx, _frame_tx, bridge) = engine_rx.recv().await.unwrap();
         let bridge = bridge.expect("a session with sound is given a bridge");
@@ -2890,7 +3137,15 @@ mod tests {
                 let sessions = Arc::clone(&served);
                 let token = token.clone();
                 async move {
-                    ws.on_upgrade(move |socket| audio(socket, sessions, Some(token), HEARTBEAT_TIMINGS, Arc::default()))
+                    ws.on_upgrade(move |socket| {
+                        audio(
+                            socket,
+                            sessions,
+                            Some(token),
+                            HEARTBEAT_TIMINGS,
+                            Arc::default(),
+                        )
+                    })
                 }
             }),
         );

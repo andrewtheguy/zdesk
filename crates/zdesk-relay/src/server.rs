@@ -40,14 +40,21 @@ impl std::str::FromStr for Network {
             Some((addr, prefix)) => (addr, Some(prefix)),
             None => (written, None),
         };
-        let addr: IpAddr = addr.parse().with_context(|| format!("{addr:?} is not an IP address"))?;
+        let addr: IpAddr = addr
+            .parse()
+            .with_context(|| format!("{addr:?} is not an IP address"))?;
         let addr = addr.to_canonical();
         let bits = if addr.is_ipv4() { 32 } else { 128 };
         let prefix = match prefix {
-            Some(prefix) => prefix.parse().with_context(|| format!("{prefix:?} is not a prefix length"))?,
+            Some(prefix) => prefix
+                .parse()
+                .with_context(|| format!("{prefix:?} is not a prefix length"))?,
             None => bits,
         };
-        anyhow::ensure!(prefix <= bits, "{written:?} has a prefix longer than its address");
+        anyhow::ensure!(
+            prefix <= bits,
+            "{written:?} has a prefix longer than its address"
+        );
         Ok(Self { addr, prefix })
     }
 }
@@ -65,7 +72,9 @@ impl Network {
             shift >= bits || (a >> shift) == (b >> shift)
         };
         match (self.addr, ip.to_canonical()) {
-            (IpAddr::V4(net), IpAddr::V4(ip)) => leading(u32::from(net).into(), u32::from(ip).into(), 32),
+            (IpAddr::V4(net), IpAddr::V4(ip)) => {
+                leading(u32::from(net).into(), u32::from(ip).into(), 32)
+            }
             (IpAddr::V6(net), IpAddr::V6(ip)) => leading(u128::from(net), u128::from(ip), 128),
             _ => false,
         }
@@ -74,7 +83,10 @@ impl Network {
 
 /// Serve gateways on `listener`, connecting them only to addresses in `allow`.
 pub async fn serve(listener: TcpListener, allow: Vec<Network>) -> anyhow::Result<()> {
-    let relay = Arc::new(Relay { allow, connections: Mutex::default() });
+    let relay = Arc::new(Relay {
+        allow,
+        connections: Mutex::default(),
+    });
     loop {
         let (stream, from) = listener.accept().await.context("accepting a connection")?;
         let relay = Arc::clone(&relay);
@@ -104,11 +116,17 @@ struct Joinable {
 }
 
 impl Relay {
-    async fn handle(self: Arc<Self>, mut stream: TcpStream, from: SocketAddr) -> anyhow::Result<()> {
+    async fn handle(
+        self: Arc<Self>,
+        mut stream: TcpStream,
+        from: SocketAddr,
+    ) -> anyhow::Result<()> {
         let line = tokio::time::timeout(DEADLINE, read_line(&mut stream))
             .await
             .context("the connection said nothing")??;
-        let request = line.strip_prefix(VERSION).and_then(|rest| rest.strip_prefix(' '));
+        let request = line
+            .strip_prefix(VERSION)
+            .and_then(|rest| rest.strip_prefix(' '));
         match request.and_then(|request| request.split_once(' ')) {
             Some(("connect", dest)) => self.connect(stream, from, dest).await,
             Some(("media", token)) => self.media(stream, token).await,
@@ -116,14 +134,25 @@ impl Relay {
         }
     }
 
-    async fn connect(self: Arc<Self>, mut client: TcpStream, from: SocketAddr, dest: &str) -> anyhow::Result<()> {
+    async fn connect(
+        self: Arc<Self>,
+        mut client: TcpStream,
+        from: SocketAddr,
+        dest: &str,
+    ) -> anyhow::Result<()> {
         let addresses = match tokio::net::lookup_host(dest).await {
             Ok(addresses) => addresses.collect::<Vec<_>>(),
             Err(e) => return Err(refuse(client, format!("cannot resolve {dest}: {e}")).await),
         };
-        let Some(addr) = addresses.into_iter().find(|addr| self.allow.iter().any(|net| net.contains(addr.ip())))
+        let Some(addr) = addresses
+            .into_iter()
+            .find(|addr| self.allow.iter().any(|net| net.contains(addr.ip())))
         else {
-            return Err(refuse(client, format!("{dest} is not an address this relay allows")).await);
+            return Err(refuse(
+                client,
+                format!("{dest} is not an address this relay allows"),
+            )
+            .await);
         };
         let mut mac = match tokio::time::timeout(DEADLINE, TcpStream::connect(addr)).await {
             Ok(Ok(mac)) => mac,
@@ -140,8 +169,15 @@ impl Relay {
             ended: joinable,
             joined: false,
         };
-        self.connections.lock().unwrap().insert(token.clone(), joinable);
-        let forget = Forget { relay: &self, token: &token, ended };
+        self.connections
+            .lock()
+            .unwrap()
+            .insert(token.clone(), joinable);
+        let forget = Forget {
+            relay: &self,
+            token: &token,
+            ended,
+        };
         client.write_all(format!("ok {token}\n").as_bytes()).await?;
         log::info!("{from}: connected to {addr}");
         client.set_nodelay(true)?;
@@ -149,7 +185,9 @@ impl Relay {
         let carried = tokio::io::copy_bidirectional(&mut client, &mut mac).await;
         drop(forget);
         match carried {
-            Ok((up, down)) => log::info!("{from}: the connection to {addr} ended, {up} bytes to it and {down} from it"),
+            Ok((up, down)) => log::info!(
+                "{from}: the connection to {addr} ended, {up} bytes to it and {down} from it"
+            ),
             Err(e) => log::info!("{from}: the connection to {addr} ended: {e}"),
         }
         Ok(())
@@ -177,7 +215,10 @@ impl Relay {
         let mut pumps = tokio::task::JoinSet::new();
         let writing = async {
             while let Some(frame) = outgoing.recv().await {
-                writer.write_all(&frame).await.context("sending to the gateway")?;
+                writer
+                    .write_all(&frame)
+                    .await
+                    .context("sending to the gateway")?;
             }
             anyhow::Ok(())
         };
@@ -194,7 +235,12 @@ impl Relay {
                         // Bound: the gateway may now have the Mac send to it.
                         out.send(Frame::Open { port }.encode()).await?;
                         let counts = Arc::new(Counts::default());
-                        pumps.spawn(pump(Arc::clone(&socket), port, out.clone(), Arc::clone(&counts)));
+                        pumps.spawn(pump(
+                            Arc::clone(&socket),
+                            port,
+                            out.clone(),
+                            Arc::clone(&counts),
+                        ));
                         ports.insert(port, (socket, counts));
                     }
                     Some(Frame::Datagram { port, payload }) => {
@@ -248,7 +294,9 @@ struct Counts {
 
 /// Answer `reason` and close: the error that ends the connection.
 async fn refuse(mut stream: TcpStream, reason: String) -> anyhow::Error {
-    let _ = stream.write_all(format!("error {reason}\n").as_bytes()).await;
+    let _ = stream
+        .write_all(format!("error {reason}\n").as_bytes())
+        .await;
     anyhow::anyhow!(reason)
 }
 
@@ -259,15 +307,25 @@ async fn refuse(mut stream: TcpStream, reason: String) -> anyhow::Error {
 fn bind(near: IpAddr, mac: IpAddr, port: u16) -> anyhow::Result<UdpSocket> {
     let at = SocketAddr::new(near, port);
     let to = SocketAddr::new(mac, port);
-    let socket = socket2::Socket::new(socket2::Domain::for_address(at), socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(at),
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
     if let Err(e) = socket.set_recv_buffer_size(UDP_RECEIVE_BUFFER) {
-        log::warn!("UDP {at} keeps its default receive buffer, short of {UDP_RECEIVE_BUFFER} bytes: {e}");
+        log::warn!(
+            "UDP {at} keeps its default receive buffer, short of {UDP_RECEIVE_BUFFER} bytes: {e}"
+        );
     }
-    socket.bind(&at.into()).with_context(|| format!("binding UDP {at}"))?;
-    socket.connect(&to.into()).with_context(|| format!("connecting UDP {at} to {to}"))?;
+    socket
+        .bind(&at.into())
+        .with_context(|| format!("binding UDP {at}"))?;
+    socket
+        .connect(&to.into())
+        .with_context(|| format!("connecting UDP {at} to {to}"))?;
     socket.set_nonblocking(true)?;
     Ok(UdpSocket::from_std(socket.into())?)
 }
@@ -279,12 +337,20 @@ async fn pump(socket: Arc<UdpSocket>, port: u16, out: mpsc::Sender<Vec<u8>>, cou
         match socket.recv(&mut datagram).await {
             Ok(len) => {
                 counts.from_mac.fetch_add(1, Ordering::Relaxed);
-                let frame = Frame::Datagram { port, payload: datagram[..len].to_vec() }.encode();
+                let frame = Frame::Datagram {
+                    port,
+                    payload: datagram[..len].to_vec(),
+                }
+                .encode();
                 if out.send(frame).await.is_err() {
                     return;
                 }
             }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset
+                ) => {}
             Err(e) => {
                 log::warn!("UDP {port} failed: {e}");
                 return;
@@ -330,8 +396,17 @@ mod tests {
         tokio::spawn(serve(listener, vec!["127.0.0.2".parse().unwrap()]));
 
         let mut gateway = TcpStream::connect(&relay).await.unwrap();
-        let refused = crate::open(&mut TcpStream::connect(&relay).await.unwrap(), "127.0.0.3:5900").await;
-        assert!(refused.unwrap_err().to_string().contains("not an address this relay allows"));
+        let refused = crate::open(
+            &mut TcpStream::connect(&relay).await.unwrap(),
+            "127.0.0.3:5900",
+        )
+        .await;
+        assert!(
+            refused
+                .unwrap_err()
+                .to_string()
+                .contains("not an address this relay allows")
+        );
         let dest = mac_tcp.local_addr().unwrap().to_string();
         let token = crate::open(&mut gateway, &dest).await.unwrap();
         let (mut mac, from) = mac_tcp.accept().await.unwrap();
@@ -343,23 +418,43 @@ mod tests {
         let link = crate::MediaLink::connect(&relay, &token).await.unwrap();
         let opened = link.open(port);
         // Once the relay says the port is bound, the Mac's first datagram arrives.
-        tokio::time::timeout(Duration::from_secs(5), link.opened(&[port])).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), link.opened(&[port]))
+            .await
+            .unwrap()
+            .unwrap();
         mac_udp.connect((from.ip(), port)).await.unwrap();
         mac_udp.send(b"picture").await.unwrap();
         let mut datagram = [0u8; 64];
-        let len = tokio::time::timeout(Duration::from_secs(5), opened.recv(&mut datagram)).await.unwrap().unwrap();
+        let len = tokio::time::timeout(Duration::from_secs(5), opened.recv(&mut datagram))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(&datagram[..len], b"picture");
         opened.send(b"report").await.unwrap();
-        let len = tokio::time::timeout(Duration::from_secs(5), mac_udp.recv(&mut datagram)).await.unwrap().unwrap();
+        let len = tokio::time::timeout(Duration::from_secs(5), mac_udp.recv(&mut datagram))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(&datagram[..len], b"report");
 
         let again = crate::MediaLink::connect(&relay, &token).await;
-        assert!(again.err().unwrap().to_string().contains("already has its media connection"));
+        assert!(
+            again
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("already has its media connection")
+        );
 
         // The Mac's connection ending ends the media connection.
         drop(mac);
         drop(gateway);
-        let ended = tokio::time::timeout(Duration::from_secs(5), opened.recv(&mut datagram)).await.unwrap();
-        assert_eq!(ended.unwrap_err().kind(), std::io::ErrorKind::ConnectionAborted);
+        let ended = tokio::time::timeout(Duration::from_secs(5), opened.recv(&mut datagram))
+            .await
+            .unwrap();
+        assert_eq!(
+            ended.unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionAborted
+        );
     }
 }

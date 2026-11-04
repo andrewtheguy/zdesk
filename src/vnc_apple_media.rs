@@ -157,9 +157,8 @@ const MODE_VIDEO: u8 = 7;
 const REMOTE_ENDPOINT_INFO: &[u8] = &[
     0x08, 0x00, // f1 = 0
     0x10, 0x01, // f2 = 1
-    0x1a, 0x0d, b'V', b'i', b'r', b't', b'u', b'a', b'l', b'M', b'a', b'c', b'2', b',', b'1',
-    0x22, 0x08, b'2', b'2', b'1', b'5', b'.', b'5', b'.', b'1',
-    0x2a, 0x05, b'2', b'5', b'G', b'8', b'3',
+    0x1a, 0x0d, b'V', b'i', b'r', b't', b'u', b'a', b'l', b'M', b'a', b'c', b'2', b',', b'1', 0x22,
+    0x08, b'2', b'2', b'1', b'5', b'.', b'5', b'.', b'1', 0x2a, 0x05, b'2', b'5', b'G', b'8', b'3',
 ];
 
 /// The blob's `f6`: the negotiation library's name and version.
@@ -203,7 +202,6 @@ const ALL_STRIPS: u8 = (1 << STRIPS) - 1;
 fn strip_rows(height: u16) -> usize {
     (usize::from(height) / STRIPS).next_multiple_of(16)
 }
-
 
 /// Minimal protocol-buffers writer: varints and length-delimited fields are the
 /// whole of what the offers use.
@@ -428,8 +426,12 @@ fn bplist_dict(entries: &[(&str, Plist<'_>)]) -> Vec<u8> {
 
 fn deflate(blob: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(blob).expect("writing to a Vec cannot fail");
-    encoder.finish().expect("finishing a Vec-backed zlib stream cannot fail")
+    encoder
+        .write_all(blob)
+        .expect("writing to a Vec cannot fail");
+    encoder
+        .finish()
+        .expect("finishing a Vec-backed zlib stream cannot fail")
 }
 
 /// One AVConference offer plist: the negotiator mode, the compressed blob, the
@@ -437,9 +439,15 @@ fn deflate(blob: &[u8]) -> Vec<u8> {
 fn offer(mode: u8, blob: &[u8], call_id: &str) -> Vec<u8> {
     let compressed = deflate(blob);
     bplist_dict(&[
-        ("avcMediaStreamOptionRemoteEndpointInfo", Plist::Data(REMOTE_ENDPOINT_INFO)),
+        (
+            "avcMediaStreamOptionRemoteEndpointInfo",
+            Plist::Data(REMOTE_ENDPOINT_INFO),
+        ),
         ("avcMediaStreamNegotiatorMode", Plist::Int(mode)),
-        ("avcMediaStreamNegotiatorMediaBlob", Plist::Data(&compressed)),
+        (
+            "avcMediaStreamNegotiatorMediaBlob",
+            Plist::Data(&compressed),
+        ),
         ("avcMediaStreamOptionCallID", Plist::Str(call_id)),
     ])
 }
@@ -534,7 +542,10 @@ impl Offers {
         };
         let audio_keys = (key(), key());
         let videos = (0..displays.clamp(1, MAX_DISPLAYS))
-            .map(|_| VideoOffer { keys: (key(), key()), ssrc: rand::random() })
+            .map(|_| VideoOffer {
+                keys: (key(), key()),
+                ssrc: rand::random(),
+            })
             .collect();
         let uuid = uuid::Uuid::new_v4();
         Self {
@@ -550,19 +561,34 @@ impl Offers {
     /// The `0x1c` message for displays of `sizes` backing pixels, one per video
     /// leg. Every stream carries the session's one call id, as Apple's viewer's do.
     fn configuration(&self, sizes: &[(u16, u16)]) -> Vec<u8> {
-        let audio = offer(MODE_AUDIO, &audio_offer_blob(self.audio_ssrc), &self.call_id);
+        let audio = offer(
+            MODE_AUDIO,
+            &audio_offer_blob(self.audio_ssrc),
+            &self.call_id,
+        );
         let offers: Vec<Vec<u8>> = self
             .videos
             .iter()
             .zip(sizes)
             .map(|(video, size)| {
                 let tiles = if self.receive.strips() { STRIPS } else { 1 };
-                offer(MODE_VIDEO, &video_offer_blob(video.ssrc, *size, tiles as u64, self.receive.codec()), &self.call_id)
+                offer(
+                    MODE_VIDEO,
+                    &video_offer_blob(video.ssrc, *size, tiles as u64, self.receive.codec()),
+                    &self.call_id,
+                )
             })
             .collect();
-        let videos: Vec<(&[u8], &KeyPair)> =
-            offers.iter().zip(&self.videos).map(|(offer, video)| (offer.as_slice(), &video.keys)).collect();
-        let flags = if videos.len() > 1 { FLAGS | FLAG_60FPS_SECOND } else { FLAGS };
+        let videos: Vec<(&[u8], &KeyPair)> = offers
+            .iter()
+            .zip(&self.videos)
+            .map(|(offer, video)| (offer.as_slice(), &video.keys))
+            .collect();
+        let flags = if videos.len() > 1 {
+            FLAGS | FLAG_60FPS_SECOND
+        } else {
+            FLAGS
+        };
         configuration_message(flags, &self.session_uuid, &audio, &self.audio_keys, &videos)
     }
 }
@@ -575,7 +601,11 @@ pub enum MediaReply {
     /// side receives on the same port numbers. A display change re-sends it on its
     /// own, with no stream behind it until the next offer. `video2_port` is the
     /// second display's leg, when the Mac has two virtual displays to send.
-    Ports { audio_port: u16, video_port: u16, video2_port: Option<u16> },
+    Ports {
+        audio_port: u16,
+        video_port: u16,
+        video2_port: Option<u16>,
+    },
     /// Message 2: AVConference accepted the offer, with an answer for this many
     /// video legs.
     Answer { videos: usize },
@@ -587,7 +617,11 @@ pub enum MediaReply {
 
 /// Parse the body of an encoding-1010 rectangle (after its `u16` size).
 pub fn parse_media_reply(body: &[u8]) -> anyhow::Result<MediaReply> {
-    anyhow::ensure!(body.len() >= 8, "a media-stream reply of {} bytes has no header", body.len());
+    anyhow::ensure!(
+        body.len() >= 8,
+        "a media-stream reply of {} bytes has no header",
+        body.len()
+    );
     let kind = u16::from_be_bytes([body[0], body[1]]);
     match kind {
         1 => {
@@ -609,7 +643,8 @@ pub fn parse_media_reply(body: &[u8]) -> anyhow::Result<MediaReply> {
             Ok(MediaReply::Ports {
                 audio_port: u16::from_be_bytes([body[8], body[9]]),
                 video_port: u16::from_be_bytes([body[14], body[15]]),
-                video2_port: (video2_flags & 1 != 0).then(|| u16::from_be_bytes([body[20], body[21]])),
+                video2_port: (video2_flags & 1 != 0)
+                    .then(|| u16::from_be_bytes([body[20], body[21]])),
             })
         }
         2 => {
@@ -627,7 +662,9 @@ pub fn parse_media_reply(body: &[u8]) -> anyhow::Result<MediaReply> {
                 body.len(),
                 18 + audio + video + video2
             );
-            Ok(MediaReply::Answer { videos: if video2 == 0 { 1 } else { 2 } })
+            Ok(MediaReply::Answer {
+                videos: if video2 == 0 { 1 } else { 2 },
+            })
         }
         3 => {
             anyhow::ensure!(
@@ -684,14 +721,26 @@ impl SessionKeys {
         let x = u128::from_be_bytes(master_salt);
         let derive = |label: u8, n: usize| {
             let mut out = vec![0u8; n];
-            aes_ctr_xor(&master_cipher, (x ^ (u128::from(label) << 48)) << 16, &mut out);
+            aes_ctr_xor(
+                &master_cipher,
+                (x ^ (u128::from(label) << 48)) << 16,
+                &mut out,
+            );
             out
         };
-        let key: [u8; 32] = derive(base, 32).try_into().expect("32 bytes were asked for");
-        let auth: [u8; 20] = derive(base + 1, 20).try_into().expect("20 bytes were asked for");
+        let key: [u8; 32] = derive(base, 32)
+            .try_into()
+            .expect("32 bytes were asked for");
+        let auth: [u8; 20] = derive(base + 1, 20)
+            .try_into()
+            .expect("20 bytes were asked for");
         let mut salt = [0u8; 16];
         salt[2..].copy_from_slice(&derive(base + 2, 14));
-        Self { cipher: Aes256::new(&key.into()), auth, salt: u128::from_be_bytes(salt) }
+        Self {
+            cipher: Aes256::new(&key.into()),
+            auth,
+            salt: u128::from_be_bytes(salt),
+        }
     }
 
     fn iv(&self, ssrc: u32, index: u64) -> u128 {
@@ -759,7 +808,8 @@ fn rtp_header(data: &[u8]) -> Result<RtpHeader, SrtpError> {
             return Err(SrtpError::NotRtp);
         }
         let profile = u16::from_be_bytes([data[at], data[at + 1]]);
-        refresh = profile & !EXTENSION_VARIES == EXTENSION_PROFILE && profile & EXTENSION_REFRESH != 0;
+        refresh =
+            profile & !EXTENSION_VARIES == EXTENSION_PROFILE && profile & EXTENSION_REFRESH != 0;
         let words = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
         at += 4 + 4 * words;
     }
@@ -790,7 +840,10 @@ pub struct SrtpReceiver {
 
 impl SrtpReceiver {
     pub fn new(master: &MasterKey) -> Self {
-        Self { keys: SessionKeys::derive(master, 0), last: Vec::with_capacity(STRIPS) }
+        Self {
+            keys: SessionKeys::derive(master, 0),
+            last: Vec::with_capacity(STRIPS),
+        }
     }
 
     /// RFC 3711 Appendix A: the rollover counter `seq` most likely belongs to.
@@ -799,7 +852,11 @@ impl SrtpReceiver {
             return 0;
         };
         if last_seq < 0x8000 {
-            if seq.wrapping_sub(last_seq) > 0x8000 && seq > last_seq { roc.wrapping_sub(1) } else { roc }
+            if seq.wrapping_sub(last_seq) > 0x8000 && seq > last_seq {
+                roc.wrapping_sub(1)
+            } else {
+                roc
+            }
         } else if seq < last_seq.wrapping_sub(0x8000) {
             roc.wrapping_add(1)
         } else {
@@ -849,7 +906,10 @@ pub struct SrtcpSender {
 
 impl SrtcpSender {
     pub fn new(master: &MasterKey) -> Self {
-        Self { keys: SessionKeys::derive(master, 3), index: 0 }
+        Self {
+            keys: SessionKeys::derive(master, 3),
+            index: 0,
+        }
     }
 
     /// `report` protected: its first eight bytes in the clear, the rest encrypted,
@@ -881,7 +941,10 @@ pub struct SrtcpReceiver {
 
 impl SrtcpReceiver {
     pub fn new(master: &MasterKey) -> Self {
-        Self { keys: SessionKeys::derive(master, 3), last: std::collections::HashMap::new() }
+        Self {
+            keys: SessionKeys::derive(master, 3),
+            last: std::collections::HashMap::new(),
+        }
     }
 
     /// Whether `data` is an authentic report newer than any already received:
@@ -895,7 +958,9 @@ impl SrtcpReceiver {
             return Err(SrtpError::Forged);
         }
         let ssrc = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        let index = u32::from_be_bytes([data[end - 4], data[end - 3], data[end - 2], data[end - 1]]) & 0x7fff_ffff;
+        let index =
+            u32::from_be_bytes([data[end - 4], data[end - 3], data[end - 2], data[end - 1]])
+                & 0x7fff_ffff;
         if self.last.get(&ssrc).is_some_and(|&last| index <= last) {
             return Err(SrtpError::Stale);
         }
@@ -984,14 +1049,23 @@ pub struct RateFeedback {
 
 impl RateFeedback {
     pub fn new(epoch: std::time::Instant) -> Self {
-        Self { epoch, ssrc: 0, last: None, received: 0, delay: OneWayDelay::default() }
+        Self {
+            epoch,
+            ssrc: 0,
+            last: None,
+            received: 0,
+            delay: OneWayDelay::default(),
+        }
     }
 
     /// An authentic picture packet from `ssrc`, stamped `timestamp`, that arrived at
     /// `at`.
     pub fn received(&mut self, ssrc: u32, timestamp: u32, at: std::time::Instant) {
         if ssrc != self.ssrc {
-            *self = Self { ssrc, ..Self::new(self.epoch) };
+            *self = Self {
+                ssrc,
+                ..Self::new(self.epoch)
+            };
         }
         self.last = Some((timestamp, at));
         self.received = self.received.wrapping_add(1);
@@ -1008,7 +1082,8 @@ impl RateFeedback {
     pub fn report(&self, ssrc: u32, now: std::time::Instant) -> Option<[u8; 32]> {
         let (timestamp, at) = self.last?;
         let millis = |d: std::time::Duration| d.as_millis().min(0xffff) as u16;
-        let clock = (now.saturating_duration_since(self.epoch).as_secs_f64() * 1024.0) as u64 as u16;
+        let clock =
+            (now.saturating_duration_since(self.epoch).as_secs_f64() * 1024.0) as u64 as u16;
         let delay = (self.delay.owrd * 8192.0).min(f64::from(u16::MAX)) as u16;
         let mut report = [0u8; 32];
         report[..4].copy_from_slice(&[0x80, 204, 0, 7]);
@@ -1058,7 +1133,8 @@ impl OneWayDelay {
         }
         self.previous = timestamp;
         self.ticks += step as u64;
-        let lag = at.saturating_duration_since(since).as_secs_f64() - self.ticks as f64 / VIDEO_CLOCK;
+        let lag =
+            at.saturating_duration_since(since).as_secs_f64() - self.ticks as f64 / VIDEO_CLOCK;
         if lag - self.short > SPURIOUS_LAG || self.long - lag > SPURIOUS_LAG {
             return self.restart(timestamp, at);
         }
@@ -1072,7 +1148,11 @@ impl OneWayDelay {
     }
 
     fn restart(&mut self, timestamp: u32, at: std::time::Instant) {
-        *self = Self { first: Some((timestamp, at)), previous: timestamp, ..Self::default() };
+        *self = Self {
+            first: Some((timestamp, at)),
+            previous: timestamp,
+            ..Self::default()
+        };
     }
 }
 
@@ -1134,10 +1214,15 @@ impl Codec {
     fn params(self, unit: &AccessUnit) -> Option<StreamParams> {
         let params = match self {
             Self::Hevc => parse_sps(unit.iter().rfind(|nal| nal_type(nal[0]) == NAL_SPS)?),
-            Self::H264 => parse_h264_sps(unit.iter().rfind(|nal| h264_nal_type(nal[0]) == H264_SPS)?),
+            Self::H264 => {
+                parse_h264_sps(unit.iter().rfind(|nal| h264_nal_type(nal[0]) == H264_SPS)?)
+            }
         };
         if params.is_none() {
-            log::warn!("vnc: the Mac's {} carried a sequence parameter set this side cannot read", self.name());
+            log::warn!(
+                "vnc: the Mac's {} carried a sequence parameter set this side cannot read",
+                self.name()
+            );
         }
         params
     }
@@ -1245,12 +1330,19 @@ struct Whole {
 impl Reassembler {
     /// For a stream in `codec` whose pictures come whole.
     fn of(codec: Codec) -> Self {
-        Self { codec, ..Self::default() }
+        Self {
+            codec,
+            ..Self::default()
+        }
     }
 
     /// For the HEVC whose pictures are strips, each numbered.
     fn numbered() -> Self {
-        Self { codec: Codec::Hevc, donl: true, ..Self::default() }
+        Self {
+            codec: Codec::Hevc,
+            donl: true,
+            ..Self::default()
+        }
     }
 
     /// Take one packet. `None` for a duplicate, or a late one whose picture has
@@ -1265,7 +1357,9 @@ impl Reassembler {
             lost = ahead != 0;
         }
         self.next_sequence = Some(header.sequence.wrapping_add(1));
-        if self.timestamp.is_some_and(|ts| ts != header.timestamp) && (self.damaged || !self.unit.is_empty()) {
+        if self.timestamp.is_some_and(|ts| ts != header.timestamp)
+            && (self.damaged || !self.unit.is_empty())
+        {
             // The previous picture's last packet (the marked one) never came.
             self.damaged = true;
             self.finish();
@@ -1344,7 +1438,10 @@ impl Reassembler {
         match h264_parameter_sets(&nal) {
             Some(sets) => self.unit.extend(sets),
             None => {
-                log::debug!("vnc: the Mac's H.264 carried a description of {} bytes this side cannot read", nal.len());
+                log::debug!(
+                    "vnc: the Mac's H.264 carried a description of {} bytes this side cannot read",
+                    nal.len()
+                );
                 self.damaged = true;
             }
         }
@@ -1365,7 +1462,8 @@ impl Reassembler {
             return;
         };
         if self.donl {
-            self.don.get_or_insert(u16::from_be_bytes([payload[body], payload[body + 1]]));
+            self.don
+                .get_or_insert(u16::from_be_bytes([payload[body], payload[body + 1]]));
         }
         match kind {
             NAL_AP => {
@@ -1411,7 +1509,10 @@ impl Reassembler {
     /// start of a picture it is the middle of. Whether the packet was one to
     /// pass over, and not a duplicate or a late one.
     fn skip(&mut self, header: &RtpHeader) -> bool {
-        if self.next_sequence.is_some_and(|expected| header.sequence.wrapping_sub(expected) >= 0x8000) {
+        if self
+            .next_sequence
+            .is_some_and(|expected| header.sequence.wrapping_sub(expected) >= 0x8000)
+        {
             return false;
         }
         *self = Self {
@@ -1460,13 +1561,20 @@ pub struct Depacketizer {
 impl Depacketizer {
     /// For a stream in `codec`.
     pub fn new(codec: Codec) -> Self {
-        Self { codec, packets: Reassembler::of(codec), ..Self::default() }
+        Self {
+            codec,
+            packets: Reassembler::of(codec),
+            ..Self::default()
+        }
     }
 
     /// Start over at a new stream, after an offer, which starts with an IDR of
     /// its own.
     fn begin(&mut self, ssrc: u32) {
-        *self = Self { ssrc: Some(ssrc), ..Self::new(self.codec) };
+        *self = Self {
+            ssrc: Some(ssrc),
+            ..Self::new(self.codec)
+        };
     }
 
     pub fn push(&mut self, header: &RtpHeader, payload: &[u8]) -> Depacketized {
@@ -1521,7 +1629,10 @@ impl Depacketizer {
     fn judge(&mut self, whole: Whole) -> Option<AccessUnit> {
         if !self.synced
             && (whole.refresh && self.resumable
-                || whole.unit.iter().any(|nal| self.codec.starts(nal) || self.codec.parameters(nal)))
+                || whole
+                    .unit
+                    .iter()
+                    .any(|nal| self.codec.starts(nal) || self.codec.parameters(nal)))
         {
             self.synced = true;
             self.resumable = false;
@@ -1571,7 +1682,12 @@ impl Default for Strips {
 
 impl Strips {
     pub fn new() -> Self {
-        Self { base: None, strips: std::array::from_fn(|_| Reassembler::numbered()), next: None, owed: 0 }
+        Self {
+            base: None,
+            strips: std::array::from_fn(|_| Reassembler::numbered()),
+            next: None,
+            owed: 0,
+        }
     }
 
     /// Take `ssrc` as the stream's or a new stream's, and return the stream's:
@@ -1583,7 +1699,10 @@ impl Strips {
             // That includes the SSRC just below one taken for the first strip's,
             // of a stream first heard at a later strip.
             _ => {
-                *self = Self { base: Some(ssrc), ..Self::new() };
+                *self = Self {
+                    base: Some(ssrc),
+                    ..Self::new()
+                };
                 ssrc
             }
         }
@@ -1604,9 +1723,11 @@ impl Strips {
             self.next = None;
         }
         let out = match pushed.whole {
-            Some(Whole { unit, don: Some(don), .. })
-                if self.next == Some(don) || strip == 0 && Codec::Hevc.is_keyframe(&unit) =>
-            {
+            Some(Whole {
+                unit,
+                don: Some(don),
+                ..
+            }) if self.next == Some(don) || strip == 0 && Codec::Hevc.is_keyframe(&unit) => {
                 self.next = Some(don.wrapping_add(1));
                 if strip == 0 && Codec::Hevc.is_keyframe(&unit) {
                     self.owed = ALL_STRIPS & !1;
@@ -1662,7 +1783,11 @@ enum Assembly {
 
 impl Assembly {
     fn new(codec: Codec, strips: bool) -> Self {
-        if strips { Self::Strips(Box::default()) } else { Self::Whole(Depacketizer::new(codec)) }
+        if strips {
+            Self::Strips(Box::default())
+        } else {
+            Self::Whole(Depacketizer::new(codec))
+        }
     }
 
     /// The SSRC that names the stream `ssrc` is of, or begins: its own, or of a
@@ -1784,7 +1909,10 @@ pub struct Passer {
 impl Passer {
     /// For a stream in `codec`.
     pub fn new(codec: Codec) -> Self {
-        Self { codec, ..Self::default() }
+        Self {
+            codec,
+            ..Self::default()
+        }
     }
 
     pub fn pass(&mut self, unit: &AccessUnit) -> Option<PassedUnit> {
@@ -1817,8 +1945,13 @@ impl Passer {
     fn pass_whole(&mut self, unit: &AccessUnit, display: Option<(u16, u16)>) -> Option<PassedUnit> {
         let passed = self.pass(unit)?;
         Some(match display {
-            Some(display) if self.codec == Codec::H264 && passed.size == (display.0 & !1, display.1 & !1) => {
-                PassedUnit { size: display, ..passed }
+            Some(display)
+                if self.codec == Codec::H264 && passed.size == (display.0 & !1, display.1 & !1) =>
+            {
+                PassedUnit {
+                    size: display,
+                    ..passed
+                }
             }
             _ => passed,
         })
@@ -1828,7 +1961,13 @@ impl Passer {
     /// `display`, in the frame of `timestamp`. A picture that is not a strip of
     /// such a display is one from before the display was offered, and is not
     /// passed.
-    fn pass_strip(&mut self, unit: &AccessUnit, strip: usize, timestamp: u32, display: (u16, u16)) -> Option<PassedUnit> {
+    fn pass_strip(
+        &mut self,
+        unit: &AccessUnit,
+        strip: usize,
+        timestamp: u32,
+        display: (u16, u16),
+    ) -> Option<PassedUnit> {
         let passed = self.pass(unit)?;
         if passed.size != (display.0, strip_rows(display.1) as u16) {
             log::debug!(
@@ -1841,7 +1980,15 @@ impl Passer {
             return None;
         }
         let begins = self.frame.replace(timestamp) != Some(timestamp);
-        Some(PassedUnit { size: display, strip: Some(crate::protocol::Strip { index: strip as u8, ends: false }), begins, ..passed })
+        Some(PassedUnit {
+            size: display,
+            strip: Some(crate::protocol::Strip {
+                index: strip as u8,
+                ends: false,
+            }),
+            begins,
+            ..passed
+        })
     }
 }
 
@@ -1883,7 +2030,11 @@ impl Bits<'_> {
     /// `se(v)`: signed Exp-Golomb, the codes alternating from +1.
     fn se(&mut self) -> Option<i64> {
         let code = i64::from(self.ue()?);
-        Some(if code % 2 == 1 { (code + 1) / 2 } else { -(code / 2) })
+        Some(if code % 2 == 1 {
+            (code + 1) / 2
+        } else {
+            -(code / 2)
+        })
     }
 }
 
@@ -1915,9 +2066,13 @@ pub fn parse_sps(nal: &[u8]) -> Option<StreamParams> {
     let tier = r.bit()?;
     let profile = r.bits(5)?;
     let compatibility = (0..32).try_fold(0u32, |flags, j| Some(flags | (r.bit()? << j)))?;
-    let constraints: Vec<u8> = (0..6).map(|_| r.bits(8).map(|b| b as u8)).collect::<Option<_>>()?;
+    let constraints: Vec<u8> = (0..6)
+        .map(|_| r.bits(8).map(|b| b as u8))
+        .collect::<Option<_>>()?;
     let level = r.bits(8)?;
-    let present: Vec<(u32, u32)> = (0..sub_layers).map(|_| Some((r.bit()?, r.bit()?))).collect::<Option<_>>()?;
+    let present: Vec<(u32, u32)> = (0..sub_layers)
+        .map(|_| Some((r.bit()?, r.bit()?)))
+        .collect::<Option<_>>()?;
     if sub_layers > 0 {
         r.skip(2 * (8 - sub_layers))?;
     }
@@ -1947,8 +2102,14 @@ pub fn parse_sps(nal: &[u8]) -> Option<StreamParams> {
     );
     let space = ["", "A", "B", "C"][space as usize];
     let tier = if tier == 1 { 'H' } else { 'L' };
-    let kept = constraints.iter().rposition(|&b| b != 0).map_or(0, |last| last + 1);
-    let constraints: String = constraints[..kept].iter().map(|b| format!(".{b:X}")).collect();
+    let kept = constraints
+        .iter()
+        .rposition(|&b| b != 0)
+        .map_or(0, |last| last + 1);
+    let constraints: String = constraints[..kept]
+        .iter()
+        .map(|b| format!(".{b:X}"))
+        .collect();
     let decode = format!("hev1.{space}{profile}.{compatibility:X}.{tier}{level}{constraints}");
     Some(StreamParams { size, decode })
 }
@@ -1966,7 +2127,10 @@ fn h264_sequence(profile: u8, r: &mut Bits<'_>) -> Option<H264Sequence> {
     r.ue()?; // seq_parameter_set_id
     let mut chroma_format = 1;
     let mut separate_planes = false;
-    if matches!(profile, 100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135) {
+    if matches!(
+        profile,
+        100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135
+    ) {
         chroma_format = r.ue()?;
         separate_planes = chroma_format == 3 && r.bit()? == 1;
         r.ue()?; // bit_depth_luma_minus8
@@ -2032,7 +2196,10 @@ fn h264_sequence(profile: u8, r: &mut Bits<'_>) -> Option<H264Sequence> {
         u16::try_from(width.checked_sub(crop_w)?).ok()?,
         u16::try_from(height.checked_sub(crop_h)?).ok()?,
     );
-    Some(H264Sequence { size, max_num_ref_frames })
+    Some(H264Sequence {
+        size,
+        max_num_ref_frames,
+    })
 }
 
 /// The picture size and configuration string an H.264 sequence parameter set
@@ -2040,8 +2207,17 @@ fn h264_sequence(profile: u8, r: &mut Bits<'_>) -> Option<H264Sequence> {
 pub fn parse_h264_sps(nal: &[u8]) -> Option<StreamParams> {
     let data = rbsp(nal.get(1..)?);
     let (profile, constraints, level) = (*data.first()?, *data.get(1)?, *data.get(2)?);
-    let sequence = h264_sequence(profile, &mut Bits { data: &data, at: 24 })?;
-    Some(StreamParams { size: sequence.size, decode: format!("avc1.{profile:02X}{constraints:02X}{level:02X}") })
+    let sequence = h264_sequence(
+        profile,
+        &mut Bits {
+            data: &data,
+            at: 24,
+        },
+    )?;
+    Some(StreamParams {
+        size: sequence.size,
+        decode: format!("avc1.{profile:02X}{constraints:02X}{level:02X}"),
+    })
 }
 
 /// Bits into an RBSP, most significant first.
@@ -2089,7 +2265,10 @@ impl BitWriter {
 /// the same reason.
 fn h264_in_decoding_order(sps: &[u8]) -> Option<Vec<u8>> {
     let data = rbsp(sps.get(1..)?);
-    let mut r = Bits { data: &data, at: 24 };
+    let mut r = Bits {
+        data: &data,
+        at: 24,
+    };
     let sequence = h264_sequence(*data.first()?, &mut r)?;
     // vui_parameters (H.264 E.1.1), as far as its last flag.
     if r.bit()? == 0 {
@@ -2198,7 +2377,19 @@ pub struct PassedUnits {
 fn pass_queue() -> (PassQueue, PassedUnits) {
     let (tx, rx) = tokio::sync::mpsc::channel((PASS_QUEUE + 1) * STRIPS);
     let frames = std::sync::Arc::<std::sync::atomic::AtomicUsize>::default();
-    (PassQueue { units: tx, frames: std::sync::Arc::clone(&frames) }, PassedUnits { units: rx, frames, held: None, strips: 0, ready: std::collections::VecDeque::new() })
+    (
+        PassQueue {
+            units: tx,
+            frames: std::sync::Arc::clone(&frames),
+        },
+        PassedUnits {
+            units: rx,
+            frames,
+            held: None,
+            strips: 0,
+            ready: std::collections::VecDeque::new(),
+        },
+    )
 }
 
 impl PassedUnits {
@@ -2234,7 +2425,8 @@ impl PassedUnits {
                 }
             };
             if unit.begins {
-                self.frames.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                self.frames
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
             self.release(unit.begins);
             if unit.strip.is_none() {
@@ -2421,7 +2613,10 @@ impl Leg {
         }
         if kind == RTCP_RECEIVER_REPORT {
             *self.unsent.lock().unwrap() = Some(at);
-            if !self.reported.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            if !self
+                .reported
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
                 self.told.notify_one();
             }
         }
@@ -2453,7 +2648,10 @@ enum Owed {
     /// and the first sound within [`STREAM_START`] of it, and after them
     /// a packet on each leg within [`STREAM_SILENCE`] of the last. `pictured` is
     /// when the latest picture of each display came.
-    Stream { offered: std::time::Instant, pictured: [Option<std::time::Instant>; MAX_DISPLAYS] },
+    Stream {
+        offered: std::time::Instant,
+        pictured: [Option<std::time::Instant>; MAX_DISPLAYS],
+    },
 }
 
 /// When `heard` last brought a packet, if it has since `since`.
@@ -2475,11 +2673,7 @@ impl MediaStream {
     /// in the Mac's order, offered and passed as `receive` says. The first display
     /// is shown from the start, and any other once [`Self::show`] says so. The
     /// handshake has advertised the stream, so the Mac already owes its ports.
-    pub fn new(
-        route: Route,
-        receive: Receive,
-        displays: usize,
-    ) -> (Self, Vec<PassedUnits>) {
+    pub fn new(route: Route, receive: Receive, displays: usize) -> (Self, Vec<PassedUnits>) {
         let offers = Offers::new(displays, receive);
         let offer_made = std::sync::Arc::<tokio::sync::Notify>::default();
         let (legs, units) = (0..offers.videos.len())
@@ -2554,7 +2748,11 @@ impl MediaStream {
     /// The leg that carries `display`, and the display leg `display` carries:
     /// with two the one is the other's inverse.
     pub fn leg_of(&self, display: usize) -> usize {
-        if self.swapped && display < 2 { 1 - display } else { display }
+        if self.swapped && display < 2 {
+            1 - display
+        } else {
+            display
+        }
     }
 
     /// The `0x1c` offer for the current displays, once the Mac has named its
@@ -2562,7 +2760,8 @@ impl MediaStream {
     /// permits one offer, and a pending offer holds every later one back.
     /// A partial layout cannot offer fewer legs than the session asked for.
     pub fn offer(&mut self, sizes: &[(u16, u16)]) -> Option<Vec<u8>> {
-        if self.pending || sizes.len() != self.legs.len() || self.offered.as_deref() == Some(sizes) {
+        if self.pending || sizes.len() != self.legs.len() || self.offered.as_deref() == Some(sizes)
+        {
             return None;
         }
         let now = std::time::Instant::now();
@@ -2574,12 +2773,21 @@ impl MediaStream {
         }
         self.pending = true;
         self.offered = Some(sizes.to_vec());
-        self.owe(Owed::Stream { offered: now, pictured: [None; MAX_DISPLAYS] });
-        let by_leg: Vec<(u16, u16)> = (0..sizes.len()).map(|leg| sizes[self.leg_of(leg)]).collect();
+        self.owe(Owed::Stream {
+            offered: now,
+            pictured: [None; MAX_DISPLAYS],
+        });
+        let by_leg: Vec<(u16, u16)> = (0..sizes.len())
+            .map(|leg| sizes[self.leg_of(leg)])
+            .collect();
         for (leg, size) in self.legs.iter().zip(&by_leg) {
             *leg.offered.lock().unwrap() = Some(*size);
-            leg.strips.store(self.offers.receive.strips(), std::sync::atomic::Ordering::Relaxed);
-            leg.reported.store(false, std::sync::atomic::Ordering::Relaxed);
+            leg.strips.store(
+                self.offers.receive.strips(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            leg.reported
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
         Some(self.offers.configuration(&by_leg))
     }
@@ -2614,7 +2822,10 @@ impl MediaStream {
         let Some(shared) = self.legs.get(leg) else {
             return false;
         };
-        let came = !shared.shown.swap(shown, std::sync::atomic::Ordering::Relaxed) && shown;
+        let came = !shared
+            .shown
+            .swap(shown, std::sync::atomic::Ordering::Relaxed)
+            && shown;
         if came {
             shared.keyframe_wanted.notify_one();
             if let Owed::Stream { offered, pictured } = &mut self.owed
@@ -2640,7 +2851,9 @@ impl MediaStream {
     pub fn stopped(&mut self) {
         self.offered = None;
         self.owed = match self.owed {
-            Owed::Stream { offered, .. } | Owed::Answer(offered) if self.pending => Owed::Answer(offered),
+            Owed::Stream { offered, .. } | Owed::Answer(offered) if self.pending => {
+                Owed::Answer(offered)
+            }
             _ => Owed::Nothing,
         };
     }
@@ -2690,8 +2903,11 @@ impl MediaStream {
     ) -> Option<std::time::Instant> {
         let shared = self.legs.get(leg)?;
         let unshown = !shared.shown.load(std::sync::atomic::Ordering::Relaxed);
-        let pictured =
-            pictured.or_else(|| unshown.then(|| heard_since(&shared.pictured, offered)).flatten())?;
+        let pictured = pictured.or_else(|| {
+            unshown
+                .then(|| heard_since(&shared.pictured, offered))
+                .flatten()
+        })?;
         Some(heard_since(&shared.heard, pictured).unwrap_or(pictured))
     }
 
@@ -2767,7 +2983,8 @@ impl MediaStream {
         offered: std::time::Instant,
         pictured: Option<std::time::Instant>,
     ) -> Option<std::time::Instant> {
-        self.picture_last(leg, offered, pictured).or_else(|| self.withheld_last(leg, offered))
+        self.picture_last(leg, offered, pictured)
+            .or_else(|| self.withheld_last(leg, offered))
     }
 
     /// When the sound leg last delivered: its latest packet, once sound has come
@@ -2804,10 +3021,14 @@ impl MediaStream {
     pub fn overdue(&self, now: std::time::Instant) -> Option<anyhow::Error> {
         let first = STREAM_START.as_secs();
         let silence = STREAM_SILENCE.as_secs();
-        let unanswered = || anyhow::anyhow!("the Mac did not answer the media-stream offer within {first}s");
-        let unnamed = || anyhow::anyhow!("the Mac named no ports for its media stream within {first}s");
+        let unanswered =
+            || anyhow::anyhow!("the Mac did not answer the media-stream offer within {first}s");
+        let unnamed =
+            || anyhow::anyhow!("the Mac named no ports for its media stream within {first}s");
         let portless = || {
-            anyhow::anyhow!("the Mac accepted the media stream but named no ports for it within {first}s")
+            anyhow::anyhow!(
+                "the Mac accepted the media stream but named no ports for it within {first}s"
+            )
         };
         // Whether the leg's packets arrived says which failure it is: none is
         // the path between the two, and some is a stream this side took nothing
@@ -2843,30 +3064,44 @@ impl MediaStream {
                 ("picture".to_owned(), "the picture's leg".to_owned())
             } else {
                 let display = leg + 1;
-                (format!("picture of display {display}"), format!("the leg of display {display}'s picture"))
+                (
+                    format!("picture of display {display}"),
+                    format!("the leg of display {display}'s picture"),
+                )
             };
-            return Some(match (last, ports.and_then(|ports| ports.videos.get(leg))) {
-                (None, _) if self.pending => unanswered(),
-                (None, None) => portless(),
-                (None, Some(port)) => {
-                    let heard = self.legs.get(leg).is_some_and(|shared| heard_since(&shared.heard, offered).is_some());
-                    nothing(&what, *port, heard)
-                }
-                (Some(_), _) => {
-                    anyhow::anyhow!("the Mac's media stream sent nothing on {its_leg} for {silence}s")
-                }
-            });
+            return Some(
+                match (last, ports.and_then(|ports| ports.videos.get(leg))) {
+                    (None, _) if self.pending => unanswered(),
+                    (None, None) => portless(),
+                    (None, Some(port)) => {
+                        let heard = self
+                            .legs
+                            .get(leg)
+                            .is_some_and(|shared| heard_since(&shared.heard, offered).is_some());
+                        nothing(&what, *port, heard)
+                    }
+                    (Some(_), _) => {
+                        anyhow::anyhow!(
+                            "the Mac's media stream sent nothing on {its_leg} for {silence}s"
+                        )
+                    }
+                },
+            );
         }
         let heard = self.sound_last(offered);
         if now >= leg_due(offered, heard) {
             return Some(match (heard, ports) {
                 (None, _) if self.pending => unanswered(),
                 (None, None) => portless(),
-                (None, Some(ports)) => {
-                    nothing("sound", ports.audio, heard_since(&self.sound_heard, offered).is_some())
-                }
+                (None, Some(ports)) => nothing(
+                    "sound",
+                    ports.audio,
+                    heard_since(&self.sound_heard, offered).is_some(),
+                ),
                 (Some(_), _) => {
-                    anyhow::anyhow!("the Mac's media stream sent nothing on the sound's leg for {silence}s")
+                    anyhow::anyhow!(
+                        "the Mac's media stream sent nothing on the sound's leg for {silence}s"
+                    )
                 }
             });
         }
@@ -2888,8 +3123,15 @@ impl MediaStream {
     /// side cannot receive. Apple's viewer shows the refusal and closes.
     pub fn on_reply(&mut self, body: &[u8]) -> anyhow::Result<Replied> {
         match parse_media_reply(body)? {
-            MediaReply::Ports { audio_port, video_port, video2_port } => {
-                let videos: Vec<u16> = [Some(video_port), video2_port].into_iter().flatten().collect();
+            MediaReply::Ports {
+                audio_port,
+                video_port,
+                video2_port,
+            } => {
+                let videos: Vec<u16> = [Some(video_port), video2_port]
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 anyhow::ensure!(
                     videos.len() == self.legs.len(),
                     "media-stream message 1 enabled {} video leg(s) for the {} virtual display(s) \
@@ -2903,25 +3145,45 @@ impl MediaStream {
                 }
                 let down = self.offered.is_some();
                 if down {
-                    log::debug!("vnc: the Mac re-announced its media streams; they are down until offered");
+                    log::debug!(
+                        "vnc: the Mac re-announced its media streams; they are down until offered"
+                    );
                     self.stopped();
                 }
-                let ports = Ports { audio: audio_port, videos };
+                let ports = Ports {
+                    audio: audio_port,
+                    videos,
+                };
                 // The Mac names the same ports every time, and the receiver carries
                 // on across display changes.
-                if self.receiver.as_ref().is_some_and(|(bound, _)| *bound == ports) {
-                    return Ok(Replied { down, answered: false });
+                if self
+                    .receiver
+                    .as_ref()
+                    .is_some_and(|(bound, _)| *bound == ports)
+                {
+                    return Ok(Replied {
+                        down,
+                        answered: false,
+                    });
                 }
                 if let Some((_, receiver)) = self.receiver.take() {
                     receiver.abort();
                 }
                 log::info!(
                     "vnc: the Mac opened its media streams: screen video at UDP {}, sound at {audio_port}",
-                    ports.videos.iter().map(u16::to_string).collect::<Vec<_>>().join(" and ")
+                    ports
+                        .videos
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" and ")
                 );
                 let receiver = self.receive(&ports)?;
                 self.receiver = Some((ports, receiver));
-                return Ok(Replied { down, answered: false });
+                return Ok(Replied {
+                    down,
+                    answered: false,
+                });
             }
             MediaReply::Answer { videos } => {
                 anyhow::ensure!(
@@ -2936,18 +3198,26 @@ impl MediaStream {
                 if matches!(self.owed, Owed::Answer(_)) {
                     self.owed = Owed::Nothing;
                 }
-                return Ok(Replied { down: false, answered: true });
+                return Ok(Replied {
+                    down: false,
+                    answered: true,
+                });
             }
             // What the Mac answers a viewer that asks for the stream while
             // another holds it.
-            MediaReply::Error { kind: 1, sub_code: 1 } => anyhow::bail!(
+            MediaReply::Error {
+                kind: 1,
+                sub_code: 1,
+            } => anyhow::bail!(
                 "another viewer already has the Mac's High Performance stream, which it gives \
                  to one at a time (error type 1, sub-code 1)"
             ),
             MediaReply::Error { kind, sub_code } => anyhow::bail!(
                 "the Mac refused the media stream (error type {kind}, sub-code {sub_code})"
             ),
-            MediaReply::Other(kind) => log::debug!("vnc: ignoring media-stream message type {kind}"),
+            MediaReply::Other(kind) => {
+                log::debug!("vnc: ignoring media-stream message type {kind}")
+            }
         }
         Ok(Replied::default())
     }
@@ -2960,7 +3230,9 @@ impl MediaStream {
             return None;
         };
         let (ports, _) = self.receiver.as_ref()?;
-        let ports: Vec<u16> = std::iter::once(ports.audio).chain(ports.videos.iter().copied()).collect();
+        let ports: Vec<u16> = std::iter::once(ports.audio)
+            .chain(ports.videos.iter().copied())
+            .collect();
         Some(link.opened(&ports))
     }
 
@@ -3077,24 +3349,29 @@ impl MediaDump {
             }
         };
         let (units, queued) = std::sync::mpsc::sync_channel::<(Track, Vec<u8>)>(DUMP_QUEUE);
-        let writer = std::thread::Builder::new().name("hp-dump".into()).spawn(move || {
-            let written = queued
-                .iter()
-                .try_for_each(|(track, unit)| match track {
-                    Track::Video => video.write_all(&unit),
-                    Track::Audio => audio.write_all(&unit),
-                })
-                .and_then(|()| video.flush())
-                .and_then(|()| audio.flush());
-            if let Err(e) = written {
-                log::warn!("vnc: stopped dumping the media stream: {e}");
-            }
-        });
+        let writer = std::thread::Builder::new()
+            .name("hp-dump".into())
+            .spawn(move || {
+                let written = queued
+                    .iter()
+                    .try_for_each(|(track, unit)| match track {
+                        Track::Video => video.write_all(&unit),
+                        Track::Audio => audio.write_all(&unit),
+                    })
+                    .and_then(|()| video.flush())
+                    .and_then(|()| audio.flush());
+                if let Err(e) = written {
+                    log::warn!("vnc: stopped dumping the media stream: {e}");
+                }
+            });
         if let Err(e) = writer {
             log::warn!("vnc: not dumping the media stream: no writer thread: {e}");
             return None;
         }
-        log::info!("vnc: dumping the media stream to {} (ZDESK_HP_DUMP)", dir.display());
+        log::info!(
+            "vnc: dumping the media stream to {} (ZDESK_HP_DUMP)",
+            dir.display()
+        );
         Some(Self { units })
     }
 
@@ -3226,7 +3503,10 @@ impl KeyframeRequest {
 
     /// What to ask for at `now`, which counts as asking.
     fn due(&mut self, now: tokio::time::Instant) -> Option<Ask> {
-        if self.asked.is_some_and(|at| now.duration_since(at) < PLI_INTERVAL) {
+        if self
+            .asked
+            .is_some_and(|at| now.duration_since(at) < PLI_INTERVAL)
+        {
             return None;
         }
         let ask = self.owed?;
@@ -3245,7 +3525,11 @@ enum Took {
 impl VideoLeg {
     /// Its sender, for the log: which display, where there is more than one.
     fn name(&self, alone: bool) -> String {
-        if alone { "screen video".to_owned() } else { format!("screen video of display {}", self.display) }
+        if alone {
+            "screen video".to_owned()
+        } else {
+            format!("screen video of display {}", self.display)
+        }
     }
 
     /// One datagram off the leg's socket: authenticated, and its picture, once
@@ -3284,7 +3568,10 @@ impl VideoLeg {
         *self.shared.pictured.lock().unwrap() = Some(arrived);
         // Each offer says anew whether its stream comes in strips, by the
         // display's height, and the stream before it has stopped by then.
-        let strips = self.shared.strips.load(std::sync::atomic::Ordering::Relaxed);
+        let strips = self
+            .shared
+            .strips
+            .load(std::sync::atomic::Ordering::Relaxed);
         if strips != matches!(self.assembly, Assembly::Strips(_)) {
             self.assembly = Assembly::new(self.codec, strips);
         }
@@ -3292,7 +3579,11 @@ impl VideoLeg {
         self.feedback.received(stream, header.timestamp, arrived);
         self.packets += 1;
         if self.packets == 1 {
-            log::info!("vnc: the Mac's {} is flowing (SSRC {:#x})", self.name(alone), header.ssrc);
+            log::info!(
+                "vnc: the Mac's {} is flowing (SSRC {:#x})",
+                self.name(alone),
+                header.ssrc
+            );
         }
         if self.media_ssrc != stream {
             // A new stream, after an offer, starts with an IDR of its own.
@@ -3312,7 +3603,9 @@ impl VideoLeg {
         let (strip, taken) = self.assembly.push(&header, payload);
         match taken {
             Depacketized::Pending => Ok(Took::Nothing),
-            Depacketized::Lost if self.assembly.resumes_at_refresh() => Ok(Took::Wants(Ask::Refresh)),
+            Depacketized::Lost if self.assembly.resumes_at_refresh() => {
+                Ok(Took::Wants(Ask::Refresh))
+            }
             Depacketized::Lost => Ok(Took::Wants(Ask::Keyframe)),
             Depacketized::Unit(unit) => {
                 // Only a stream that has had a picture it can go on from yields
@@ -3324,8 +3617,10 @@ impl VideoLeg {
                 }
                 // What a refresh request names, which only the HEVC is asked for.
                 if self.codec == Codec::Hevc
-                    && let Some(params) =
-                        unit.iter().find(|nal| nal_type(nal[0]) == NAL_SPS).and_then(|sps| parse_sps(sps))
+                    && let Some(params) = unit
+                        .iter()
+                        .find(|nal| nal_type(nal[0]) == NAL_SPS)
+                        .and_then(|sps| parse_sps(sps))
                 {
                     self.size = Some(params.size);
                 }
@@ -3337,7 +3632,11 @@ impl VideoLeg {
                     log::warn!("vnc: stopped dumping the media stream: {e:#}");
                     *dump = None;
                 }
-                match self.onward.send(Coded { unit, strip, timestamp: header.timestamp }) {
+                match self.onward.send(Coded {
+                    unit,
+                    strip,
+                    timestamp: header.timestamp,
+                }) {
                     Sent::Queued => {
                         if self.counted.replace(header.timestamp) != Some(header.timestamp) {
                             self.pictures += 1;
@@ -3345,7 +3644,8 @@ impl VideoLeg {
                         // The HEVC's pictures ask to be acknowledged, and the
                         // H.264's do not.
                         if self.codec == Codec::Hevc {
-                            self.unacknowledged = Some(self.assembly.acknowledgement(header.timestamp));
+                            self.unacknowledged =
+                                Some(self.assembly.acknowledgement(header.timestamp));
                         }
                         Ok(Took::Nothing)
                     }
@@ -3383,7 +3683,10 @@ impl VideoLeg {
         };
         self.asks += 1;
         let request = match (ask, self.size) {
-            (Ask::Refresh, Some(size)) => self.rtcp.protect(&rtcp_refresh(self.ssrc, self.media_ssrc, size)),
+            (Ask::Refresh, Some(size)) => {
+                self.rtcp
+                    .protect(&rtcp_refresh(self.ssrc, self.media_ssrc, size))
+            }
             _ => self.rtcp.protect(&rtcp_pli(self.ssrc, self.media_ssrc)),
         };
         let _ = self.socket.send(&request).await;
@@ -3428,7 +3731,10 @@ pub enum Route {
     /// Straight from the Mac, on UDP: `peer` is the Mac as the TCP session
     /// reached it, where the streams come from and RTCP goes, and `local` this
     /// side's address on that connection, which the sockets bind.
-    Direct { peer: std::net::IpAddr, local: std::net::IpAddr },
+    Direct {
+        peer: std::net::IpAddr,
+        local: std::net::IpAddr,
+    },
     /// Through a relay's media connection ([`crate::config::TargetConfig::relay`]),
     /// which binds each port towards the Mac in this side's place.
     Relayed(zdesk_relay::MediaLink),
@@ -3437,7 +3743,10 @@ pub enum Route {
 impl Route {
     /// The route of a session on `stream`, straight from the Mac.
     pub fn direct(peer: std::net::SocketAddr, local: std::net::SocketAddr) -> Self {
-        Self::Direct { peer: peer.ip(), local: local.ip() }
+        Self::Direct {
+            peer: peer.ip(),
+            local: local.ip(),
+        }
     }
 }
 
@@ -3470,7 +3779,10 @@ impl Datagrams {
 /// (`WSAECONNRESET`) on the receive after the send. UDP has no connection to
 /// refuse or reset otherwise, so neither is the socket failing.
 fn unreachable(e: &std::io::Error) -> bool {
-    matches!(e.kind(), std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset)
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset
+    )
 }
 
 impl Receiver {
@@ -3516,9 +3828,13 @@ impl Receiver {
             socket
                 .bind(&at.into())
                 .with_context(|| format!("bind UDP {at} for the Mac's media stream"))?;
-            socket.connect(&to.into()).with_context(|| format!("connect UDP {at} to {to}"))?;
+            socket
+                .connect(&to.into())
+                .with_context(|| format!("connect UDP {at} to {to}"))?;
             socket.set_nonblocking(true)?;
-            Ok(Datagrams::Udp(tokio::net::UdpSocket::from_std(socket.into())?))
+            Ok(Datagrams::Udp(tokio::net::UdpSocket::from_std(
+                socket.into(),
+            )?))
         };
         let epoch = std::time::Instant::now();
         let videos = media
@@ -3545,7 +3861,10 @@ impl Receiver {
                     shared: shared.clone(),
                     onward,
                     codec: media.offers.receive.codec(),
-                    assembly: Assembly::new(media.offers.receive.codec(), shared.strips.load(std::sync::atomic::Ordering::Relaxed)),
+                    assembly: Assembly::new(
+                        media.offers.receive.codec(),
+                        shared.strips.load(std::sync::atomic::Ordering::Relaxed),
+                    ),
                     feedback: RateFeedback::new(epoch),
                     keyframe_request: KeyframeRequest::default(),
                     size: None,
@@ -3585,7 +3904,8 @@ impl Receiver {
         let mut datagram = vec![0u8; 65_536];
         let mut second_datagram = vec![0u8; if alone { 0 } else { 65_536 }];
         let mut sound_datagram = vec![0u8; 2048];
-        let mut dump = MediaDump::from_env(self.videos.first().map_or(Codec::Hevc, |leg| leg.codec));
+        let mut dump =
+            MediaDump::from_env(self.videos.first().map_or(Codec::Hevc, |leg| leg.codec));
         let failure = loop {
             let mut want_keyframe = [None; MAX_DISPLAYS];
             tokio::select! {
@@ -3750,9 +4070,10 @@ impl Onward {
         let display = *self.offered.lock().unwrap();
         let passed = match coded.strip {
             None => self.passer.pass_whole(&coded.unit, display),
-            Some(strip) => {
-                display.and_then(|display| self.passer.pass_strip(&coded.unit, strip, coded.timestamp, display))
-            }
+            Some(strip) => display.and_then(|display| {
+                self.passer
+                    .pass_strip(&coded.unit, strip, coded.timestamp, display)
+            }),
         };
         passed.map_or(Sent::Unready, |passed| self.units.send(passed))
     }
@@ -3775,7 +4096,11 @@ struct Sound {
 
 impl Sound {
     fn start(bridge: std::sync::Arc<crate::audio::AudioBridge>) -> Self {
-        Self { bridge, packets: 0, forged: 0 }
+        Self {
+            bridge,
+            packets: 0,
+            forged: 0,
+        }
     }
 
     /// One authenticated, decrypted RTP packet of the sound leg: one AAC-ELD
@@ -3811,15 +4136,26 @@ mod tests {
         assert_eq!(request.due(start), None, "nothing is owed");
         request.want(Ask::Refresh);
         assert_eq!(request.due(start), Some(Ask::Refresh));
-        assert_eq!(request.due(start + super::PLI_INTERVAL / 2), None, "too soon to ask again");
+        assert_eq!(
+            request.due(start + super::PLI_INTERVAL / 2),
+            None,
+            "too soon to ask again"
+        );
         // The Mac may have dropped the first: it is still owed.
         assert_eq!(request.due(start + super::PLI_INTERVAL), Some(Ask::Refresh));
         // An IDR wanted meanwhile is what goes out, and a refresh does not undo it.
         request.want(Ask::Keyframe);
         request.want(Ask::Refresh);
-        assert_eq!(request.due(start + super::PLI_INTERVAL * 2), Some(Ask::Keyframe));
+        assert_eq!(
+            request.due(start + super::PLI_INTERVAL * 2),
+            Some(Ask::Keyframe)
+        );
         request.settle();
-        assert_eq!(request.due(start + super::PLI_INTERVAL * 4), None, "a picture came");
+        assert_eq!(
+            request.due(start + super::PLI_INTERVAL * 4),
+            None,
+            "a picture came"
+        );
     }
 
     /// The packets a probe of macvm sent, which its encoder answered with a
@@ -3828,11 +4164,16 @@ mod tests {
     fn the_refresh_request_and_the_acknowledgement_are_avconferences() {
         assert_eq!(
             super::rtcp_refresh(0xb54e_0c1c, 0x39b8_5839, (1600, 1000)),
-            [0x82, 0xce, 0, 3, 0xb5, 0x4e, 0x0c, 0x1c, 0x39, 0xb8, 0x58, 0x39, 0x06, 0x40, 0x03, 0xe8]
+            [
+                0x82, 0xce, 0, 3, 0xb5, 0x4e, 0x0c, 0x1c, 0x39, 0xb8, 0x58, 0x39, 0x06, 0x40, 0x03,
+                0xe8
+            ]
         );
         assert_eq!(
             super::rtcp_reference_ack(0x1203_c98d, 200_800),
-            [0x80, 0xcc, 0, 3, 0x12, 0x03, 0xc9, 0x8d, 0, 0, 0, 5, 0x00, 0x03, 0x10, 0x60]
+            [
+                0x80, 0xcc, 0, 3, 0x12, 0x03, 0xc9, 0x8d, 0, 0, 0, 5, 0x00, 0x03, 0x10, 0x60
+            ]
         );
     }
 
@@ -3850,7 +4191,11 @@ mod tests {
         assert_eq!(packet(0x9301), Ok(false));
         assert_eq!(packet(0x9311), Ok(false));
         assert_eq!(packet(0x9331), Ok(true));
-        assert_eq!(packet(0x1020), Ok(false), "another extension's bits mean nothing");
+        assert_eq!(
+            packet(0x1020),
+            Ok(false),
+            "another extension's bits mean nothing"
+        );
     }
 
     /// After lost packets the pictures handed on are still there to predict
@@ -3858,19 +4203,43 @@ mod tests {
     /// they are not, and only a random-access picture will do.
     #[test]
     fn a_stream_goes_on_from_a_refresh_picture_after_a_loss_but_not_after_a_resync() {
-        let refresh = |sequence, timestamp| RtpHeader { refresh: true, ..header(sequence, timestamp, true) };
+        let refresh = |sequence, timestamp| RtpHeader {
+            refresh: true,
+            ..header(sequence, timestamp, true)
+        };
         let mut d = Depacketizer::default();
-        assert_eq!(d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
-        assert!(matches!(d.push(&header(11, 0, true), IDR), Depacketized::Unit(_)));
+        assert_eq!(
+            d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
+        assert!(matches!(
+            d.push(&header(11, 0, true), IDR),
+            Depacketized::Unit(_)
+        ));
         // 12 is lost: 13 predicts from it, and the refresh picture does not.
         assert_eq!(d.push(&header(13, 800, true), TRAIL), Depacketized::Lost);
         assert!(d.resumes_at_refresh());
         assert_eq!(d.push(&header(14, 1200, true), TRAIL), Depacketized::Lost);
-        assert_eq!(d.push(&refresh(15, 1600), TRAIL), Depacketized::Unit(vec![TRAIL.to_vec()]));
+        assert_eq!(
+            d.push(&refresh(15, 1600), TRAIL),
+            Depacketized::Unit(vec![TRAIL.to_vec()])
+        );
         assert!(!d.resumes_at_refresh());
-        assert_eq!(d.push(&header(16, 2000, true), TRAIL), Depacketized::Unit(vec![TRAIL.to_vec()]));
+        assert_eq!(
+            d.push(&header(16, 2000, true), TRAIL),
+            Depacketized::Unit(vec![TRAIL.to_vec()])
+        );
         // A refresh picture that lost a packet of its own is no start.
-        assert_eq!(d.push(&RtpHeader { marker: false, ..refresh(18, 2400) }, TRAIL), Depacketized::Lost);
+        assert_eq!(
+            d.push(
+                &RtpHeader {
+                    marker: false,
+                    ..refresh(18, 2400)
+                },
+                TRAIL
+            ),
+            Depacketized::Lost
+        );
         assert_eq!(d.push(&header(20, 2400, true), TRAIL), Depacketized::Lost);
         assert!(d.resumes_at_refresh());
         // Whoever was shown the stream gave pictures up: a refresh predicts from
@@ -3878,14 +4247,23 @@ mod tests {
         d.resync();
         assert!(!d.resumes_at_refresh());
         assert_eq!(d.push(&refresh(21, 2800), TRAIL), Depacketized::Lost);
-        assert_eq!(d.push(&header(22, 3200, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
-        assert!(matches!(d.push(&header(23, 3200, true), IDR), Depacketized::Unit(_)));
+        assert_eq!(
+            d.push(&header(22, 3200, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
+        assert!(matches!(
+            d.push(&header(23, 3200, true), IDR),
+            Depacketized::Unit(_)
+        ));
     }
 
     use super::*;
 
     fn unhex(hex: &str) -> Vec<u8> {
-        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     /// The sound offer's blob Apple's own negotiator produced on macOS 26.6 for
@@ -3943,9 +4321,16 @@ mod tests {
     fn the_video_offer_asks_for_one_picture_a_frame_at_apples_bitrates() {
         let blob = video_offer_blob(7, (1280, 800), 1, Codec::Hevc);
         let top = fields(&blob);
-        let stream = top.iter().find_map(|(f, v)| (*f == 5).then(|| v.clone().unwrap_err())).unwrap();
+        let stream = top
+            .iter()
+            .find_map(|(f, v)| (*f == 5).then(|| v.clone().unwrap_err()))
+            .unwrap();
         let stream = fields(&stream);
-        let value = |field| stream.iter().find_map(|(f, v)| (*f == field).then(|| *v.as_ref().unwrap()));
+        let value = |field| {
+            stream
+                .iter()
+                .find_map(|(f, v)| (*f == field).then(|| *v.as_ref().unwrap()))
+        };
         assert_eq!(value(4), Some(1280));
         assert_eq!(value(5), Some(800));
         assert_eq!(value(6), Some(1), "tilesPerFrame");
@@ -3958,7 +4343,14 @@ mod tests {
             .collect();
         assert_eq!(
             bitrates,
-            [40_000_000, 75_000_000, 20_000_000, 60_000_000, 100_000_000, 6_000_000]
+            [
+                40_000_000,
+                75_000_000,
+                20_000_000,
+                60_000_000,
+                100_000_000,
+                6_000_000
+            ]
         );
     }
 
@@ -3966,7 +4358,11 @@ mod tests {
     /// whose offsets land on the objects they name.
     #[test]
     fn the_offer_is_a_binary_plist_of_four_entries() {
-        let plist = offer(MODE_AUDIO, &audio_offer_blob(1), "910BCF8F-D1D7-4EB6-B728-E1FDB02DD3B6");
+        let plist = offer(
+            MODE_AUDIO,
+            &audio_offer_blob(1),
+            "910BCF8F-D1D7-4EB6-B728-E1FDB02DD3B6",
+        );
         assert_eq!(&plist[..8], b"bplist00");
         assert_eq!(&plist[8..17], &[0xd4, 1, 2, 3, 4, 5, 6, 7, 8]);
         let trailer = &plist[plist.len() - 32..];
@@ -3974,7 +4370,12 @@ mod tests {
         assert_eq!(u64::from_be_bytes(trailer[8..16].try_into().unwrap()), 9);
         let table = u64::from_be_bytes(trailer[24..32].try_into().unwrap()) as usize;
         let offsets: Vec<usize> = (0..9)
-            .map(|i| usize::from(u16::from_be_bytes([plist[table + 2 * i], plist[table + 2 * i + 1]])))
+            .map(|i| {
+                usize::from(u16::from_be_bytes([
+                    plist[table + 2 * i],
+                    plist[table + 2 * i + 1],
+                ]))
+            })
             .collect();
         assert_eq!(offsets[0], 8, "the dictionary is the first object");
         for (i, key) in [
@@ -3998,11 +4399,19 @@ mod tests {
     fn the_configuration_message_lays_out_as_measured() {
         let a = ([0xa1; 46], [0xa2; 46]);
         let v = ([0xb1; 46], [0xb2; 46]);
-        let msg = configuration_message(FLAGS, &[0x11; 16], &[0xaa; 300], &a, &[(&[0xbb; 400], &v)]);
+        let msg =
+            configuration_message(FLAGS, &[0x11; 16], &[0xaa; 300], &a, &[(&[0xbb; 400], &v)]);
         assert_eq!(msg[0], 0x1c);
-        assert_eq!(usize::from(u16::from_be_bytes([msg[2], msg[3]])), msg.len() - 4);
+        assert_eq!(
+            usize::from(u16::from_be_bytes([msg[2], msg[3]])),
+            msg.len() - 4
+        );
         assert_eq!(&msg[4..6], &[0, 3]);
-        assert_eq!(&msg[6..10], &[0, 0, 0, 5], "60 fps, and the pointer left out");
+        assert_eq!(
+            &msg[6..10],
+            &[0, 0, 0, 5],
+            "60 fps, and the pointer left out"
+        );
         assert_eq!(&msg[0x0a..0x0c], &300u16.to_be_bytes());
         assert_eq!(&msg[0x0c..0x0e], &400u16.to_be_bytes());
         assert_eq!(&msg[0x0e..0x10], &[0, 0]);
@@ -4024,7 +4433,10 @@ mod tests {
             &a,
             &[(&[0xbb; 400], &v), (&[0xcc; 500], &w)],
         );
-        assert_eq!(usize::from(u16::from_be_bytes([two[2], two[3]])), two.len() - 4);
+        assert_eq!(
+            usize::from(u16::from_be_bytes([two[2], two[3]])),
+            two.len() - 4
+        );
         assert_eq!(&two[6..10], &[0, 0, 0, 7]);
         assert_eq!(&two[0x0c..0x0e], &400u16.to_be_bytes());
         assert_eq!(&two[0x0e..0x10], &500u16.to_be_bytes());
@@ -4047,16 +4459,33 @@ mod tests {
     #[test]
     fn the_replies_parse_as_measured() {
         // Message 1 as the Mac sent it: audio at 5900, video at 5901.
-        let ports = unhex("0001000100000000170c00000001170d0000000100000000000000000000000000000000");
+        let ports =
+            unhex("0001000100000000170c00000001170d0000000100000000000000000000000000000000");
         assert_eq!(
             parse_media_reply(&ports).unwrap(),
-            MediaReply::Ports { audio_port: 5900, video_port: 5901, video2_port: None }
+            MediaReply::Ports {
+                audio_port: 5900,
+                video_port: 5901,
+                video2_port: None
+            }
         );
         let answer = unhex("000200020000000000020003000000000000aabbccddee");
-        assert_eq!(parse_media_reply(&answer).unwrap(), MediaReply::Answer { videos: 1 });
+        assert_eq!(
+            parse_media_reply(&answer).unwrap(),
+            MediaReply::Answer { videos: 1 }
+        );
         let error = unhex("00030001000000000000000200000000");
-        assert_eq!(parse_media_reply(&error).unwrap(), MediaReply::Error { kind: 2, sub_code: 0 });
-        assert_eq!(parse_media_reply(&[0, 9, 0, 1, 0, 0, 0, 0]).unwrap(), MediaReply::Other(9));
+        assert_eq!(
+            parse_media_reply(&error).unwrap(),
+            MediaReply::Error {
+                kind: 2,
+                sub_code: 0
+            }
+        );
+        assert_eq!(
+            parse_media_reply(&[0, 9, 0, 1, 0, 0, 0, 0]).unwrap(),
+            MediaReply::Other(9)
+        );
         assert!(parse_media_reply(&[0, 1, 0, 1]).is_err());
         assert!(parse_media_reply(&[0, 1, 0, 1, 0, 0, 0, 0, 0]).is_err());
         let mut disabled_audio = ports.clone();
@@ -4069,10 +4498,17 @@ mod tests {
         second_video[25] = 1;
         assert_eq!(
             parse_media_reply(&second_video).unwrap(),
-            MediaReply::Ports { audio_port: 5900, video_port: 5901, video2_port: Some(5902) }
+            MediaReply::Ports {
+                audio_port: 5900,
+                video_port: 5901,
+                video2_port: Some(5902)
+            }
         );
         let two_answers = unhex("000200020000000000020003000100000000aabbccddeeff");
-        assert_eq!(parse_media_reply(&two_answers).unwrap(), MediaReply::Answer { videos: 2 });
+        assert_eq!(
+            parse_media_reply(&two_answers).unwrap(),
+            MediaReply::Answer { videos: 2 }
+        );
         let mut wrong_answer_size = answer;
         wrong_answer_size.pop();
         assert!(parse_media_reply(&wrong_answer_size).is_err());
@@ -4087,20 +4523,36 @@ mod tests {
     /// authenticated the Mac's own packets — is authenticated and decrypted here.
     #[test]
     fn srtp_unprotects_what_an_independent_implementation_protected() {
-        let packet = unhex("80e412340a0b0c0dcafebabe610005049285d9955b8928769900c5323d679c04bbccbf");
+        let packet =
+            unhex("80e412340a0b0c0dcafebabe610005049285d9955b8928769900c5323d679c04bbccbf");
         let mut data = packet.clone();
         let header = SrtpReceiver::new(&master()).unprotect(&mut data).unwrap();
         assert_eq!(
-            (header.payload_type, header.marker, header.sequence, header.timestamp, header.ssrc),
+            (
+                header.payload_type,
+                header.marker,
+                header.sequence,
+                header.timestamp,
+                header.ssrc
+            ),
             (100, true, 0x1234, 0x0a0b_0c0d, 0xcafe_babe)
         );
-        assert_eq!(&data[header.payload.0..header.payload.1], b"\x02\x01hello, hevc");
+        assert_eq!(
+            &data[header.payload.0..header.payload.1],
+            b"\x02\x01hello, hevc"
+        );
 
         let mut forged = packet.clone();
         forged[14] ^= 1;
-        assert_eq!(SrtpReceiver::new(&master()).unprotect(&mut forged), Err(SrtpError::Forged));
+        assert_eq!(
+            SrtpReceiver::new(&master()).unprotect(&mut forged),
+            Err(SrtpError::Forged)
+        );
         let mut other_key = packet;
-        assert_eq!(SrtpReceiver::new(&[7; 46]).unprotect(&mut other_key), Err(SrtpError::Forged));
+        assert_eq!(
+            SrtpReceiver::new(&[7; 46]).unprotect(&mut other_key),
+            Err(SrtpError::Forged)
+        );
     }
 
     #[test]
@@ -4126,18 +4578,43 @@ mod tests {
         let second = sender.protect(&rtcp_receiver_report(0x0102_0304));
         let mut reports = SrtcpReceiver::new(&master());
         assert_eq!(reports.authenticate(&first), Ok(()));
-        assert_eq!(reports.authenticate(&first), Err(SrtpError::Stale), "a duplicate");
+        assert_eq!(
+            reports.authenticate(&first),
+            Err(SrtpError::Stale),
+            "a duplicate"
+        );
         assert_eq!(reports.authenticate(&second), Ok(()), "the index counts up");
-        assert_eq!(reports.authenticate(&first), Err(SrtpError::Stale), "overtaken");
+        assert_eq!(
+            reports.authenticate(&first),
+            Err(SrtpError::Stale),
+            "overtaken"
+        );
         let mut forged = second.clone();
         forged[9] ^= 1;
-        assert_eq!(SrtcpReceiver::new(&master()).authenticate(&forged), Err(SrtpError::Forged));
-        assert_eq!(SrtcpReceiver::new(&[7; 46]).authenticate(&second), Err(SrtpError::Forged));
-        assert_eq!(SrtcpReceiver::new(&master()).authenticate(&second[..20]), Err(SrtpError::NotRtp));
+        assert_eq!(
+            SrtcpReceiver::new(&master()).authenticate(&forged),
+            Err(SrtpError::Forged)
+        );
+        assert_eq!(
+            SrtcpReceiver::new(&[7; 46]).authenticate(&second),
+            Err(SrtpError::Forged)
+        );
+        assert_eq!(
+            SrtcpReceiver::new(&master()).authenticate(&second[..20]),
+            Err(SrtpError::NotRtp)
+        );
 
         let other = SrtcpSender::new(&master()).protect(&rtcp_receiver_report(0x0506_0708));
-        assert_eq!(reports.authenticate(&other), Ok(()), "a new stream starts over");
-        assert_eq!(reports.authenticate(&second), Err(SrtpError::Stale), "an earlier stream's stays spent");
+        assert_eq!(
+            reports.authenticate(&other),
+            Ok(()),
+            "a new stream starts over"
+        );
+        assert_eq!(
+            reports.authenticate(&second),
+            Err(SrtpError::Stale),
+            "an earlier stream's stays spent"
+        );
     }
 
     /// Byte for byte a report the Mac took from the rate-control probe, 5.9 s into
@@ -4148,7 +4625,11 @@ mod tests {
         let epoch = std::time::Instant::now();
         let at = epoch + std::time::Duration::from_nanos(5_908_203_200);
         let mut feedback = RateFeedback::new(epoch);
-        assert_eq!(feedback.report(0x0d96_7839, at), None, "nothing to echo yet");
+        assert_eq!(
+            feedback.report(0x0d96_7839, at),
+            None,
+            "nothing to echo yet"
+        );
         for _ in 0..2970 {
             feedback.received(0x1234_5678, 0x8042, at);
         }
@@ -4167,7 +4648,11 @@ mod tests {
         let mut feedback = RateFeedback::new(epoch);
         // 30 pictures a second, 800 ticks of 24 kHz apart, each 5 ms in transit.
         let picture = |feedback: &mut RateFeedback, n: u64, queued: u64| {
-            feedback.received(9, 0xffff_f000_u32.wrapping_add(n as u32 * 800), ms(n * 100 / 3 + 5 + queued));
+            feedback.received(
+                9,
+                0xffff_f000_u32.wrapping_add(n as u32 * 800),
+                ms(n * 100 / 3 + 5 + queued),
+            );
         };
         for n in 0..300 {
             picture(&mut feedback, n, 0);
@@ -4186,7 +4671,10 @@ mod tests {
         let queued = feedback.delay();
         assert!((0.2..0.3).contains(&queued), "{queued}");
         let report = feedback.report(1, ms(12_000)).unwrap();
-        assert_eq!(u16::from_be_bytes([report[26], report[27]]), (queued * 8192.0) as u16);
+        assert_eq!(
+            u16::from_be_bytes([report[26], report[27]]),
+            (queued * 8192.0) as u16
+        );
 
         // It drains, and the delay falls with it.
         for n in 330..400 {
@@ -4202,14 +4690,26 @@ mod tests {
 
     #[test]
     fn srtp_refuses_a_duplicate_and_a_straggler() {
-        let packet = unhex("80e412340a0b0c0dcafebabe610005049285d9955b8928769900c5323d679c04bbccbf");
+        let packet =
+            unhex("80e412340a0b0c0dcafebabe610005049285d9955b8928769900c5323d679c04bbccbf");
         let mut srtp = SrtpReceiver::new(&master());
         assert!(srtp.unprotect(&mut packet.clone()).is_ok());
-        assert_eq!(srtp.unprotect(&mut packet.clone()), Err(SrtpError::Stale), "a duplicate");
+        assert_eq!(
+            srtp.unprotect(&mut packet.clone()),
+            Err(SrtpError::Stale),
+            "a duplicate"
+        );
         srtp.last = vec![(0xcafe_babe, 0x1235, 0)];
-        assert_eq!(srtp.unprotect(&mut packet.clone()), Err(SrtpError::Stale), "overtaken");
+        assert_eq!(
+            srtp.unprotect(&mut packet.clone()),
+            Err(SrtpError::Stale),
+            "overtaken"
+        );
         srtp.last = vec![(0x0102_0304, 0x1235, 0)];
-        assert!(srtp.unprotect(&mut packet.clone()).is_ok(), "a new stream starts over");
+        assert!(
+            srtp.unprotect(&mut packet.clone()).is_ok(),
+            "a new stream starts over"
+        );
     }
 
     #[test]
@@ -4220,7 +4720,11 @@ mod tests {
         assert_eq!(srtp.guess_roc(1, 0x0002), 1, "past the wrap");
         assert_eq!(srtp.guess_roc(1, 0xffff), 0);
         srtp.last = vec![(1, 0x0002, 1)];
-        assert_eq!(srtp.guess_roc(1, 0xfff5), 0, "a late packet from before the wrap");
+        assert_eq!(
+            srtp.guess_roc(1, 0xfff5),
+            0,
+            "a late packet from before the wrap"
+        );
         assert_eq!(srtp.guess_roc(1, 0x0010), 1);
         assert_eq!(srtp.guess_roc(2, 0x0010), 0, "a new stream starts over");
     }
@@ -4228,13 +4732,30 @@ mod tests {
     #[test]
     fn rtcp_and_rtp_are_told_apart() {
         let mut rtcp = unhex("80c90001010203040000000000000000000000");
-        assert_eq!(SrtpReceiver::new(&master()).unprotect(&mut rtcp), Err(SrtpError::Rtcp));
-        assert_eq!(SrtpReceiver::new(&master()).unprotect(&mut [0x40; 30]), Err(SrtpError::NotRtp));
-        assert_eq!(rtcp_receiver_report(0x0102_0304), [0x80, 201, 0, 1, 1, 2, 3, 4]);
+        assert_eq!(
+            SrtpReceiver::new(&master()).unprotect(&mut rtcp),
+            Err(SrtpError::Rtcp)
+        );
+        assert_eq!(
+            SrtpReceiver::new(&master()).unprotect(&mut [0x40; 30]),
+            Err(SrtpError::NotRtp)
+        );
+        assert_eq!(
+            rtcp_receiver_report(0x0102_0304),
+            [0x80, 201, 0, 1, 1, 2, 3, 4]
+        );
     }
 
     fn header(sequence: u16, timestamp: u32, marker: bool) -> RtpHeader {
-        RtpHeader { payload_type: 100, marker, sequence, timestamp, ssrc: 9, refresh: false, payload: (0, 0) }
+        RtpHeader {
+            payload_type: 100,
+            marker,
+            sequence,
+            timestamp,
+            ssrc: 9,
+            refresh: false,
+            payload: (0, 0),
+        }
     }
 
     const VPS: &[u8] = &[0x40, 0x01, 0xaa];
@@ -4274,15 +4795,24 @@ mod tests {
     #[test]
     fn a_stream_passed_over_takes_the_idr_that_starts_at_the_next_packet() {
         let mut d = Depacketizer::default();
-        assert_eq!(d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
-        assert!(matches!(d.push(&header(11, 0, true), IDR), Depacketized::Unit(_)));
+        assert_eq!(
+            d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
+        assert!(matches!(
+            d.push(&header(11, 0, true), IDR),
+            Depacketized::Unit(_)
+        ));
         // 40,000 packets out of view, which a sequence number left where it was
         // would read as behind.
         let on = 11u16.wrapping_add(40_000);
         for passed in 1..=40_000u16 {
             d.skip(&header(11u16.wrapping_add(passed), 400, passed == 40_000));
         }
-        assert_eq!(d.push(&header(on + 1, 800, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
+        assert_eq!(
+            d.push(&header(on + 1, 800, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
         assert_eq!(
             d.push(&header(on + 2, 800, true), IDR),
             Depacketized::Unit(vec![VPS.to_vec(), SPS.to_vec(), IDR.to_vec()])
@@ -4301,8 +4831,14 @@ mod tests {
         // The picture passed over never ended with a marked packet: the next
         // timestamp is a new picture all the same.
         d.skip(&header(13, 800, false));
-        assert_eq!(d.push(&header(14, 1200, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
-        assert!(matches!(d.push(&header(15, 1200, true), IDR), Depacketized::Unit(_)));
+        assert_eq!(
+            d.push(&header(14, 1200, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
+        assert!(matches!(
+            d.push(&header(15, 1200, true), IDR),
+            Depacketized::Unit(_)
+        ));
     }
 
     /// Apple's first picture: the parameter sets aggregated, the IDR fragmented;
@@ -4310,15 +4846,27 @@ mod tests {
     #[test]
     fn access_units_come_out_of_aggregates_fragments_and_single_units() {
         let mut d = Depacketizer::default();
-        assert_eq!(d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])), Depacketized::Pending);
+        assert_eq!(
+            d.push(&header(10, 0, false), &aggregation(&[VPS, SPS])),
+            Depacketized::Pending
+        );
         let pieces = fragments(IDR, 3);
-        assert_eq!(d.push(&header(11, 0, false), &pieces[0]), Depacketized::Pending);
-        assert_eq!(d.push(&header(12, 0, false), &pieces[1]), Depacketized::Pending);
+        assert_eq!(
+            d.push(&header(11, 0, false), &pieces[0]),
+            Depacketized::Pending
+        );
+        assert_eq!(
+            d.push(&header(12, 0, false), &pieces[1]),
+            Depacketized::Pending
+        );
         assert_eq!(
             d.push(&header(13, 0, true), &pieces[2]),
             Depacketized::Unit(vec![VPS.to_vec(), SPS.to_vec(), IDR.to_vec()])
         );
-        assert_eq!(d.push(&header(14, 400, true), TRAIL), Depacketized::Unit(vec![TRAIL.to_vec()]));
+        assert_eq!(
+            d.push(&header(14, 400, true), TRAIL),
+            Depacketized::Unit(vec![TRAIL.to_vec()])
+        );
     }
 
     /// Nothing is decodable until a random-access picture, and a gap drops
@@ -4326,26 +4874,63 @@ mod tests {
     #[test]
     fn a_lost_packet_drops_pictures_until_the_next_idr() {
         let mut d = Depacketizer::default();
-        assert_eq!(d.push(&header(1, 0, true), TRAIL), Depacketized::Lost, "joined mid-stream");
-        assert_eq!(d.push(&header(2, 400, true), IDR), Depacketized::Unit(vec![IDR.to_vec()]));
-        assert_eq!(d.push(&header(3, 800, true), TRAIL), Depacketized::Unit(vec![TRAIL.to_vec()]));
-        assert_eq!(d.push(&header(5, 1200, true), TRAIL), Depacketized::Lost, "4 never came");
+        assert_eq!(
+            d.push(&header(1, 0, true), TRAIL),
+            Depacketized::Lost,
+            "joined mid-stream"
+        );
+        assert_eq!(
+            d.push(&header(2, 400, true), IDR),
+            Depacketized::Unit(vec![IDR.to_vec()])
+        );
+        assert_eq!(
+            d.push(&header(3, 800, true), TRAIL),
+            Depacketized::Unit(vec![TRAIL.to_vec()])
+        );
+        assert_eq!(
+            d.push(&header(5, 1200, true), TRAIL),
+            Depacketized::Lost,
+            "4 never came"
+        );
         assert_eq!(d.push(&header(6, 1600, true), TRAIL), Depacketized::Lost);
-        assert_eq!(d.push(&header(6, 1600, true), TRAIL), Depacketized::Pending, "a duplicate");
-        assert_eq!(d.push(&header(7, 2000, true), IDR), Depacketized::Unit(vec![IDR.to_vec()]));
+        assert_eq!(
+            d.push(&header(6, 1600, true), TRAIL),
+            Depacketized::Pending,
+            "a duplicate"
+        );
+        assert_eq!(
+            d.push(&header(7, 2000, true), IDR),
+            Depacketized::Unit(vec![IDR.to_vec()])
+        );
 
         // A fragment lost in the middle of a picture takes the picture with it.
         let pieces = fragments(IDR, 3);
-        assert_eq!(d.push(&header(8, 2400, false), &pieces[0]), Depacketized::Pending);
-        assert_eq!(d.push(&header(10, 2400, true), &pieces[2]), Depacketized::Lost);
+        assert_eq!(
+            d.push(&header(8, 2400, false), &pieces[0]),
+            Depacketized::Pending
+        );
+        assert_eq!(
+            d.push(&header(10, 2400, true), &pieces[2]),
+            Depacketized::Lost
+        );
     }
 
     #[test]
     fn a_new_stream_starts_its_own_picture_count() {
         let mut d = Depacketizer::default();
-        assert_eq!(d.push(&header(100, 0, true), IDR), Depacketized::Unit(vec![IDR.to_vec()]));
-        let next = RtpHeader { ssrc: 10, ..header(5000, 0, true) };
-        assert_eq!(d.push(&next, IDR), Depacketized::Unit(vec![IDR.to_vec()]), "not a gap");
+        assert_eq!(
+            d.push(&header(100, 0, true), IDR),
+            Depacketized::Unit(vec![IDR.to_vec()])
+        );
+        let next = RtpHeader {
+            ssrc: 10,
+            ..header(5000, 0, true)
+        };
+        assert_eq!(
+            d.push(&next, IDR),
+            Depacketized::Unit(vec![IDR.to_vec()]),
+            "not a gap"
+        );
     }
 
     /// A payload with the decoding order number a stream in strips carries: after
@@ -4356,7 +4941,10 @@ mod tests {
     }
 
     fn strip(strip: u32, sequence: u16, timestamp: u32, marker: bool) -> RtpHeader {
-        RtpHeader { ssrc: 9 + strip, ..header(sequence, timestamp, marker) }
+        RtpHeader {
+            ssrc: 9 + strip,
+            ..header(sequence, timestamp, marker)
+        }
     }
 
     /// A keyframe as the Mac sends one in strips, the first strip's parameter
@@ -4366,20 +4954,44 @@ mod tests {
     #[test]
     fn strips_come_out_in_their_one_decoding_order() {
         let mut s = Strips::default();
-        assert_eq!(s.push(&strip(0, 10, 0, false), &numbered(7, &aggregation(&[VPS, SPS]))), (0, Depacketized::Pending));
+        assert_eq!(
+            s.push(
+                &strip(0, 10, 0, false),
+                &numbered(7, &aggregation(&[VPS, SPS]))
+            ),
+            (0, Depacketized::Pending)
+        );
         let pieces = fragments(IDR, 3);
-        assert_eq!(s.push(&strip(0, 11, 0, false), &numbered(7, &pieces[0])), (0, Depacketized::Pending));
-        assert_eq!(s.push(&strip(0, 12, 0, false), &numbered(7, &pieces[1])), (0, Depacketized::Pending));
+        assert_eq!(
+            s.push(&strip(0, 11, 0, false), &numbered(7, &pieces[0])),
+            (0, Depacketized::Pending)
+        );
+        assert_eq!(
+            s.push(&strip(0, 12, 0, false), &numbered(7, &pieces[1])),
+            (0, Depacketized::Pending)
+        );
         assert_eq!(
             s.push(&strip(0, 13, 0, true), &numbered(7, &pieces[2])),
-            (0, Depacketized::Unit(vec![VPS.to_vec(), SPS.to_vec(), IDR.to_vec()]))
+            (
+                0,
+                Depacketized::Unit(vec![VPS.to_vec(), SPS.to_vec(), IDR.to_vec()])
+            )
         );
         let trail = Depacketized::Unit(vec![TRAIL.to_vec()]);
-        assert_eq!(s.push(&strip(1, 500, 0, true), &numbered(8, TRAIL)), (1, trail));
+        assert_eq!(
+            s.push(&strip(1, 500, 0, true), &numbered(8, TRAIL)),
+            (1, trail)
+        );
         let trail = || Depacketized::Unit(vec![TRAIL.to_vec()]);
         // A frame carries the strips that changed.
-        assert_eq!(s.push(&strip(3, 900, 0, true), &numbered(9, TRAIL)), (3, trail()));
-        assert_eq!(s.push(&strip(0, 14, 400, true), &numbered(10, TRAIL)), (0, trail()));
+        assert_eq!(
+            s.push(&strip(3, 900, 0, true), &numbered(9, TRAIL)),
+            (3, trail())
+        );
+        assert_eq!(
+            s.push(&strip(0, 14, 400, true), &numbered(10, TRAIL)),
+            (0, trail())
+        );
         assert_eq!(s.stream(12), 9, "the display's SSRC is its first strip's");
     }
 
@@ -4388,14 +5000,27 @@ mod tests {
     #[test]
     fn a_picture_is_acknowledged_by_what_the_mac_filed_it_under() {
         let mut whole = Assembly::new(Codec::Hevc, false);
-        assert!(matches!(whole.push(&header(1, 400, true), IDR).1, Depacketized::Unit(_)));
+        assert!(matches!(
+            whole.push(&header(1, 400, true), IDR).1,
+            Depacketized::Unit(_)
+        ));
         assert_eq!(whole.acknowledgement(400), 400);
 
         let mut strips = Assembly::new(Codec::Hevc, true);
-        assert!(matches!(strips.push(&strip(0, 1, 800, true), &numbered(7, IDR)).1, Depacketized::Unit(_)));
+        assert!(matches!(
+            strips.push(&strip(0, 1, 800, true), &numbered(7, IDR)).1,
+            Depacketized::Unit(_)
+        ));
         assert_eq!(strips.acknowledgement(800), 7);
-        assert!(matches!(strips.push(&strip(1, 1, 800, true), &numbered(8, TRAIL)).1, Depacketized::Unit(_)));
-        assert_eq!(strips.acknowledgement(800), 8, "the frame's second strip, under the same timestamp");
+        assert!(matches!(
+            strips.push(&strip(1, 1, 800, true), &numbered(8, TRAIL)).1,
+            Depacketized::Unit(_)
+        ));
+        assert_eq!(
+            strips.acknowledgement(800),
+            8,
+            "the frame's second strip, under the same timestamp"
+        );
     }
 
     /// A picture missing from the decoding order is one every strip may predict
@@ -4407,36 +5032,81 @@ mod tests {
         let trail = || Depacketized::Unit(vec![TRAIL.to_vec()]);
         let idr = || Depacketized::Unit(vec![IDR.to_vec()]);
         // Joined mid-stream, at a strip taken for the first until an earlier one comes.
-        assert_eq!(s.push(&strip(1, 1, 0, true), &numbered(3, TRAIL)), (0, Depacketized::Lost));
-        assert_eq!(s.push(&strip(0, 1, 400, true), &numbered(4, IDR)), (0, idr()));
-        assert_eq!(s.push(&strip(1, 2, 400, true), &numbered(5, TRAIL)), (1, trail()));
-        assert_eq!(s.push(&strip(2, 1, 800, true), &numbered(7, TRAIL)), (2, Depacketized::Lost), "6 never came");
-        assert_eq!(s.push(&strip(0, 2, 1200, true), &numbered(8, TRAIL)), (0, Depacketized::Lost));
-        assert_eq!(s.push(&strip(2, 2, 1200, true), &numbered(9, IDR)), (2, Depacketized::Lost), "not the first strip's");
-        assert_eq!(s.push(&strip(0, 3, 1600, true), &numbered(10, IDR)), (0, idr()));
-        assert_eq!(s.push(&strip(3, 1, 1600, true), &numbered(11, TRAIL)), (3, trail()));
+        assert_eq!(
+            s.push(&strip(1, 1, 0, true), &numbered(3, TRAIL)),
+            (0, Depacketized::Lost)
+        );
+        assert_eq!(
+            s.push(&strip(0, 1, 400, true), &numbered(4, IDR)),
+            (0, idr())
+        );
+        assert_eq!(
+            s.push(&strip(1, 2, 400, true), &numbered(5, TRAIL)),
+            (1, trail())
+        );
+        assert_eq!(
+            s.push(&strip(2, 1, 800, true), &numbered(7, TRAIL)),
+            (2, Depacketized::Lost),
+            "6 never came"
+        );
+        assert_eq!(
+            s.push(&strip(0, 2, 1200, true), &numbered(8, TRAIL)),
+            (0, Depacketized::Lost)
+        );
+        assert_eq!(
+            s.push(&strip(2, 2, 1200, true), &numbered(9, IDR)),
+            (2, Depacketized::Lost),
+            "not the first strip's"
+        );
+        assert_eq!(
+            s.push(&strip(0, 3, 1600, true), &numbered(10, IDR)),
+            (0, idr())
+        );
+        assert_eq!(
+            s.push(&strip(3, 1, 1600, true), &numbered(11, TRAIL)),
+            (3, trail())
+        );
 
         // A strip's own sequence numbers show a packet lost before the order does.
         let pieces = fragments(TRAIL, 2);
-        assert_eq!(s.push(&strip(3, 3, 2000, true), &numbered(12, &pieces[1])), (3, Depacketized::Lost));
-        assert_eq!(s.push(&strip(0, 4, 2400, true), &numbered(13, TRAIL)), (0, Depacketized::Lost));
-        assert_eq!(s.push(&strip(0, 5, 2800, true), &numbered(14, IDR)), (0, idr()));
+        assert_eq!(
+            s.push(&strip(3, 3, 2000, true), &numbered(12, &pieces[1])),
+            (3, Depacketized::Lost)
+        );
+        assert_eq!(
+            s.push(&strip(0, 4, 2400, true), &numbered(13, TRAIL)),
+            (0, Depacketized::Lost)
+        );
+        assert_eq!(
+            s.push(&strip(0, 5, 2800, true), &numbered(14, IDR)),
+            (0, idr())
+        );
 
         // The keyframe is whole once every other strip's picture of it has come.
         assert!(!s.whole(), "three strips of the keyframe are still to come");
         for (other, sequence) in [(1, 3), (2, 3), (3, 4)] {
             assert!(!s.whole());
             let at = 14 + other as u16;
-            assert_eq!(s.push(&strip(other, sequence, 2800, true), &numbered(at, TRAIL)).1, trail());
+            assert_eq!(
+                s.push(&strip(other, sequence, 2800, true), &numbered(at, TRAIL))
+                    .1,
+                trail()
+            );
         }
         assert!(s.whole());
-        assert_eq!(s.push(&strip(0, 6, 3200, true), &numbered(18, TRAIL)), (0, trail()));
+        assert_eq!(
+            s.push(&strip(0, 6, 3200, true), &numbered(18, TRAIL)),
+            (0, trail())
+        );
         assert!(s.whole());
         s.resync();
         assert!(!s.whole());
 
         // A new stream, after an offer, is another display's worth of SSRCs.
-        let next = RtpHeader { ssrc: 5000, ..header(77, 0, true) };
+        let next = RtpHeader {
+            ssrc: 5000,
+            ..header(77, 0, true)
+        };
         assert_eq!(s.push(&next, &numbered(0, IDR)), (0, idr()));
         assert_eq!(s.stream(5003), 5000);
     }
@@ -4447,13 +5117,24 @@ mod tests {
     async fn a_keyframe_that_has_begun_is_asked_for_again_only_after_the_interval() {
         let mut request = KeyframeRequest::default();
         request.hold(tokio::time::Instant::now());
-        assert_eq!(request.due(tokio::time::Instant::now()), None, "its strips are on their way");
+        assert_eq!(
+            request.due(tokio::time::Instant::now()),
+            None,
+            "its strips are on their way"
+        );
         tokio::time::advance(PLI_INTERVAL).await;
-        assert_eq!(request.due(tokio::time::Instant::now()), Some(Ask::Keyframe));
+        assert_eq!(
+            request.due(tokio::time::Instant::now()),
+            Some(Ask::Keyframe)
+        );
         request.hold(tokio::time::Instant::now());
         request.settle();
         tokio::time::advance(PLI_INTERVAL).await;
-        assert_eq!(request.due(tokio::time::Instant::now()), None, "the keyframe came whole");
+        assert_eq!(
+            request.due(tokio::time::Instant::now()),
+            None,
+            "the keyframe came whole"
+        );
     }
 
     /// The strip heights the Mac sent, and four tiles offered whatever the
@@ -4462,18 +5143,60 @@ mod tests {
     /// from probes below it.
     #[test]
     fn a_display_is_offered_in_strips_whatever_its_size() {
-        for (height, rows) in [(64, 16), (96, 32), (120, 32), (144, 48), (600, 160), (800, 208), (801, 208), (833, 208), (834, 208), (835, 208), (836, 224), (900, 240), (1000, 256), (1080, 272), (1730, 432), (1800, 464)] {
+        for (height, rows) in [
+            (64, 16),
+            (96, 32),
+            (120, 32),
+            (144, 48),
+            (600, 160),
+            (800, 208),
+            (801, 208),
+            (833, 208),
+            (834, 208),
+            (835, 208),
+            (836, 224),
+            (900, 240),
+            (1000, 256),
+            (1080, 272),
+            (1730, 432),
+            (1800, 464),
+        ] {
             assert_eq!(strip_rows(height), rows, "{height} rows");
         }
         // Whether the configuration for a display of `size` holds a video offer
         // of `tiles` tiles.
         let offered = |offers: &Offers, size, tiles| {
-            let want = offer(MODE_VIDEO, &video_offer_blob(offers.videos[0].ssrc, size, tiles, Codec::Hevc), &offers.call_id);
-            offers.configuration(&[size]).windows(want.len()).any(|at| at == want)
+            let want = offer(
+                MODE_VIDEO,
+                &video_offer_blob(offers.videos[0].ssrc, size, tiles, Codec::Hevc),
+                &offers.call_id,
+            );
+            offers
+                .configuration(&[size])
+                .windows(want.len())
+                .any(|at| at == want)
         };
-        assert!(offered(&Offers::new(1, Receive::Hevc { strips: true }), (1600, 1000), 4));
-        assert!(offered(&Offers::new(1, Receive::Hevc { strips: true }), (160, 90), 4), "the Mac says what it sends none of");
-        assert!(offered(&Offers::new(1, Receive::Hevc { strips: false }), (1600, 1000), 1), "a passed stream");
+        assert!(offered(
+            &Offers::new(1, Receive::Hevc { strips: true }),
+            (1600, 1000),
+            4
+        ));
+        assert!(
+            offered(
+                &Offers::new(1, Receive::Hevc { strips: true }),
+                (160, 90),
+                4
+            ),
+            "the Mac says what it sends none of"
+        );
+        assert!(
+            offered(
+                &Offers::new(1, Receive::Hevc { strips: false }),
+                (1600, 1000),
+                1
+            ),
+            "a passed stream"
+        );
     }
 
     /// The offer carries the display's size as it is, in either codec: offered
@@ -4483,11 +5206,26 @@ mod tests {
     #[test]
     fn the_offer_carries_the_display_as_it_is() {
         let offered = |offers: &Offers, size, codec| {
-            let want = offer(MODE_VIDEO, &video_offer_blob(offers.videos[0].ssrc, size, 1, codec), &offers.call_id);
-            offers.configuration(&[size]).windows(want.len()).any(|at| at == want)
+            let want = offer(
+                MODE_VIDEO,
+                &video_offer_blob(offers.videos[0].ssrc, size, 1, codec),
+                &offers.call_id,
+            );
+            offers
+                .configuration(&[size])
+                .windows(want.len())
+                .any(|at| at == want)
         };
-        assert!(offered(&Offers::new(1, Receive::H264), (1864, 983), Codec::H264));
-        assert!(offered(&Offers::new(1, Receive::Hevc { strips: false }), (1863, 983), Codec::Hevc));
+        assert!(offered(
+            &Offers::new(1, Receive::H264),
+            (1864, 983),
+            Codec::H264
+        ));
+        assert!(offered(
+            &Offers::new(1, Receive::Hevc { strips: false }),
+            (1863, 983),
+            Codec::Hevc
+        ));
     }
 
     /// Each strip's SSRC has sequence numbers of its own, so its own rollover.
@@ -4507,7 +5245,10 @@ mod tests {
         let mut rest = &stream[..];
         while let Some(at) = rest.windows(3).position(|w| w == [0, 0, 1]) {
             rest = &rest[at + 3..];
-            let end = rest.windows(3).position(|w| w == [0, 0, 1]).unwrap_or(rest.len());
+            let end = rest
+                .windows(3)
+                .position(|w| w == [0, 0, 1])
+                .unwrap_or(rest.len());
             let mut nal = rest[..end].to_vec();
             while nal.last() == Some(&0) {
                 nal.pop();
@@ -4542,7 +5283,10 @@ mod tests {
             .collect();
         assert_eq!(
             parse_sps(&sps),
-            Some(StreamParams { size: (1600, 1000), decode: "hev1.4.10.L150.BE.8".to_owned() })
+            Some(StreamParams {
+                size: (1600, 1000),
+                decode: "hev1.4.10.L150.BE.8".to_owned()
+            })
         );
         assert_eq!(parse_sps(&sps[..12]), None, "a truncated one says nothing");
     }
@@ -4553,14 +5297,20 @@ mod tests {
     fn access_units_pass_as_annex_b_described_by_their_parameter_sets() {
         let units = fixture_units();
         let mut passer = Passer::default();
-        let passed: Vec<PassedUnit> = units.iter().map(|unit| passer.pass(unit).unwrap()).collect();
+        let passed: Vec<PassedUnit> = units
+            .iter()
+            .map(|unit| passer.pass(unit).unwrap())
+            .collect();
         assert_eq!(passed.len(), 3);
         assert!(passed[0].keyframe, "the stream opens on an IDR");
         assert!(!passed[1].keyframe && !passed[2].keyframe);
         for (unit, passed) in units.iter().zip(&passed) {
             assert_eq!(passed.size, (64, 48));
             assert_eq!(passed.decode, "hev1.4.10.L30.9E.8");
-            let annex_b: Vec<u8> = unit.iter().flat_map(|nal| [&[0, 0, 0, 1][..], nal].concat()).collect();
+            let annex_b: Vec<u8> = unit
+                .iter()
+                .flat_map(|nal| [&[0, 0, 0, 1][..], nal].concat())
+                .collect();
             assert_eq!(passed.data, annex_b);
         }
         // A unit before any parameter set has nothing to be configured by.
@@ -4576,12 +5326,42 @@ mod tests {
         let display = (64, 180);
         let mut passer = Passer::default();
         let first = passer.pass_strip(&units[0], 0, 900, display).unwrap();
-        assert_eq!((first.size, first.strip, first.begins, first.keyframe), (display, Some(Strip { index: 0, ends: false }), true, true));
+        assert_eq!(
+            (first.size, first.strip, first.begins, first.keyframe),
+            (
+                display,
+                Some(Strip {
+                    index: 0,
+                    ends: false
+                }),
+                true,
+                true
+            )
+        );
         assert_eq!(first.data, passer.pass(&units[0]).unwrap().data);
         let same = passer.pass_strip(&units[1], 2, 900, display).unwrap();
-        assert_eq!((same.strip, same.begins, same.keyframe), (Some(Strip { index: 2, ends: false }), false, false));
+        assert_eq!(
+            (same.strip, same.begins, same.keyframe),
+            (
+                Some(Strip {
+                    index: 2,
+                    ends: false
+                }),
+                false,
+                false
+            )
+        );
         let next = passer.pass_strip(&units[2], 2, 3900, display).unwrap();
-        assert_eq!((next.strip, next.begins), (Some(Strip { index: 2, ends: false }), true));
+        assert_eq!(
+            (next.strip, next.begins),
+            (
+                Some(Strip {
+                    index: 2,
+                    ends: false
+                }),
+                true
+            )
+        );
         // A 48-row picture is no strip of a display of 400 rows.
         assert_eq!(passer.pass_strip(&units[1], 1, 6900, (64, 400)), None);
     }
@@ -4609,21 +5389,38 @@ mod tests {
     #[test]
     fn the_macs_h264_describes_itself_in_a_sample_description() {
         let (sps, pps) = (h264_strip_sps(), unhex(H264_PPS));
-        assert_eq!(h264_parameter_sets(&unhex(H264_DESCRIPTION_UNIT)), Some(vec![sps.clone(), pps]));
-        assert_eq!(h264_parameter_sets(&unhex(H264_DESCRIPTION_UNIT)[..120]), None, "cut short");
+        assert_eq!(
+            h264_parameter_sets(&unhex(H264_DESCRIPTION_UNIT)),
+            Some(vec![sps.clone(), pps])
+        );
+        assert_eq!(
+            h264_parameter_sets(&unhex(H264_DESCRIPTION_UNIT)[..120]),
+            None,
+            "cut short"
+        );
         assert_eq!(h264_parameter_sets(b"\x92\xe6\xc0\xa3 no record"), None);
         assert_eq!(
             parse_h264_sps(&sps),
-            Some(StreamParams { size: (1600, 256), decode: "avc1.640020".to_owned() }),
+            Some(StreamParams {
+                size: (1600, 256),
+                decode: "avc1.640020".to_owned()
+            }),
             "a quarter of 1000 rows, rounded up to 16"
         );
         assert_eq!(
             parse_h264_sps(&unhex(H264_WHOLE_SPS)),
-            Some(StreamParams { size: (1600, 1000), decode: "avc1.640028".to_owned() }),
+            Some(StreamParams {
+                size: (1600, 1000),
+                decode: "avc1.640028".to_owned()
+            }),
             "cropped from 1008 rows"
         );
         assert_eq!(parse_h264_sps(&sps[..6]), None);
-        assert_eq!(parse_h264_sps(&unhex(H264_STRIP_SPS)).map(|params| params.size), Some((1600, 256)), "as the Mac sent it");
+        assert_eq!(
+            parse_h264_sps(&unhex(H264_STRIP_SPS)).map(|params| params.size),
+            Some((1600, 256)),
+            "as the Mac sent it"
+        );
     }
 
     /// The Mac's set says nothing of reordering, which leaves a decoder free to
@@ -4639,16 +5436,28 @@ mod tests {
         // Its restriction: no picture reordered, and a buffer of the twelve
         // reference frames the set allows.
         let data = rbsp(&written[1..]);
-        let mut r = Bits { data: &data, at: 24 };
-        assert_eq!(h264_sequence(100, &mut r).map(|sequence| (sequence.size, sequence.max_num_ref_frames)), Some(((1600, 256), 12)));
-        r.skip(1 + 1 + 1 + 1 + 4 + 1 + 24 + 1 + 1 + 1 + 1 + 1).unwrap();
+        let mut r = Bits {
+            data: &data,
+            at: 24,
+        };
+        assert_eq!(
+            h264_sequence(100, &mut r).map(|sequence| (sequence.size, sequence.max_num_ref_frames)),
+            Some(((1600, 256), 12))
+        );
+        r.skip(1 + 1 + 1 + 1 + 4 + 1 + 24 + 1 + 1 + 1 + 1 + 1)
+            .unwrap();
         assert_eq!(r.bit(), Some(1), "bitstream_restriction_flag");
         r.skip(1).unwrap();
         assert_eq!([(); 6].map(|()| r.ue().unwrap()), [2, 1, 16, 16, 0, 12]);
         // One that says so already is left as it is, and so is one cut short.
         assert_eq!(h264_in_decoding_order(&written), None);
         assert_eq!(h264_in_decoding_order(&sent[..9]), None);
-        assert_eq!(h264_in_decoding_order(&unhex(H264_WHOLE_SPS)).and_then(|sps| parse_h264_sps(&sps)).map(|params| params.size), Some((1600, 1000)));
+        assert_eq!(
+            h264_in_decoding_order(&unhex(H264_WHOLE_SPS))
+                .and_then(|sps| parse_h264_sps(&sps))
+                .map(|params| params.size),
+            Some((1600, 1000))
+        );
     }
 
     /// The H.264 in one tile: the description, the IDR in fragments without a
@@ -4657,7 +5466,14 @@ mod tests {
     #[test]
     fn h264_sent_whole_goes_on_from_an_idr_alone() {
         let (sent, pps) = (unhex(H264_WHOLE_SPS), unhex(H264_PPS));
-        let description = [&unhex(H264_DESCRIPTION_UNIT)[..4], b"avcC\x01\x64\x00\x28\xff\xe1\x00\x11", &sent, b"\x01\x00\x04", &pps].concat();
+        let description = [
+            &unhex(H264_DESCRIPTION_UNIT)[..4],
+            b"avcC\x01\x64\x00\x28\xff\xe1\x00\x11",
+            &sent,
+            b"\x01\x00\x04",
+            &pps,
+        ]
+        .concat();
         let sps = h264_in_decoding_order(&sent).unwrap();
         let fragments = |nal: &[u8]| {
             let (first, second) = nal[1..].split_at(nal.len() / 2);
@@ -4669,20 +5485,38 @@ mod tests {
         };
         let mut d = Depacketizer::new(Codec::H264);
         let idr = fragments(H264_IDR_SLICE);
-        assert_eq!(d.push(&header(1, 0, false), &description), Depacketized::Pending);
+        assert_eq!(
+            d.push(&header(1, 0, false), &description),
+            Depacketized::Pending
+        );
         assert_eq!(d.push(&header(2, 0, false), &idr[0]), Depacketized::Pending);
         assert_eq!(
             d.push(&header(3, 0, true), &idr[1]),
             Depacketized::Unit(vec![sps, pps, H264_IDR_SLICE.to_vec()])
         );
-        assert_eq!(d.push(&header(4, 400, true), H264_SLICE), Depacketized::Unit(vec![H264_SLICE.to_vec()]));
+        assert_eq!(
+            d.push(&header(4, 400, true), H264_SLICE),
+            Depacketized::Unit(vec![H264_SLICE.to_vec()])
+        );
         // Sequence 5 never came.
-        assert_eq!(d.push(&header(6, 1200, true), H264_SLICE), Depacketized::Lost);
+        assert_eq!(
+            d.push(&header(6, 1200, true), H264_SLICE),
+            Depacketized::Lost
+        );
         assert!(!d.resumes_at_refresh(), "an IDR is asked for");
-        let refresh = RtpHeader { refresh: true, ..header(7, 1600, true) };
+        let refresh = RtpHeader {
+            refresh: true,
+            ..header(7, 1600, true)
+        };
         assert_eq!(d.push(&refresh, H264_SLICE), Depacketized::Lost);
-        assert_eq!(d.push(&header(8, 2000, false), &idr[0]), Depacketized::Pending);
-        assert_eq!(d.push(&header(9, 2000, true), &idr[1]), Depacketized::Unit(vec![H264_IDR_SLICE.to_vec()]));
+        assert_eq!(
+            d.push(&header(8, 2000, false), &idr[0]),
+            Depacketized::Pending
+        );
+        assert_eq!(
+            d.push(&header(9, 2000, true), &idr[1]),
+            Depacketized::Unit(vec![H264_IDR_SLICE.to_vec()])
+        );
     }
 
     /// One tile of a 1281×801 display, as the Mac sent it: coded 1280×800, and
@@ -4695,8 +5529,15 @@ mod tests {
         assert_eq!(passer.pass(&unit).unwrap().size, (1280, 800));
         let whole = passer.pass_whole(&unit, Some((1281, 801))).unwrap();
         assert_eq!((whole.size, whole.strip), ((1281, 801), None));
-        assert_eq!(passer.pass_whole(&unit, Some((1280, 800))).unwrap().size, (1280, 800));
-        assert_eq!(passer.pass_whole(&unit, Some((1600, 1000))).unwrap().size, (1280, 800), "another display's");
+        assert_eq!(
+            passer.pass_whole(&unit, Some((1280, 800))).unwrap().size,
+            (1280, 800)
+        );
+        assert_eq!(
+            passer.pass_whole(&unit, Some((1600, 1000))).unwrap().size,
+            (1280, 800),
+            "another display's"
+        );
         assert_eq!(passer.pass_whole(&unit, None).unwrap().size, (1280, 800));
     }
 
@@ -4706,11 +5547,15 @@ mod tests {
     fn the_video_offer_names_the_hevc_only_for_a_stream_in_it() {
         let hevc = video_offer_blob(7, (1600, 1000), 4, Codec::Hevc);
         let h264 = video_offer_blob(7, (1600, 1000), 1, Codec::H264);
-        let names = |blob: &[u8], features: &[u8]| blob.windows(features.len()).any(|at| at == features);
+        let names =
+            |blob: &[u8], features: &[u8]| blob.windows(features.len()).any(|at| at == features);
         assert!(names(&hevc, b"CABAC") && names(&hevc, b"POSE:4"));
         assert!(names(&h264, b"CABAC") && !names(&h264, b"POSE:4"));
         let (offers, _) = MediaStream::new(
-            Route::direct("192.0.2.1:5900".parse().unwrap(), "192.0.2.2:40000".parse().unwrap()),
+            Route::direct(
+                "192.0.2.1:5900".parse().unwrap(),
+                "192.0.2.2:40000".parse().unwrap(),
+            ),
             Receive::H264,
             1,
         );
@@ -4723,18 +5568,28 @@ mod tests {
     /// platform's words: none of them is the socket failing.
     #[tokio::test]
     async fn a_report_to_a_port_not_yet_open_is_no_socket_failure() {
-        let closed = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let closed = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
         let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         socket.connect(closed).await.unwrap();
         socket.send(b"report").await.unwrap();
         let mut datagram = [0u8; 16];
-        match tokio::time::timeout(std::time::Duration::from_secs(2), socket.recv(&mut datagram)).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            socket.recv(&mut datagram),
+        )
+        .await
+        {
             Ok(Err(e)) => assert!(unreachable(&e), "{e}"),
             Ok(Ok(len)) => panic!("{len} bytes from a closed port"),
             // A platform that reports nothing leaves the socket as it was.
             Err(_) => {}
         }
-        assert!(!unreachable(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+        assert!(!unreachable(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
     }
 
     /// The read loop's queue is as deep in frames whether a frame is one unit or
@@ -4745,23 +5600,46 @@ mod tests {
         let (queue, mut units) = pass_queue();
         for _ in 0..PASS_QUEUE {
             for index in 0..STRIPS as u8 {
-                assert!(matches!(queue.send(passed_strip(index, index == 0)), Sent::Queued));
+                assert!(matches!(
+                    queue.send(passed_strip(index, index == 0)),
+                    Sent::Queued
+                ));
             }
         }
-        assert!(matches!(queue.send(passed_strip(0, true)), Sent::Full(PASS_QUEUE)));
+        assert!(matches!(
+            queue.send(passed_strip(0, true)),
+            Sent::Full(PASS_QUEUE)
+        ));
         assert!(matches!(queue.send(passed_whole()), Sent::Full(PASS_QUEUE)));
         // Taken once the second strip says the first is not its frame's last.
-        assert_eq!(units.recv().await.unwrap().unwrap().strip, Some(Strip { index: 0, ends: false }));
+        assert_eq!(
+            units.recv().await.unwrap().unwrap().strip,
+            Some(Strip {
+                index: 0,
+                ends: false
+            })
+        );
         assert!(matches!(queue.send(passed_whole()), Sent::Queued));
         assert!(matches!(queue.send(passed_whole()), Sent::Full(PASS_QUEUE)));
     }
 
     fn passed_whole() -> PassedUnit {
-        PassedUnit { size: (64, 180), strip: None, begins: true, decode: String::new(), keyframe: false, data: Vec::new() }
+        PassedUnit {
+            size: (64, 180),
+            strip: None,
+            begins: true,
+            decode: String::new(),
+            keyframe: false,
+            data: Vec::new(),
+        }
     }
 
     fn passed_strip(index: u8, begins: bool) -> PassedUnit {
-        PassedUnit { strip: Some(crate::protocol::Strip { index, ends: false }), begins, ..passed_whole() }
+        PassedUnit {
+            strip: Some(crate::protocol::Strip { index, ends: false }),
+            begins,
+            ..passed_whole()
+        }
     }
 
     /// A strip is passed on as its frame's last where it is the fourth, where
@@ -4807,7 +5685,12 @@ mod tests {
     fn media() -> MediaStream {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 1).0
+        MediaStream::new(
+            Route::direct(peer, local),
+            Receive::Hevc { strips: true },
+            1,
+        )
+        .0
     }
 
     /// Offer the stream for `size` as the session does once the Mac has named its
@@ -4830,8 +5713,14 @@ mod tests {
     #[test]
     fn an_offer_waits_for_the_ports_and_goes_out_once_per_display_and_one_at_a_time() {
         let mut m = media();
-        assert!(m.deadline().is_some(), "the handshake already asked for the ports");
-        assert!(m.offer(&[(1600, 1000)]).is_none(), "no offer before the Mac names its ports");
+        assert!(
+            m.deadline().is_some(),
+            "the handshake already asked for the ports"
+        );
+        assert!(
+            m.offer(&[(1600, 1000)]).is_none(),
+            "no offer before the Mac names its ports"
+        );
         m.invited = true;
         let Some(msg) = m.offer(&[(1600, 1000)]) else {
             panic!("the named ports allow an offer")
@@ -4841,9 +5730,15 @@ mod tests {
         assert!(m.offer(&[(1280, 800)]).is_none(), "not while one is out");
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
         assert!(!m.pending());
-        assert!(m.offer(&[(1600, 1000)]).is_none(), "the stream runs at this size");
+        assert!(
+            m.offer(&[(1600, 1000)]).is_none(),
+            "the stream runs at this size"
+        );
         m.stopped();
-        assert!(m.offer(&[(1600, 1000)]).is_none(), "a display change waits for the ports named after it");
+        assert!(
+            m.offer(&[(1600, 1000)]).is_none(),
+            "a display change waits for the ports named after it"
+        );
         m.invited = true;
         assert!(m.offer(&[(1600, 1000)]).is_some());
     }
@@ -4861,7 +5756,10 @@ mod tests {
 
         // Binding them is what fails here, once the naming is noted.
         let bound = m.on_reply(&unhex(PORTS)).unwrap_err();
-        assert!(format!("{bound:#}").contains("for the Mac's media stream"), "{bound:#}");
+        assert!(
+            format!("{bound:#}").contains("for the Mac's media stream"),
+            "{bound:#}"
+        );
         assert_eq!(m.deadline(), None, "named");
         assert!(m.offer(&[(1600, 1000)]).is_some());
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
@@ -4876,7 +5774,9 @@ mod tests {
     fn a_refusal_ends_the_session() {
         let mut m = media();
         offer_on_ports(&mut m, (1600, 1000));
-        let refused = m.on_reply(&unhex("00030001000000000000000200000000")).unwrap_err();
+        let refused = m
+            .on_reply(&unhex("00030001000000000000000200000000"))
+            .unwrap_err();
         assert!(
             format!("{refused:#}").contains("refused the media stream (error type 2, sub-code 0)"),
             "{refused:#}"
@@ -4892,30 +5792,59 @@ mod tests {
     #[test]
     fn a_stream_without_pictures_or_sound_is_overdue_but_not_across_a_display_change() {
         let mut m = media();
-        assert!(m.deadline().is_some(), "the handshake owes the ports before any offer");
-        *m.sounded.lock().unwrap() = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        assert!(
+            m.deadline().is_some(),
+            "the handshake owes the ports before any offer"
+        );
+        *m.sounded.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
         let offered = std::time::Instant::now();
         offer_on_ports(&mut m, (1600, 1000));
         let first = m.deadline().expect("an offer owes a picture and sound");
         assert!(first >= offered + STREAM_START);
-        assert!(m.overdue(first - std::time::Duration::from_millis(1)).is_none());
+        assert!(
+            m.overdue(first - std::time::Duration::from_millis(1))
+                .is_none()
+        );
         let unanswered = m.overdue(first).expect("overdue at the deadline");
-        assert!(unanswered.to_string().contains("did not answer"), "{unanswered}");
+        assert!(
+            unanswered.to_string().contains("did not answer"),
+            "{unanswered}"
+        );
 
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
         let portless = m.overdue(first).expect("still overdue once answered");
-        assert!(portless.to_string().contains("named no ports"), "{portless}");
+        assert!(
+            portless.to_string().contains("named no ports"),
+            "{portless}"
+        );
 
         m.pictured(0, (1280, 800));
-        assert_eq!(m.deadline(), Some(first), "another display's picture settles nothing");
+        assert_eq!(
+            m.deadline(),
+            Some(first),
+            "another display's picture settles nothing"
+        );
         *m.legs[0].heard.lock().unwrap() = Some(std::time::Instant::now());
-        assert_eq!(m.deadline(), Some(first), "nor does a report before the first picture");
+        assert_eq!(
+            m.deadline(),
+            Some(first),
+            "nor does a report before the first picture"
+        );
 
         m.pictured(0, (1600, 1000));
-        let Owed::Stream { pictured: [Some(pictured), _], .. } = m.owed else {
+        let Owed::Stream {
+            pictured: [Some(pictured), _],
+            ..
+        } = m.owed
+        else {
             panic!("the picture was not noted: {:?}", m.owed)
         };
-        assert_eq!(m.deadline(), Some(first), "the first sound is still owed, none since the offer");
+        assert_eq!(
+            m.deadline(),
+            Some(first),
+            "the first sound is still owed, none since the offer"
+        );
         assert!(m.overdue(first).is_some(), "and overdue without it");
 
         *m.sound_heard.lock().unwrap() = Some(pictured);
@@ -4923,11 +5852,21 @@ mod tests {
         assert!(m.overdue(first).is_some(), "and overdue without it");
         *m.sounded.lock().unwrap() = Some(pictured);
         *m.legs[0].heard.lock().unwrap() = Some(pictured);
-        let next = m.deadline().expect("a running stream owes a packet on each leg");
+        let next = m
+            .deadline()
+            .expect("a running stream owes a packet on each leg");
         assert_eq!(next, pictured + STREAM_SILENCE);
-        assert!(m.overdue(first).is_none(), "the first picture and sound settled the offer");
+        assert!(
+            m.overdue(first).is_none(),
+            "the first picture and sound settled the offer"
+        );
         let silent = m.overdue(next).expect("overdue after the silence");
-        assert!(silent.to_string().contains("sent nothing on the picture's leg for 48s"), "{silent}");
+        assert!(
+            silent
+                .to_string()
+                .contains("sent nothing on the picture's leg for 48s"),
+            "{silent}"
+        );
 
         // A still screen sends no picture, and the Mac's report on the picture's
         // leg is what keeps it alive.
@@ -4935,9 +5874,18 @@ mod tests {
         *m.legs[0].heard.lock().unwrap() = Some(reported);
         assert_eq!(m.deadline(), Some(next), "the sound is due first now");
         let quiet = m.overdue(next).expect("a leg without sound is overdue too");
-        assert!(quiet.to_string().contains("sent nothing on the sound's leg for 48s"), "{quiet}");
+        assert!(
+            quiet
+                .to_string()
+                .contains("sent nothing on the sound's leg for 48s"),
+            "{quiet}"
+        );
         *m.sound_heard.lock().unwrap() = Some(reported);
-        assert_eq!(m.deadline(), Some(reported + STREAM_SILENCE), "a report on each leg puts both off");
+        assert_eq!(
+            m.deadline(),
+            Some(reported + STREAM_SILENCE),
+            "a report on each leg puts both off"
+        );
         assert!(m.overdue(next).is_none());
 
         m.stopped();
@@ -4955,19 +5903,39 @@ mod tests {
     fn a_display_the_mac_withholds_holds_the_session() {
         let mut m = media();
         // The receiver carries on across offers, and so does what it last heard.
-        *m.legs[0].unsent.lock().unwrap() = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
-        m.legs[0].reported.store(true, std::sync::atomic::Ordering::Relaxed);
+        *m.legs[0].unsent.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        m.legs[0]
+            .reported
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         offer_on_ports(&mut m, (320, 136));
-        assert!(!m.legs[0].reported.load(std::sync::atomic::Ordering::Relaxed), "an offer's first report wakes the session");
+        assert!(
+            !m.legs[0]
+                .reported
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "an offer's first report wakes the session"
+        );
         let unanswered = m.deadline().expect("an offer owes its answer");
         *m.legs[0].heard.lock().unwrap() = Some(std::time::Instant::now());
         *m.legs[0].unsent.lock().unwrap() = Some(std::time::Instant::now());
-        assert!(!m.withheld(0), "an unanswered offer has no stream to report on");
+        assert!(
+            !m.withheld(0),
+            "an unanswered offer has no stream to report on"
+        );
         assert_eq!(m.deadline(), Some(unanswered), "and still owes its answer");
-        assert!(m.overdue(unanswered).expect("overdue unanswered").to_string().contains("did not answer"));
-        *m.legs[0].unsent.lock().unwrap() = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        assert!(
+            m.overdue(unanswered)
+                .expect("overdue unanswered")
+                .to_string()
+                .contains("did not answer")
+        );
+        *m.legs[0].unsent.lock().unwrap() =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
-        assert!(!m.withheld(0), "nor is a report from before the offer its stream's");
+        assert!(
+            !m.withheld(0),
+            "nor is a report from before the offer its stream's"
+        );
         let sound = std::time::Instant::now();
         *m.sounded.lock().unwrap() = Some(sound);
         *m.sound_heard.lock().unwrap() = Some(sound);
@@ -4978,9 +5946,17 @@ mod tests {
         *m.legs[0].heard.lock().unwrap() = Some(said);
         *m.legs[0].unsent.lock().unwrap() = Some(said);
         assert!(m.withheld(0));
-        assert!(m.overdue(first).is_none(), "the Mac's word stands for the picture");
-        assert_eq!(m.deadline(), Some(sound + STREAM_SILENCE).min(Some(said + STREAM_SILENCE)));
-        let silent = m.overdue(said + STREAM_SILENCE).expect("a leg that stops reporting is overdue");
+        assert!(
+            m.overdue(first).is_none(),
+            "the Mac's word stands for the picture"
+        );
+        assert_eq!(
+            m.deadline(),
+            Some(sound + STREAM_SILENCE).min(Some(said + STREAM_SILENCE))
+        );
+        let silent = m
+            .overdue(said + STREAM_SILENCE)
+            .expect("a leg that stops reporting is overdue");
         assert!(silent.to_string().contains("sent nothing on"), "{silent}");
 
         *m.legs[0].pictured.lock().unwrap() = Some(std::time::Instant::now());
@@ -4990,7 +5966,10 @@ mod tests {
         m.stopped();
         assert!(!m.withheld(0), "a display change owes nothing");
         offer_on_ports(&mut m, (1600, 1000));
-        assert!(!m.withheld(0), "nor does its offer, until its own stream reports");
+        assert!(
+            !m.withheld(0),
+            "nor does its offer, until its own stream reports"
+        );
     }
 
     /// What the receiver reads off the Mac's report is its packet type, which
@@ -5003,7 +5982,10 @@ mod tests {
         let mut reports = SrtcpReceiver::new(&master());
         let receiver = mac.protect(&rtcp_receiver_report(0x0102_0304));
         reports.authenticate(&receiver).expect("authentic");
-        assert_eq!(receiver[1], RTCP_RECEIVER_REPORT, "the type is readable under SRTCP");
+        assert_eq!(
+            receiver[1], RTCP_RECEIVER_REPORT,
+            "the type is readable under SRTCP"
+        );
         let mut sender_report = [0u8; 28];
         sender_report[..8].copy_from_slice(&[0x80, 200, 0, 6, 1, 2, 3, 4]);
         let sender = mac.protect(&sender_report);
@@ -5018,16 +6000,25 @@ mod tests {
         *m.sound_heard.lock().unwrap() = Some(sound);
         let first = m.deadline().expect("the picture is owed");
         m.legs[0].report(receiver[1], std::time::Instant::now());
-        assert!(m.withheld(0), "a receiver's, with no picture, is the Mac sending none");
+        assert!(
+            m.withheld(0),
+            "a receiver's, with no picture, is the Mac sending none"
+        );
         assert!(m.overdue(first).is_none(), "which holds the session");
 
         // A sender's report after it: the Mac has sent pictures, so the one
         // missing was lost, and is owed within the offer's time again.
         m.legs[0].report(sender[1], std::time::Instant::now());
-        assert!(!m.withheld(0), "a sender's report is a stream that sends pictures");
+        assert!(
+            !m.withheld(0),
+            "a sender's report is a stream that sends pictures"
+        );
         assert!(m.overdue(first).is_some(), "and the picture is owed again");
         m.legs[0].report(receiver[1], std::time::Instant::now());
-        assert!(!m.withheld(0), "and a receiver's behind it is that stream gone still");
+        assert!(
+            !m.withheld(0),
+            "and a receiver's behind it is that stream gone still"
+        );
 
         // The other order: a sender's first, its pictures lost, then a still screen.
         let mut lost = media();
@@ -5035,9 +6026,18 @@ mod tests {
         assert!(lost.on_reply(&unhex(ANSWER)).unwrap().answered);
         lost.legs[0].report(sender[1], std::time::Instant::now());
         assert!(!lost.withheld(0));
-        assert!(heard_since(&lost.legs[0].heard, std::time::Instant::now() - std::time::Duration::from_secs(1)).is_some());
+        assert!(
+            heard_since(
+                &lost.legs[0].heard,
+                std::time::Instant::now() - std::time::Duration::from_secs(1)
+            )
+            .is_some()
+        );
         lost.legs[0].report(receiver[1], std::time::Instant::now());
-        assert!(!lost.withheld(0), "a stream that sent is not one the Mac withholds");
+        assert!(
+            !lost.withheld(0),
+            "a stream that sent is not one the Mac withholds"
+        );
         let first = lost.deadline().expect("the picture is owed");
         *lost.sounded.lock().unwrap() = Some(std::time::Instant::now());
         *lost.sound_heard.lock().unwrap() = Some(std::time::Instant::now());
@@ -5045,7 +6045,10 @@ mod tests {
 
         // A sender's report from before the offer is the last display's stream's.
         let mut next = media();
-        next.legs[0].report(sender[1], std::time::Instant::now() - std::time::Duration::from_secs(1));
+        next.legs[0].report(
+            sender[1],
+            std::time::Instant::now() - std::time::Duration::from_secs(1),
+        );
         offer_on_ports(&mut next, (320, 136));
         assert!(next.on_reply(&unhex(ANSWER)).unwrap().answered);
         next.legs[0].report(receiver[1], std::time::Instant::now());
@@ -5066,7 +6069,11 @@ mod tests {
     async fn each_offers_first_report_of_nothing_sent_wakes_the_session() {
         let woken = |m: &MediaStream| {
             let wake = m.offered();
-            async move { tokio::time::timeout(std::time::Duration::from_millis(50), wake.notified()).await.is_ok() }
+            async move {
+                tokio::time::timeout(std::time::Duration::from_millis(50), wake.notified())
+                    .await
+                    .is_ok()
+            }
         };
         let mut m = media();
         offer_on_ports(&mut m, (320, 136));
@@ -5083,7 +6090,10 @@ mod tests {
         offer_on_ports(&mut m, (1600, 1000));
         assert!(woken(&m).await, "the next offer's own wake");
         m.legs[0].report(RTCP_RECEIVER_REPORT, std::time::Instant::now());
-        assert!(woken(&m).await, "and its first receiver's report, on the receiver that carried on");
+        assert!(
+            woken(&m).await,
+            "and its first receiver's report, on the receiver that carried on"
+        );
     }
 
     /// A session with two virtual displays offers a video leg for each in the one
@@ -5093,36 +6103,70 @@ mod tests {
     fn two_displays_are_offered_named_and_answered_together() {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        let (mut m, pictures) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: false }, 2);
+        let (mut m, pictures) = MediaStream::new(
+            Route::direct(peer, local),
+            Receive::Hevc { strips: false },
+            2,
+        );
         assert_eq!((m.displays(), pictures.len()), (2, 2));
 
         let sizes = [(1600, 1000), (1280, 800)];
-        assert_eq!(m.offer(&sizes[..1]), None, "a layout of one display is not the two asked for");
+        assert_eq!(
+            m.offer(&sizes[..1]),
+            None,
+            "a layout of one display is not the two asked for"
+        );
         assert_eq!(m.offer(&sizes), None, "the ports have not arrived");
         m.invited = true;
         let Some(msg) = m.offer(&sizes) else {
             panic!("the named ports allow an offer")
         };
         let length = |at: usize| usize::from(u16::from_be_bytes([msg[at], msg[at + 1]]));
-        assert_eq!(&msg[6..10], &[0, 0, 0, 7], "60 fps on both streams, and the pointer left out");
-        assert!(length(0x0c) > 0 && length(0x0e) > 0, "an offer for each display");
-        assert_eq!(msg.len() - 4, 0xd8 + length(0x0a) + length(0x0c) + 0x5c + length(0x0e));
+        assert_eq!(
+            &msg[6..10],
+            &[0, 0, 0, 7],
+            "60 fps on both streams, and the pointer left out"
+        );
+        assert!(
+            length(0x0c) > 0 && length(0x0e) > 0,
+            "an offer for each display"
+        );
+        assert_eq!(
+            msg.len() - 4,
+            0xd8 + length(0x0a) + length(0x0c) + 0x5c + length(0x0e)
+        );
         assert!(m.offer(&sizes).is_none(), "one offer at a time");
 
         let one = m.on_reply(&unhex(ANSWER)).unwrap_err();
-        assert!(format!("{one:#}").contains("answered 1 video leg(s) of the 2"), "{one:#}");
-        assert_eq!(m.on_reply(&unhex("000200020000000000020003000100000000aabbccddeeff")).unwrap(), Replied { down: false, answered: true });
+        assert!(
+            format!("{one:#}").contains("answered 1 video leg(s) of the 2"),
+            "{one:#}"
+        );
+        assert_eq!(
+            m.on_reply(&unhex("000200020000000000020003000100000000aabbccddeeff"))
+                .unwrap(),
+            Replied {
+                down: false,
+                answered: true
+            }
+        );
         assert!(!m.pending());
 
         // Message 1 without the second leg, to this session, and with it, to a
         // session of one display.
         let short = m.on_reply(&unhex(PORTS)).unwrap_err();
-        assert!(format!("{short:#}").contains("enabled 1 video leg(s) for the 2"), "{short:#}");
+        assert!(
+            format!("{short:#}").contains("enabled 1 video leg(s) for the 2"),
+            "{short:#}"
+        );
         let mut both = unhex(PORTS);
         both[20..22].copy_from_slice(&5902u16.to_be_bytes());
         both[25] = 1;
         let extra = media().on_reply(&both).unwrap_err();
-        assert!(format!("{extra:#}").contains("enabled 2 video leg(s) for the 1"), "{extra:#}");
+        assert!(
+            format!("{extra:#}").contains("enabled 2 video leg(s) for the 1"),
+            "{extra:#}"
+        );
     }
 
     /// With the second display arranged ahead of the first on the Mac, the legs
@@ -5133,13 +6177,20 @@ mod tests {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
         let relaxed = std::sync::atomic::Ordering::Relaxed;
-        let (mut m, _units) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 2);
+        let (mut m, _units) = MediaStream::new(
+            Route::direct(peer, local),
+            Receive::Hevc { strips: true },
+            2,
+        );
         m.invited = true;
         assert_eq!((m.leg_of(0), m.leg_of(1)), (0, 1));
         m.show(0, true);
         m.arrange(true);
         assert_eq!((m.leg_of(0), m.leg_of(1)), (1, 0));
-        assert!(m.legs[1].shown.load(relaxed) && !m.legs[0].shown.load(relaxed), "shown goes with the display");
+        assert!(
+            m.legs[1].shown.load(relaxed) && !m.legs[0].shown.load(relaxed),
+            "shown goes with the display"
+        );
         m.show(1, true);
         assert!(m.legs[0].shown.load(relaxed));
 
@@ -5148,11 +6199,18 @@ mod tests {
         let sizes = [(1920, 911), (1915, 910)];
         assert!(m.offer(&sizes).is_some());
         m.pictured(0, (1920, 911));
-        let Owed::Stream { pictured, .. } = m.owed else { panic!("an offer owes its stream") };
+        let Owed::Stream { pictured, .. } = m.owed else {
+            panic!("an offer owes its stream")
+        };
         assert!(pictured[1].is_some() && pictured[0].is_none());
         m.pictured(1, (1920, 911));
-        let Owed::Stream { pictured, .. } = m.owed else { panic!("an offer owes its stream") };
-        assert!(pictured[0].is_none(), "the second display is the other size");
+        let Owed::Stream { pictured, .. } = m.owed else {
+            panic!("an offer owes its stream")
+        };
+        assert!(
+            pictured[0].is_none(),
+            "the second display is the other size"
+        );
 
         m.arrange(false);
         assert_eq!((m.leg_of(0), m.leg_of(1)), (0, 1));
@@ -5169,12 +6227,19 @@ mod tests {
     fn a_display_nobody_is_shown_owes_its_packets_and_one_coming_into_view_its_next() {
         let peer = "[fd00::2]:5900".parse().unwrap();
         let local = "[fd00::1]:50000".parse().unwrap();
-        let (mut m, _units) = MediaStream::new(Route::direct(peer, local), Receive::Hevc { strips: true }, 2);
+        let (mut m, _units) = MediaStream::new(
+            Route::direct(peer, local),
+            Receive::Hevc { strips: true },
+            2,
+        );
         m.invited = true;
         let offered = std::time::Instant::now();
         assert!(m.offer(&[(1600, 1000), (1280, 800)]).is_some());
-        m.on_reply(&unhex("000200020000000000020003000100000000aabbccddeeff")).unwrap();
-        let first = m.deadline().expect("the offer owes both pictures and sound");
+        m.on_reply(&unhex("000200020000000000020003000100000000aabbccddeeff"))
+            .unwrap();
+        let first = m
+            .deadline()
+            .expect("the offer owes both pictures and sound");
 
         // The first display's picture and the sound arrive; the second, in no
         // tab, has sent nothing.
@@ -5182,7 +6247,11 @@ mod tests {
         let now = Some(std::time::Instant::now());
         *m.sounded.lock().unwrap() = now;
         *m.sound_heard.lock().unwrap() = now;
-        assert_eq!(m.deadline(), Some(first), "the second display's picture is still owed");
+        assert_eq!(
+            m.deadline(),
+            Some(first),
+            "the second display's picture is still owed"
+        );
         let missing = m.overdue(first).expect("overdue without it");
         assert!(missing.to_string().contains("named no ports"), "{missing}");
 
@@ -5197,14 +6266,25 @@ mod tests {
         assert!(m.show(1, true), "it came into view");
         assert!(!m.show(1, true), "and is in view");
         assert!(m.overdue(first + STREAM_START).is_none());
-        let Owed::Stream { pictured: [Some(_), Some(shown)], .. } = m.owed else {
+        let Owed::Stream {
+            pictured: [Some(_), Some(shown)],
+            ..
+        } = m.owed
+        else {
             panic!("the display coming into view was not noted: {:?}", m.owed)
         };
         *m.legs[1].heard.lock().unwrap() = Some(shown);
         *m.legs[0].heard.lock().unwrap() = Some(shown + STREAM_SILENCE);
         *m.sound_heard.lock().unwrap() = Some(shown + STREAM_SILENCE);
-        let silent = m.overdue(shown + STREAM_SILENCE).expect("overdue after the silence");
-        assert!(silent.to_string().contains("the leg of display 2's picture for 48s"), "{silent}");
+        let silent = m
+            .overdue(shown + STREAM_SILENCE)
+            .expect("overdue after the silence");
+        assert!(
+            silent
+                .to_string()
+                .contains("the leg of display 2's picture for 48s"),
+            "{silent}"
+        );
     }
 
     /// A display change while an offer is out still owes that offer's answer by
@@ -5219,14 +6299,26 @@ mod tests {
         m.stopped();
         assert!(m.pending());
         m.invited = true;
-        assert!(m.offer(&[(1280, 800)]).is_none(), "not while the first is out, ports named or not");
+        assert!(
+            m.offer(&[(1280, 800)]).is_none(),
+            "not while the first is out, ports named or not"
+        );
         assert_eq!(m.deadline(), Some(first), "the answer is still owed");
-        assert!(m.overdue(first - std::time::Duration::from_millis(1)).is_none());
+        assert!(
+            m.overdue(first - std::time::Duration::from_millis(1))
+                .is_none()
+        );
         let unanswered = m.overdue(first).expect("unanswered at the deadline");
-        assert!(unanswered.to_string().contains("did not answer"), "{unanswered}");
+        assert!(
+            unanswered.to_string().contains("did not answer"),
+            "{unanswered}"
+        );
 
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
         assert_eq!(m.deadline(), None, "answered, for a display that has gone");
-        assert!(m.offer(&[(1280, 800)]).is_some(), "the new display's offer goes out");
+        assert!(
+            m.offer(&[(1280, 800)]).is_some(),
+            "the new display's offer goes out"
+        );
     }
 }

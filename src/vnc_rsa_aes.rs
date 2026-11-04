@@ -148,8 +148,12 @@ impl Strength {
 
     fn cipher(self, key: &[u8]) -> Cipher {
         match self {
-            Self::Aes128 => Cipher::Aes128(Eax::<Aes128>::new_from_slice(key).expect("a 16-byte key")),
-            Self::Aes256 => Cipher::Aes256(Eax::<Aes256>::new_from_slice(key).expect("a 32-byte key")),
+            Self::Aes128 => {
+                Cipher::Aes128(Eax::<Aes128>::new_from_slice(key).expect("a 16-byte key"))
+            }
+            Self::Aes256 => {
+                Cipher::Aes256(Eax::<Aes256>::new_from_slice(key).expect("a 32-byte key"))
+            }
         }
     }
 }
@@ -209,8 +213,16 @@ impl WireKey {
 }
 
 fn left_pad(bytes: &[u8], size: usize) -> Vec<u8> {
-    let bytes = bytes.iter().copied().skip_while(|&b| b == 0).collect::<Vec<_>>();
-    assert!(bytes.len() <= size, "a {}-byte number in a {size}-byte field", bytes.len());
+    let bytes = bytes
+        .iter()
+        .copied()
+        .skip_while(|&b| b == 0)
+        .collect::<Vec<_>>();
+    assert!(
+        bytes.len() <= size,
+        "a {}-byte number in a {size}-byte field",
+        bytes.len()
+    );
     let mut out = vec![0u8; size - bytes.len()];
     out.extend_from_slice(&bytes);
     out
@@ -239,7 +251,8 @@ pub async fn authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     // Key generation is the expensive step, and it does not depend on anything
     // the server says: start it before the server's key is read so the two
     // overlap, and off the runtime because a 2048-bit search is real CPU time.
-    let client_key = tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::rng(), CLIENT_KEY_BITS));
+    let client_key =
+        tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::rng(), CLIENT_KEY_BITS));
 
     let server_wire = read_server_key(reader).await?;
     let server_key = server_wire.public_key()?;
@@ -271,7 +284,8 @@ pub async fn authenticate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     out.extend_from_slice(&sealed_random);
     writer.write_all(&out).await?;
 
-    let server_random = read_server_random(reader, &client_key, client_wire.size(), strength).await?;
+    let server_random =
+        read_server_random(reader, &client_key, client_wire.size(), strength).await?;
 
     let send_key = strength.hash(&[&server_random, &client_random]);
     let recv_key = strength.hash(&[&client_random, &server_random]);
@@ -421,7 +435,8 @@ impl Sealer {
     /// no frame at all — nothing has ever needed to send one, and a reader that
     /// receives one has only a counter to advance for it.
     pub fn frame(&mut self, msg: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(msg.len() + (msg.len() / MAX_FRAME_BODY + 1) * (HEADER + TAG));
+        let mut out =
+            Vec::with_capacity(msg.len() + (msg.len() / MAX_FRAME_BODY + 1) * (HEADER + TAG));
         for body in msg.chunks(MAX_FRAME_BODY) {
             let header = (body.len() as u16).to_be_bytes();
             let sealed = self.cipher.seal(&self.counter, &header, body);
@@ -478,12 +493,15 @@ impl Opener {
     /// Open the complete frame in `staging`, leaving its body ready to hand on.
     fn accept(&mut self, len: usize) -> io::Result<()> {
         let (header, sealed) = self.staging.split_at(HEADER);
-        let body = self.cipher.open(&self.counter, header, &sealed[..len + TAG]).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "an RSA-AES frame failed its authentication tag",
-            )
-        })?;
+        let body = self
+            .cipher
+            .open(&self.counter, header, &sealed[..len + TAG])
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "an RSA-AES frame failed its authentication tag",
+                )
+            })?;
         bump(&mut self.counter);
         self.body = body;
         self.body_pos = 0;
@@ -526,7 +544,8 @@ impl Opener {
                     }
                     self.filled += n;
                     if self.filled == HEADER {
-                        let len = usize::from(u16::from_be_bytes([self.staging[0], self.staging[1]]));
+                        let len =
+                            usize::from(u16::from_be_bytes([self.staging[0], self.staging[1]]));
                         self.staging.resize(HEADER + len + TAG, 0);
                         self.phase = Phase::Sealed { len };
                     }
@@ -717,8 +736,18 @@ mod tests {
         assert_eq!(credentials("andrew", "pw").unwrap(), b"\x06andrew\x02pw");
         assert_eq!(credentials("", "pw").unwrap(), b"\x00\x02pw");
         let long = "x".repeat(256);
-        assert!(credentials(&long, "pw").unwrap_err().to_string().contains("username"));
-        assert!(credentials("u", &long).unwrap_err().to_string().contains("password"));
+        assert!(
+            credentials(&long, "pw")
+                .unwrap_err()
+                .to_string()
+                .contains("username")
+        );
+        assert!(
+            credentials("u", &long)
+                .unwrap_err()
+                .to_string()
+                .contains("password")
+        );
     }
 
     /// The server side of the exchange, written from the specification rather
@@ -770,7 +799,8 @@ mod tests {
         let send = strength.hash(&[&client_random, &server_random]);
         let recv = strength.hash(&[&server_random, &client_random]);
         let mut sealer = Sealer::new(strength.cipher(&send[..random_len]));
-        let mut frames = FrameReader::new(&mut sock, Opener::new(strength.cipher(&recv[..random_len])));
+        let mut frames =
+            FrameReader::new(&mut sock, Opener::new(strength.cipher(&recv[..random_len])));
 
         let hash_len = strength.hash(&[]).len();
         let mut client_hash = vec![0u8; hash_len];
@@ -803,10 +833,16 @@ mod tests {
         (credentials, echo.to_vec())
     }
 
-    async fn exchange(strength: Strength, subtype: u8, username: &str, password: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-        let server_key = tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::rng(), 1024).unwrap())
-            .await
-            .unwrap();
+    async fn exchange(
+        strength: Strength,
+        subtype: u8,
+        username: &str,
+        password: &str,
+    ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        let server_key =
+            tokio::task::spawn_blocking(|| RsaPrivateKey::new(&mut rand::rng(), 1024).unwrap())
+                .await
+                .unwrap();
         let (client_sock, server_sock) = tokio::io::duplex(4096);
         let server = tokio::spawn(scripted_server(server_sock, strength, server_key, subtype));
 

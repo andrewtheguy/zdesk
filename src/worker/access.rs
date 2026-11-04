@@ -97,9 +97,10 @@ struct Pin {
 
 /// The local clock time `after` from now, as the panel prints it.
 fn clock(after: Duration) -> String {
-    jiff::Zoned::now()
-        .checked_add(after)
-        .map_or_else(|_| "?".to_owned(), |time| time.strftime("%H:%M").to_string())
+    jiff::Zoned::now().checked_add(after).map_or_else(
+        |_| "?".to_owned(),
+        |time| time.strftime("%H:%M").to_string(),
+    )
 }
 
 impl Pin {
@@ -124,7 +125,9 @@ pub enum PinState {
         minutes_left: u64,
     },
     /// It logged a browser in, at this local clock time.
-    Used { at: String },
+    Used {
+        at: String,
+    },
     Expired,
     Withdrawn,
 }
@@ -134,7 +137,9 @@ pub enum PinState {
 pub enum Refusal {
     /// Not six digits, so it cannot be the PIN and is not counted against it.
     NotSixDigits,
-    Wrong { left: u32 },
+    Wrong {
+        left: u32,
+    },
     Used,
     Withdrawn,
     Expired,
@@ -149,12 +154,15 @@ impl Refusal {
                 if left == 1 { "entry" } else { "entries" }
             ),
             Self::Used => {
-                "The PIN has already logged a browser in. Press P in the zDesk TUI for a new one.".to_owned()
+                "The PIN has already logged a browser in. Press P in the zDesk TUI for a new one."
+                    .to_owned()
             }
             Self::Withdrawn => format!(
                 "The PIN was withdrawn after {MAX_WRONG} wrong entries. Press P in the zDesk TUI for a new one."
             ),
-            Self::Expired => "The PIN has expired. Press P in the zDesk TUI for a new one.".to_owned(),
+            Self::Expired => {
+                "The PIN has expired. Press P in the zDesk TUI for a new one.".to_owned()
+            }
         }
     }
 }
@@ -184,7 +192,10 @@ impl Access {
     /// The `Set-Cookie` value for `login`, for the landing origin and every
     /// instance subdomain under it.
     pub fn set_cookie(&self, login: &str) -> String {
-        format!("{}={login}; Domain={MASTER_HOST}; HttpOnly; SameSite=Lax; Path=/", self.cookie)
+        format!(
+            "{}={login}; Domain={MASTER_HOST}; HttpOnly; SameSite=Lax; Path=/",
+            self.cookie
+        )
     }
 
     /// Replace the PIN with a new one whose time starts now. Logins already made
@@ -308,18 +319,38 @@ mod tests {
         assert!(pin.bytes().all(|byte| byte.is_ascii_digit()), "{pin}");
 
         let login = access.log_in(&pin).unwrap();
-        assert!(matches!(access.pin(), PinState::Used { .. }), "{:?}", access.pin());
-        assert_eq!(access.log_in(&pin), Err(Refusal::Used), "a PIN logs one browser in");
+        assert!(
+            matches!(access.pin(), PinState::Used { .. }),
+            "{:?}",
+            access.pin()
+        );
+        assert_eq!(
+            access.log_in(&pin),
+            Err(Refusal::Used),
+            "a PIN logs one browser in"
+        );
         let cookie = format!("other=1; zdesk_login_52380={login}");
-        assert_eq!(access.login_in(Some(&cookie)).as_deref(), Some(login.as_str()));
+        assert_eq!(
+            access.login_in(Some(&cookie)).as_deref(),
+            Some(login.as_str())
+        );
         assert_eq!(access.login_in(Some("zdesk_login_52380=forged")), None);
-        assert_eq!(access.login_in(Some(&format!("zdesk_session={login}"))), None, "a served gateway's cookie is not a login");
+        assert_eq!(
+            access.login_in(Some(&format!("zdesk_session={login}"))),
+            None,
+            "a served gateway's cookie is not a login"
+        );
         assert_eq!(
             access.login_in(Some(&format!("zdesk_login_52381={login}"))),
             None,
             "the login of the control plane on another port is that one's"
         );
-        assert_eq!(access.set_cookie(&login), format!("zdesk_login_52380={login}; Domain=zdesk.localhost; HttpOnly; SameSite=Lax; Path=/"));
+        assert_eq!(
+            access.set_cookie(&login),
+            format!(
+                "zdesk_login_52380={login}; Domain=zdesk.localhost; HttpOnly; SameSite=Lax; Path=/"
+            )
+        );
         assert_eq!(access.login_in(None), None);
     }
 
@@ -337,11 +368,17 @@ mod tests {
         }
         assert_eq!(access.log_in(&not(&pin)), Err(Refusal::Withdrawn));
         assert_eq!(access.pin(), PinState::Withdrawn);
-        assert_eq!(access.log_in(&pin), Err(Refusal::Withdrawn), "not even the PIN itself");
+        assert_eq!(
+            access.log_in(&pin),
+            Err(Refusal::Withdrawn),
+            "not even the PIN itself"
+        );
 
         access.generate();
         let pin = digits(&access);
-        access.log_in(&pin).expect("a new PIN starts with every try");
+        access
+            .log_in(&pin)
+            .expect("a new PIN starts with every try");
     }
 
     /// The PIN guards only new logins: a browser that has logged in stays logged
@@ -352,13 +389,21 @@ mod tests {
         let login = access.log_in(&digits(&access)).unwrap();
         let cookie = format!("zdesk_login_52380={login}");
 
-        assert!(matches!(access.pin(), PinState::Used { .. }), "{:?}", access.pin());
+        assert!(
+            matches!(access.pin(), PinState::Used { .. }),
+            "{:?}",
+            access.pin()
+        );
 
         access.generate();
-        let PinState::Open { minutes_left, .. } = access.pin() else { unreachable!() };
+        let PinState::Open { minutes_left, .. } = access.pin() else {
+            unreachable!()
+        };
         assert_eq!(minutes_left, PIN_LIFETIME.as_secs() / 60);
         tokio::time::advance(PIN_LIFETIME - Duration::from_secs(30)).await;
-        let PinState::Open { minutes_left, .. } = access.pin() else { unreachable!() };
+        let PinState::Open { minutes_left, .. } = access.pin() else {
+            unreachable!()
+        };
         assert_eq!(minutes_left, 1, "the last half minute reads as one");
 
         tokio::time::advance(Duration::from_secs(30)).await;

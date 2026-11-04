@@ -127,8 +127,11 @@ fn launch_keyed(dir: &std::path::Path, key: &str) -> (Child, String, String) {
         .expect("the gateway binary must be built");
     // The key line comes first on that pipe, empty for a config that names no
     // passwords.
-    std::io::Write::write_all(child.stdin.as_mut().expect("a piped stdin"), format!("{key}\n").as_bytes())
-        .expect("the gateway reads its key line");
+    std::io::Write::write_all(
+        child.stdin.as_mut().expect("a piped stdin"),
+        format!("{key}\n").as_bytes(),
+    )
+    .expect("the gateway reads its key line");
 
     // Taken rather than borrowed, so the reader below owns what is left of stdout
     // after the handshake line.
@@ -137,10 +140,8 @@ fn launch_keyed(dir: &std::path::Path, key: &str) -> (Child, String, String) {
     stdout
         .read_line(&mut line)
         .expect("the gateway must print a handshake line");
-    let handshake: serde_json::Value =
-        serde_json::from_str(line.trim_end()).unwrap_or_else(|e| {
-            panic!("the handshake must be one line of JSON, got {line:?}: {e}")
-        });
+    let handshake: serde_json::Value = serde_json::from_str(line.trim_end())
+        .unwrap_or_else(|e| panic!("the handshake must be one line of JSON, got {line:?}: {e}"));
 
     // Both pipes are drained for the rest of the child's life. Nothing reads what
     // arrives — the assertions are all made over HTTP — but a pipe nobody empties
@@ -155,7 +156,10 @@ fn launch_keyed(dir: &std::path::Path, key: &str) -> (Child, String, String) {
     if let Some(mut stderr) = child.stderr.take() {
         std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     }
-    let endpoint = handshake["endpoint"].as_str().expect("an endpoint").to_owned();
+    let endpoint = handshake["endpoint"]
+        .as_str()
+        .expect("an endpoint")
+        .to_owned();
     transport::check_endpoint(dir, &endpoint).expect("the instance's own endpoint");
     #[cfg(unix)]
     assert_eq!(std::path::Path::new(&endpoint), dir.join("gateway.sock"));
@@ -203,7 +207,12 @@ async fn the_handshake_names_an_endpoint_that_answers_and_a_token_that_works() {
         std::path::Path::new(&worker.endpoint).exists(),
         "the socket is bound before the handshake"
     );
-    assert_eq!(worker.token.len(), 43, "32 bytes of base64url: {}", worker.token);
+    assert_eq!(
+        worker.token.len(),
+        43,
+        "32 bytes of base64url: {}",
+        worker.token
+    );
 
     let (status, body) = worker.get_authorized("/api/health").await;
     assert_eq!((status, body.as_str()), (200, "ok"));
@@ -233,7 +242,10 @@ async fn nothing_but_the_token_gets_past_the_guard() {
 
     // Among other cookies is still found, which is what a real browser sends.
     let (status, _) = worker
-        .get("/api/targets", Some(&format!("other=1; {}", worker.cookie())))
+        .get(
+            "/api/targets",
+            Some(&format!("other=1; {}", worker.cookie())),
+        )
         .await;
     assert_eq!(status, 200);
 
@@ -348,7 +360,10 @@ async fn the_spa_is_served_and_unknown_api_paths_are_not() {
         .expect("the document references its script from the root");
     let (status, body) = worker.get_authorized(&format!("/{script}")).await;
     assert_eq!(status, 200, "{script}");
-    assert!(!body.contains("<div id=\"root\">"), "a script, not the index: {script}");
+    assert!(
+        !body.contains("<div id=\"root\">"),
+        "a script, not the index: {script}"
+    );
 
     // A client-side route is the index with a 200, not a 404, the page a display
     // shows in a tab of its own among them.
@@ -436,7 +451,10 @@ async fn a_config_naming_passwords_starts_on_the_key_it_is_handed() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{stderr}");
     assert!(output.stdout.is_empty(), "no handshake without the key");
-    assert!(stderr.contains("nothing gave its master password"), "{stderr}");
+    assert!(
+        stderr.contains("nothing gave its master password"),
+        "{stderr}"
+    );
 }
 
 /// One gateway per instance, on every platform: a second is refused before it
@@ -455,8 +473,14 @@ async fn a_second_gateway_for_the_same_instance_is_refused() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&second.stderr);
     assert!(!second.status.success(), "{stderr}");
-    assert!(second.stdout.is_empty(), "no handshake from a refused gateway");
-    assert!(stderr.contains("already served by another gateway"), "{stderr}");
+    assert!(
+        second.stdout.is_empty(),
+        "no handshake from a refused gateway"
+    );
+    assert!(
+        stderr.contains("already served by another gateway"),
+        "{stderr}"
+    );
 
     let (status, _) = worker.get_authorized("/api/health").await;
     assert_eq!(status, 200, "the first gateway still serves");
@@ -546,7 +570,10 @@ fn check_config_agrees_with_what_the_gateway_would_do() {
     let (ok, stderr) = check(one_target(), true);
     assert!(ok, "a config the gateway serves must pass: {stderr}");
     // An empty one too — that is a first launch.
-    assert!(check("", true).0, "no targets yet is not an error for an instance");
+    assert!(
+        check("", true).0,
+        "no targets yet is not an error for an instance"
+    );
 
     let (ok, stderr) = check("[server]\n", true);
     assert!(!ok, "the worker rules apply");

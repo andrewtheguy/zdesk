@@ -52,7 +52,7 @@
 //   Each tick is the whole of its device's choice: the session plugs it, and
 //   this browser's device opens while the remote uses it.
 // - How the host draws an RDP pipeline is one of three on a target with the
-//   pipeline on: high quality, H.264 full screen (alpha), the one suggested for a
+//   pipeline on: high quality, H.264 full screen (beta), the one suggested for a
 //   phone or tablet, or H.264 by region (alpha), which is not: see
 //   `pipelineOptions`. A browser that cannot decode the H.264 is offered high
 //   quality alone.
@@ -749,7 +749,7 @@ function pipelineOptions(
     },
     {
       value: "adaptive-desktop",
-      label: "H.264 full screen (alpha)",
+      label: "H.264 full screen (beta)",
       note: abilities.rdpVideo
         ? "The whole desktop in H.264, which the host fits to the link, played by this browser's own video decoder with nothing composed in the page: the least memory and processor of the three. Recommended on a phone or tablet."
         : noDecoder,

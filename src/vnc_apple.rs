@@ -120,7 +120,10 @@ pub fn under_minimum(points: (u16, u16)) -> bool {
 /// `points` with each side raised to no less than a Mac is asked for
 /// ([`MIN_DISPLAY_POINTS`]).
 pub fn raised_to_minimum(points: (u16, u16)) -> (u16, u16) {
-    (points.0.max(MIN_DISPLAY_POINTS.0), points.1.max(MIN_DISPLAY_POINTS.1))
+    (
+        points.0.max(MIN_DISPLAY_POINTS.0),
+        points.1.max(MIN_DISPLAY_POINTS.1),
+    )
 }
 
 /// What this client advertises to a Mac.
@@ -250,8 +253,10 @@ const DYNAMIC_MAX_HEIGHT: u32 = 2160;
 /// The most points a virtual display covers on every client: the ceiling at the 2x
 /// a Retina client is given. A size within it is the size at either density; one
 /// past it [`virtual_display_mode`] would shrink for such a client.
-pub const POINTS_AT_ANY_DENSITY: (u16, u16) =
-    ((DYNAMIC_MAX_WIDTH / 2) as u16, (DYNAMIC_MAX_HEIGHT / 2) as u16);
+pub const POINTS_AT_ANY_DENSITY: (u16, u16) = (
+    (DYNAMIC_MAX_WIDTH / 2) as u16,
+    (DYNAMIC_MAX_HEIGHT / 2) as u16,
+);
 /// Bytes of one display record in a layout payload.
 const LAYOUT_RECORD: usize = 0x38;
 /// Bytes of a layout payload before its first record, counted after the `u16`
@@ -304,7 +309,9 @@ pub fn set_mode_control() -> [u8; 4] {
 /// is copied rather than derived — a message the server pattern-matches is not
 /// the place to send a tidier version of itself.
 pub fn set_encryption_start() -> Vec<u8> {
-    vec![0x12, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]
+    vec![
+        0x12, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    ]
 }
 
 /// `SetEncryption(command = 2, argument = 1)`: tell the server to decrypt every
@@ -389,7 +396,9 @@ pub fn scroll_wheel((dx, dy): (i32, i32), (x, y): (u16, u16)) -> Vec<u8> {
     }
     for points in axes {
         // 16.16 fixed point.
-        msg.extend_from_slice(&((i64::from(points) * 65536 / i64::from(POINTS_PER_LINE)) as i32).to_be_bytes());
+        msg.extend_from_slice(
+            &((i64::from(points) * 65536 / i64::from(POINTS_PER_LINE)) as i32).to_be_bytes(),
+        );
     }
     for points in axes {
         msg.extend_from_slice(&points.to_be_bytes());
@@ -456,7 +465,10 @@ impl VirtualMode {
         let even = |px: u16| (px & !1).max(2);
         let pixels = (even(self.pixels.0), even(self.pixels.1));
         let scaled = |px: u16| (f32::from(px) / density).round().max(1.0) as u16;
-        Self { pixels, scaled: (scaled(pixels.0), scaled(pixels.1)) }
+        Self {
+            pixels,
+            scaled: (scaled(pixels.0), scaled(pixels.1)),
+        }
     }
 }
 
@@ -471,15 +483,16 @@ impl VirtualMode {
 /// clamped pixels so the two still state the same ratio.
 pub fn virtual_display_mode((w, h): (u16, u16), density: f32) -> VirtualMode {
     let axis = |points: u16, max: u32| {
-        let pixels = (f32::from(points) * density)
-            .round()
-            .clamp(1.0, max as f32);
+        let pixels = (f32::from(points) * density).round().clamp(1.0, max as f32);
         let scaled = (pixels / density).round().max(1.0);
         (pixels as u16, scaled as u16)
     };
     let (wp, ws) = axis(w, DYNAMIC_MAX_WIDTH);
     let (hp, hs) = axis(h, DYNAMIC_MAX_HEIGHT);
-    VirtualMode { pixels: (wp, hp), scaled: (ws, hs) }
+    VirtualMode {
+        pixels: (wp, hp),
+        scaled: (ws, hs),
+    }
 }
 
 /// The virtual display's refresh rate, in hertz, which is what bounds the media
@@ -514,10 +527,22 @@ pub const DISPLAY_HZ: u8 = 30;
 /// a 60 Hz virtual display only doubles the Mac's HEVC decoding work.
 pub fn set_display_configuration(modes: &[VirtualMode], dynamic: bool) -> Vec<u8> {
     const PRESETS: [VirtualMode; 4] = [
-        VirtualMode { pixels: (2880, 1800), scaled: (1440, 900) },
-        VirtualMode { pixels: (3840, 2160), scaled: (1920, 1080) },
-        VirtualMode { pixels: (2880, 1620), scaled: (1440, 810) },
-        VirtualMode { pixels: (2624, 1696), scaled: (1312, 848) },
+        VirtualMode {
+            pixels: (2880, 1800),
+            scaled: (1440, 900),
+        },
+        VirtualMode {
+            pixels: (3840, 2160),
+            scaled: (1920, 1080),
+        },
+        VirtualMode {
+            pixels: (2880, 1620),
+            scaled: (1440, 810),
+        },
+        VirtualMode {
+            pixels: (2624, 1696),
+            scaled: (1312, 848),
+        },
     ];
     const MODE_COUNT: usize = 1 + PRESETS.len();
 
@@ -525,7 +550,9 @@ pub fn set_display_configuration(modes: &[VirtualMode], dynamic: bool) -> Vec<u8
     let mut body = Vec::with_capacity(CONFIG_HEAD - 4 + descriptor * modes.len());
     body.extend_from_slice(&1u16.to_be_bytes()); // version
     body.extend_from_slice(
-        &u16::try_from(modes.len()).expect("one or two displays").to_be_bytes(),
+        &u16::try_from(modes.len())
+            .expect("one or two displays")
+            .to_be_bytes(),
     ); // display_count
     body.extend_from_slice(&0u32.to_be_bytes()); // flags
 
@@ -576,8 +603,10 @@ pub fn set_display_configuration(modes: &[VirtualMode], dynamic: bool) -> Vec<u8
 /// its session-ready resize: 1920x1080 points rendered at 2x. Creating stable,
 /// symmetric displays first lets macOS restore their saved arrangement and
 /// window placement before the viewer applies its window's current size.
-pub const NATIVE_OPENING_MODE: VirtualMode =
-    VirtualMode { pixels: (3840, 2160), scaled: (1920, 1080) };
+pub const NATIVE_OPENING_MODE: VirtualMode = VirtualMode {
+    pixels: (3840, 2160),
+    scaled: (1920, 1080),
+};
 
 /// What the Mac calls virtual display `index`, in its Displays settings and
 /// wherever a display is named: Apple's viewer's own names. A descriptor without
@@ -736,7 +765,12 @@ impl Layout {
         let density = selection
             .and_then(|id| self.displays.iter().find(|display| display.info.id == id))
             .map_or_else(
-                || self.displays.iter().map(|display| display.density).fold(1.0, f32::max),
+                || {
+                    self.displays
+                        .iter()
+                        .map(|display| display.density)
+                        .fold(1.0, f32::max)
+                },
                 |display| display.density,
             );
         (host_density / density).clamp(f32::MIN_POSITIVE, 1.0)
@@ -764,9 +798,10 @@ impl Layout {
             return None;
         }
         let min = |at: fn(&Display) -> (i16, i16)| {
-            self.displays.iter().map(at).fold((i16::MAX, i16::MAX), |m, (x, y)| {
-                (m.0.min(x), m.1.min(y))
-            })
+            self.displays
+                .iter()
+                .map(at)
+                .fold((i16::MAX, i16::MAX), |m, (x, y)| (m.0.min(x), m.1.min(y)))
         };
         // From the least edge, so never negative, and within the u16 the edges
         // were sent in.
@@ -799,7 +834,12 @@ impl Layout {
     /// framebuffer, it does not change with the selection.
     pub fn points_spanned(&self) -> (u16, u16) {
         let span = |start: fn(&Display) -> i16, size: fn(&Display) -> u16| {
-            let lo = self.displays.iter().map(|d| i32::from(start(d))).min().unwrap_or(0);
+            let lo = self
+                .displays
+                .iter()
+                .map(|d| i32::from(start(d)))
+                .min()
+                .unwrap_or(0);
             let hi = self
                 .displays
                 .iter()
@@ -916,9 +956,8 @@ fn parse_layout_kind(payload: &[u8], virtual_display: bool) -> anyhow::Result<La
         let edges = |at: usize| {
             let (top, left, bottom, right) =
                 (signed(at), signed(at + 2), signed(at + 4), signed(at + 6));
-            let size = |from: i16, to: i16| {
-                u16::try_from(i32::from(to) - i32::from(from)).unwrap_or(0)
-            };
+            let size =
+                |from: i16, to: i16| u16::try_from(i32::from(to) - i32::from(from)).unwrap_or(0);
             (size(left, right), size(top, bottom))
         };
         let logical = edges(0x14);
@@ -942,17 +981,22 @@ fn parse_layout_kind(payload: &[u8], virtual_display: bool) -> anyhow::Result<La
         // server scale as the second. Their product is the ratio of the returned
         // backing and logical rects, so all three fields check one another.
         let stated = f64::from_be_bytes(
-            record[0x00..0x08].try_into().expect("eight bytes inside a 0x38-byte record"),
+            record[0x00..0x08]
+                .try_into()
+                .expect("eight bytes inside a 0x38-byte record"),
         );
         let viewer_scale = f64::from_be_bytes(
-            record[0x08..0x10].try_into().expect("eight bytes inside a 0x38-byte record"),
+            record[0x08..0x10]
+                .try_into()
+                .expect("eight bytes inside a 0x38-byte record"),
         );
         let ratio = f32::from(backing.0) / f32::from(logical.0);
         // Only `SetServerScaling` moves this off 1.0, and a record is not dropped
         // over it: High Performance lists one record, so dropping it would end the
         // session. A value outside (0, 1] is read as the unscaled 1.0 it was
         // before this field was read at.
-        let viewer_scale = if viewer_scale.is_finite() && viewer_scale > 0.0 && viewer_scale <= 1.0 {
+        let viewer_scale = if viewer_scale.is_finite() && viewer_scale > 0.0 && viewer_scale <= 1.0
+        {
             viewer_scale as f32
         } else {
             warn!(
@@ -1022,7 +1066,10 @@ fn parse_layout_kind(payload: &[u8], virtual_display: bool) -> anyhow::Result<La
         });
     }
 
-    anyhow::ensure!(!displays.is_empty(), "a display layout listed no usable display");
+    anyhow::ensure!(
+        !displays.is_empty(),
+        "a display layout listed no usable display"
+    );
     let viewer_scale = displays[0].viewer_scale;
     if displays
         .iter()
@@ -1038,7 +1085,12 @@ fn parse_layout_kind(payload: &[u8], virtual_display: bool) -> anyhow::Result<La
         backing.0,
         backing.1
     );
-    Ok(Layout { backing, current, displays, on_virtual_display: flags & LAYOUT_ON_VIRTUAL_DISPLAY != 0 })
+    Ok(Layout {
+        backing,
+        current,
+        displays,
+        on_virtual_display: flags & LAYOUT_ON_VIRTUAL_DISPLAY != 0,
+    })
 }
 
 /// Apple's cursor shapes, which arrive as a cache rather than as pixels.
@@ -1117,7 +1169,10 @@ impl CursorCache {
         // Point-sized: the Mac ships the same pixmap whatever density the display
         // renders at, and re-selects it from this cache across density changes.
         let shape = CursorShape::from_rgba(w, h, hx, hy, CursorUnit::Points, &rgba)?;
-        debug!("vnc: cursor {w}x{h} stored as {id}, {} bytes", shape.png.len());
+        debug!(
+            "vnc: cursor {w}x{h} stored as {id}, {} bytes",
+            shape.png.len()
+        );
         self.shapes.insert(id, shape.clone());
         Ok(Cursor::Shape(shape))
     }
@@ -1240,7 +1295,9 @@ mod tests {
     /// same with only that bit cleared.
     #[test]
     fn high_performance_needs_the_mac_to_accept_set_display_configuration() {
-        let macvm = [0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let macvm = [
+            0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(holds_high_performance(&macvm));
         assert!(accepts(&macvm, 0x1c), "the media stream's configuration");
         assert!(!accepts(&macvm, 0x01), "a message type no Mac takes");
@@ -1256,7 +1313,9 @@ mod tests {
     /// that bit cleared does not.
     #[test]
     fn a_scroll_needs_the_mac_to_accept_the_second_event_message() {
-        let macvm = [0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let macvm = [
+            0xbf, 0xf6, 0xe7, 0x2f, 0xec, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(takes_scroll(&macvm));
         let mut without = macvm;
         without[2] &= !0x01;
@@ -1268,7 +1327,9 @@ mod tests {
     fn set_encryption_is_the_observed_bytes() {
         assert_eq!(
             set_encryption_start(),
-            vec![0x12, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01]
+            vec![
+                0x12, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01
+            ]
         );
         assert_eq!(
             enable_inbound_record_decryption(),
@@ -1289,9 +1350,17 @@ mod tests {
         let display = &msg[CONFIG_HEAD..];
         assert_eq!(usize::from(be16(display, 0)), descriptor);
         assert_eq!(be32(display, 0x7a), 1, "display_flags: dynamic resolution");
-        assert_eq!(be32(display, 0x7e), 0, "display_type, left as native leaves it");
+        assert_eq!(
+            be32(display, 0x7e),
+            0,
+            "display_type, left as native leaves it"
+        );
         let mm = |at| f32::from_be_bytes(display[at..at + 4].try_into().unwrap());
-        assert_eq!((mm(0x82), mm(0x86)), (369.45456, 207.81818), "the largest mode at 264 dpi");
+        assert_eq!(
+            (mm(0x82), mm(0x86)),
+            (369.45456, 207.81818),
+            "the largest mode at 264 dpi"
+        );
         assert_eq!(be32(display, 0x8a), DYNAMIC_MAX_WIDTH, "maximum width");
         assert_eq!(be32(display, 0x8e), DYNAMIC_MAX_HEIGHT, "maximum height");
         assert_eq!(be16(display, 0x92), 0, "current mode");
@@ -1309,11 +1378,20 @@ mod tests {
         for (index, expected) in expected.into_iter().enumerate() {
             let mode = DESCRIPTOR_HEAD + index * MODE_ENTRY;
             assert_eq!(
-                (be32(display, mode), be32(display, mode + 4), be32(display, mode + 8), be32(display, mode + 12)),
+                (
+                    be32(display, mode),
+                    be32(display, mode + 4),
+                    be32(display, mode + 8),
+                    be32(display, mode + 12)
+                ),
                 expected,
                 "mode {index}"
             );
-            assert_eq!(&display[mode + 16..mode + 24], &30.0f64.to_be_bytes(), "mode {index} refresh");
+            assert_eq!(
+                &display[mode + 16..mode + 24],
+                &30.0f64.to_be_bytes(),
+                "mode {index} refresh"
+            );
             assert_eq!(be32(display, mode + 24), 0, "mode {index} flags");
         }
 
@@ -1335,7 +1413,10 @@ mod tests {
         for at in [CONFIG_HEAD, CONFIG_HEAD + descriptor] {
             assert_eq!(be32(&opening, at + 0x7a), 0, "opening display_flags");
             assert_eq!(be32(&resize, at + 0x7a), 1, "resize display_flags");
-            assert_eq!(opening[at + 0x7e..at + descriptor], resize[at + 0x7e..at + descriptor]);
+            assert_eq!(
+                opening[at + 0x7e..at + descriptor],
+                resize[at + 0x7e..at + descriptor]
+            );
         }
     }
 
@@ -1350,7 +1431,10 @@ mod tests {
         assert_eq!(be16(&msg, 6), 2, "display_count");
         // Each is the descriptor a one-display message carries for the same mode,
         // under its own name: zero-terminated in the 120 bytes after the length.
-        let names = ["Screen Sharing Virtual Display", "Screen Sharing Virtual Display #2"];
+        let names = [
+            "Screen Sharing Virtual Display",
+            "Screen Sharing Virtual Display #2",
+        ];
         for (index, mode) in [first, second].into_iter().enumerate() {
             let at = CONFIG_HEAD + index * descriptor;
             let alone = set_display_configuration(&[mode], true);
@@ -1360,13 +1444,23 @@ mod tests {
             assert_eq!(&name[..names[index].len()], names[index].as_bytes());
             assert!(name[names[index].len()..].iter().all(|byte| *byte == 0));
         }
-        assert_eq!(be32(&msg[CONFIG_HEAD + descriptor..], 0x9c), 2560, "the second's render width");
+        assert_eq!(
+            be32(&msg[CONFIG_HEAD + descriptor..], 0x9c),
+            2560,
+            "the second's render width"
+        );
     }
 
     #[test]
     fn a_retina_mode_doubles_the_pixels_and_keeps_the_points() {
         let mode = virtual_display_mode((1600, 1000), 2.0);
-        assert_eq!(mode, VirtualMode { pixels: (3200, 2000), scaled: (1600, 1000) });
+        assert_eq!(
+            mode,
+            VirtualMode {
+                pixels: (3200, 2000),
+                scaled: (1600, 1000)
+            }
+        );
 
         let msg = set_display_configuration(&[mode], true);
         let display = &msg[CONFIG_HEAD..];
@@ -1386,12 +1480,41 @@ mod tests {
     #[test]
     fn an_h264_sessions_mode_has_even_sides() {
         let even = |points, density: f32| virtual_display_mode(points, density).even_sided(density);
-        assert_eq!(even((1864, 983), 1.0), VirtualMode { pixels: (1864, 982), scaled: (1864, 982) });
-        assert_eq!(even((1863, 982), 1.0), VirtualMode { pixels: (1862, 982), scaled: (1862, 982) });
-        assert_eq!(even((1863, 983), 1.0), VirtualMode { pixels: (1862, 982), scaled: (1862, 982) }, "each side on its own");
-        assert_eq!(even((1864, 984), 1.0), virtual_display_mode((1864, 984), 1.0), "an even display is asked for as it is");
+        assert_eq!(
+            even((1864, 983), 1.0),
+            VirtualMode {
+                pixels: (1864, 982),
+                scaled: (1864, 982)
+            }
+        );
+        assert_eq!(
+            even((1863, 982), 1.0),
+            VirtualMode {
+                pixels: (1862, 982),
+                scaled: (1862, 982)
+            }
+        );
+        assert_eq!(
+            even((1863, 983), 1.0),
+            VirtualMode {
+                pixels: (1862, 982),
+                scaled: (1862, 982)
+            },
+            "each side on its own"
+        );
+        assert_eq!(
+            even((1864, 984), 1.0),
+            virtual_display_mode((1864, 984), 1.0),
+            "an even display is asked for as it is"
+        );
         // At 2x every side is even already, and the points stay the window's.
-        assert_eq!(even((1863, 983), 2.0), VirtualMode { pixels: (3726, 1966), scaled: (1863, 983) });
+        assert_eq!(
+            even((1863, 983), 2.0),
+            VirtualMode {
+                pixels: (3726, 1966),
+                scaled: (1863, 983)
+            }
+        );
     }
 
     #[test]
@@ -1400,12 +1523,21 @@ mod tests {
         // 3840×2160 backing ceiling the Mac holds a virtual display to. The pixels
         // are clamped and the points re-derived, keeping the density exact.
         let mode = virtual_display_mode((2560, 1440), 2.0);
-        assert_eq!(mode, VirtualMode { pixels: (3840, 2160), scaled: (1920, 1080) });
+        assert_eq!(
+            mode,
+            VirtualMode {
+                pixels: (3840, 2160),
+                scaled: (1920, 1080)
+            }
+        );
 
         // At 1x the same points fit untouched.
         assert_eq!(
             virtual_display_mode((2560, 1440), 1.0),
-            VirtualMode { pixels: (2560, 1440), scaled: (2560, 1440) }
+            VirtualMode {
+                pixels: (2560, 1440),
+                scaled: (2560, 1440)
+            }
         );
     }
 
@@ -1436,20 +1568,37 @@ mod tests {
     /// information silently, with a session that still connects and paints.
     #[test]
     fn the_list_asks_for_displays_and_zrle_but_not_the_media_stream() {
-        for encoding in [ENCODING_DISPLAY_INFO, ENCODING_DISPLAY_LAYOUT, ENCODING_ZRLE] {
+        for encoding in [
+            ENCODING_DISPLAY_INFO,
+            ENCODING_DISPLAY_LAYOUT,
+            ENCODING_ZRLE,
+        ] {
             assert!(ENCODINGS.contains(&encoding), "{encoding:#x}");
         }
-        assert!(!ENCODINGS.contains(&0x3f2), "the media stream is asked for once a display exists");
+        assert!(
+            !ENCODINGS.contains(&0x3f2),
+            "the media stream is asked for once a display exists"
+        );
     }
 
     /// The Mac sends the first codec of the list it knows, so the tiles go ahead of
     /// ZRLE, and the list is otherwise the one every Apple session sends.
     #[test]
     fn an_adaptive_session_lists_the_tiles_ahead_of_zrle() {
-        let tiles = ADAPTIVE_ENCODINGS.iter().position(|&e| e == ENCODING_ADAPTIVE).unwrap();
-        let zrle = ADAPTIVE_ENCODINGS.iter().position(|&e| e == ENCODING_ZRLE).unwrap();
+        let tiles = ADAPTIVE_ENCODINGS
+            .iter()
+            .position(|&e| e == ENCODING_ADAPTIVE)
+            .unwrap();
+        let zrle = ADAPTIVE_ENCODINGS
+            .iter()
+            .position(|&e| e == ENCODING_ZRLE)
+            .unwrap();
         assert!(tiles < zrle);
-        let others: Vec<i32> = ADAPTIVE_ENCODINGS.iter().copied().filter(|&e| e != ENCODING_ADAPTIVE).collect();
+        let others: Vec<i32> = ADAPTIVE_ENCODINGS
+            .iter()
+            .copied()
+            .filter(|&e| e != ENCODING_ADAPTIVE)
+            .collect();
         assert_eq!(others, ENCODINGS);
     }
 
@@ -1458,16 +1607,30 @@ mod tests {
     /// encoding its session expects first.
     #[test]
     fn a_full_session_lists_zlib_ahead_of_zrle() {
-        let zlib = FULL_ENCODINGS.iter().position(|&e| e == ENCODING_ZLIB).unwrap();
-        let zrle = FULL_ENCODINGS.iter().position(|&e| e == ENCODING_ZRLE).unwrap();
+        let zlib = FULL_ENCODINGS
+            .iter()
+            .position(|&e| e == ENCODING_ZLIB)
+            .unwrap();
+        let zrle = FULL_ENCODINGS
+            .iter()
+            .position(|&e| e == ENCODING_ZRLE)
+            .unwrap();
         assert!(zlib < zrle);
-        let others: Vec<i32> = FULL_ENCODINGS.iter().copied().filter(|&e| e != ENCODING_ZLIB).collect();
+        let others: Vec<i32> = FULL_ENCODINGS
+            .iter()
+            .copied()
+            .filter(|&e| e != ENCODING_ZLIB)
+            .collect();
         assert_eq!(others, ENCODINGS);
         assert_eq!(encodings(None), ENCODINGS);
         for quality in [StandardQuality::Adaptive, StandardQuality::Full] {
             let list = encodings(Some(quality));
             let codecs = [ENCODING_ZLIB, ENCODING_ZRLE, ENCODING_ADAPTIVE];
-            assert_eq!(list.iter().find(|e| codecs.contains(e)), Some(&encoding(quality)), "{quality:?}");
+            assert_eq!(
+                list.iter().find(|e| codecs.contains(e)),
+                Some(&encoding(quality)),
+                "{quality:?}"
+            );
         }
     }
 
@@ -1488,22 +1651,26 @@ mod tests {
         0x00, 0x05, 0x0b, 0x40, 0x03, 0x84, 0x11, 0x80, 0x07, 0x08, 0xff, 0xff, 0xff, 0xff, 0x00,
         0x00, 0x00, 0x04, 0x00, 0x02, //
         // display id 1: scale 1.0, viewer scale 1.0, both rects (0,0,800,1280), main.
-        0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xf0, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x20, 0x05, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x03, 0x20, 0x05, 0x00, 0x00, 0x00, 0x00, 0x01, 0x20, 0x20, 0x00,
-        0x01, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00, //
+        0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x20, 0x05, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x03, 0x20, 0x05, 0x00, 0x00, 0x00, 0x00, 0x01, 0x20, 0x20, 0x00, 0x01, 0x00,
+        0xff, 0x00, 0xff, 0x00, 0xff, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00, //
         // display id 4: scale 2.0, logical (0,1280,900,2880), backing (0,1280,1800,4480).
-        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xf0, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x03, 0x84, 0x0b, 0x40,
-        0x00, 0x00, 0x05, 0x00, 0x07, 0x08, 0x11, 0x80, 0x00, 0x00, 0x00, 0x00, 0x20, 0x20, 0x00,
-        0x01, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00,
+        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x03, 0x84, 0x0b, 0x40, 0x00, 0x00,
+        0x05, 0x00, 0x07, 0x08, 0x11, 0x80, 0x00, 0x00, 0x00, 0x00, 0x20, 0x20, 0x00, 0x01, 0x00,
+        0xff, 0x00, 0xff, 0x00, 0xff, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00,
     ];
 
     #[test]
     fn a_captured_layout_reproduces_the_macs_real_screens() {
         let parsed = parse_layout(TWO_REAL_SCREENS).unwrap();
 
-        assert_eq!(parsed.backing, (4480, 1800), "the framebuffer, from the header");
+        assert_eq!(
+            parsed.backing,
+            (4480, 1800),
+            "the framebuffer, from the header"
+        );
         assert_eq!(parsed.current, None, "0xffffffff is the combined view");
         assert_eq!(parsed.displays.len(), 2);
         assert_eq!(
@@ -1523,7 +1690,10 @@ mod tests {
         let retina = &parsed.displays[1];
         assert_eq!(retina.info.id, 4);
         assert_eq!(retina.info.label, "Display 2");
-        assert_eq!(retina.info.detail, "1600×900 at 2x", "points, then the density");
+        assert_eq!(
+            retina.info.detail, "1600×900 at 2x",
+            "points, then the density"
+        );
         assert_eq!(retina.density, 2.0);
         assert!(!retina.info.main);
     }
@@ -1558,7 +1728,10 @@ mod tests {
         // A screen that is gone by the time the id is looked up leaves the desktop
         // at its pixel size rather than guessing at another screen's density.
         payload[0x0a..0x0e].copy_from_slice(&99u32.to_be_bytes());
-        assert_eq!(parse_layout(&payload).unwrap().scale(), crate::protocol::UNSCALED);
+        assert_eq!(
+            parse_layout(&payload).unwrap().scale(),
+            crate::protocol::UNSCALED
+        );
     }
 
     #[test]
@@ -1586,7 +1759,10 @@ mod tests {
         // at 0.5x. The densest is what the browser was matched to.
         let mut payload = layout(
             None,
-            &[(1, (1280, 800), (640, 400), 0x01), (4, (1600, 900), (1600, 900), 0x00)],
+            &[
+                (1, (1280, 800), (640, 400), 0x01),
+                (4, (1600, 900), (1600, 900), 0x00),
+            ],
         );
         super::test_scale_layout(&mut payload, 0.5, &[1.0, 2.0]);
         let both = parse_layout(&payload).unwrap();
@@ -1602,7 +1778,10 @@ mod tests {
         // screen was dropped as zero-width.
         let mut payload = layout(
             None,
-            &[(7, (1440, 900), (2880, 1800), 0x00), (1, (1280, 800), (1280, 800), 0x01)],
+            &[
+                (7, (1440, 900), (2880, 1800), 0x00),
+                (1, (1280, 800), (1280, 800), 0x01),
+            ],
         );
         let record = LAYOUT_HEAD;
         payload[record + 0x16..record + 0x18].copy_from_slice(&(-1440i16).to_be_bytes());
@@ -1637,7 +1816,10 @@ mod tests {
         assert_eq!(
             combined.mosaic(),
             Some(vec![
-                MosaicRegion { pixels: rect(0, 0, 1280, 800), points: rect(0, 0, 1280, 800) },
+                MosaicRegion {
+                    pixels: rect(0, 0, 1280, 800),
+                    points: rect(0, 0, 1280, 800)
+                },
                 MosaicRegion {
                     pixels: rect(1280, 0, 3200, 1800),
                     points: rect(1280, 0, 1600, 900),
@@ -1645,20 +1827,36 @@ mod tests {
             ])
         );
 
-        assert_eq!(combined.points_spanned(), (2880, 900), "what Apple's viewer names it");
+        assert_eq!(
+            combined.points_spanned(),
+            (2880, 900),
+            "what Apple's viewer names it"
+        );
 
         // A selected screen is one density, and so are screens that agree.
         let mut payload = TWO_REAL_SCREENS.to_vec();
         payload[0x0a..0x0e].copy_from_slice(&4u32.to_be_bytes());
         assert_eq!(parse_layout(&payload).unwrap().mosaic(), None);
-        let alike = layout(None, &[(1, (1280, 800), (2560, 1600), 0x01), (2, (1440, 900), (2880, 1800), 0x00)]);
+        let alike = layout(
+            None,
+            &[
+                (1, (1280, 800), (2560, 1600), 0x01),
+                (2, (1440, 900), (2880, 1800), 0x00),
+            ],
+        );
         let alike = parse_layout(&alike).unwrap();
         assert_eq!(alike.mosaic(), None);
         assert_eq!(alike.server_scale_for(None, 1.0), 0.5);
 
         // Mixed is what Apple's viewer calls mixed: a 1x screen beside one that
         // is not. HiDPI screens that differ among themselves are served uniformly.
-        let hidpi = layout(None, &[(1, (1280, 800), (1920, 1200), 0x01), (2, (1440, 900), (2880, 1800), 0x00)]);
+        let hidpi = layout(
+            None,
+            &[
+                (1, (1280, 800), (1920, 1200), 0x01),
+                (2, (1440, 900), (2880, 1800), 0x00),
+            ],
+        );
         let hidpi = parse_layout(&hidpi).unwrap();
         assert_eq!(hidpi.mosaic(), None);
         assert_eq!(hidpi.server_scale_for(None, 1.0), 0.5);
@@ -1672,12 +1870,18 @@ mod tests {
     fn the_builder_agrees_with_the_captured_bytes() {
         let built = layout(
             None,
-            &[(1, (1280, 800), (1280, 800), 0x01), (4, (1600, 900), (3200, 1800), 0x00)],
+            &[
+                (1, (1280, 800), (1280, 800), 0x01),
+                (4, (1600, 900), (3200, 1800), 0x00),
+            ],
         );
         // Not byte-equal: the capture carries a pixel format per record that nothing
         // here reads. Equal in every field the parser does read, which is the claim
         // that matters.
-        assert_eq!(parse_layout(&built).unwrap(), parse_layout(TWO_REAL_SCREENS).unwrap());
+        assert_eq!(
+            parse_layout(&built).unwrap(),
+            parse_layout(TWO_REAL_SCREENS).unwrap()
+        );
     }
 
     #[test]
@@ -1709,8 +1913,13 @@ mod tests {
     fn a_mirrored_screen_is_not_offered_twice() {
         // Every member of a mirror set carries bit 1, the one the others copy
         // included, and they share an origin.
-        let mut payload =
-            layout(None, &[(11, (1920, 1080), (1920, 1080), 0x03), (22, (1920, 1080), (1920, 1080), 0x02)]);
+        let mut payload = layout(
+            None,
+            &[
+                (11, (1920, 1080), (1920, 1080), 0x03),
+                (22, (1920, 1080), (1920, 1080), 0x02),
+            ],
+        );
         let second = LAYOUT_HEAD + LAYOUT_RECORD;
         payload.copy_within(LAYOUT_HEAD + 0x14..LAYOUT_HEAD + 0x24, second + 0x14);
         let parsed = parse_layout(&payload).unwrap();
@@ -1749,7 +1958,10 @@ mod tests {
         // Bytes past the last record are tolerated, as Apple's viewer tolerates them.
         let mut payload = one(0x01);
         payload.extend_from_slice(&[0u8; 8]);
-        assert_eq!(parse_layout(&payload).unwrap(), parse_layout(&one(0x01)).unwrap());
+        assert_eq!(
+            parse_layout(&payload).unwrap(),
+            parse_layout(&one(0x01)).unwrap()
+        );
 
         // A scale factor read out of the wrong offset: the bytes there are a
         // denormal, not a density. The record is dropped rather than the layout

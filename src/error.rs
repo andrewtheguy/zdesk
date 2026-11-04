@@ -61,9 +61,7 @@ impl IntoResponse for AppError {
         match self {
             AppError::NotFound => (StatusCode::NOT_FOUND, "not found").into_response(),
             AppError::BadRequest(why) => (StatusCode::BAD_REQUEST, why).into_response(),
-            AppError::Unauthorized => {
-                (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
-            }
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized").into_response(),
             AppError::Forbidden => {
                 (StatusCode::FORBIDDEN, "not this session's holder").into_response()
             }

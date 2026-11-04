@@ -328,9 +328,11 @@ pub fn router_with_sessions(
     routed
         // `.fallback` returns the SPA's response as-is, where `.not_found_service`
         // would force a 404 onto the index a client-side route is answered with.
-        .fallback(|State(state): State<AppState>, request: Request| async move {
-            crate::assets::serve(state.hevc_decoder.as_ref(), &request)
-        })
+        .fallback(
+            |State(state): State<AppState>, request: Request| async move {
+                crate::assets::serve(state.hevc_decoder.as_ref(), &request)
+            },
+        )
         // Added last and therefore **outermost**: it sees every request before
         // routing, because what it acts on is the `Host` a browser arrived under
         // rather than which handler would answer. Inert unless
@@ -387,7 +389,11 @@ fn is_loopback_name(name: &str) -> bool {
 ///   to outlive the config key that caused it, on a hostname somebody may want
 ///   back. This one is a development convenience and must be as easy to remove as
 ///   it was to add.
-async fn dev_hostname_redirect(State(state): State<AppState>, req: Request, next: Next) -> Response {
+async fn dev_hostname_redirect(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
     let Some(dev_hostname) = state.config.dev_hostname.as_deref() else {
         return next.run(req).await;
     };
@@ -437,9 +443,11 @@ async fn dev_hostname_redirect(State(state): State<AppState>, req: Request, next
             .map_or("/", |path_and_query| path_and_query.as_str())
     );
     match header::HeaderValue::from_str(&target) {
-        Ok(location) => {
-            (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, location)]).into_response()
-        }
+        Ok(location) => (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(header::LOCATION, location)],
+        )
+            .into_response(),
         // Unreachable with a validated label and a `Host` that parsed, and a
         // redirect nobody can follow is worse than none.
         Err(e) => {
@@ -476,9 +484,10 @@ const VERSION_HEADER: HeaderName = HeaderName::from_static("x-zdesk-version");
 /// Such a page speaks the previous release's wire, and there is no older wire to
 /// answer it in, so it is told which gateway it is talking to and reloads.
 async fn state_version(mut response: Response) -> Response {
-    response
-        .headers_mut()
-        .insert(VERSION_HEADER, HeaderValue::from_static(env!("CARGO_PKG_VERSION")));
+    response.headers_mut().insert(
+        VERSION_HEADER,
+        HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+    );
     response
 }
 
@@ -539,14 +548,19 @@ async fn login_handler(
     };
     let ok = state
         .login_throttle
-        .attempt(std::time::Instant::now(), || login.verify(&req.username, &req.password))
+        .attempt(std::time::Instant::now(), || {
+            login.verify(&req.username, &req.password)
+        })
         .map_err(AppError::LoginLocked)?;
     if !ok {
         return Err(AppError::Unauthorized);
     }
     let token = state.auth.create();
     let cookie = format!("{}={token}; {}", auth::COOKIE_NAME, cookie_flags(&headers));
-    Ok(([(header::SET_COOKIE, cookie)], Json(OkResponse { ok: true })))
+    Ok((
+        [(header::SET_COOKIE, cookie)],
+        Json(OkResponse { ok: true }),
+    ))
 }
 
 /// Invalidate the caller's login (if any), end the remote session with it, and
@@ -562,10 +576,7 @@ async fn login_handler(
 /// both, so there is no ordering to get right and no dependence on the WebSocket
 /// still being up — which is precisely the state a browser is in when the grace
 /// period is already counting down.
-async fn logout_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     if let Some(token) = auth::token_from_headers(&headers) {
         state.auth.invalidate(&token);
     }
@@ -575,7 +586,10 @@ async fn logout_handler(
         auth::COOKIE_NAME,
         cookie_flags(&headers)
     );
-    ([(header::SET_COOKIE, cookie)], Json(OkResponse { ok: true }))
+    (
+        [(header::SET_COOKIE, cookie)],
+        Json(OkResponse { ok: true }),
+    )
 }
 
 #[derive(Serialize)]
@@ -611,7 +625,12 @@ async fn config_handler(State(state): State<AppState>) -> Json<ConfigResponse> {
 /// A `data:` logo has no such fact to check: it was decoded once when the config
 /// resolved, so there is nothing here that can fail.
 async fn logo_handler(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
-    let logo = state.config.branding.logo.as_ref().ok_or(AppError::NotFound)?;
+    let logo = state
+        .config
+        .branding
+        .logo
+        .as_ref()
+        .ok_or(AppError::NotFound)?;
     let bytes = match &logo.source {
         crate::config::LogoSource::Inline(bytes) => bytes.clone(),
         crate::config::LogoSource::File(path) => tokio::fs::read(path)
@@ -743,7 +762,14 @@ impl TargetInfo {
 /// never leave the server.
 async fn targets_handler(State(state): State<AppState>) -> Json<Vec<TargetInfo>> {
     let page_hevc = state.hevc_decoder.is_some();
-    Json(state.config.targets.iter().map(|target| TargetInfo::of(target, page_hevc)).collect())
+    Json(
+        state
+            .config
+            .targets
+            .iter()
+            .map(|target| TargetInfo::of(target, page_hevc))
+            .collect(),
+    )
 }
 
 #[derive(Deserialize)]
@@ -771,7 +797,10 @@ impl ThroughputQuery {
             return Err("to must come after from");
         }
         let back = || self.within.map(|within| now.saturating_sub(within));
-        Ok(throughput::Window { since: self.from.or_else(back).unwrap_or(0), until: self.to })
+        Ok(throughput::Window {
+            since: self.from.or_else(back).unwrap_or(0),
+            until: self.to,
+        })
     }
 }
 
@@ -813,7 +842,10 @@ async fn throughput_handler(
     let written = tokio::task::spawn_blocking(move || store.records(window, seconds))
         .await
         .map_err(anyhow::Error::from)??;
-    let throughput::Reading { mut records, mut open } = snapshot.with_written(written, window);
+    let throughput::Reading {
+        mut records,
+        mut open,
+    } = snapshot.with_written(written, window);
     if !seconds {
         // The rows from memory carry theirs whatever the range: drop them with the rest.
         for record in records.iter_mut().chain(&mut open) {
@@ -874,7 +906,9 @@ async fn claim_handler(
 ) -> ApiResult<Json<ClaimResponse>> {
     // The route's guard has already checked the cookie, so it is there.
     let login = auth::token_from_headers(&headers).unwrap_or_default();
-    let session_id = state.sessions.claim(req.force, req.session_id.as_deref(), &login)?;
+    let session_id = state
+        .sessions
+        .claim(req.force, req.session_id.as_deref(), &login)?;
     Ok(Json(ClaimResponse { session_id }))
 }
 
@@ -913,10 +947,7 @@ mod tests {
         let has_v6 = std::net::TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_ok();
         let port = free_port();
         let listeners = bind_all(&both_loopbacks(port), "localhost:0").unwrap();
-        let bound: Vec<_> = listeners
-            .iter()
-            .map(|l| l.local_addr().unwrap())
-            .collect();
+        let bound: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
         if has_v6 {
             assert_eq!(bound, both_loopbacks(port), "both, in the order resolved");
         } else {
@@ -940,7 +971,10 @@ mod tests {
             .expect_err("a port in use must refuse the start");
         let text = format!("{err:#}");
         assert!(text.contains("already in use"), "{text}");
-        assert!(text.contains(&port.to_string()), "it must name the port: {text}");
+        assert!(
+            text.contains(&port.to_string()),
+            "it must name the port: {text}"
+        );
 
         // And nothing was left holding the address that *was* free: the IPv6
         // listener taken on the way through has to be released, or a retry after
@@ -956,7 +990,10 @@ mod tests {
     #[test]
     fn an_unavailable_address_is_skipped_while_the_rest_still_bind() {
         let port = free_port();
-        let mut addrs = vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), port)];
+        let mut addrs = vec![SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            port,
+        )];
         addrs.push(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
 
         let listeners = bind_all(&addrs, "example:0").expect("the loopback still binds");
@@ -980,10 +1017,7 @@ mod tests {
         let port = free_port();
         let wildcard = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port);
         let listeners = bind_all(&[wildcard], "[::]:0").unwrap();
-        let bound: Vec<_> = listeners
-            .iter()
-            .map(|l| l.local_addr().unwrap())
-            .collect();
+        let bound: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
         assert_eq!(
             bound,
             vec![
@@ -1030,7 +1064,6 @@ mod tests {
         assert!(format!("{err:#}").contains("can be listened on"), "{err:#}");
     }
 
-
     /// An inline icon reaches the wire under the type the config declared.
     /// `/api/logo` is public and answers before anybody has logged in, so this is
     /// the whole path a tab takes to its favicon.
@@ -1059,7 +1092,9 @@ mod tests {
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "image/png"
         );
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
         assert_eq!(&body[..], PNG);
     }
 
@@ -1094,7 +1129,9 @@ mod tests {
                 virtual_displays: 1,
                 virtual_display: false,
             }],
-            auth: crate::auth::GatewayAuth::Login(crate::auth::SiteLogin::with_password("admin", "hunter22").unwrap()),
+            auth: crate::auth::GatewayAuth::Login(
+                crate::auth::SiteLogin::with_password("admin", "hunter22").unwrap(),
+            ),
             branding: crate::config::Branding {
                 text: "zDesk".to_owned(),
                 logo: None,
@@ -1227,7 +1264,12 @@ mod tests {
     async fn nothing_but_the_home_page_is_redirected() {
         for path in ["/api/health", "/api/auth/status", "/ws", "/assets/app.js"] {
             assert_eq!(
-                redirect_for(dev_router(Some("gw-a.zdesk.localhost")), "127.0.0.1:52675", path).await,
+                redirect_for(
+                    dev_router(Some("gw-a.zdesk.localhost")),
+                    "127.0.0.1:52675",
+                    path
+                )
+                .await,
                 None,
                 "{path} must not be redirected"
             );
@@ -1242,7 +1284,6 @@ mod tests {
             None
         );
     }
-
 
     /// The exact `/api/targets` entry. Pinned because the picker reads every key
     /// of it, and because `subtype` and `passthrough` are `null` far more often
@@ -1260,11 +1301,28 @@ mod tests {
         let text = format!(
             "{}{}{}",
             target("mac", "protocol = \"vnc\"\nsubtype = \"ard\"", "192.0.2.10"),
-            target("win", "protocol = \"rdp\"\nsize = \"1920x1080\"", "192.0.2.11"),
-            target("fast", "protocol = \"vnc\"\nsubtype = \"ard-high-performance\"", "192.0.2.10"),
-        ) + &target("two", "protocol = \"rdp\"\nvirtual_displays = 2", "192.0.2.11")
-            + &target("sway", "protocol = \"vnc\"\nsubtype = \"wlshare\"", "192.0.2.12");
-        let targets = crate::config::ConfigFile::parse_fixture(&text).expect("the targets parse").targets;
+            target(
+                "win",
+                "protocol = \"rdp\"\nsize = \"1920x1080\"",
+                "192.0.2.11"
+            ),
+            target(
+                "fast",
+                "protocol = \"vnc\"\nsubtype = \"ard-high-performance\"",
+                "192.0.2.10"
+            ),
+        ) + &target(
+            "two",
+            "protocol = \"rdp\"\nvirtual_displays = 2",
+            "192.0.2.11",
+        ) + &target(
+            "sway",
+            "protocol = \"vnc\"\nsubtype = \"wlshare\"",
+            "192.0.2.12",
+        );
+        let targets = crate::config::ConfigFile::parse_fixture(&text)
+            .expect("the targets parse")
+            .targets;
         let entry = |name: &str| {
             let target = targets.iter().find(|t| t.name == name).unwrap();
             serde_json::to_string(&TargetInfo::of(target, false)).unwrap()
@@ -1346,17 +1404,38 @@ mod tests {
             request.body(axum::body::Body::from(body)).unwrap()
         };
         let login = r#"{"username":"admin","password":"hunter22"}"#;
-        let response = app.clone().oneshot(request("POST", "/api/auth/login", None, login)).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(request("POST", "/api/auth/login", None, login))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let set_cookie = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap();
         let cookie = set_cookie.split(';').next().unwrap().to_owned();
 
         for (method, uri, body) in [("GET", "/api/targets", ""), ("POST", "/api/session", "{}")] {
             // Refused or answered: a page that lost its login is told the same.
-            let refused = app.clone().oneshot(request(method, uri, None, body)).await.unwrap();
+            let refused = app
+                .clone()
+                .oneshot(request(method, uri, None, body))
+                .await
+                .unwrap();
             assert_eq!(refused.status(), StatusCode::UNAUTHORIZED, "{uri}");
-            assert_eq!(refused.headers().get(VERSION_HEADER).unwrap(), env!("CARGO_PKG_VERSION"), "{uri}");
-            let response = app.clone().oneshot(request(method, uri, Some(&cookie), body)).await.unwrap();
+            assert_eq!(
+                refused.headers().get(VERSION_HEADER).unwrap(),
+                env!("CARGO_PKG_VERSION"),
+                "{uri}"
+            );
+            let response = app
+                .clone()
+                .oneshot(request(method, uri, Some(&cookie), body))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
             assert_eq!(
                 response.headers().get(VERSION_HEADER).unwrap(),
@@ -1386,13 +1465,20 @@ mod tests {
                         .method("POST")
                         .uri("/api/auth/login")
                         .header(header::CONTENT_TYPE, "application/json")
-                        .body(axum::body::Body::from(r#"{"username":"admin","password":"hunter22"}"#))
+                        .body(axum::body::Body::from(
+                            r#"{"username":"admin","password":"hunter22"}"#,
+                        ))
                         .unwrap(),
                 )
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            let set_cookie = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
+            let set_cookie = response
+                .headers()
+                .get(header::SET_COOKIE)
+                .unwrap()
+                .to_str()
+                .unwrap();
             set_cookie.split(';').next().unwrap().to_owned()
         };
 
@@ -1418,25 +1504,51 @@ mod tests {
             ],
         };
         let now = throughput::unix_now();
-        store.write(&[record(now - 600, 100), record(now - 100, 200)]).unwrap();
+        store
+            .write(&[record(now - 600, 100), record(now - 100, 200)])
+            .unwrap();
         // A timeframe closed but not written yet, then the one still being counted:
         // one sample of the picker's, and bytes since.
-        let meters = Arc::new(throughput::ThroughputMeters::open_at(vec!["mac".to_owned()], now - 20));
+        let meters = Arc::new(throughput::ThroughputMeters::open_at(
+            vec!["mac".to_owned()],
+            now - 20,
+        ));
         meters.counter(None, throughput::Socket::Session).sent(30);
         meters.sample(now - 19);
         meters.close_timeframe(now - 10);
-        meters.counter(None, throughput::Socket::Session).received(4);
+        meters
+            .counter(None, throughput::Socket::Session)
+            .received(4);
         meters.sample(now - 9);
-        meters.counter(None, throughput::Socket::Session).received(2);
-        let app = router(router_config(None), Throughput { meters, store: Some(Arc::new(store)) }, None);
+        meters
+            .counter(None, throughput::Socket::Session)
+            .received(2);
+        let app = router(
+            router_config(None),
+            Throughput {
+                meters,
+                store: Some(Arc::new(store)),
+            },
+            None,
+        );
 
-        let response = app.clone().oneshot(get("/api/throughput", None)).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput", None))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let cookie = log_in(app.clone()).await;
-        let response = app.clone().oneshot(get("/api/throughput?within=300", Some(&cookie))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput?within=300", Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         let mut json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         // The read's own clock is the open timeframe's end; the second it lands in is
         // not this test's to know.
@@ -1462,47 +1574,97 @@ mod tests {
 
         // A range too long to draw a point a second is answered without the seconds, from
         // the database and from the meters alike.
-        let response = app.clone().oneshot(get("/api/throughput", Some(&cookie))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput", Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["hasSeconds"], serde_json::json!(false), "the range says so itself");
-        for record in json["records"].as_array().unwrap().iter().chain(json["open"].as_array().unwrap()) {
+        assert_eq!(
+            json["hasSeconds"],
+            serde_json::json!(false),
+            "the range says so itself"
+        );
+        for record in json["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(json["open"].as_array().unwrap())
+        {
             assert_eq!(record["seconds"], serde_json::json!([]), "{record}");
         }
 
         // A range named outright: the timeframes inside it alone, and not the one still
         // being counted, which began after that range ended.
         let named = format!("/api/throughput?from={}&to={}", now - 700, now - 500);
-        let response = app.clone().oneshot(get(&named, Some(&cookie))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get(&named, Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["records"], serde_json::json!([{"target": "mac", "socket": "session", "start": now - 600, "end": now - 540, "sentBytes": 100, "receivedBytes": 7, "peakSentPerSec": 50, "peakReceivedPerSec": 7, "seconds": [[0, 50, 3], [30, 50, 4]]}]));
+        assert_eq!(
+            json["records"],
+            serde_json::json!([{"target": "mac", "socket": "session", "start": now - 600, "end": now - 540, "sentBytes": 100, "receivedBytes": 7, "peakSentPerSec": 50, "peakReceivedPerSec": 7, "seconds": [[0, 50, 3], [30, 50, 4]]}])
+        );
         assert_eq!(json["open"], serde_json::json!([]));
 
         // Two ranges in one query, or one that ends where it begins, is no query at all.
-        for query in [format!("?within=300&to={now}"), format!("?from={now}&to={now}")] {
-            let response =
-                app.clone().oneshot(get(&format!("/api/throughput{query}"), Some(&cookie))).await.unwrap();
+        for query in [
+            format!("?within=300&to={now}"),
+            format!("?from={now}&to={now}"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(get(&format!("/api/throughput{query}"), Some(&cookie)))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
         }
 
-        let response = app.clone().oneshot(get("/api/throughput/live", None)).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput/live", None))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let response = app.clone().oneshot(get("/api/throughput/live", Some(&cookie))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput/live", Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         assert_eq!(
             std::str::from_utf8(&body).unwrap(),
-            format!(r#"{{"at":{},"rates":[{{"target":null,"socket":"session","sentPerSec":0,"receivedPerSec":4}}]}}"#, now - 9)
+            format!(
+                r#"{{"at":{},"rates":[{{"target":null,"socket":"session","sentPerSec":0,"receivedPerSec":4}}]}}"#,
+                now - 9
+            )
         );
 
         let app = router(router_config(None), Throughput::default(), None);
         let cookie = log_in(app.clone()).await;
-        let response = app.clone().oneshot(get("/api/throughput", Some(&cookie))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(get("/api/throughput", Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let response = app.oneshot(get("/api/throughput/live", Some(&cookie))).await.unwrap();
+        let response = app
+            .oneshot(get("/api/throughput/live", Some(&cookie)))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

@@ -115,7 +115,10 @@ impl Format {
         let bits = r.u16_le()?;
         let extra = r.u16_le()?;
         r.skip(usize::from(extra))?;
-        let format = Self { channels, sample_rate };
+        let format = Self {
+            channels,
+            sample_rate,
+        };
         let pcm = tag == WAVE_FORMAT_PCM
             && bits == BITS_PER_SAMPLE
             && channels > 0
@@ -129,10 +132,20 @@ impl Format {
 /// if the host lists nothing this end produces.
 fn choose(offered: &[Format]) -> Option<Format> {
     let producible: Vec<Format> = offered.iter().copied().filter(|f| f.producible()).collect();
-    let mono: Vec<Format> = producible.iter().copied().filter(|f| f.channels == 1).collect();
+    let mono: Vec<Format> = producible
+        .iter()
+        .copied()
+        .filter(|f| f.channels == 1)
+        .collect();
     let pool = if mono.is_empty() { producible } else { mono };
-    let above = pool.iter().filter(|f| f.sample_rate >= SPEECH_RATE).min_by_key(|f| f.sample_rate);
-    let below = pool.iter().filter(|f| f.sample_rate < SPEECH_RATE).max_by_key(|f| f.sample_rate);
+    let above = pool
+        .iter()
+        .filter(|f| f.sample_rate >= SPEECH_RATE)
+        .min_by_key(|f| f.sample_rate);
+    let below = pool
+        .iter()
+        .filter(|f| f.sample_rate < SPEECH_RATE)
+        .max_by_key(|f| f.sample_rate);
     above.or(below).copied()
 }
 
@@ -208,7 +221,10 @@ impl Rdpeai {
         if self.recording() {
             turn.outputs.push(Output::Closed);
         }
-        *self = Self { channel: Some(channel), ..Self::default() };
+        *self = Self {
+            channel: Some(channel),
+            ..Self::default()
+        };
         turn
     }
 
@@ -275,7 +291,10 @@ impl Rdpeai {
             kind => return Err(r.refuse("a message id", kind)),
         };
         if !in_sequence {
-            debug!("rdp: ignoring audio input message {kind:#04x} out of sequence in {:?}", self.phase);
+            debug!(
+                "rdp: ignoring audio input message {kind:#04x} out of sequence in {:?}",
+                self.phase
+            );
             return Ok(());
         }
         match kind {
@@ -319,7 +338,10 @@ impl Rdpeai {
                     turn.replies.push(open_reply_pdu(E_INVALIDARG));
                     return Err(r.refuse("frames per packet", frames));
                 }
-                self.phase = Phase::Recording { format, frames: frames as usize };
+                self.phase = Phase::Recording {
+                    format,
+                    frames: frames as usize,
+                };
                 self.pending.clear();
                 turn.replies.push(format_change_pdu(initial));
                 turn.replies.push(open_reply_pdu(S_OK));
@@ -379,11 +401,18 @@ fn open_reply_pdu(result: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    const MONO_16K: Format = Format { channels: 1, sample_rate: 16_000 };
+    const MONO_16K: Format = Format {
+        channels: 1,
+        sample_rate: 16_000,
+    };
 
     fn pcm_format(channels: u16, rate: u32) -> Vec<u8> {
         let mut w = Writer::new();
-        Format { channels, sample_rate: rate }.write(&mut w);
+        Format {
+            channels,
+            sample_rate: rate,
+        }
+        .write(&mut w);
         w.finish()
     }
 
@@ -434,7 +463,10 @@ mod tests {
         assert_eq!(turn.replies, vec![vec![0x01, 0x01, 0x00, 0x00, 0x00]]);
         assert_eq!(turn.outputs, vec![Output::Negotiated { version: 1 }]);
         mic.opened(4);
-        assert_eq!(mic.push(&[0x01, 0x07, 0, 0, 0]).replies, vec![vec![0x01, 0x02, 0, 0, 0]]);
+        assert_eq!(
+            mic.push(&[0x01, 0x07, 0, 0, 0]).replies,
+            vec![vec![0x01, 0x02, 0, 0, 0]]
+        );
     }
 
     /// The host's list of 4.1.3, whose PCM entries are 44.1, 22.05 and 11.025 kHz: an
@@ -449,30 +481,60 @@ mod tests {
             pcm_format(1, 22_050),
             pcm_format(1, 11_025),
             // ADPCM, with its extra bytes, stepped over.
-            [&[0x02, 0x00, 0x01, 0x00, 0x44, 0xAC, 0, 0, 0x47, 0xAD, 0, 0, 0x00, 0x08, 0x04, 0x00, 0x02, 0x00][..], &[0xF4, 0x07]].concat(),
+            [
+                &[
+                    0x02, 0x00, 0x01, 0x00, 0x44, 0xAC, 0, 0, 0x47, 0xAD, 0, 0, 0x00, 0x08, 0x04,
+                    0x00, 0x02, 0x00,
+                ][..],
+                &[0xF4, 0x07],
+            ]
+            .concat(),
         ]);
         let mut mic = negotiated();
         let turn = mic.push(&host);
-        let chosen = Format { channels: 1, sample_rate: 22_050 };
+        let chosen = Format {
+            channels: 1,
+            sample_rate: 22_050,
+        };
         assert_eq!(turn.outputs, vec![Output::Offered(chosen)]);
         assert_eq!(turn.replies[0], vec![0x05]);
         assert_eq!(
             turn.replies[1],
             vec![
-                0x02, 0x01, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x00, // header, 1 format, 27 bytes
+                0x02, 0x01, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00,
+                0x00, // header, 1 format, 27 bytes
                 0x01, 0x00, 0x01, 0x00, 0x22, 0x56, 0x00, 0x00, // PCM, mono, 22050
-                0x44, 0xAC, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, // 44100 B/s, 2, 16, 0
+                0x44, 0xAC, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00,
+                0x00, // 44100 B/s, 2, 16, 0
             ]
         );
     }
 
     #[test]
     fn speech_rates_mono_first() {
-        let f = |channels, sample_rate| Format { channels, sample_rate };
-        assert_eq!(choose(&[f(1, 48_000), f(1, 16_000), f(1, 8_000)]), Some(f(1, 16_000)));
-        assert_eq!(choose(&[f(2, 16_000), f(1, 44_100)]), Some(f(1, 44_100)), "mono before a better rate");
-        assert_eq!(choose(&[f(1, 8_000), f(1, 12_000)]), Some(f(1, 12_000)), "the highest below");
-        assert_eq!(choose(&[f(2, 32_000)]), Some(f(2, 32_000)), "stereo when nothing is mono");
+        let f = |channels, sample_rate| Format {
+            channels,
+            sample_rate,
+        };
+        assert_eq!(
+            choose(&[f(1, 48_000), f(1, 16_000), f(1, 8_000)]),
+            Some(f(1, 16_000))
+        );
+        assert_eq!(
+            choose(&[f(2, 16_000), f(1, 44_100)]),
+            Some(f(1, 44_100)),
+            "mono before a better rate"
+        );
+        assert_eq!(
+            choose(&[f(1, 8_000), f(1, 12_000)]),
+            Some(f(1, 12_000)),
+            "the highest below"
+        );
+        assert_eq!(
+            choose(&[f(2, 32_000)]),
+            Some(f(2, 32_000)),
+            "stereo when nothing is mono"
+        );
         assert_eq!(choose(&[f(1, 11_025), f(3, 16_000), f(1, 96_000)]), None);
     }
 
@@ -496,7 +558,10 @@ mod tests {
         let mut mic = negotiated();
         mic.push(&formats_from_host(&[pcm_format(1, 16_000)]));
         let turn = mic.push(&open(320, 0));
-        assert_eq!(turn.replies, vec![vec![0x07, 0, 0, 0, 0], vec![0x04, 0x00, 0x00, 0x00, 0x00]]);
+        assert_eq!(
+            turn.replies,
+            vec![vec![0x07, 0, 0, 0, 0], vec![0x04, 0x00, 0x00, 0x00, 0x00]]
+        );
         assert_eq!(turn.outputs, vec![Output::Opened(MONO_16K)]);
     }
 
@@ -510,12 +575,19 @@ mod tests {
         assert_eq!(mic.push(&[0x07, 0, 0, 0, 0]), Turn::default());
 
         let mut mic = recording(4);
-        assert_eq!(mic.push(&formats_from_host(&[pcm_format(1, 48_000)])), Turn::default());
+        assert_eq!(
+            mic.push(&formats_from_host(&[pcm_format(1, 48_000)])),
+            Turn::default()
+        );
         assert_eq!(mic.push(&[MSG_SNDIN_VERSION, 2, 0, 0, 0]), Turn::default());
         assert_eq!(mic.push(&open(8, 0)), Turn::default());
         assert!(mic.recording());
         let turn = mic.sample(&[0; 8]);
-        assert_eq!(turn.replies, vec![vec![0x05], [&[0x06][..], &[0; 8]].concat()], "still 16 kHz mono in fours");
+        assert_eq!(
+            turn.replies,
+            vec![vec![0x05], [&[0x06][..], &[0; 8]].concat()],
+            "still 16 kHz mono in fours"
+        );
     }
 
     /// An unsuccessful Open leaves the formats exchanged, so the host may open again.
@@ -523,9 +595,18 @@ mod tests {
     fn an_open_can_follow_a_refused_one() {
         let mut mic = negotiated();
         mic.push(&formats_from_host(&[pcm_format(1, 16_000)]));
-        assert_eq!(mic.push(&open(0, 0)).replies, vec![open_reply_pdu(E_INVALIDARG)]);
-        assert_eq!(mic.push(&open(320, 1)).replies, vec![open_reply_pdu(E_INVALIDARG)]);
-        assert_eq!(mic.push(&open(320, 0)).outputs, vec![Output::Opened(MONO_16K)]);
+        assert_eq!(
+            mic.push(&open(0, 0)).replies,
+            vec![open_reply_pdu(E_INVALIDARG)]
+        );
+        assert_eq!(
+            mic.push(&open(320, 1)).replies,
+            vec![open_reply_pdu(E_INVALIDARG)]
+        );
+        assert_eq!(
+            mic.push(&open(320, 0)).outputs,
+            vec![Output::Opened(MONO_16K)]
+        );
     }
 
     /// PCM is cut into packets of exactly FramesPerPacket frames, each an Incoming Data PDU
@@ -534,9 +615,15 @@ mod tests {
     fn pcm_goes_out_in_whole_packets() {
         let mut mic = recording(4);
         let turn = mic.sample(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        assert_eq!(turn.replies, vec![vec![0x05], vec![0x06, 1, 2, 3, 4, 5, 6, 7, 8]]);
+        assert_eq!(
+            turn.replies,
+            vec![vec![0x05], vec![0x06, 1, 2, 3, 4, 5, 6, 7, 8]]
+        );
         let turn = mic.sample(&[11, 12, 13, 14, 15, 16]);
-        assert_eq!(turn.replies, vec![vec![0x05], vec![0x06, 9, 10, 11, 12, 13, 14, 15, 16]]);
+        assert_eq!(
+            turn.replies,
+            vec![vec![0x05], vec![0x06, 9, 10, 11, 12, 13, 14, 15, 16]]
+        );
         assert!(mic.sample(&[]).replies.is_empty());
     }
 
@@ -555,8 +642,14 @@ mod tests {
         mic.sample(&[1, 2]);
         let turn = mic.push(&[0x07, 0, 0, 0, 0]);
         assert_eq!(turn.replies, vec![vec![0x07, 0, 0, 0, 0]]);
-        assert!(mic.sample(&[3, 4, 5, 6, 7, 8]).replies.is_empty(), "the old half-packet was dropped");
-        assert!(mic.push(&[0x07, 1, 0, 0, 0]).replies.is_empty(), "an index never offered");
+        assert!(
+            mic.sample(&[3, 4, 5, 6, 7, 8]).replies.is_empty(),
+            "the old half-packet was dropped"
+        );
+        assert!(
+            mic.push(&[0x07, 1, 0, 0, 0]).replies.is_empty(),
+            "an index never offered"
+        );
     }
 
     #[test]
@@ -575,7 +668,11 @@ mod tests {
         assert_eq!(mic.push(&[]), Turn::default());
         assert_eq!(mic.push(&[0x03, 1, 0]), Turn::default());
         assert_eq!(mic.push(&[0x42]), Turn::default());
-        assert_eq!(mic.push(&[0x01, 0, 0, 0, 0]), Turn::default(), "version zero");
+        assert_eq!(
+            mic.push(&[0x01, 0, 0, 0, 0]),
+            Turn::default(),
+            "version zero"
+        );
         assert!(mic.recording());
     }
 }

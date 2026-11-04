@@ -62,7 +62,10 @@ impl Drawn {
 
     /// Whether what was drawn this way is lossless.
     pub fn lossless(self) -> bool {
-        matches!(self, Self::Uncompressed | Self::Planar | Self::Alpha | Self::ClearCodec)
+        matches!(
+            self,
+            Self::Uncompressed | Self::Planar | Self::Alpha | Self::ClearCodec
+        )
     }
 
     pub fn name(self) -> &'static str {
@@ -141,7 +144,9 @@ impl Fidelity {
 
     /// Whether anything so far was drawn with H.264, in any of its shapes.
     pub fn h264(&self) -> bool {
-        self.seen.iter().any(|drawn| matches!(drawn, Drawn::Avc420 | Drawn::Avc444 | Drawn::Avc444v2))
+        self.seen
+            .iter()
+            .any(|drawn| matches!(drawn, Drawn::Avc420 | Drawn::Avc444 | Drawn::Avc444v2))
     }
 
     /// Whether what was drawn is what a host set to Lossless draws with: something,
@@ -149,7 +154,11 @@ impl Fidelity {
     /// its default opens with ClearCodec and RemoteFX Progressive, or with H.264
     /// where it was asked for the whole desktop in it.
     pub fn as_lossless_host(&self) -> bool {
-        !self.is_empty() && self.seen.iter().all(|drawn| matches!(drawn, Drawn::Uncompressed | Drawn::Planar | Drawn::Alpha))
+        !self.is_empty()
+            && self
+                .seen
+                .iter()
+                .all(|drawn| matches!(drawn, Drawn::Uncompressed | Drawn::Planar | Drawn::Alpha))
     }
 
     /// The codecs drawn with, by name, in a fixed order.
@@ -206,16 +215,31 @@ mod tests {
         fidelity.saw(gfx::CODEC_CLEARCODEC, &clear(false, &[2, 1]));
         assert!(!fidelity.lossless());
         fidelity.saw(gfx::CODEC_CAPROGRESSIVE, &[]);
-        assert_eq!(fidelity.names(), ["ClearCodec with NSCodec", "RemoteFX Progressive"]);
+        assert_eq!(
+            fidelity.names(),
+            ["ClearCodec with NSCodec", "RemoteFX Progressive"]
+        );
     }
 
     #[test]
     fn clearcodec_is_lossless_only_without_nscodec() {
-        assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(false, &[0, 2])), Drawn::ClearCodec);
-        assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[2])), Drawn::ClearCodec);
-        assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[0, 1])), Drawn::ClearCodecNsc);
+        assert_eq!(
+            Drawn::of(gfx::CODEC_CLEARCODEC, &clear(false, &[0, 2])),
+            Drawn::ClearCodec
+        );
+        assert_eq!(
+            Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[2])),
+            Drawn::ClearCodec
+        );
+        assert_eq!(
+            Drawn::of(gfx::CODEC_CLEARCODEC, &clear(true, &[0, 1])),
+            Drawn::ClearCodecNsc
+        );
         // A glyph hit, with no composition header behind it.
-        assert_eq!(Drawn::of(gfx::CODEC_CLEARCODEC, &[0x03, 0, 7, 0]), Drawn::ClearCodec);
+        assert_eq!(
+            Drawn::of(gfx::CODEC_CLEARCODEC, &[0x03, 0, 7, 0]),
+            Drawn::ClearCodec
+        );
         assert!(Drawn::ClearCodec.lossless());
         assert!(!Drawn::ClearCodecNsc.lossless());
     }
@@ -231,7 +255,11 @@ mod tests {
             gfx::CODEC_AVC444_V2,
             0x0042,
         ] {
-            assert!(!Drawn::of(codec, &[]).lossless(), "{}", gfx::codec_name(codec));
+            assert!(
+                !Drawn::of(codec, &[]).lossless(),
+                "{}",
+                gfx::codec_name(codec)
+            );
         }
     }
 
@@ -253,6 +281,9 @@ mod tests {
         // ClearCodec without NSCodec is lossless, but no Lossless host draws with it.
         let region = opened(&[gfx::CODEC_CLEARCODEC]);
         assert!(region.lossless() && !region.as_lossless_host() && !region.h264());
-        assert!(!Fidelity::default().as_lossless_host(), "nothing drawn says nothing");
+        assert!(
+            !Fidelity::default().as_lossless_host(),
+            "nothing drawn says nothing"
+        );
     }
 }

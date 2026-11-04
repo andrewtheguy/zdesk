@@ -157,11 +157,16 @@ impl Instance {
         loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Claim { _file: file }),
-                Err(std::fs::TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
+                Err(std::fs::TryLockError::WouldBlock)
+                    if tokio::time::Instant::now() < deadline =>
+                {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
                 Err(std::fs::TryLockError::WouldBlock) => {
-                    anyhow::bail!("{} is already served by another gateway", self.dir.display())
+                    anyhow::bail!(
+                        "{} is already served by another gateway",
+                        self.dir.display()
+                    )
                 }
                 Err(std::fs::TryLockError::Error(error)) => {
                     return Err(error).with_context(|| format!("cannot lock {}", path.display()));
@@ -202,9 +207,13 @@ pub async fn serve(instance: &Instance, claim: Claim, key: Option<Key>) -> anyho
     // start the launcher reports rather than a gateway that silently records nothing.
     let throughput = crate::throughput::start(
         config.meter.as_ref(),
-        config.targets.iter().map(|target| target.name.clone()).collect(),
+        config
+            .targets
+            .iter()
+            .map(|target| target.name.clone())
+            .collect(),
     )
-        .context("cannot record websocket throughput ([meter].database)")?;
+    .context("cannot record websocket throughput ([meter].database)")?;
     // Before the handshake for the same reason: an archive it cannot serve is a
     // refused start.
     let hevc_decoder = config
@@ -231,7 +240,10 @@ pub async fn serve(instance: &Instance, claim: Claim, key: Option<Key>) -> anyho
 
     info!("worker listening on {}", config.listen);
     info!("config: {}", instance.config_path().display());
-    info!("{} target(s) available in the picker:", config.targets.len());
+    info!(
+        "{} target(s) available in the picker:",
+        config.targets.len()
+    );
     for target in &config.targets {
         info!(
             "  target {:?}: {}:{} ({:?})",
@@ -240,9 +252,7 @@ pub async fn serve(instance: &Instance, claim: Claim, key: Option<Key>) -> anyho
     }
 
     let app = crate::server::router(config, throughput, hevc_decoder);
-    axum::serve(listener, app)
-        .await
-        .context("server error")?;
+    axum::serve(listener, app).await.context("server error")?;
     Ok(())
 }
 
@@ -267,7 +277,9 @@ pub fn read_key() -> anyhow::Result<Option<Key>> {
     if line.is_empty() {
         Ok(None)
     } else {
-        Key::from_line(line).map(Some).context("the key line on stdin is malformed")
+        Key::from_line(line)
+            .map(Some)
+            .context("the key line on stdin is malformed")
     }
 }
 
@@ -337,7 +349,7 @@ pub fn check(text: &str) -> anyhow::Result<()> {
         Path::new(""),
         Path::new(""),
     )
-        .map(|_| ())
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -360,14 +372,20 @@ mod tests {
         );
         // The field names the parent reads, spelled out so renaming one here fails
         // here rather than at launch.
-        assert!(line.contains("\"endpoint\":\"/tmp/zdesk/gateway.sock\""), "{line}");
+        assert!(
+            line.contains("\"endpoint\":\"/tmp/zdesk/gateway.sock\""),
+            "{line}"
+        );
         assert!(line.contains("\"token\":\"abc-123\""), "{line}");
     }
 
     #[test]
     fn an_instance_names_its_config_beside_itself() {
         let instance = Instance::new("/tmp/inst");
-        assert_eq!(instance.config_path(), Path::new("/tmp/inst").join("zdesk.toml"));
+        assert_eq!(
+            instance.config_path(),
+            Path::new("/tmp/inst").join("zdesk.toml")
+        );
     }
 
     /// A worker's config is `[branding]` and `[[targets]]`, and an empty one is a
@@ -387,7 +405,10 @@ mod tests {
             let error = check(text).expect_err("[server] is the launcher's");
             let message = format!("{error:#}");
             assert!(message.contains("[server]"), "{message}");
-            assert!(message.contains("[[targets]]"), "it must say what does belong: {message}");
+            assert!(
+                message.contains("[[targets]]"),
+                "it must say what does belong: {message}"
+            );
         }
     }
 
@@ -434,7 +455,11 @@ mod tests {
     #[test]
     fn checking_goes_as_far_as_starting_would() {
         let text = "[[targets]]\nname = \"box\"\nprotocol = \"rdp\"\nhost = \"::1\"\nusername = \"a\"\npassword_ref = \"b\"\negfx = false\nvirtual_displays = 2\n";
-        let error = check(&crate::config::vaulted(text)).expect_err("two displays are refused without the pipeline");
-        assert!(format!("{error:#}").contains("virtual_displays = 2 with egfx = false"), "{error:#}");
+        let error = check(&crate::config::vaulted(text))
+            .expect_err("two displays are refused without the pipeline");
+        assert!(
+            format!("{error:#}").contains("virtual_displays = 2 with egfx = false"),
+            "{error:#}"
+        );
     }
 }

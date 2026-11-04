@@ -25,7 +25,12 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
-    let allowed = args.allow.iter().map(Network::to_string).collect::<Vec<_>>().join(", ");
+    let allowed = args
+        .allow
+        .iter()
+        .map(Network::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
     log::warn!(
         "listening on {} with no authentication: anyone who reaches it can connect through it to {allowed}",
         listener.local_addr()?

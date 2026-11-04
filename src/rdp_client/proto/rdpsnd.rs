@@ -71,7 +71,11 @@ const WAVE_FORMAT_PCM: u16 = 0x0001;
 const FORMAT_BYTES: u16 = 18;
 
 fn refuse(field: &'static str, value: impl Into<u64>) -> Malformed {
-    Malformed::Refused { what: WHAT, field, value: value.into() }
+    Malformed::Refused {
+        what: WHAT,
+        field,
+        value: value.into(),
+    }
 }
 
 /// Linear PCM, interleaved, little-endian: the one kind of audio this path carries.
@@ -114,8 +118,14 @@ impl Format {
         let bits_per_sample = r.u16_le()?;
         let extra = r.u16_le()?;
         r.bytes(usize::from(extra))?;
-        let format = Self { channels, sample_rate, bits_per_sample };
-        let pcm = tag == WAVE_FORMAT_PCM && block_align == format.block_align() && byte_rate == format.byte_rate();
+        let format = Self {
+            channels,
+            sample_rate,
+            bits_per_sample,
+        };
+        let pcm = tag == WAVE_FORMAT_PCM
+            && block_align == format.block_align()
+            && byte_rate == format.byte_rate();
         Ok(pcm.then_some(format))
     }
 }
@@ -123,7 +133,11 @@ impl Format {
 /// The one format asked for. One rather than a list, and that is load-bearing:
 /// a buffer names its format by index into the client's list, and with one entry
 /// the index can only mean this.
-pub const CD_QUALITY: Format = Format { channels: 2, sample_rate: 44_100, bits_per_sample: 16 };
+pub const CD_QUALITY: Format = Format {
+    channels: 2,
+    sample_rate: 44_100,
+    bits_per_sample: 16,
+};
 
 /// What one PDU amounted to, beyond the replies it earned.
 #[derive(Debug, PartialEq, Eq)]
@@ -132,10 +146,15 @@ pub enum Output {
     Negotiated,
     /// The host offered nothing this client takes, and was told so: it will
     /// redirect nothing. `offered` is how many formats it listed.
-    NoFormat { offered: u16 },
+    NoFormat {
+        offered: u16,
+    },
     /// One buffer of samples in [`CD_QUALITY`], and the Wave Confirm to send once
     /// they have been handed on.
-    Wave { samples: Vec<u8>, confirm: Confirm },
+    Wave {
+        samples: Vec<u8>,
+        confirm: Confirm,
+    },
     /// The host has nothing playing. The agreed format stands; the next buffer is
     /// played without a new format list, which the host will not send.
     Closed,
@@ -191,20 +210,32 @@ impl Rdpsnd {
                 let timestamp = r.u16_le()?;
                 let pack_size = r.u16_le()?;
                 // The rest is padding: a probe of the link, with nothing to read.
-                Ok(Turn { replies: vec![training_confirm(timestamp, pack_size)], output: Output::Nothing })
+                Ok(Turn {
+                    replies: vec![training_confirm(timestamp, pack_size)],
+                    output: Output::Nothing,
+                })
             }
             SNDC_WAVE2 => self.wave2(&mut r, body_size, arrived),
             SNDC_WAVE => self.wave_info(&mut r, body_size),
-            SNDC_CLOSE => Ok(Turn { replies: Vec::new(), output: Output::Closed }),
+            SNDC_CLOSE => Ok(Turn {
+                replies: Vec::new(),
+                output: Output::Closed,
+            }),
             // Capabilities this client did not claim; the browser's own volume
             // control is the one within reach of whoever is listening.
             SNDC_SETVOLUME | SNDC_SETPITCH => {
                 debug!("rdp: ignoring a sound volume or pitch PDU ({kind:#04x})");
-                Ok(Turn { replies: Vec::new(), output: Output::Nothing })
+                Ok(Turn {
+                    replies: Vec::new(),
+                    output: Output::Nothing,
+                })
             }
             other => {
                 debug!("rdp: ignoring a sound PDU of type {other:#04x}");
-                Ok(Turn { replies: Vec::new(), output: Output::Nothing })
+                Ok(Turn {
+                    replies: Vec::new(),
+                    output: Output::Nothing,
+                })
             }
         }
     }
@@ -230,12 +261,21 @@ impl Rdpsnd {
         if version >= QUALITY_FROM {
             replies.push(quality_mode());
         }
-        let output = if offered { Output::Negotiated } else { Output::NoFormat { offered: count } };
+        let output = if offered {
+            Output::Negotiated
+        } else {
+            Output::NoFormat { offered: count }
+        };
         Ok(Turn { replies, output })
     }
 
     /// A Wave2 PDU: the buffer, whole.
-    fn wave2(&mut self, r: &mut Reader<'_>, body_size: usize, arrived: Instant) -> Result<Turn, Malformed> {
+    fn wave2(
+        &mut self,
+        r: &mut Reader<'_>,
+        body_size: usize,
+        arrived: Instant,
+    ) -> Result<Turn, Malformed> {
         let timestamp = r.u16_le()?;
         let format = r.u16_le()?;
         let block = r.u8()?;
@@ -245,7 +285,15 @@ impl Rdpsnd {
             return Err(refuse("a Wave2 body size", body_size as u64));
         };
         let data = r.bytes(size)?;
-        Ok(self.buffer(format, data.to_vec(), Confirm { timestamp, block, arrived }))
+        Ok(self.buffer(
+            format,
+            data.to_vec(),
+            Confirm {
+                timestamp,
+                block,
+                arrived,
+            },
+        ))
     }
 
     /// A Wave Info PDU: the buffer's first four bytes, and how many follow in the
@@ -260,8 +308,17 @@ impl Rdpsnd {
             Some(size) if size >= 4 => size,
             _ => return Err(refuse("a Wave Info body size", body_size as u64)),
         };
-        self.pending = Some(Pending { timestamp, format, block, head, size });
-        Ok(Turn { replies: Vec::new(), output: Output::Nothing })
+        self.pending = Some(Pending {
+            timestamp,
+            format,
+            block,
+            head,
+            size,
+        });
+        Ok(Turn {
+            replies: Vec::new(),
+            output: Output::Nothing,
+        })
     }
 
     /// The Wave PDU after a Wave Info: no header of its own, four bytes of pad where
@@ -272,7 +329,11 @@ impl Rdpsnd {
         let rest = r.bytes(pending.size - 4)?;
         let mut data = pending.head.to_vec();
         data.extend_from_slice(rest);
-        let confirm = Confirm { timestamp: pending.timestamp, block: pending.block, arrived };
+        let confirm = Confirm {
+            timestamp: pending.timestamp,
+            block: pending.block,
+            arrived,
+        };
         Ok(self.buffer(pending.format, data, confirm))
     }
 
@@ -283,11 +344,19 @@ impl Rdpsnd {
         if !self.negotiated {
             debug!("rdp: dropping a sound buffer that arrived before any format was agreed");
         } else if format != 0 {
-            debug!("rdp: dropping a sound buffer in format {format}, which this client did not ask for");
+            debug!(
+                "rdp: dropping a sound buffer in format {format}, which this client did not ask for"
+            );
         } else {
-            return Turn { replies: Vec::new(), output: Output::Wave { samples, confirm } };
+            return Turn {
+                replies: Vec::new(),
+                output: Output::Wave { samples, confirm },
+            };
         }
-        Turn { replies: vec![confirm.encode_at(confirm.arrived)], output: Output::Nothing }
+        Turn {
+            replies: vec![confirm.encode_at(confirm.arrived)],
+            output: Output::Nothing,
+        }
     }
 }
 
@@ -474,7 +543,10 @@ mod tests {
         body.extend_from_slice(&[0xAA; 1020]);
         let turn = snd.push(&server(SNDC_TRAINING, &body)).unwrap();
         assert_eq!(turn.output, Output::Nothing);
-        assert_eq!(turn.replies, vec![vec![SNDC_TRAINING, 0, 4, 0, 0x34, 0x12, 0x00, 0x04]]);
+        assert_eq!(
+            turn.replies,
+            vec![vec![SNDC_TRAINING, 0, 4, 0, 0x34, 0x12, 0x00, 0x04]]
+        );
     }
 
     /// A Wave2 in the agreed format is the buffer and a confirm of its block, timed
@@ -484,8 +556,13 @@ mod tests {
         let mut snd = Rdpsnd::new();
         snd.push(&server_formats(8, &[cd()])).unwrap();
         let turn = snd.push(&wave2(0, 7, &[1, 2, 3, 4, 5, 6, 7, 8])).unwrap();
-        assert!(turn.replies.is_empty(), "confirmed once the buffer is handed on, not before");
-        let Output::Wave { samples, confirm } = turn.output else { panic!("a buffer") };
+        assert!(
+            turn.replies.is_empty(),
+            "confirmed once the buffer is handed on, not before"
+        );
+        let Output::Wave { samples, confirm } = turn.output else {
+            panic!("a buffer")
+        };
         assert_eq!(samples, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         // Sent five milliseconds after it arrived: the host's timestamp, plus five.
         let sent = confirm.encode_at(confirm.arrived + std::time::Duration::from_millis(5));
@@ -499,7 +576,11 @@ mod tests {
     #[test]
     fn a_confirm_timestamp_wraps_at_sixteen_bits() {
         let arrived = Instant::now();
-        let confirm = Confirm { timestamp: 0xFFFF, block: 1, arrived };
+        let confirm = Confirm {
+            timestamp: 0xFFFF,
+            block: 1,
+            arrived,
+        };
         let sent = confirm.encode_at(arrived + std::time::Duration::from_millis(2));
         assert_eq!(sent[4..6], [0x01, 0x00]);
     }
@@ -515,9 +596,17 @@ mod tests {
         let mut info = vec![SNDC_WAVE, 0, 16, 0];
         info.extend_from_slice(&[0x11, 0x22, 0, 0, 3, 0, 0, 0, 1, 2, 3, 4]);
         let turn = snd.push(&info).unwrap();
-        assert_eq!(turn, Turn { replies: Vec::new(), output: Output::Nothing });
+        assert_eq!(
+            turn,
+            Turn {
+                replies: Vec::new(),
+                output: Output::Nothing
+            }
+        );
         let turn = snd.push(&[0xEE, 0xEE, 0xEE, 0xEE, 5, 6, 7, 8]).unwrap();
-        let Output::Wave { samples, confirm } = turn.output else { panic!("a buffer") };
+        let Output::Wave { samples, confirm } = turn.output else {
+            panic!("a buffer")
+        };
         assert_eq!(samples, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         let sent = confirm.encode_at(confirm.arrived);
         assert_eq!(sent, vec![SNDC_WAVECONFIRM, 0, 4, 0, 0x11, 0x22, 3, 0]);
@@ -529,12 +618,20 @@ mod tests {
     fn a_close_is_reported_and_a_short_pdu_refused() {
         let mut snd = Rdpsnd::new();
         snd.push(&server_formats(8, &[cd()])).unwrap();
-        assert_eq!(snd.push(&server(SNDC_CLOSE, &[])).unwrap().output, Output::Closed);
-        let Output::Wave { samples, .. } = snd.push(&wave2(0, 1, &[1, 2, 3, 4])).unwrap().output else {
+        assert_eq!(
+            snd.push(&server(SNDC_CLOSE, &[])).unwrap().output,
+            Output::Closed
+        );
+        let Output::Wave { samples, .. } = snd.push(&wave2(0, 1, &[1, 2, 3, 4])).unwrap().output
+        else {
             panic!("the next stream needs no new format list");
         };
         assert_eq!(samples, vec![1, 2, 3, 4]);
         assert!(snd.push(&[SNDC_WAVE2, 0, 20, 0, 1, 2]).is_err());
-        assert!(snd.push(&[SNDC_WAVE2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_err(), "a body too small for its fields");
+        assert!(
+            snd.push(&[SNDC_WAVE2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                .is_err(),
+            "a body too small for its fields"
+        );
     }
 }

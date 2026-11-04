@@ -112,8 +112,12 @@ pub fn certificate_public_key(der: &[u8]) -> Result<Vec<u8>, Malformed> {
     let bits = expect(&mut spki, BIT_STRING)?;
     // The first byte of a bit string is how many bits of the last byte are padding.
     // A key is whole bytes, so it is zero, and the key is everything after it.
-    let (unused, key) =
-        bits.split_first().ok_or(Malformed::Short { what: WHAT, len: 0, at: 0, need: 1 })?;
+    let (unused, key) = bits.split_first().ok_or(Malformed::Short {
+        what: WHAT,
+        len: 0,
+        at: 0,
+        need: 1,
+    })?;
     if *unused != 0 || key.is_empty() {
         return Err(Malformed::Refused {
             what: WHAT,
@@ -147,7 +151,10 @@ pub fn read_integer(r: &mut Reader<'_>) -> Result<u32, Malformed> {
     let bytes = expect(r, INTEGER)?;
     // Four bytes plus a leading zero is the longest a 32-bit value can be written.
     if bytes.is_empty() || bytes.len() > 5 {
-        return Err(r.refuse("an INTEGER of", u64::try_from(bytes.len()).unwrap_or(u64::MAX)));
+        return Err(r.refuse(
+            "an INTEGER of",
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        ));
     }
     let mut value = 0_u64;
     for byte in bytes {
@@ -161,7 +168,10 @@ pub fn read_enumerated(r: &mut Reader<'_>) -> Result<u8, Malformed> {
     let bytes = expect(r, ENUMERATED)?;
     match bytes {
         [value] => Ok(*value),
-        other => Err(r.refuse("an ENUMERATED of", u64::try_from(other.len()).unwrap_or(u64::MAX))),
+        other => Err(r.refuse(
+            "an ENUMERATED of",
+            u64::try_from(other.len()).unwrap_or(u64::MAX),
+        )),
     }
 }
 
@@ -179,7 +189,9 @@ pub fn write_length(w: &mut Writer, length: usize) {
         }
         Err(_) => {
             w.u8(0x82);
-            w.u16_be(u16::try_from(length).expect("a connect PDU fits the TPKT length before this"));
+            w.u16_be(
+                u16::try_from(length).expect("a connect PDU fits the TPKT length before this"),
+            );
         }
     }
 }
@@ -211,7 +223,10 @@ pub fn write_boolean(w: &mut Writer, value: bool) {
 /// when the top bit would otherwise make it negative.
 pub fn write_integer(w: &mut Writer, value: u32) {
     let bytes = value.to_be_bytes();
-    let first = bytes.iter().position(|b| *b != 0).unwrap_or(bytes.len() - 1);
+    let first = bytes
+        .iter()
+        .position(|b| *b != 0)
+        .unwrap_or(bytes.len() - 1);
     let digits = &bytes[first..];
     let pad = usize::from(digits[0] & 0x80 != 0);
     write_tag(w, INTEGER, digits.len() + pad);
@@ -244,11 +259,22 @@ mod tests {
     #[test]
     fn a_length_is_read_in_both_forms() {
         let short = tlv(INTEGER, &[7]);
-        assert_eq!(header(&mut Reader::new("a test", &short)).unwrap(), (INTEGER, 1));
+        assert_eq!(
+            header(&mut Reader::new("a test", &short)).unwrap(),
+            (INTEGER, 1)
+        );
 
         let long = tlv(OCTET_STRING, &vec![0; 300]);
-        assert_eq!(header(&mut Reader::new("a test", &long)).unwrap(), (OCTET_STRING, 300));
-        assert_eq!(expect(&mut Reader::new("a test", &long), OCTET_STRING).unwrap().len(), 300);
+        assert_eq!(
+            header(&mut Reader::new("a test", &long)).unwrap(),
+            (OCTET_STRING, 300)
+        );
+        assert_eq!(
+            expect(&mut Reader::new("a test", &long), OCTET_STRING)
+                .unwrap()
+                .len(),
+            300
+        );
     }
 
     #[test]
@@ -268,7 +294,11 @@ mod tests {
         let bytes = tlv(INTEGER, &[7]);
         assert!(matches!(
             expect(&mut Reader::new("a test", &bytes), SEQUENCE).unwrap_err(),
-            Malformed::Refused { field: "an ASN.1 tag", value: 2, .. }
+            Malformed::Refused {
+                field: "an ASN.1 tag",
+                value: 2,
+                ..
+            }
         ));
     }
 
@@ -285,7 +315,10 @@ mod tests {
         assert_eq!(written(|w| write_length(w, 0x1234)), vec![0x82, 0x12, 0x34]);
         for length in [0_usize, 1, 0x7F, 0x80, 0xFF, 0x100, 0xFFFF] {
             let bytes = written(|w| write_length(w, length));
-            assert_eq!(read_length(&mut Reader::new("a test", &bytes)).unwrap(), length);
+            assert_eq!(
+                read_length(&mut Reader::new("a test", &bytes)).unwrap(),
+                length
+            );
         }
     }
 
@@ -295,13 +328,25 @@ mod tests {
     fn an_integer_is_written_as_the_positive_number_it_is() {
         assert_eq!(written(|w| write_integer(w, 0)), vec![INTEGER, 1, 0]);
         assert_eq!(written(|w| write_integer(w, 2)), vec![INTEGER, 1, 2]);
-        assert_eq!(written(|w| write_integer(w, 0x80)), vec![INTEGER, 2, 0x00, 0x80]);
-        assert_eq!(written(|w| write_integer(w, 0xFFFF)), vec![INTEGER, 3, 0x00, 0xFF, 0xFF]);
-        assert_eq!(written(|w| write_integer(w, 0xFC17)), vec![INTEGER, 3, 0x00, 0xFC, 0x17]);
+        assert_eq!(
+            written(|w| write_integer(w, 0x80)),
+            vec![INTEGER, 2, 0x00, 0x80]
+        );
+        assert_eq!(
+            written(|w| write_integer(w, 0xFFFF)),
+            vec![INTEGER, 3, 0x00, 0xFF, 0xFF]
+        );
+        assert_eq!(
+            written(|w| write_integer(w, 0xFC17)),
+            vec![INTEGER, 3, 0x00, 0xFC, 0x17]
+        );
 
         for value in [0_u32, 1, 0x7F, 0x80, 0xFF, 0x420, 0xFC17, 0xFFFF, u32::MAX] {
             let bytes = written(|w| write_integer(w, value));
-            assert_eq!(read_integer(&mut Reader::new("a test", &bytes)).unwrap(), value);
+            assert_eq!(
+                read_integer(&mut Reader::new("a test", &bytes)).unwrap(),
+                value
+            );
         }
     }
 
@@ -312,15 +357,27 @@ mod tests {
             w.bytes(b"hi");
         });
         assert_eq!(bytes, vec![0x7F, 101, 2, b'h', b'i']);
-        assert_eq!(expect_application(&mut Reader::new("a test", &bytes), 101).unwrap(), b"hi");
+        assert_eq!(
+            expect_application(&mut Reader::new("a test", &bytes), 101).unwrap(),
+            b"hi"
+        );
         let err = expect_application(&mut Reader::new("a test", &bytes), 102).unwrap_err();
-        assert!(matches!(err, Malformed::Refused { field: "an ASN.1 application tag", .. }));
+        assert!(matches!(
+            err,
+            Malformed::Refused {
+                field: "an ASN.1 application tag",
+                ..
+            }
+        ));
     }
 
     #[test]
     fn a_boolean_and_an_octet_string_are_written_the_way_mcs_sends_them() {
         assert_eq!(written(|w| write_boolean(w, true)), vec![BOOLEAN, 1, 0xFF]);
-        assert_eq!(written(|w| write_octet_string(w, &[1])), vec![OCTET_STRING, 1, 1]);
+        assert_eq!(
+            written(|w| write_octet_string(w, &[1])),
+            vec![OCTET_STRING, 1, 1]
+        );
         assert_eq!(
             read_enumerated(&mut Reader::new("a test", &[ENUMERATED, 1, 0])).unwrap(),
             0
@@ -351,9 +408,15 @@ mod tests {
     #[test]
     fn a_certificate_yields_its_public_key() {
         let key = vec![0xAB; 270];
-        assert_eq!(certificate_public_key(&certificate(true, &key)).unwrap(), key);
+        assert_eq!(
+            certificate_public_key(&certificate(true, &key)).unwrap(),
+            key
+        );
         // A v1 certificate has no version tag, and the walk must not eat a field.
-        assert_eq!(certificate_public_key(&certificate(false, &key)).unwrap(), key);
+        assert_eq!(
+            certificate_public_key(&certificate(false, &key)).unwrap(),
+            key
+        );
     }
 
     #[test]

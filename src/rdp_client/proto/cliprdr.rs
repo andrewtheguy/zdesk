@@ -162,7 +162,9 @@ pub fn decode(pdu: &[u8]) -> Result<Message<'_>, Malformed> {
         FORMAT_LIST_RESPONSE => Message::ListResponse { ok },
         FORMAT_DATA_REQUEST => {
             let mut r = Reader::new(WHAT, body);
-            Message::DataRequest { format: r.u32_le()? }
+            Message::DataRequest {
+                format: r.u32_le()?,
+            }
         }
         FORMAT_DATA_RESPONSE => Message::Data(ok.then_some(body)),
         other => Message::Ignored(other),
@@ -194,7 +196,10 @@ fn capabilities_of(body: &[u8]) -> Result<Message<'static>, Malformed> {
             general = (r.u32_le()?, r.u32_le()?);
         }
     }
-    Ok(Message::Capabilities { version: general.0, flags: general.1 })
+    Ok(Message::Capabilities {
+        version: general.0,
+        flags: general.1,
+    })
 }
 
 /// This client's capabilities: one general set, with nothing in it turned on.
@@ -299,35 +304,67 @@ mod tests {
     fn the_servers_capabilities_are_read_for_the_record() {
         // Byte for byte what a Windows 11 host sends: version 2, and the five flags
         // that come with file transfer and clipboard locking.
-        let windows = pdu(CLIP_CAPS, 0, &[
-            0x01, 0x00, 0x00, 0x00, // one set, pad
-            0x01, 0x00, 0x0C, 0x00, // CB_CAPSTYPE_GENERAL, 12 bytes
-            0x02, 0x00, 0x00, 0x00, // CB_CAPS_VERSION_2
-            0x3E, 0x00, 0x00, 0x00, // long names, file clip, locking, huge files
-        ]);
-        assert_eq!(decode(&windows).unwrap(), Message::Capabilities { version: 2, flags: 0x3E });
+        let windows = pdu(
+            CLIP_CAPS,
+            0,
+            &[
+                0x01, 0x00, 0x00, 0x00, // one set, pad
+                0x01, 0x00, 0x0C, 0x00, // CB_CAPSTYPE_GENERAL, 12 bytes
+                0x02, 0x00, 0x00, 0x00, // CB_CAPS_VERSION_2
+                0x3E, 0x00, 0x00, 0x00, // long names, file clip, locking, huge files
+            ],
+        );
+        assert_eq!(
+            decode(&windows).unwrap(),
+            Message::Capabilities {
+                version: 2,
+                flags: 0x3E
+            }
+        );
 
         // This client's own, through the same decoder: one set and no flags at all.
         assert_eq!(
             decode(&capabilities()).unwrap(),
-            Message::Capabilities { version: CAPS_VERSION_2, flags: 0 }
+            Message::Capabilities {
+                version: CAPS_VERSION_2,
+                flags: 0
+            }
         );
 
         // A server with nothing to say, and one whose set this client does not know:
         // both are a clipboard that works, so neither is an error.
         let empty = pdu(CLIP_CAPS, 0, &[0, 0, 0, 0]);
-        assert_eq!(decode(&empty).unwrap(), Message::Capabilities { version: 0, flags: 0 });
+        assert_eq!(
+            decode(&empty).unwrap(),
+            Message::Capabilities {
+                version: 0,
+                flags: 0
+            }
+        );
         let unknown = [0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x06, 0x00, 0xAB, 0xCD];
         let other = pdu(CLIP_CAPS, 0, &unknown);
-        assert_eq!(decode(&other).unwrap(), Message::Capabilities { version: 0, flags: 0 });
+        assert_eq!(
+            decode(&other).unwrap(),
+            Message::Capabilities {
+                version: 0,
+                flags: 0
+            }
+        );
     }
 
     /// A capability set whose length does not even cover its own header would leave
     /// the reader where it started — once per set, forever.
     #[test]
     fn a_capability_set_shorter_than_its_own_header_is_refused() {
-        let lying = pdu(CLIP_CAPS, 0, &[0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00]);
-        assert!(matches!(decode(&lying).unwrap_err(), Malformed::Refused { .. }));
+        let lying = pdu(
+            CLIP_CAPS,
+            0,
+            &[0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00],
+        );
+        assert!(matches!(
+            decode(&lying).unwrap_err(),
+            Malformed::Refused { .. }
+        ));
     }
 
     #[test]
@@ -360,13 +397,21 @@ mod tests {
     fn a_format_list_is_one_short_name_entry_per_format() {
         let list = format_list(&[TEXT]);
         assert_eq!(list.len(), HEADER + SHORT_NAME);
-        assert_eq!(&list[..8], &[0x02, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &list[..8],
+            &[0x02, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00]
+        );
         assert_eq!(&list[8..12], &[0x0D, 0x00, 0x00, 0x00]);
-        assert!(list[12..].iter().all(|&byte| byte == 0), "the name field is empty");
+        assert!(
+            list[12..].iter().all(|&byte| byte == 0),
+            "the name field is empty"
+        );
 
         // And it reads back as what it said, through the same decoder a server's
         // list goes through.
-        let Message::Formats(body) = decode(&list).unwrap() else { panic!("not a format list") };
+        let Message::Formats(body) = decode(&list).unwrap() else {
+            panic!("not a format list")
+        };
         assert_eq!(formats(body).unwrap(), vec![TEXT]);
     }
 
@@ -410,7 +455,10 @@ mod tests {
         for unit in "Rich Text Format".encode_utf16().chain(std::iter::once(0)) {
             body.extend_from_slice(&unit.to_le_bytes());
         }
-        assert!(!body.len().is_multiple_of(SHORT_NAME), "this list cannot be short names");
+        assert!(
+            !body.len().is_multiple_of(SHORT_NAME),
+            "this list cannot be short names"
+        );
         assert_eq!(formats(&body).unwrap(), vec![TEXT, 49]);
     }
 
@@ -418,18 +466,32 @@ mod tests {
     #[test]
     fn an_unterminated_long_name_is_short_rather_than_endless() {
         let body = [TEXT.to_le_bytes().as_slice(), &[0x41, 0x00, 0x42]].concat();
-        assert!(matches!(formats(&body).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            formats(&body).unwrap_err(),
+            Malformed::Short { .. }
+        ));
     }
 
     #[test]
     fn a_paste_names_the_format_it_is_waiting_for() {
         let request = data_request(TEXT);
-        assert_eq!(request, vec![0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0D, 0, 0, 0]);
-        assert_eq!(decode(&request).unwrap(), Message::DataRequest { format: TEXT });
+        assert_eq!(
+            request,
+            vec![
+                0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0D, 0, 0, 0
+            ]
+        );
+        assert_eq!(
+            decode(&request).unwrap(),
+            Message::DataRequest { format: TEXT }
+        );
         // And a request for a format nobody offered still reads: what to do about one
         // is the caller's, and it has to answer it either way.
         let other = data_request(0xDEAD);
-        assert_eq!(decode(&other).unwrap(), Message::DataRequest { format: 0xDEAD });
+        assert_eq!(
+            decode(&other).unwrap(),
+            Message::DataRequest { format: 0xDEAD }
+        );
     }
 
     /// The two answers to a request, and the bit that tells them apart. A body
@@ -454,8 +516,11 @@ mod tests {
     #[test]
     fn what_this_client_answers_a_paste_with_says_which_of_the_two_it_is() {
         let bytes = [b'h', 0, b'i', 0, 0, 0];
-        let (answered, refused, empty) =
-            (data_response(Some(&bytes)), data_response(None), data_response(Some(&[])));
+        let (answered, refused, empty) = (
+            data_response(Some(&bytes)),
+            data_response(None),
+            data_response(Some(&[])),
+        );
         assert_eq!(&answered[..4], [0x05, 0x00, 0x01, 0x00]);
         assert_eq!(&refused[..4], [0x05, 0x00, 0x02, 0x00]);
         assert_eq!(decode(&answered).unwrap(), Message::Data(Some(&bytes[..])));
@@ -469,10 +534,15 @@ mod tests {
 
     #[test]
     fn the_answer_to_a_format_list_carries_whether_it_was_taken() {
-        let (taken, failed) =
-            (format_list_response(), pdu(FORMAT_LIST_RESPONSE, 0x0002, &[]));
+        let (taken, failed) = (
+            format_list_response(),
+            pdu(FORMAT_LIST_RESPONSE, 0x0002, &[]),
+        );
         assert_eq!(decode(&taken).unwrap(), Message::ListResponse { ok: true });
-        assert_eq!(decode(&failed).unwrap(), Message::ListResponse { ok: false });
+        assert_eq!(
+            decode(&failed).unwrap(),
+            Message::ListResponse { ok: false }
+        );
     }
 
     /// The PDUs of the two features this client did not ask for. A server should not
@@ -489,15 +559,24 @@ mod tests {
     /// Both of these come off a socket, so neither may panic.
     #[test]
     fn a_truncated_pdu_is_short_rather_than_a_panic() {
-        assert!(matches!(decode(&[0x01, 0x00, 0x00]).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            decode(&[0x01, 0x00, 0x00]).unwrap_err(),
+            Malformed::Short { .. }
+        ));
         // A header announcing a body that is not there.
         let lying = pdu(FORMAT_DATA_RESPONSE, RESPONSE_OK, &[1, 2, 3]);
-        assert!(matches!(decode(&lying[..HEADER + 1]).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            decode(&lying[..HEADER + 1]).unwrap_err(),
+            Malformed::Short { .. }
+        ));
         // A request whose body is too short for the format id it should carry.
         let mut w = Writer::new();
         header(&mut w, FORMAT_DATA_REQUEST, 0, 2);
         w.bytes(&[0x0D, 0x00]);
-        assert!(matches!(decode(&w.finish()).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            decode(&w.finish()).unwrap_err(),
+            Malformed::Short { .. }
+        ));
     }
 
     /// Padding past the announced length is not part of what the peer said, and the
@@ -507,6 +586,9 @@ mod tests {
         let mut w = Writer::new();
         header(&mut w, FORMAT_DATA_RESPONSE, RESPONSE_OK, 2);
         w.bytes(&[b'A', 0, 0xFF, 0xFF]);
-        assert_eq!(decode(&w.finish()).unwrap(), Message::Data(Some(&[b'A', 0][..])));
+        assert_eq!(
+            decode(&w.finish()).unwrap(),
+            Message::Data(Some(&[b'A', 0][..]))
+        );
     }
 }

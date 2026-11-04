@@ -185,7 +185,9 @@ impl Format {
         w.u32_le(1); // PixelAspectRatioNumerator
         w.u32_le(1); // PixelAspectRatioDenominator
         w.u8(DECODING_REQUIRED);
-        w.finish().try_into().expect("a media type is written to its exact size")
+        w.finish()
+            .try_into()
+            .expect("a media type is written to its exact size")
     }
 }
 
@@ -328,7 +330,9 @@ impl Rdpecam {
 
     /// Whether dynamic channel `channel` is one of this end's open channels.
     pub fn owns(&self, channel: u32) -> bool {
-        self.enumerator == Some(channel) || self.instance(channel).is_some() || self.withdrawn.contains(&channel)
+        self.enumerator == Some(channel)
+            || self.instance(channel).is_some()
+            || self.withdrawn.contains(&channel)
     }
 
     /// A channel [`Self::wants`] was accepted as `channel`.
@@ -352,7 +356,10 @@ impl Rdpecam {
             if self.devices.is_empty() {
                 turn.outputs.push(Output::Attached);
             }
-            self.devices.push(Instance { channel, activations: 0 });
+            self.devices.push(Instance {
+                channel,
+                activations: 0,
+            });
         }
         turn
     }
@@ -368,11 +375,16 @@ impl Rdpecam {
             self.negotiated = false;
             self.refused = false;
             self.announced = false;
-        } else if let Some(at) = self.devices.iter().position(|instance| instance.channel == channel) {
+        } else if let Some(at) = self
+            .devices
+            .iter()
+            .position(|instance| instance.channel == channel)
+        {
             debug!("rdp: the host closed a camera device channel, {channel}");
             let instance = self.devices.remove(at);
             self.activations = self.activations.saturating_sub(instance.activations);
-            if (self.stream_channel == Some(channel) || self.activations == 0) && self.stop_stream() {
+            if (self.stream_channel == Some(channel) || self.activations == 0) && self.stop_stream()
+            {
                 turn.outputs.push(Output::Stopped);
             }
         } else {
@@ -424,7 +436,8 @@ impl Rdpecam {
         }
         self.stop_stream();
         self.activations = 0;
-        self.withdrawn.extend(self.devices.drain(..).map(|instance| instance.channel));
+        self.withdrawn
+            .extend(self.devices.drain(..).map(|instance| instance.channel));
         if std::mem::take(&mut self.announced)
             && let Some(enumerator) = self.enumerator
         {
@@ -511,7 +524,9 @@ impl Rdpecam {
     }
 
     fn instance(&self, channel: u32) -> Option<&Instance> {
-        self.devices.iter().find(|instance| instance.channel == channel)
+        self.devices
+            .iter()
+            .find(|instance| instance.channel == channel)
     }
 
     fn ask_for_keyframe(&mut self, turn: &mut Turn) {
@@ -534,9 +549,12 @@ impl Rdpecam {
 
     /// Send the Device Added Notification once everything it waits for holds.
     fn announce(&mut self, turn: &mut Turn) {
-        if let (Some(enumerator), true, false, true) =
-            (self.enumerator, self.negotiated, self.announced, self.format.is_some())
-        {
+        if let (Some(enumerator), true, false, true) = (
+            self.enumerator,
+            self.negotiated,
+            self.announced,
+            self.format.is_some(),
+        ) {
             turn.reply(enumerator, self.device_added(&self.name, DEVICE_CHANNEL));
             self.announced = true;
         }
@@ -595,7 +613,10 @@ impl Rdpecam {
             debug!("rdp: discarding camera message {id:#04x}, which is not a request");
             return;
         }
-        debug!("rdp: the host asks the camera {id:#04x} on channel {channel} ({} body bytes)", body.len());
+        debug!(
+            "rdp: the host asks the camera {id:#04x} on channel {channel} ({} body bytes)",
+            body.len()
+        );
         let reply = self.request(channel, version, id, body, turn);
         // Empty for a Sample Request owed until there is a sample: it is answered when
         // one arrives.
@@ -607,7 +628,14 @@ impl Rdpecam {
     /// The response a request earns, after the checks 3.1.1 and 3.2.5 put in front of
     /// acting on it: that it is well formed for the negotiated version, that it is for the
     /// device as it is plugged now, and that the device's state takes it.
-    fn request(&mut self, channel: u32, version: u8, id: u8, body: &[u8], turn: &mut Turn) -> Vec<u8> {
+    fn request(
+        &mut self,
+        channel: u32,
+        version: u8,
+        id: u8,
+        body: &[u8],
+        turn: &mut Turn,
+    ) -> Vec<u8> {
         // A Sample Request's every failure is a Sample Error Response, naming the stream
         // it asked about (3.2.5.23, 3.2.5.24).
         let fail = |this: &Self, code: u32| match id {
@@ -621,7 +649,9 @@ impl Rdpecam {
                 | DEACTIVATE_DEVICE_REQUEST
                 | STREAM_LIST_REQUEST
                 | STOP_STREAMS_REQUEST => body.is_empty(),
-                MEDIA_TYPE_LIST_REQUEST | CURRENT_MEDIA_TYPE_REQUEST | SAMPLE_REQUEST => body.len() == 1,
+                MEDIA_TYPE_LIST_REQUEST | CURRENT_MEDIA_TYPE_REQUEST | SAMPLE_REQUEST => {
+                    body.len() == 1
+                }
                 START_STREAMS_REQUEST => {
                     !body.is_empty()
                         && body.len().is_multiple_of(START_STREAM_INFO_BYTES)
@@ -637,12 +667,18 @@ impl Rdpecam {
                 _ => false,
             };
         if !well_formed {
-            debug!("rdp: refusing camera request {id:#04x} ({} body bytes) as malformed", body.len());
+            debug!(
+                "rdp: refusing camera request {id:#04x} ({} body bytes) as malformed",
+                body.len()
+            );
             return fail(self, INVALID_MESSAGE);
         }
-        let (Some(format), Some(at)) =
-            (self.format, self.devices.iter().position(|instance| instance.channel == channel))
-        else {
+        let (Some(format), Some(at)) = (
+            self.format,
+            self.devices
+                .iter()
+                .position(|instance| instance.channel == channel),
+        ) else {
             debug!("rdp: refusing camera request {id:#04x} for a device that has been withdrawn");
             return fail(self, INVALID_REQUEST);
         };
@@ -673,7 +709,9 @@ impl Rdpecam {
                 self.error(INVALID_STREAM_NUMBER)
             }
             MEDIA_TYPE_LIST_REQUEST => self.media_type_response(MEDIA_TYPE_LIST_RESPONSE, format),
-            CURRENT_MEDIA_TYPE_REQUEST => self.media_type_response(CURRENT_MEDIA_TYPE_RESPONSE, format),
+            CURRENT_MEDIA_TYPE_REQUEST => {
+                self.media_type_response(CURRENT_MEDIA_TYPE_RESPONSE, format)
+            }
             START_STREAMS_REQUEST => self.start_streams(channel, body, format, turn),
             STOP_STREAMS_REQUEST => {
                 if self.stop_stream() {
@@ -693,7 +731,9 @@ impl Rdpecam {
             }
             PROPERTY_LIST_REQUEST => vec![self.version, PROPERTY_LIST_RESPONSE],
             PROPERTY_VALUE_REQUEST | SET_PROPERTY_VALUE_REQUEST => match body[0] {
-                PROPERTY_SET_CAMERA_CONTROL | PROPERTY_SET_VIDEO_PROC_AMP => self.error(ITEM_NOT_FOUND),
+                PROPERTY_SET_CAMERA_CONTROL | PROPERTY_SET_VIDEO_PROC_AMP => {
+                    self.error(ITEM_NOT_FOUND)
+                }
                 _ => self.error(SET_NOT_FOUND),
             },
             _ => unreachable!("every other id was refused as malformed"),
@@ -702,9 +742,20 @@ impl Rdpecam {
 
     /// A Start Streams Request: every START_STREAM_INFO must name stream 0, once, in the
     /// one media type the list offered.
-    fn start_streams(&mut self, channel: u32, body: &[u8], format: Format, turn: &mut Turn) -> Vec<u8> {
+    fn start_streams(
+        &mut self,
+        channel: u32,
+        body: &[u8],
+        format: Format,
+        turn: &mut Turn,
+    ) -> Vec<u8> {
         let offered = format.media_type();
-        for (index, info) in body.as_chunks::<START_STREAM_INFO_BYTES>().0.iter().enumerate() {
+        for (index, info) in body
+            .as_chunks::<START_STREAM_INFO_BYTES>()
+            .0
+            .iter()
+            .enumerate()
+        {
             if info[0] != 0 {
                 return self.error(INVALID_STREAM_NUMBER);
             }
@@ -824,8 +875,18 @@ mod tests {
     const ENUMERATION: u32 = 5;
     const DEVICE: u32 = 6;
 
-    const VGA: Format = Format { width: 640, height: 480, fps_numerator: 30, fps_denominator: 1 };
-    const FULL_HD: Format = Format { width: 1920, height: 1080, fps_numerator: 30, fps_denominator: 1 };
+    const VGA: Format = Format {
+        width: 640,
+        height: 480,
+        fps_numerator: 30,
+        fps_denominator: 1,
+    };
+    const FULL_HD: Format = Format {
+        width: 1920,
+        height: 1080,
+        fps_numerator: 30,
+        fps_denominator: 1,
+    };
 
     /// A camera the host has negotiated with, been told about, and opened the channel of.
     fn attached(format: Format) -> Rdpecam {
@@ -834,7 +895,10 @@ mod tests {
         cam.push(ENUMERATION, &[2, SELECT_VERSION_RESPONSE]);
         cam.plug(format);
         assert!(cam.wants(DEVICE_CHANNEL));
-        assert_eq!(cam.opened(DEVICE_CHANNEL, DEVICE).outputs, vec![Output::Attached]);
+        assert_eq!(
+            cam.opened(DEVICE_CHANNEL, DEVICE).outputs,
+            vec![Output::Attached]
+        );
         cam
     }
 
@@ -863,7 +927,10 @@ mod tests {
     fn streaming(format: Format) -> Rdpecam {
         let mut cam = attached(format);
         ask(&mut cam, &[2, ACTIVATE_DEVICE_REQUEST]);
-        assert_eq!(ask(&mut cam, &start(format)), vec![vec![2, SUCCESS_RESPONSE]]);
+        assert_eq!(
+            ask(&mut cam, &start(format)),
+            vec![vec![2, SUCCESS_RESPONSE]]
+        );
         cam
     }
 
@@ -872,12 +939,18 @@ mod tests {
     fn the_enumeration_channel_opens_with_the_version_request() {
         let mut cam = Rdpecam::new("zDesk Camera");
         assert!(cam.wants(ENUMERATOR));
-        assert!(!cam.wants(DEVICE_CHANNEL), "no device channel before one is announced");
+        assert!(
+            !cam.wants(DEVICE_CHANNEL),
+            "no device channel before one is announced"
+        );
         let turn = cam.opened(ENUMERATOR, ENUMERATION);
         assert_eq!(turn.replies, vec![(ENUMERATION, vec![0x02, 0x03])]);
         let turn = cam.push(ENUMERATION, &[0x02, 0x04]);
         assert_eq!(turn.outputs, vec![Output::Negotiated { version: 2 }]);
-        assert!(turn.replies.is_empty(), "nothing is plugged, so nothing is announced");
+        assert!(
+            turn.replies.is_empty(),
+            "nothing is plugged, so nothing is announced"
+        );
     }
 
     /// 4.2.1, byte for byte.
@@ -885,11 +958,15 @@ mod tests {
     fn a_device_added_notification_is_the_specifications_example() {
         let cam = Rdpecam::new("Mock Camera 1");
         let expected = [
-            0x02, 0x05, 0x4d, 0x00, 0x6f, 0x00, 0x63, 0x00, 0x6b, 0x00, 0x20, 0x00, 0x43, 0x00, 0x61, 0x00,
-            0x6d, 0x00, 0x65, 0x00, 0x72, 0x00, 0x61, 0x00, 0x20, 0x00, 0x31, 0x00, 0x00, 0x00, 0x52, 0x44,
-            0x43, 0x61, 0x6d, 0x65, 0x72, 0x61, 0x5f, 0x44, 0x65, 0x76, 0x69, 0x63, 0x65, 0x5f, 0x30, 0x00,
+            0x02, 0x05, 0x4d, 0x00, 0x6f, 0x00, 0x63, 0x00, 0x6b, 0x00, 0x20, 0x00, 0x43, 0x00,
+            0x61, 0x00, 0x6d, 0x00, 0x65, 0x00, 0x72, 0x00, 0x61, 0x00, 0x20, 0x00, 0x31, 0x00,
+            0x00, 0x00, 0x52, 0x44, 0x43, 0x61, 0x6d, 0x65, 0x72, 0x61, 0x5f, 0x44, 0x65, 0x76,
+            0x69, 0x63, 0x65, 0x5f, 0x30, 0x00,
         ];
-        assert_eq!(cam.device_added("Mock Camera 1", "RDCamera_Device_0"), expected);
+        assert_eq!(
+            cam.device_added("Mock Camera 1", "RDCamera_Device_0"),
+            expected
+        );
     }
 
     /// 4.3.1, byte for byte.
@@ -897,8 +974,8 @@ mod tests {
     fn a_device_removed_notification_is_the_specifications_example() {
         let cam = Rdpecam::new("Mock Camera 1");
         let expected = [
-            0x02, 0x06, 0x52, 0x44, 0x43, 0x61, 0x6d, 0x65, 0x72, 0x61, 0x5f, 0x44, 0x65, 0x76, 0x69, 0x63,
-            0x65, 0x5f, 0x31, 0x00,
+            0x02, 0x06, 0x52, 0x44, 0x43, 0x61, 0x6d, 0x65, 0x72, 0x61, 0x5f, 0x44, 0x65, 0x76,
+            0x69, 0x63, 0x65, 0x5f, 0x31, 0x00,
         ];
         assert_eq!(cam.device_removed("RDCamera_Device_1"), expected);
     }
@@ -915,7 +992,10 @@ mod tests {
         assert_eq!(turn.replies, vec![(ENUMERATION, added.clone())]);
         assert_eq!(&added[..10], &[2, 0x05, b'C', 0, b'a', 0, b'm', 0, 0, 0]);
         assert_eq!(&added[10..], b"Zdesk_Camera_0\0");
-        assert!(cam.plug(VGA).replies.is_empty(), "plugging again in the same format is nothing");
+        assert!(
+            cam.plug(VGA).replies.is_empty(),
+            "plugging again in the same format is nothing"
+        );
     }
 
     /// 3.2.5.2: a version this end does not speak ends the protocol there, and a second
@@ -930,7 +1010,11 @@ mod tests {
             assert_eq!(turn.outputs, vec![Output::VersionRefused { version }]);
             assert!(turn.replies.is_empty());
             let turn = cam.push(ENUMERATION, &[2, SELECT_VERSION_RESPONSE]);
-            assert_eq!(turn, Turn::default(), "the conversation on this channel is over");
+            assert_eq!(
+                turn,
+                Turn::default(),
+                "the conversation on this channel is over"
+            );
             assert!(!cam.wants(DEVICE_CHANNEL));
         }
     }
@@ -942,11 +1026,14 @@ mod tests {
         let mut cam = attached(VGA);
         assert_eq!(ask(&mut cam, &[0x02, 0x07]), vec![vec![0x02, 0x01]]);
         // 4.4.4's first description, except that this stream is not shareable.
-        assert_eq!(ask(&mut cam, &[0x02, 0x09]), vec![vec![0x02, 0x0a, 0x01, 0x00, 0x01, 0x01, 0x00]]);
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x09]),
+            vec![vec![0x02, 0x0a, 0x01, 0x00, 0x01, 0x01, 0x00]]
+        );
         // The first entry of 4.4.6's list, which is this device's whole list.
         let list = [
-            0x02, 0x0c, 0x01, 0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x02, 0x0c, 0x01, 0x80, 0x02, 0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x1e, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
         ];
         assert_eq!(ask(&mut cam, &[0x02, 0x0b, 0x00]), vec![list.to_vec()]);
         assert_eq!(ask(&mut cam, &[0x02, 0x08]), vec![vec![0x02, 0x01]]);
@@ -955,11 +1042,14 @@ mod tests {
         let mut cam = attached(FULL_HD);
         ask(&mut cam, &[0x02, 0x07]);
         let current = [
-            0x02, 0x0e, 0x01, 0x80, 0x07, 0x00, 0x00, 0x38, 0x04, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x02, 0x0e, 0x01, 0x80, 0x07, 0x00, 0x00, 0x38, 0x04, 0x00, 0x00, 0x1e, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
         ];
         assert_eq!(ask(&mut cam, &[0x02, 0x0d, 0x00]), vec![current.to_vec()]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x0d, 0x01]), vec![cam.error(INVALID_STREAM_NUMBER)]);
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x0d, 0x01]),
+            vec![cam.error(INVALID_STREAM_NUMBER)]
+        );
     }
 
     /// 4.5: the Video Capture sequence with 4.5.1's request, and a sample going out for the
@@ -969,23 +1059,39 @@ mod tests {
         let mut cam = attached(FULL_HD);
         ask(&mut cam, &[0x02, 0x07]);
         let start = [
-            0x02, 0x0f, 0x00, 0x01, 0x80, 0x07, 0x00, 0x00, 0x38, 0x04, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x02, 0x0f, 0x00, 0x01, 0x80, 0x07, 0x00, 0x00, 0x38, 0x04, 0x00, 0x00, 0x1e, 0x00,
+            0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0x01,
         ];
         let turn = cam.push(DEVICE, &start);
         assert_eq!(turn.replies, vec![(DEVICE, vec![0x02, 0x01])]);
         assert_eq!(turn.outputs, vec![Output::Started(FULL_HD)]);
 
-        assert!(ask(&mut cam, &[0x02, 0x11, 0x00]).is_empty(), "owed until there is a sample");
+        assert!(
+            ask(&mut cam, &[0x02, 0x11, 0x00]).is_empty(),
+            "owed until there is a sample"
+        );
         let turn = cam.sample(vec![0, 0, 0, 1, 0x09, 0x30], true);
-        assert_eq!(turn.replies, vec![(DEVICE, vec![0x02, 0x12, 0x00, 0, 0, 0, 1, 0x09, 0x30])]);
-        assert!(cam.sample(vec![7], false).replies.is_empty(), "nothing is owed, so it waits");
-        assert_eq!(ask(&mut cam, &[0x02, 0x11, 0x00]), vec![vec![0x02, 0x12, 0x00, 7]]);
+        assert_eq!(
+            turn.replies,
+            vec![(DEVICE, vec![0x02, 0x12, 0x00, 0, 0, 0, 1, 0x09, 0x30])]
+        );
+        assert!(
+            cam.sample(vec![7], false).replies.is_empty(),
+            "nothing is owed, so it waits"
+        );
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x11, 0x00]),
+            vec![vec![0x02, 0x12, 0x00, 7]]
+        );
 
         let turn = cam.push(DEVICE, &[0x02, 0x10]);
         assert_eq!(turn.replies, vec![(DEVICE, vec![0x02, 0x01])]);
         assert_eq!(turn.outputs, vec![Output::Stopped]);
-        assert!(cam.sample(vec![1], true).replies.is_empty(), "nothing is taken once stopped");
+        assert!(
+            cam.sample(vec![1], true).replies.is_empty(),
+            "nothing is taken once stopped"
+        );
     }
 
     /// 3.1.1 and 4.8: a Deactivated device takes nothing but activation, and says so with
@@ -993,8 +1099,14 @@ mod tests {
     #[test]
     fn a_deactivated_device_answers_not_initialized() {
         let mut cam = attached(VGA);
-        assert_eq!(ask(&mut cam, &[0x02, 0x09]), vec![vec![0x02, 0x02, 0x03, 0x00, 0x00, 0x00]]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x11, 0x00]), vec![vec![0x02, 0x13, 0x00, 0x03, 0x00, 0x00, 0x00]]);
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x09]),
+            vec![vec![0x02, 0x02, 0x03, 0x00, 0x00, 0x00]]
+        );
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x11, 0x00]),
+            vec![vec![0x02, 0x13, 0x00, 0x03, 0x00, 0x00, 0x00]]
+        );
         let turn = cam.push(DEVICE, &start(VGA));
         assert_eq!(turn.replies, vec![(DEVICE, cam.error(NOT_INITIALIZED))]);
         assert!(turn.outputs.is_empty());
@@ -1006,9 +1118,15 @@ mod tests {
     fn a_sample_request_before_the_stream_starts_is_an_invalid_request() {
         let mut cam = attached(VGA);
         ask(&mut cam, &[2, ACTIVATE_DEVICE_REQUEST]);
-        assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]), vec![vec![2, 0x13, 0, 0x04, 0, 0, 0]]);
+        assert_eq!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 0]),
+            vec![vec![2, 0x13, 0, 0x04, 0, 0, 0]]
+        );
         let mut cam = streaming(VGA);
-        assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST, 1]), vec![vec![2, 0x13, 1, 0x05, 0, 0, 0]]);
+        assert_eq!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 1]),
+            vec![vec![2, 0x13, 1, 0x05, 0, 0, 0]]
+        );
     }
 
     /// Activations nest (3.1.1): the device is not Deactivated until every Activate has its
@@ -1020,9 +1138,16 @@ mod tests {
         let turn = cam.push(DEVICE, &[2, DEACTIVATE_DEVICE_REQUEST]);
         assert_eq!(turn.replies, vec![(DEVICE, vec![2, SUCCESS_RESPONSE])]);
         assert_eq!(turn.outputs, vec![Output::Stopped]);
-        assert_ne!(ask(&mut cam, &[2, STREAM_LIST_REQUEST]), vec![cam.error(NOT_INITIALIZED)], "still activated once");
+        assert_ne!(
+            ask(&mut cam, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(NOT_INITIALIZED)],
+            "still activated once"
+        );
         ask(&mut cam, &[2, DEACTIVATE_DEVICE_REQUEST]);
-        assert_eq!(ask(&mut cam, &[2, STREAM_LIST_REQUEST]), vec![cam.error(NOT_INITIALIZED)]);
+        assert_eq!(
+            ask(&mut cam, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(NOT_INITIALIZED)]
+        );
     }
 
     /// What a Windows host was measured doing: the Device Initialization sequence on one
@@ -1034,18 +1159,38 @@ mod tests {
     fn two_instances_of_the_device_channel_share_the_device() {
         const CONTROL: u32 = 19;
         let mut cam = attached(VGA);
-        for request in [&[2, ACTIVATE_DEVICE_REQUEST][..], &[2, STREAM_LIST_REQUEST], &[2, MEDIA_TYPE_LIST_REQUEST, 0], &[2, CURRENT_MEDIA_TYPE_REQUEST, 0]] {
+        for request in [
+            &[2, ACTIVATE_DEVICE_REQUEST][..],
+            &[2, STREAM_LIST_REQUEST],
+            &[2, MEDIA_TYPE_LIST_REQUEST, 0],
+            &[2, CURRENT_MEDIA_TYPE_REQUEST, 0],
+        ] {
             assert_eq!(ask(&mut cam, request).len(), 1);
         }
-        assert!(cam.wants(DEVICE_CHANNEL), "a second instance is as welcome as the first");
-        assert!(cam.opened(DEVICE_CHANNEL, CONTROL).outputs.is_empty(), "the device was already attached");
-        assert_eq!(ask_on(&mut cam, CONTROL, &[2, ACTIVATE_DEVICE_REQUEST]), vec![vec![2, SUCCESS_RESPONSE]]);
-        assert_eq!(ask_on(&mut cam, CONTROL, &[2, PROPERTY_LIST_REQUEST]), vec![vec![2, PROPERTY_LIST_RESPONSE]]);
+        assert!(
+            cam.wants(DEVICE_CHANNEL),
+            "a second instance is as welcome as the first"
+        );
+        assert!(
+            cam.opened(DEVICE_CHANNEL, CONTROL).outputs.is_empty(),
+            "the device was already attached"
+        );
+        assert_eq!(
+            ask_on(&mut cam, CONTROL, &[2, ACTIVATE_DEVICE_REQUEST]),
+            vec![vec![2, SUCCESS_RESPONSE]]
+        );
+        assert_eq!(
+            ask_on(&mut cam, CONTROL, &[2, PROPERTY_LIST_REQUEST]),
+            vec![vec![2, PROPERTY_LIST_RESPONSE]]
+        );
 
         let turn = cam.push(DEVICE, &start(VGA));
         assert_eq!(turn.outputs, vec![Output::Started(VGA)]);
         assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
-        assert_eq!(cam.sample(vec![9], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 9])]);
+        assert_eq!(
+            cam.sample(vec![9], true).replies,
+            vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 9])]
+        );
 
         // The control instance deactivating ends the stream, as a Deactivate does, but
         // leaves the device activated by the other.
@@ -1059,8 +1204,14 @@ mod tests {
         ask_on(&mut cam, CONTROL, &[2, ACTIVATE_DEVICE_REQUEST]);
         assert!(cam.closed(CONTROL).outputs.is_empty());
         assert_eq!(cam.closed(DEVICE).outputs, vec![Output::Stopped]);
-        assert_eq!(cam.opened(DEVICE_CHANNEL, 20).outputs, vec![Output::Attached]);
-        assert_eq!(ask_on(&mut cam, 20, &[2, STREAM_LIST_REQUEST]), vec![cam.error(NOT_INITIALIZED)]);
+        assert_eq!(
+            cam.opened(DEVICE_CHANNEL, 20).outputs,
+            vec![Output::Attached]
+        );
+        assert_eq!(
+            ask_on(&mut cam, 20, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(NOT_INITIALIZED)]
+        );
     }
 
     /// 3.2.5: a malformed request — the wrong length, the wrong version, an id that is no
@@ -1079,8 +1230,15 @@ mod tests {
         ] {
             assert_eq!(ask(&mut cam, request), vec![invalid.clone()], "{request:?}");
         }
-        assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST]), vec![vec![2, 0x13, 0, 0x02, 0, 0, 0]]);
-        for response in [&[2, SUCCESS_RESPONSE][..], &[2, ERROR_RESPONSE, 1, 0, 0, 0], &[2, SAMPLE_RESPONSE, 0, 1]] {
+        assert_eq!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST]),
+            vec![vec![2, 0x13, 0, 0x02, 0, 0, 0]]
+        );
+        for response in [
+            &[2, SUCCESS_RESPONSE][..],
+            &[2, ERROR_RESPONSE, 1, 0, 0, 0],
+            &[2, SAMPLE_RESPONSE, 0, 1],
+        ] {
             assert!(ask(&mut cam, response).is_empty(), "{response:?}");
         }
     }
@@ -1102,9 +1260,18 @@ mod tests {
             }
             request
         };
-        assert_eq!(ask(&mut cam, &starting(&[info(0, FULL_HD)])), vec![cam.error(INVALID_MEDIA_TYPE)]);
-        assert_eq!(ask(&mut cam, &starting(&[info(1, VGA)])), vec![cam.error(INVALID_STREAM_NUMBER)]);
-        assert_eq!(ask(&mut cam, &starting(&[info(0, VGA), info(0, VGA)])), vec![cam.error(INVALID_REQUEST)]);
+        assert_eq!(
+            ask(&mut cam, &starting(&[info(0, FULL_HD)])),
+            vec![cam.error(INVALID_MEDIA_TYPE)]
+        );
+        assert_eq!(
+            ask(&mut cam, &starting(&[info(1, VGA)])),
+            vec![cam.error(INVALID_STREAM_NUMBER)]
+        );
+        assert_eq!(
+            ask(&mut cam, &starting(&[info(0, VGA), info(0, VGA)])),
+            vec![cam.error(INVALID_REQUEST)]
+        );
         let mut truncated = starting(&[info(0, VGA)]);
         truncated.pop();
         assert_eq!(ask(&mut cam, &truncated), vec![cam.error(INVALID_MESSAGE)]);
@@ -1121,8 +1288,16 @@ mod tests {
     fn samples_wait_for_requests_and_a_gap_waits_for_a_keyframe() {
         let mut cam = streaming(VGA);
         let turn = cam.sample(vec![1], false);
-        assert_eq!(turn.outputs, vec![Output::KeyframeNeeded], "a stream opens on a keyframe");
-        assert_eq!(cam.sample(vec![2], false), Turn::default(), "asked once per gap");
+        assert_eq!(
+            turn.outputs,
+            vec![Output::KeyframeNeeded],
+            "a stream opens on a keyframe"
+        );
+        assert_eq!(
+            cam.sample(vec![2], false),
+            Turn::default(),
+            "asked once per gap"
+        );
 
         for n in 0..PENDING {
             let turn = cam.sample(vec![10 + n as u8], n == 0);
@@ -1130,13 +1305,28 @@ mod tests {
         }
         let turn = cam.sample(vec![99], false);
         assert_eq!(turn.outputs, vec![Output::KeyframeNeeded]);
-        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty(), "the queue went with the gap");
-        assert_eq!(cam.sample(vec![3], false), Turn::default(), "still waiting for a keyframe");
+        assert!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty(),
+            "the queue went with the gap"
+        );
+        assert_eq!(
+            cam.sample(vec![3], false),
+            Turn::default(),
+            "still waiting for a keyframe"
+        );
         let turn = cam.sample(vec![4], true);
-        assert_eq!(turn.replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 4])], "the owed request takes it");
+        assert_eq!(
+            turn.replies,
+            vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 4])],
+            "the owed request takes it"
+        );
         cam.sample(vec![5], false);
         cam.sample(vec![6], false);
-        assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]), vec![vec![2, SAMPLE_RESPONSE, 0, 5]], "oldest first");
+        assert_eq!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 0]),
+            vec![vec![2, SAMPLE_RESPONSE, 0, 5]],
+            "oldest first"
+        );
     }
 
     /// A host that stops asking: idle only while it is owed nothing, nothing taken while
@@ -1146,30 +1336,63 @@ mod tests {
     fn a_host_that_stops_asking_idles_the_stream_until_it_asks_again() {
         let mut cam = streaming(VGA);
         assert!(cam.awaits_request());
-        assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty(), "owed until there is a sample");
+        assert!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty(),
+            "owed until there is a sample"
+        );
         assert_eq!(cam.sample_requests(), 1);
-        assert!(!cam.awaits_request(), "a host owed a sample is waiting on this end");
+        assert!(
+            !cam.awaits_request(),
+            "a host owed a sample is waiting on this end"
+        );
         assert_eq!(cam.idle(), Turn::default(), "so it does not go idle");
-        assert_eq!(cam.sample(vec![1], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]);
+        assert_eq!(
+            cam.sample(vec![1], true).replies,
+            vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]
+        );
 
         cam.sample(vec![2], false);
         assert_eq!(cam.idle().outputs, vec![Output::Idle]);
         assert!(!cam.awaits_request());
         assert_eq!(cam.idle(), Turn::default(), "idle once");
-        assert_eq!(cam.sample(vec![3], true), Turn::default(), "nothing is taken while idle");
+        assert_eq!(
+            cam.sample(vec![3], true),
+            Turn::default(),
+            "nothing is taken while idle"
+        );
 
         let turn = cam.push(DEVICE, &[2, SAMPLE_REQUEST, 0]);
         assert_eq!(turn.outputs, vec![Output::Resumed(VGA)]);
-        assert!(turn.replies.is_empty(), "what waited went with the idle, so the request is owed");
+        assert!(
+            turn.replies.is_empty(),
+            "what waited went with the idle, so the request is owed"
+        );
         assert_eq!(cam.sample_requests(), 2);
-        assert_eq!(cam.sample(vec![4], false).outputs, vec![Output::KeyframeNeeded], "it resumes on a keyframe");
-        assert_eq!(cam.sample(vec![5], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 5])]);
+        assert_eq!(
+            cam.sample(vec![4], false).outputs,
+            vec![Output::KeyframeNeeded],
+            "it resumes on a keyframe"
+        );
+        assert_eq!(
+            cam.sample(vec![5], true).replies,
+            vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 5])]
+        );
 
         // The host's own stop ends the idle with the stream.
         cam.idle();
-        assert_eq!(cam.push(DEVICE, &[2, STOP_STREAMS_REQUEST]).outputs, vec![Output::Stopped]);
-        assert_eq!(cam.idle(), Turn::default(), "a stopped stream does not go idle");
-        assert_eq!(cam.push(DEVICE, &start(VGA)).outputs, vec![Output::Started(VGA)]);
+        assert_eq!(
+            cam.push(DEVICE, &[2, STOP_STREAMS_REQUEST]).outputs,
+            vec![Output::Stopped]
+        );
+        assert_eq!(
+            cam.idle(),
+            Turn::default(),
+            "a stopped stream does not go idle"
+        );
+        assert_eq!(
+            cam.push(DEVICE, &start(VGA)).outputs,
+            vec![Output::Started(VGA)]
+        );
         assert!(cam.awaits_request(), "a new stream starts not idle");
     }
 
@@ -1184,19 +1407,43 @@ mod tests {
         assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
         assert!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]).is_empty());
         assert!(!cam.awaits_request());
-        assert_eq!(cam.unavailable(), Turn::default(), "nothing goes on the wire at once");
-        assert!(cam.awaits_request(), "the host is timed although it is owed a sample");
-        assert_eq!(cam.sample(vec![1], true).replies, vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]);
-        assert!(cam.awaits_request(), "a sample from before the failure is not the camera back");
+        assert_eq!(
+            cam.unavailable(),
+            Turn::default(),
+            "nothing goes on the wire at once"
+        );
+        assert!(
+            cam.awaits_request(),
+            "the host is timed although it is owed a sample"
+        );
+        assert_eq!(
+            cam.sample(vec![1], true).replies,
+            vec![(DEVICE, vec![2, SAMPLE_RESPONSE, 0, 1])]
+        );
+        assert!(
+            cam.awaits_request(),
+            "a sample from before the failure is not the camera back"
+        );
 
         let turn = cam.idle();
         assert_eq!(turn.outputs, vec![Output::Idle]);
         let error = cam.sample_error(0, UNEXPECTED_ERROR);
-        assert_eq!(turn.replies, vec![(DEVICE, error)], "an error for the request still owed");
+        assert_eq!(
+            turn.replies,
+            vec![(DEVICE, error)],
+            "an error for the request still owed"
+        );
 
         let turn = cam.push(DEVICE, &[2, SAMPLE_REQUEST, 0]);
-        assert_eq!(turn.outputs, vec![Output::Resumed(VGA)], "the caller is told to try again");
-        assert!(!cam.awaits_request(), "and the new request waits on it, as any does");
+        assert_eq!(
+            turn.outputs,
+            vec![Output::Resumed(VGA)],
+            "the caller is told to try again"
+        );
+        assert!(
+            !cam.awaits_request(),
+            "and the new request waits on it, as any does"
+        );
     }
 
     /// Version 2's properties: an empty list and no property found; under version 1 none
@@ -1206,19 +1453,40 @@ mod tests {
         let mut cam = attached(VGA);
         ask(&mut cam, &[2, ACTIVATE_DEVICE_REQUEST]);
         assert_eq!(ask(&mut cam, &[0x02, 0x14]), vec![vec![0x02, 0x15]]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x16, 0x02, 0x02]), vec![cam.error(ITEM_NOT_FOUND)]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x18, 0x02, 0x02, 0x01, 0x64, 0, 0, 0]), vec![cam.error(ITEM_NOT_FOUND)]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x16, 0x07, 0x02]), vec![cam.error(SET_NOT_FOUND)]);
-        assert_eq!(ask(&mut cam, &[0x02, 0x18, 0x02, 0x02, 0x03, 0x64, 0, 0, 0]), vec![cam.error(INVALID_MESSAGE)]);
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x16, 0x02, 0x02]),
+            vec![cam.error(ITEM_NOT_FOUND)]
+        );
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x18, 0x02, 0x02, 0x01, 0x64, 0, 0, 0]),
+            vec![cam.error(ITEM_NOT_FOUND)]
+        );
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x16, 0x07, 0x02]),
+            vec![cam.error(SET_NOT_FOUND)]
+        );
+        assert_eq!(
+            ask(&mut cam, &[0x02, 0x18, 0x02, 0x02, 0x03, 0x64, 0, 0, 0]),
+            vec![cam.error(INVALID_MESSAGE)]
+        );
 
         let mut old = Rdpecam::new("Cam");
         old.opened(ENUMERATOR, ENUMERATION);
         old.push(ENUMERATION, &[1, SELECT_VERSION_RESPONSE]);
         let turn = old.plug(VGA);
-        assert_eq!(turn.replies[0].1[0], 1, "every message after the negotiation carries its version");
+        assert_eq!(
+            turn.replies[0].1[0], 1,
+            "every message after the negotiation carries its version"
+        );
         old.opened(DEVICE_CHANNEL, DEVICE);
-        assert_eq!(ask(&mut old, &[1, ACTIVATE_DEVICE_REQUEST]), vec![vec![1, SUCCESS_RESPONSE]]);
-        assert_eq!(ask(&mut old, &[1, PROPERTY_LIST_REQUEST]), vec![vec![1, ERROR_RESPONSE, 2, 0, 0, 0]]);
+        assert_eq!(
+            ask(&mut old, &[1, ACTIVATE_DEVICE_REQUEST]),
+            vec![vec![1, SUCCESS_RESPONSE]]
+        );
+        assert_eq!(
+            ask(&mut old, &[1, PROPERTY_LIST_REQUEST]),
+            vec![vec![1, ERROR_RESPONSE, 2, 0, 0, 0]]
+        );
     }
 
     /// Unplugging answers every Sample Request still owed, then tells the host the device is
@@ -1233,12 +1501,22 @@ mod tests {
         let owed = vec![2, SAMPLE_ERROR_RESPONSE, 0, 0x01, 0, 0, 0];
         assert_eq!(
             turn.replies,
-            vec![(DEVICE, owed.clone()), (DEVICE, owed), (ENUMERATION, cam.device_removed(DEVICE_CHANNEL))]
+            vec![
+                (DEVICE, owed.clone()),
+                (DEVICE, owed),
+                (ENUMERATION, cam.device_removed(DEVICE_CHANNEL))
+            ]
         );
         assert!(turn.outputs.is_empty(), "the caller is the one ending it");
         assert!(!cam.wants(DEVICE_CHANNEL));
-        assert_eq!(ask(&mut cam, &[2, STREAM_LIST_REQUEST]), vec![cam.error(INVALID_REQUEST)]);
-        assert_eq!(ask(&mut cam, &[2, SAMPLE_REQUEST, 0]), vec![cam.sample_error(0, INVALID_REQUEST)]);
+        assert_eq!(
+            ask(&mut cam, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(INVALID_REQUEST)]
+        );
+        assert_eq!(
+            ask(&mut cam, &[2, SAMPLE_REQUEST, 0]),
+            vec![cam.sample_error(0, INVALID_REQUEST)]
+        );
         assert_eq!(cam.closed(DEVICE), Turn::default());
         assert!(!cam.owns(DEVICE));
         assert_eq!(cam.unplug(), Turn::default());
@@ -1255,13 +1533,28 @@ mod tests {
             turn.replies,
             vec![
                 (ENUMERATION, cam.device_removed(DEVICE_CHANNEL)),
-                (ENUMERATION, cam.device_added("zDesk Camera", DEVICE_CHANNEL)),
+                (
+                    ENUMERATION,
+                    cam.device_added("zDesk Camera", DEVICE_CHANNEL)
+                ),
             ]
         );
-        assert_eq!(cam.opened(DEVICE_CHANNEL, 9).outputs, vec![Output::Attached]);
-        assert!(cam.owns(9) && cam.owns(DEVICE), "the old instance is open until the host closes it");
-        assert_eq!(ask(&mut cam, &[2, STREAM_LIST_REQUEST]), vec![cam.error(INVALID_REQUEST)]);
-        assert_eq!(ask_on(&mut cam, 9, &[2, STREAM_LIST_REQUEST]), vec![cam.error(NOT_INITIALIZED)]);
+        assert_eq!(
+            cam.opened(DEVICE_CHANNEL, 9).outputs,
+            vec![Output::Attached]
+        );
+        assert!(
+            cam.owns(9) && cam.owns(DEVICE),
+            "the old instance is open until the host closes it"
+        );
+        assert_eq!(
+            ask(&mut cam, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(INVALID_REQUEST)]
+        );
+        assert_eq!(
+            ask_on(&mut cam, 9, &[2, STREAM_LIST_REQUEST]),
+            vec![cam.error(NOT_INITIALIZED)]
+        );
     }
 
     /// The channels closing: the device's takes the stream, the enumerator's the
@@ -1271,14 +1564,24 @@ mod tests {
         let mut cam = streaming(VGA);
         assert_eq!(cam.closed(DEVICE).outputs, vec![Output::Stopped]);
         assert!(!cam.owns(DEVICE));
-        assert_eq!(cam.push(DEVICE, &[2, ACTIVATE_DEVICE_REQUEST]), Turn::default(), "no longer ours");
+        assert_eq!(
+            cam.push(DEVICE, &[2, ACTIVATE_DEVICE_REQUEST]),
+            Turn::default(),
+            "no longer ours"
+        );
 
         assert_eq!(cam.closed(ENUMERATION), Turn::default());
-        assert!(!cam.wants(DEVICE_CHANNEL), "the announcement went with the channel");
+        assert!(
+            !cam.wants(DEVICE_CHANNEL),
+            "the announcement went with the channel"
+        );
         let turn = cam.opened(ENUMERATOR, 11);
         assert_eq!(turn.replies, vec![(11, vec![2, SELECT_VERSION_REQUEST])]);
         let turn = cam.push(11, &[2, SELECT_VERSION_RESPONSE]);
-        assert_eq!(turn.replies, vec![(11, cam.device_added("zDesk Camera", DEVICE_CHANNEL))]);
+        assert_eq!(
+            turn.replies,
+            vec![(11, cam.device_added("zDesk Camera", DEVICE_CHANNEL))]
+        );
     }
 
     #[test]
@@ -1286,7 +1589,10 @@ mod tests {
         let mut cam = Rdpecam::new("Cam");
         cam.opened(ENUMERATOR, ENUMERATION);
         cam.push(ENUMERATION, &[2, SELECT_VERSION_RESPONSE]);
-        let broken = Format { fps_denominator: 0, ..VGA };
+        let broken = Format {
+            fps_denominator: 0,
+            ..VGA
+        };
         assert_eq!(cam.plug(broken), Turn::default());
         assert!(!cam.wants(DEVICE_CHANNEL));
     }

@@ -20,7 +20,10 @@ use crate::rdp_client::{Camera, CameraFeed, CameraSink, Fed};
 /// The `Connect::camera` for a target that carries a camera: the device's name, and a
 /// sink that turns the host's decisions into the bridge's signals.
 pub fn camera(bridge: Arc<CameraBridge>) -> Camera {
-    Camera { name: CAMERA_DEVICE_NAME.to_owned(), sink: Box::new(Signals(bridge)) }
+    Camera {
+        name: CAMERA_DEVICE_NAME.to_owned(),
+        sink: Box::new(Signals(bridge)),
+    }
 }
 
 /// Make the session's camera feed the bridge's control, so the camera socket drives the
@@ -29,7 +32,10 @@ pub fn camera(bridge: Arc<CameraBridge>) -> Camera {
 /// The control holds the bridge weakly: the bridge holds the control, and a strong
 /// reference back would keep both alive past the engine they belong to.
 pub fn attach(bridge: &Arc<CameraBridge>, feed: CameraFeed) {
-    bridge.set_control(Arc::new(Control { feed, bridge: Arc::downgrade(bridge) }));
+    bridge.set_control(Arc::new(Control {
+        feed,
+        bridge: Arc::downgrade(bridge),
+    }));
 }
 
 /// The RDP client's sink, which is the bridge's signals with a shape on them. Every call
@@ -116,7 +122,12 @@ mod tests {
 
         sink.negotiated(2);
         sink.attached();
-        sink.started(Format { width: 1280, height: 720, fps_numerator: 30_000, fps_denominator: 1_001 });
+        sink.started(Format {
+            width: 1280,
+            height: 720,
+            fps_numerator: 30_000,
+            fps_denominator: 1_001,
+        });
         sink.stopped();
         sink.keyframe_needed();
 

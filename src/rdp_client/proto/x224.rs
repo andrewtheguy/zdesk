@@ -118,8 +118,11 @@ impl std::ops::BitOr for Security {
 /// which bit NLA is.
 impl fmt::Debug for Security {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const NAMED: [(Security, &str); 3] =
-            [(Security::SSL, "SSL"), (Security::HYBRID, "HYBRID"), (Security::HYBRID_EX, "HYBRID_EX")];
+        const NAMED: [(Security, &str); 3] = [
+            (Security::SSL, "SSL"),
+            (Security::HYBRID, "HYBRID"),
+            (Security::HYBRID_EX, "HYBRID_EX"),
+        ];
         if self.0 == Self::RDP.0 {
             return f.write_str("RDP");
         }
@@ -229,7 +232,9 @@ impl ConnectionRequest {
         let mut w = Writer::with_capacity(total);
         w.u8(TPKT_VERSION);
         w.u8(0);
-        w.u16_be(u16::try_from(total).expect("a capped cookie plus fixed fields is under 64 bytes"));
+        w.u16_be(
+            u16::try_from(total).expect("a capped cookie plus fixed fields is under 64 bytes"),
+        );
         w.u8(u8::try_from(li).expect("a capped cookie plus fixed fields is under 64 bytes"));
         w.u8(TPDU_CONNECTION_REQUEST);
         // DST-REF, SRC-REF, and class 0 with no options. RDP leaves all three zero.
@@ -253,7 +258,10 @@ impl ConnectionRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionConfirm {
     /// The server chose a protocol. It is one of the ones the request offered.
-    Negotiated { protocol: Security, flags: ConfirmFlags },
+    Negotiated {
+        protocol: Security,
+        flags: ConfirmFlags,
+    },
     /// The server sent no negotiation data at all, which is how a server that does
     /// not speak the negotiation says "legacy RDP security". This client does not
     /// implement that, but the distinction is worth keeping: it is a different thing
@@ -298,9 +306,10 @@ impl ConnectionConfirm {
         }
         let value = r.u32_le()?;
         match kind {
-            TYPE_RDP_NEG_RSP => {
-                Ok(Self::Negotiated { protocol: Security(value), flags: ConfirmFlags(flags) })
-            }
+            TYPE_RDP_NEG_RSP => Ok(Self::Negotiated {
+                protocol: Security(value),
+                flags: ConfirmFlags(flags),
+            }),
             TYPE_RDP_NEG_FAILURE => Ok(Self::Refused(value.into())),
             other => Err(r.refuse("its RDP_NEG_DATA type", other)),
         }
@@ -427,14 +436,20 @@ mod tests {
             0x03, 0x00, 0x00, 0x00, // SSL | HYBRID
         ]);
         assert_eq!(request.encode(), expected);
-        assert_eq!(u16::from(expected[3]), u16::try_from(expected.len()).unwrap());
+        assert_eq!(
+            u16::from(expected[3]),
+            u16::try_from(expected.len()).unwrap()
+        );
     }
 
     /// Without a cookie the request is the fixed part alone, and the two length
     /// fields have to follow it down.
     #[test]
     fn a_request_without_a_cookie_is_the_negotiation_alone() {
-        let request = ConnectionRequest { cookie: None, protocols: Security::HYBRID };
+        let request = ConnectionRequest {
+            cookie: None,
+            protocols: Security::HYBRID,
+        };
         assert_eq!(
             request.encode(),
             vec![
@@ -458,11 +473,17 @@ mod tests {
         assert!(text.contains("Cookie: mstshash=administr\r\n"), "{text}");
 
         // Nine bytes lands in the middle of the third character here, so eight go.
-        let wide =
-            ConnectionRequest { cookie: Some("héllo wörld".to_owned()), protocols: Security::SSL };
+        let wide = ConnectionRequest {
+            cookie: Some("héllo wörld".to_owned()),
+            protocols: Security::SSL,
+        };
         let bytes = wide.encode();
         assert!(String::from_utf8_lossy(&bytes).contains("mstshash=héllo w\r\n"));
-        assert_eq!(usize::from(bytes[4]) + 5, bytes.len(), "the length indicator follows the cut");
+        assert_eq!(
+            usize::from(bytes[4]) + 5,
+            bytes.len(),
+            "the length indicator follows the cut"
+        );
     }
 
     #[test]
@@ -475,7 +496,8 @@ mod tests {
                 flags: ConfirmFlags(0x03),
             }
         );
-        let ConnectionConfirm::Negotiated { flags, .. } = ConnectionConfirm::decode(&frame).unwrap()
+        let ConnectionConfirm::Negotiated { flags, .. } =
+            ConnectionConfirm::decode(&frame).unwrap()
         else {
             panic!("a negotiated confirm");
         };
@@ -489,7 +511,10 @@ mod tests {
         let ConnectionConfirm::Refused(why) = ConnectionConfirm::decode(&frame).unwrap() else {
             panic!("a refusal");
         };
-        assert_eq!(why.to_string(), "the server requires Network Level Authentication");
+        assert_eq!(
+            why.to_string(),
+            "the server requires Network Level Authentication"
+        );
 
         let frame = confirm(&[0x03, 0x00, 0x08, 0x00, 0x63, 0x00, 0x00, 0x00]);
         assert_eq!(
@@ -501,7 +526,10 @@ mod tests {
     /// A server with nothing to say about security is not a server that failed.
     #[test]
     fn a_confirm_without_negotiation_data_is_its_own_answer() {
-        assert_eq!(ConnectionConfirm::decode(&confirm(&[])).unwrap(), ConnectionConfirm::Unnegotiated);
+        assert_eq!(
+            ConnectionConfirm::decode(&confirm(&[])).unwrap(),
+            ConnectionConfirm::Unnegotiated
+        );
     }
 
     #[test]
@@ -510,7 +538,11 @@ mod tests {
         frame[5] = 0xE0; // a Connection Request coming back at us
         assert!(matches!(
             ConnectionConfirm::decode(&frame).unwrap_err(),
-            Malformed::Refused { field: "its TPDU code", value: 0xE0, .. }
+            Malformed::Refused {
+                field: "its TPDU code",
+                value: 0xE0,
+                ..
+            }
         ));
 
         // A negotiation structure that is not eight bytes long.
@@ -523,7 +555,10 @@ mod tests {
         // A length indicator too small to cover the header it introduces.
         let mut frame = confirm(&[0x02, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00]);
         frame[4] = 0x02;
-        assert!(matches!(ConnectionConfirm::decode(&frame).unwrap_err(), Malformed::Refused { .. }));
+        assert!(matches!(
+            ConnectionConfirm::decode(&frame).unwrap_err(),
+            Malformed::Refused { .. }
+        ));
     }
 
     /// Truncation is the shape a socket produces, so it has to be an error and not a
@@ -532,7 +567,10 @@ mod tests {
     fn a_frame_that_is_not_the_length_it_claims_is_an_error() {
         let frame = confirm(&[0x02, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00]);
         for cut in 0..frame.len() {
-            assert!(ConnectionConfirm::decode(&frame[..cut]).is_err(), "cut to {cut} bytes");
+            assert!(
+                ConnectionConfirm::decode(&frame[..cut]).is_err(),
+                "cut to {cut} bytes"
+            );
         }
     }
 
@@ -542,7 +580,10 @@ mod tests {
         // Not TPKT at all: byte 0 of a fast-path PDU is an action, never 3.
         assert!(matches!(
             frame_length(&[0x00, 0x00, 0x00, 0x2B]).unwrap_err(),
-            Malformed::Refused { field: "its version", .. }
+            Malformed::Refused {
+                field: "its version",
+                ..
+            }
         ));
         // Shorter than the shortest TPDU it could be carrying.
         assert!(frame_length(&[0x03, 0x00, 0x00, 0x06]).is_err());
@@ -579,7 +620,10 @@ mod tests {
     #[test]
     fn security_reads_as_names() {
         assert_eq!(format!("{:?}", Security::RDP), "RDP");
-        assert_eq!(format!("{:?}", Security::SSL | Security::HYBRID), "SSL|HYBRID");
+        assert_eq!(
+            format!("{:?}", Security::SSL | Security::HYBRID),
+            "SSL|HYBRID"
+        );
         assert_eq!(format!("{:?}", Security(0x11)), "SSL|0x10");
     }
 }

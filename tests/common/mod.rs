@@ -26,7 +26,9 @@ pub const TEST_PASSWORD: &str = "hunter22";
 /// (`tests/tui_worker_e2e.rs`).
 #[allow(dead_code)]
 pub fn test_auth() -> zdesk::auth::GatewayAuth {
-    zdesk::auth::GatewayAuth::Login(zdesk::auth::SiteLogin::with_password(TEST_USER, TEST_PASSWORD).unwrap())
+    zdesk::auth::GatewayAuth::Login(
+        zdesk::auth::SiteLogin::with_password(TEST_USER, TEST_PASSWORD).unwrap(),
+    )
 }
 
 /// Pull `name` out of the operator's UAT config, for a test that borrows a
@@ -39,15 +41,23 @@ pub fn uat_target(name: &str) -> zdesk::config::TargetConfig {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp/test_uat.toml");
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("these tests need the local UAT config at {path}: {e}"));
-    let mut config = zdesk::config::ConfigFile::parse(&text).expect("tmp/test_uat.toml should parse");
+    let mut config =
+        zdesk::config::ConfigFile::parse(&text).expect("tmp/test_uat.toml should parse");
     // Its passwords open as a served gateway's would: [server].master_password_file.
     let key = config.needs_master().then(|| {
         let master = config
-            .served_master(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tmp")))
+            .served_master(std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tmp"
+            )))
             .unwrap_or_else(|e| panic!("tmp/test_uat.toml's master password: {e:#}"));
-        config.key(&master).unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"))
+        config
+            .key(&master)
+            .unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"))
     });
-    config.unlock(key.as_ref()).unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"));
+    config
+        .unlock(key.as_ref())
+        .unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"));
     config
         .targets
         .into_iter()
@@ -125,7 +135,8 @@ pub async fn login(addr: SocketAddr) -> String {
         .lines()
         .find_map(|line| {
             let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("set-cookie").then(|| value.trim())
+            name.eq_ignore_ascii_case("set-cookie")
+                .then(|| value.trim())
         })
         .expect("login sets the session cookie");
     // "zdesk_session=<token>; HttpOnly; …" → the name=token pair.
@@ -160,9 +171,8 @@ pub async fn claim_session(addr: SocketAddr, cookie: &str) -> String {
 }
 
 /// One WebSocket to the gateway.
-pub type Socket = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+pub type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// A browser's view of its session: the session socket and the first display's
 /// socket beside it, read as one stream, as the page reads them into one handler.
@@ -180,7 +190,8 @@ pub struct Ws {
 }
 
 impl futures_util::Stream for Ws {
-    type Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>;
+    type Item =
+        Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -384,9 +395,16 @@ pub fn paint_ack(frame: &[u8]) -> String {
 pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
     use zdesk::protocol::batch;
 
-    assert!(frame.len() >= batch::HEADER_LEN, "frame is shorter than a batch header");
+    assert!(
+        frame.len() >= batch::HEADER_LEN,
+        "frame is shorter than a batch header"
+    );
     assert_eq!(frame[0], batch::FRAME_KIND, "unexpected frame kind");
-    assert_eq!(frame[1] & !batch::FLAG_CONTINUED, 0, "no flag but continued");
+    assert_eq!(
+        frame[1] & !batch::FLAG_CONTINUED,
+        0,
+        "no flag but continued"
+    );
     let count = u16::from_le_bytes([frame[2], frame[3]]);
 
     let mut at = batch::HEADER_LEN;
@@ -394,13 +412,21 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
     while at < frame.len() {
         let le = |o: usize| u16::from_le_bytes([frame[at + o], frame[at + o + 1]]);
         let le32 = |o: usize| {
-            u32::from_le_bytes([frame[at + o], frame[at + o + 1], frame[at + o + 2], frame[at + o + 3]])
-                as usize
+            u32::from_le_bytes([
+                frame[at + o],
+                frame[at + o + 1],
+                frame[at + o + 2],
+                frame[at + o + 3],
+            ]) as usize
         };
         match frame[at] {
             batch::OP_VIDEO => {
                 let flags = frame[at + 1];
-                assert_eq!(flags & !batch::VIDEO_KEYFRAME, 0, "unknown record flags {flags:#x}");
+                assert_eq!(
+                    flags & !batch::VIDEO_KEYFRAME,
+                    0,
+                    "unknown record flags {flags:#x}"
+                );
                 let len = le32(6);
                 let start = at + batch::VIDEO_HEADER_LEN;
                 records.push(BatchRecord::Video(BatchUnit {
@@ -429,12 +455,23 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");
-                records.push(BatchRecord::Tile(BatchTile { format, x: le(2), y: le(4), w: le(6), h: le(8), image }));
+                records.push(BatchRecord::Tile(BatchTile {
+                    format,
+                    x: le(2),
+                    y: le(4),
+                    w: le(6),
+                    h: le(8),
+                    image,
+                }));
                 at = start + len;
             }
             batch::OP_REGION => {
                 let flags = frame[at + 2];
-                assert_eq!(flags & !batch::REGION_KEYFRAME, 0, "unknown region flags {flags:#x}");
+                assert_eq!(
+                    flags & !batch::REGION_KEYFRAME,
+                    0,
+                    "unknown region flags {flags:#x}"
+                );
                 let len = le32(11);
                 let start = at + batch::REGION_HEADER_LEN;
                 let payload = frame[start..start + len].to_vec();
@@ -451,20 +488,36 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                 at = start + len;
             }
             batch::OP_COPY => {
-                let copy = BatchCopy { sx: le(1), sy: le(3), x: le(5), y: le(7), w: le(9), h: le(11) };
+                let copy = BatchCopy {
+                    sx: le(1),
+                    sy: le(3),
+                    x: le(5),
+                    y: le(7),
+                    w: le(9),
+                    h: le(11),
+                };
                 assert!(copy.w > 0 && copy.h > 0, "an empty copy");
                 records.push(BatchRecord::Copy(copy));
                 at += batch::COPY_LEN;
             }
             op @ (batch::OP_STORE | batch::OP_CACHED) => {
-                records.push(BatchRecord::Cache(BatchCache { store: op == batch::OP_STORE, slot: le(1), x: le(3), y: le(5) }));
+                records.push(BatchRecord::Cache(BatchCache {
+                    store: op == batch::OP_STORE,
+                    slot: le(1),
+                    x: le(3),
+                    y: le(5),
+                }));
                 at += batch::CACHE_LEN;
             }
             op => panic!("unknown record op {op}"),
         }
     }
     assert_eq!(at, frame.len(), "records must exactly fill the frame");
-    assert_eq!(records.len(), usize::from(count), "the header's count must match the records present");
+    assert_eq!(
+        records.len(),
+        usize::from(count),
+        "the header's count must match the records present"
+    );
     records
 }
 
@@ -475,10 +528,20 @@ pub fn batch_units(frame: &[u8]) -> Vec<BatchUnit> {
         .into_iter()
         .map(|record| match record {
             BatchRecord::Video(unit) => unit,
-            BatchRecord::Tile(tile) => panic!("a tile at ({}, {}) in a passed stream's batch", tile.x, tile.y),
-            BatchRecord::Region(region) => panic!("region {}'s unit in a passed stream's batch", region.stream),
-            BatchRecord::Copy(copy) => panic!("a copy to ({}, {}) in a passed stream's batch", copy.x, copy.y),
-            BatchRecord::Cache(cache) => panic!("a cache's slot {} in a passed stream's batch", cache.slot),
+            BatchRecord::Tile(tile) => panic!(
+                "a tile at ({}, {}) in a passed stream's batch",
+                tile.x, tile.y
+            ),
+            BatchRecord::Region(region) => {
+                panic!("region {}'s unit in a passed stream's batch", region.stream)
+            }
+            BatchRecord::Copy(copy) => panic!(
+                "a copy to ({}, {}) in a passed stream's batch",
+                copy.x, copy.y
+            ),
+            BatchRecord::Cache(cache) => {
+                panic!("a cache's slot {} in a passed stream's batch", cache.slot)
+            }
         })
         .collect()
 }
@@ -495,7 +558,11 @@ pub struct Coverage {
 #[allow(dead_code)]
 impl Coverage {
     pub fn new(w: u16, h: u16) -> Self {
-        Self { w, h, sent: std::collections::HashSet::new() }
+        Self {
+            w,
+            h,
+            sent: std::collections::HashSet::new(),
+        }
     }
 
     /// A tile record sent, which must lie on the tile grid and inside the desktop.
@@ -508,7 +575,8 @@ impl Coverage {
             tile.y
         );
         assert!(
-            u32::from(tile.x) + u32::from(tile.w) <= u32::from(self.w) && u32::from(tile.y) + u32::from(tile.h) <= u32::from(self.h),
+            u32::from(tile.x) + u32::from(tile.w) <= u32::from(self.w)
+                && u32::from(tile.y) + u32::from(tile.h) <= u32::from(self.h),
             "a {}x{} tile at ({}, {}) past the {}x{} desktop",
             tile.w,
             tile.h,
@@ -526,7 +594,9 @@ impl Coverage {
 
     /// Whether every tile of the desktop has been sent.
     pub fn whole(&self) -> bool {
-        self.sent.len() == usize::from(self.w.div_ceil(zdesk::tiles::TILE)) * usize::from(self.h.div_ceil(zdesk::tiles::TILE))
+        self.sent.len()
+            == usize::from(self.w.div_ceil(zdesk::tiles::TILE))
+                * usize::from(self.h.div_ceil(zdesk::tiles::TILE))
     }
 }
 
@@ -547,7 +617,10 @@ pub struct StandardRect {
 pub fn standard_rects(frame: &[u8]) -> Vec<StandardRect> {
     use zdesk::protocol::batch;
 
-    assert!(frame.len() >= batch::HEADER_LEN, "frame is shorter than a batch header");
+    assert!(
+        frame.len() >= batch::HEADER_LEN,
+        "frame is shorter than a batch header"
+    );
     assert_eq!(frame[0], batch::FRAME_KIND, "unexpected frame kind");
     assert_eq!(frame[1], 0, "flags must be zero");
     let count = u16::from_le_bytes([frame[2], frame[3]]);
@@ -556,7 +629,12 @@ pub fn standard_rects(frame: &[u8]) -> Vec<StandardRect> {
     let mut records = Vec::new();
     while at < frame.len() {
         let le = |o: usize| u16::from_le_bytes([frame[at + o], frame[at + o + 1]]);
-        assert_eq!(frame[at], batch::OP_STANDARD, "unknown record op {}", frame[at]);
+        assert_eq!(
+            frame[at],
+            batch::OP_STANDARD,
+            "unknown record op {}",
+            frame[at]
+        );
         let len = u32::from_le_bytes(frame[at + 9..at + 13].try_into().unwrap()) as usize;
         let start = at + batch::STANDARD_HEADER_LEN;
         assert!(len > 0, "a STANDARD record with no body");
@@ -570,7 +648,11 @@ pub fn standard_rects(frame: &[u8]) -> Vec<StandardRect> {
         at = start + len;
     }
     assert_eq!(at, frame.len(), "records must exactly fill the frame");
-    assert_eq!(records.len(), usize::from(count), "the header's count must match the records present");
+    assert_eq!(
+        records.len(),
+        usize::from(count),
+        "the header's count must match the records present"
+    );
     records
 }
 
@@ -605,7 +687,12 @@ pub async fn connect_ws(addr: SocketAddr, token: &str, cookie: &str) -> Ws {
 /// composes an RDP host's graphics pipeline either way, and decodes no H.264 on
 /// one.
 #[allow(dead_code)]
-pub async fn connect_ws_stating(addr: SocketAddr, token: &str, cookie: &str, apple_media: bool) -> Ws {
+pub async fn connect_ws_stating(
+    addr: SocketAddr,
+    token: &str,
+    cookie: &str,
+    apple_media: bool,
+) -> Ws {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 
     let mut request = format!(
@@ -618,7 +705,13 @@ pub async fn connect_ws_stating(addr: SocketAddr, token: &str, cookie: &str, app
         .insert("Cookie", cookie.parse().unwrap());
     let (session, _resp) = tokio_tungstenite::connect_async(request).await.unwrap();
     let display = connect_display_ws(addr, cookie, 1).await;
-    Ws { session, display, session_done: false, display_done: false, display_first: false }
+    Ws {
+        session,
+        display,
+        session_done: false,
+        display_done: false,
+        display_first: false,
+    }
 }
 
 /// Open the audio WebSocket with a claim token and the login cookie.
@@ -683,9 +776,11 @@ pub async fn connect_target(ws: &mut Ws, target: &str) {
     use futures_util::SinkExt as _;
     use tokio_tungstenite::tungstenite::Message;
 
-    ws.send(Message::text(format!(r#"{{"type":"connect","target":"{target}","choices":{{"size":"target"}}}}"#)))
-        .await
-        .unwrap();
+    ws.send(Message::text(format!(
+        r#"{{"type":"connect","target":"{target}","choices":{{"size":"target"}}}}"#
+    )))
+    .await
+    .unwrap();
 }
 
 /// [`connect_target`] with what the picker's Start would carry: `choices` is the
@@ -721,7 +816,10 @@ pub fn container_runtime() -> &'static str {
     let usable = |runtime: &str| runtime_responds(runtime, Duration::from_secs(10));
     if let Ok(forced) = std::env::var("ZDESK_TEST_CONTAINER_RUNTIME") {
         let forced: &'static str = Box::leak(forced.into_boxed_str());
-        assert!(usable(forced), "ZDESK_TEST_CONTAINER_RUNTIME={forced} cannot be reached");
+        assert!(
+            usable(forced),
+            "ZDESK_TEST_CONTAINER_RUNTIME={forced} cannot be reached"
+        );
         return forced;
     }
     for runtime in ["podman", "docker"] {
@@ -803,7 +901,12 @@ impl Container {
             .arg(format!("{}:{to}", self.name))
             .output()
             .expect("run container cp");
-        assert!(out.status.success(), "copying {} in failed:\n{}", from.display(), String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "copying {} in failed:\n{}",
+            from.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     /// What the container's server has written to its stdout and stderr, together:
@@ -814,7 +917,11 @@ impl Container {
             .args(["logs", &self.name])
             .output()
             .expect("run container logs");
-        assert!(out.status.success(), "container logs failed:\n{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "container logs failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
     }
 }
@@ -854,7 +961,9 @@ pub fn start_dummy_server(
     context: &str,
     internal_port: u16,
 ) -> (Container, u16) {
-    let context_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join(context);
+    let context_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(context);
     start_server_image(runtime, image, &context_dir, &context_dir, internal_port)
 }
 
@@ -910,11 +1019,12 @@ pub fn start_server_image(
         std::process::id(),
         NEXT.fetch_add(1, AtomicOrdering::Relaxed)
     );
-    let container = Container { runtime, name: name.clone() };
+    let container = Container {
+        runtime,
+        name: name.clone(),
+    };
     let run = Command::new(runtime)
-        .args([
-            "run", "-d", "--rm", "--name", &name, "-p", &publish, image,
-        ])
+        .args(["run", "-d", "--rm", "--name", &name, "-p", &publish, image])
         .output()
         .expect("run container");
     assert!(

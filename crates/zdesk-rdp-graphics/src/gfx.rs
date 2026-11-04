@@ -88,7 +88,11 @@ pub enum Update {
     /// the primary first — one, the whole of it, when the host's definitions do
     /// not make it up ([`gfx::arrangement`]). The framebuffer has already been
     /// resized and cleared; the caller is what tells the world.
-    Reset { width: u32, height: u32, monitors: Vec<gfx::Placed> },
+    Reset {
+        width: u32,
+        height: u32,
+        monitors: Vec<gfx::Placed>,
+    },
     /// This rectangle of the framebuffer was painted.
     Paint(Rect),
     /// The server finished frame `id`, and this client has finished `decoded` in all.
@@ -212,7 +216,12 @@ impl Surface {
     }
 
     fn bounds(&self) -> Rect {
-        Rect { x: 0, y: 0, width: self.width, height: self.height }
+        Rect {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        }
     }
 
     /// Whether a command's rectangle lies inside this surface.
@@ -225,10 +234,19 @@ impl Surface {
     fn write(&mut self, rect: Rect16, bgrx: &[u8]) {
         let width = usize::from(rect.width());
         let stride = self.stride();
-        for (row, src) in bgrx.chunks_exact(width * 4).take(usize::from(rect.height())).enumerate() {
+        for (row, src) in bgrx
+            .chunks_exact(width * 4)
+            .take(usize::from(rect.height()))
+            .enumerate()
+        {
             let at = (usize::from(rect.top) + row) * stride + usize::from(rect.left) * 4;
             let dst = &mut self.pixels[at..at + width * 4];
-            for (out, px) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+            for (out, px) in dst
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(src.as_chunks::<4>().0)
+            {
                 *out = [px[2], px[1], px[0], 0];
             }
         }
@@ -237,8 +255,10 @@ impl Surface {
 
     /// Whether an arbitrary rectangle lies inside this surface.
     fn contains(&self, x: u32, y: u32, width: u32, height: u32) -> bool {
-        x.checked_add(width).is_some_and(|right| right <= self.width)
-            && y.checked_add(height).is_some_and(|bottom| bottom <= self.height)
+        x.checked_add(width)
+            .is_some_and(|right| right <= self.width)
+            && y.checked_add(height)
+                .is_some_and(|bottom| bottom <= self.height)
     }
 
     /// Fill a rectangle with one colour, `[r, g, b]` in the surface's own order.
@@ -247,7 +267,10 @@ impl Surface {
         let px = [rgb[0], rgb[1], rgb[2], 0];
         for row in 0..rect.height as usize {
             let at = (rect.y as usize + row) * stride + rect.x as usize * 4;
-            for out in self.pixels[at..at + rect.width as usize * 4].as_chunks_mut::<4>().0 {
+            for out in self.pixels[at..at + rect.width as usize * 4]
+                .as_chunks_mut::<4>()
+                .0
+            {
                 *out = px;
             }
         }
@@ -270,7 +293,12 @@ impl Surface {
     /// rectangle, and record it as changed. The caller has checked the rectangle
     /// fits.
     fn copy_in(&mut self, x: u32, y: u32, width: u32, height: u32, packed: &[u8]) {
-        let rect = Rect { x, y, width, height };
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
         self.copy_rows(rect, packed, width as usize * 4);
     }
 
@@ -301,7 +329,12 @@ impl Surface {
             self.gpu = self
                 .gpu
                 .iter()
-                .flat_map(|shown| shown.rect.minus(rect).map(move |piece| OnGpu { rect: piece, ..*shown }))
+                .flat_map(|shown| {
+                    shown.rect.minus(rect).map(move |piece| OnGpu {
+                        rect: piece,
+                        ..*shown
+                    })
+                })
                 .collect();
         }
     }
@@ -309,7 +342,11 @@ impl Surface {
     /// Unit `unit`'s picture, shown from the GPU over `rect`.
     fn show_on_gpu(&mut self, rect: Rect, unit: u32) {
         self.release(rect);
-        self.gpu.push(OnGpu { rect, at: None, unit: Some(unit) });
+        self.gpu.push(OnGpu {
+            rect,
+            at: None,
+            unit: Some(unit),
+        });
     }
 
     /// The rectangles shown from the GPU, those that line up joined.
@@ -324,7 +361,10 @@ impl Surface {
         let mut pieces = vec![rect];
         for shown in &self.gpu {
             if pieces.iter().any(|piece| piece.overlaps(&shown.rect)) {
-                pieces = pieces.iter().flat_map(|piece| piece.minus(shown.rect)).collect();
+                pieces = pieces
+                    .iter()
+                    .flat_map(|piece| piece.minus(shown.rect))
+                    .collect();
             }
         }
         pieces
@@ -334,8 +374,16 @@ impl Surface {
     fn gpu_areas(&self, surface: u16) -> impl Iterator<Item = GpuArea> + '_ {
         self.gpu.iter().filter_map(move |shown| {
             let (x, y) = shown.at?;
-            let output = Rect { x: x + shown.rect.x, y: y + shown.rect.y, ..shown.rect };
-            Some(GpuArea { surface, rect: shown.rect, output })
+            let output = Rect {
+                x: x + shown.rect.x,
+                y: y + shown.rect.y,
+                ..shown.rect
+            };
+            Some(GpuArea {
+                surface,
+                rect: shown.rect,
+                output,
+            })
         })
     }
 }
@@ -404,7 +452,11 @@ impl Tally {
             .iter()
             .map(|(codec, count)| format!("{} {count}", gfx::codec_name(*codec)))
             .collect();
-        format!("commands [{}], codecs [{}]", commands.join(", "), codecs.join(", "))
+        format!(
+            "commands [{}], codecs [{}]",
+            commands.join(", "),
+            codecs.join(", ")
+        )
     }
 }
 
@@ -568,12 +620,18 @@ impl Graphics {
     /// against everything this pipeline has unwrapped before it, so every message
     /// comes through here, in order.
     pub(crate) fn unwrap(&mut self, data: &[u8], commands: &mut Vec<u8>) -> Result<()> {
-        self.zgfx.decompress(data, commands).context("unwrapping a graphics pipeline PDU")
+        self.zgfx
+            .decompress(data, commands)
+            .context("unwrapping a graphics pipeline PDU")
     }
 
     /// Act on a buffer of commands that is already unwrapped. The pictures supplied
     /// for it are its own: whichever it did not take are dropped with it.
-    pub(crate) fn compose(&mut self, commands: &[u8], framebuffer: &Framebuffer) -> Result<Vec<Update>> {
+    pub(crate) fn compose(
+        &mut self,
+        commands: &[u8],
+        framebuffer: &Framebuffer,
+    ) -> Result<Vec<Update>> {
         self.unit = 0;
         let outcome = self.compose_run(commands, framebuffer);
         self.supplied.clear();
@@ -587,7 +645,12 @@ impl Graphics {
     /// placed, and is dropped: [`Self::plan`] shows none such.
     fn finish_gpu(&mut self) -> Vec<GpuPaint> {
         let mut paints = Vec::new();
-        let output = self.output.map(|(width, height)| Rect { x: 0, y: 0, width, height });
+        let output = self.output.map(|(width, height)| Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        });
         for (id, surface) in &mut self.surfaces {
             surface.gpu.retain_mut(|shown| {
                 let Some(unit) = shown.unit.take() else { return true };
@@ -624,15 +687,27 @@ impl Graphics {
     /// Every rectangle shown from the GPU, as the output shows it: what the page
     /// reads back to have the surfaces whole.
     pub(crate) fn gpu_areas(&self) -> Vec<GpuArea> {
-        self.surfaces.iter().flat_map(|(id, surface)| surface.gpu_areas(*id)).collect()
+        self.surfaces
+            .iter()
+            .flat_map(|(id, surface)| surface.gpu_areas(*id))
+            .collect()
     }
 
     /// The pixels of a rectangle shown from the GPU, read back off it: `rgbx` is
     /// `rect`'s rows, packed, top row first. The framebuffer takes them where the
     /// surface is mapped, for whoever reads it whole, and nothing is presented:
     /// the page's picture holds them already.
-    pub(crate) fn restore(&mut self, surface: u16, rect: Rect, rgbx: &[u8], framebuffer: &Framebuffer) -> Result<()> {
-        let found = self.surfaces.get_mut(&surface).with_context(|| format!("no graphics surface {surface}"))?;
+    pub(crate) fn restore(
+        &mut self,
+        surface: u16,
+        rect: Rect,
+        rgbx: &[u8],
+        framebuffer: &Framebuffer,
+    ) -> Result<()> {
+        let found = self
+            .surfaces
+            .get_mut(&surface)
+            .with_context(|| format!("no graphics surface {surface}"))?;
         anyhow::ensure!(
             found.contains(rect.x, rect.y, rect.width, rect.height),
             "a {}x{}+{}+{} rectangle read back for a {}x{} graphics surface",
@@ -654,14 +729,28 @@ impl Graphics {
         let stride = found.stride();
         for (row, src) in rgbx.chunks_exact(bytes).enumerate() {
             let at = (rect.y as usize + row) * stride + rect.x as usize * 4;
-            for (out, px) in found.pixels[at..at + bytes].as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+            for (out, px) in found.pixels[at..at + bytes]
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(src.as_chunks::<4>().0)
+            {
                 *out = [px[0], px[1], px[2], 0];
             }
         }
         found.release(rect);
         if let (Some((ox, oy)), Some((width, height))) = (found.mapped, self.output) {
-            let output = Rect { x: 0, y: 0, width, height };
-            let placed = Rect { x: ox.saturating_add(rect.x), y: oy.saturating_add(rect.y), ..rect };
+            let output = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+            let placed = Rect {
+                x: ox.saturating_add(rect.x),
+                y: oy.saturating_add(rect.y),
+                ..rect
+            };
             if let Some(placed) = placed.clipped(output) {
                 let origin = ((placed.x - ox) as usize, (placed.y - oy) as usize);
                 framebuffer.blit_from(&found.pixels, found.stride(), origin, placed);
@@ -691,7 +780,14 @@ impl Graphics {
             .iter()
             .map(|(id, surface)| {
                 let chroma = surface.avc.as_ref().is_some_and(|avc| avc.chroma_seen());
-                (*id, Seen { size: (surface.width, surface.height), mapped: surface.mapped, chroma })
+                (
+                    *id,
+                    Seen {
+                        size: (surface.width, surface.height),
+                        mapped: surface.mapped,
+                        chroma,
+                    },
+                )
             })
             .collect();
         let mut output = self.output;
@@ -731,15 +827,29 @@ impl Graphics {
         for message in gfx::messages(commands) {
             match message? {
                 Message::ResetGraphics { width, height, .. } => output = Some((width, height)),
-                Message::CreateSurface { surface, width, height, .. } => {
+                Message::CreateSurface {
+                    surface,
+                    width,
+                    height,
+                    ..
+                } => {
                     let size = (u32::from(width), u32::from(height));
-                    surfaces.insert(surface, Seen { size, mapped: None, chroma: false });
+                    surfaces.insert(
+                        surface,
+                        Seen {
+                            size,
+                            mapped: None,
+                            chroma: false,
+                        },
+                    );
                 }
                 Message::DeleteSurface { surface } => {
                     surfaces.remove(&surface);
                 }
                 Message::MapSurfaceToOutput { surface, x, y } => {
-                    let Some(seen) = surfaces.get_mut(&surface) else { continue };
+                    let Some(seen) = surfaces.get_mut(&surface) else {
+                        continue;
+                    };
                     let moved = seen.mapped.replace((x, y)).is_some_and(|was| was != (x, y));
                     let placed = seen.placed();
                     // Moved, what it showed from the GPU is drawn where it was.
@@ -751,7 +861,9 @@ impl Graphics {
                     // surface paints over.
                     let Some(placed) = placed else { continue };
                     for (other, under) in &surfaces {
-                        if *other != surface && under.placed().is_some_and(|under| under.overlaps(&placed)) {
+                        if *other != surface
+                            && under.placed().is_some_and(|under| under.overlaps(&placed))
+                        {
                             deny(&mut plan, &shown, *other);
                             restore(&mut plan, *other, &|area| area.output.overlaps(&placed));
                         }
@@ -764,9 +876,16 @@ impl Graphics {
                         }
                     }
                 }
-                Message::WireToSurface1 { surface, codec, data, .. } if avc::carries(codec) => {
+                Message::WireToSurface1 {
+                    surface,
+                    codec,
+                    data,
+                    ..
+                } if avc::carries(codec) => {
                     // As `avc::scan` counts them: a payload that does not read has no units.
-                    let Ok(stream) = avc::Stream::read(codec, data) else { continue };
+                    let Ok(stream) = avc::Stream::read(codec, data) else {
+                        continue;
+                    };
                     let seen = surfaces.get_mut(&surface);
                     let chroma_before = seen.as_ref().is_some_and(|seen| seen.chroma);
                     if stream.has_chroma() {
@@ -791,13 +910,21 @@ impl Graphics {
                         }
                     }
                 }
-                Message::WireToSurface1 { surface, codec: gfx::CODEC_CLEARCODEC, .. } => {
+                Message::WireToSurface1 {
+                    surface,
+                    codec: gfx::CODEC_CLEARCODEC,
+                    ..
+                } => {
                     // Its bands can land beside its rectangle (see `draw`).
                     deny(&mut plan, &shown, surface);
                     restore(&mut plan, surface, &|_| true);
                 }
-                Message::SurfaceToSurface { src, rect, .. } => read(&mut plan, &shown, src, to_rect(rect)),
-                Message::SurfaceToCache { surface, rect, .. } => read(&mut plan, &shown, surface, to_rect(rect)),
+                Message::SurfaceToSurface { src, rect, .. } => {
+                    read(&mut plan, &shown, src, to_rect(rect))
+                }
+                Message::SurfaceToCache { surface, rect, .. } => {
+                    read(&mut plan, &shown, surface, to_rect(rect))
+                }
                 _ => {}
             }
         }
@@ -846,7 +973,10 @@ impl Graphics {
             }
             let read = gfx::messages(&commands[command.start..command.end]).next();
             match read.transpose()? {
-                Some(Message::WireToSurface1 { codec, data, .. } | Message::WireToSurface2 { codec, data, .. }) => {
+                Some(
+                    Message::WireToSurface1 { codec, data, .. }
+                    | Message::WireToSurface2 { codec, data, .. },
+                ) => {
                     self.saw(codec, data, &mut updates);
                 }
                 Some(Message::CapsConfirm { version, flags }) => {
@@ -860,12 +990,20 @@ impl Graphics {
                     self.opened = false;
                     updates.push(Update::Confirmed { version, flags });
                 }
-                Some(Message::ResetGraphics { width, height, monitors }) => {
+                Some(Message::ResetGraphics {
+                    width,
+                    height,
+                    monitors,
+                }) => {
                     affordable(width, height)?;
                     let monitors = gfx::arrangement(width, height, &monitors);
                     debug!("rdp: graphics reset to {width}x{height}, over {monitors:?}");
                     self.output = Some((width, height));
-                    updates.push(Update::Reset { width, height, monitors });
+                    updates.push(Update::Reset {
+                        width,
+                        height,
+                        monitors,
+                    });
                 }
                 Some(Message::EndFrame { frame }) => {
                     // Everything drawn since the confirmation is this frame's: the
@@ -879,7 +1017,10 @@ impl Graphics {
                 _ => {}
             }
         }
-        updates.push(Update::Passed { wrapped: wrapped.to_vec(), frames });
+        updates.push(Update::Passed {
+            wrapped: wrapped.to_vec(),
+            frames,
+        });
         Ok(updates)
     }
 
@@ -901,15 +1042,28 @@ impl Graphics {
                     self.opened = false;
                     updates.push(Update::Confirmed { version, flags });
                 }
-                Message::ResetGraphics { width, height, monitors } => {
+                Message::ResetGraphics {
+                    width,
+                    height,
+                    monitors,
+                } => {
                     self.tally.command(gfx::CMD_RESET_GRAPHICS);
                     affordable(width, height)?;
                     let monitors = gfx::arrangement(width, height, &monitors);
                     debug!("rdp: graphics reset to {width}x{height}, over {monitors:?}");
                     self.output = Some((width, height));
-                    updates.push(Update::Reset { width, height, monitors });
+                    updates.push(Update::Reset {
+                        width,
+                        height,
+                        monitors,
+                    });
                 }
-                Message::CreateSurface { surface, width, height, .. } => {
+                Message::CreateSurface {
+                    surface,
+                    width,
+                    height,
+                    ..
+                } => {
                     self.tally.command(gfx::CMD_CREATE_SURFACE);
                     debug!("rdp: graphics surface {surface} created, {width}x{height}");
                     self.sizes.insert(surface, (width, height));
@@ -924,9 +1078,16 @@ impl Graphics {
                     match self.sizes.get(&surface) {
                         Some(&(width, height)) => updates.push(Update::Mapped {
                             surface,
-                            rect: Rect { x, y, width: u32::from(width), height: u32::from(height) },
+                            rect: Rect {
+                                x,
+                                y,
+                                width: u32::from(width),
+                                height: u32::from(height),
+                            },
                         }),
-                        None => warn!("rdp: the host mapped graphics surface {surface}, which does not exist"),
+                        None => warn!(
+                            "rdp: the host mapped graphics surface {surface}, which does not exist"
+                        ),
                     }
                 }
                 Message::StartFrame { .. } => self.tally.command(gfx::CMD_START_FRAME),
@@ -938,7 +1099,12 @@ impl Graphics {
                     }
                     updates.push(Update::Ended { frame });
                 }
-                Message::WireToSurface1 { surface, codec, data, .. } => {
+                Message::WireToSurface1 {
+                    surface,
+                    codec,
+                    data,
+                    ..
+                } => {
                     self.tally.command(gfx::CMD_WIRE_TO_SURFACE_1);
                     self.tally.codec(codec);
                     self.saw(codec, data, &mut updates);
@@ -958,11 +1124,17 @@ impl Graphics {
                         }
                         Ok(stream) => {
                             if let Some(unit) = stream.luma_bitstream() {
-                                updates.push(Update::Unit { surface, unit: unit.to_vec() });
+                                updates.push(Update::Unit {
+                                    surface,
+                                    unit: unit.to_vec(),
+                                });
                             }
                         }
                         Err(e) => {
-                            warn!("rdp: a {} command of surface {surface} does not read: {e}", gfx::codec_name(codec));
+                            warn!(
+                                "rdp: a {} command of surface {surface} does not read: {e}",
+                                gfx::codec_name(codec)
+                            );
                             updates.push(Update::Lost { surface });
                         }
                     }
@@ -978,7 +1150,9 @@ impl Graphics {
                 Message::SurfaceToCache { .. } => self.not_drawn(gfx::CMD_SURFACE_TO_CACHE),
                 Message::CacheToSurface { .. } => self.not_drawn(gfx::CMD_CACHE_TO_SURFACE),
                 Message::EvictCacheEntry { .. } => self.tally.command(gfx::CMD_EVICT_CACHE_ENTRY),
-                Message::DeleteEncodingContext { .. } => self.tally.command(gfx::CMD_DELETE_ENCODING_CONTEXT),
+                Message::DeleteEncodingContext { .. } => {
+                    self.tally.command(gfx::CMD_DELETE_ENCODING_CONTEXT)
+                }
                 Message::Other { command, .. } => self.tally.command(command),
             }
         }
@@ -992,7 +1166,11 @@ impl Graphics {
             info!(
                 "rdp: the host has drawn with {} so far, {}",
                 names.join(", "),
-                if self.fidelity.lossless() { "lossless" } else { "not lossless" }
+                if self.fidelity.lossless() {
+                    "lossless"
+                } else {
+                    "not lossless"
+                }
             );
             updates.push(Update::Drawn(self.fidelity.clone()));
         }
@@ -1009,7 +1187,10 @@ impl Graphics {
                     gfx::codec_name(codec)
                 );
             } else {
-                warn!("rdp: the host drew with {} beside its H.264, which is not shown", gfx::codec_name(codec));
+                warn!(
+                    "rdp: the host drew with {} beside its H.264, which is not shown",
+                    gfx::codec_name(codec)
+                );
             }
         }
     }
@@ -1019,20 +1200,34 @@ impl Graphics {
     fn not_drawn(&mut self, command: u16) {
         self.tally.command(command);
         if self.unshown.insert(0x8000 | command) {
-            warn!("rdp: the host drew with {} beside its H.264, which is not shown", gfx::command_name(command));
+            warn!(
+                "rdp: the host drew with {} beside its H.264, which is not shown",
+                gfx::command_name(command)
+            );
         }
     }
 
-    fn act(&mut self, message: Message<'_>, framebuffer: &Framebuffer, updates: &mut Vec<Update>) -> Result<()> {
+    fn act(
+        &mut self,
+        message: Message<'_>,
+        framebuffer: &Framebuffer,
+        updates: &mut Vec<Update>,
+    ) -> Result<()> {
         match message {
             Message::CapsConfirm { version, flags } => {
                 self.tally.command(gfx::CMD_CAPS_CONFIRM);
-                info!("rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}");
+                info!(
+                    "rdp: the host confirmed graphics pipeline version {version:#010x}, flags {flags:#x}"
+                );
                 self.cache_budget = cache_budget(version, flags);
                 self.fit_caches();
                 updates.push(Update::Confirmed { version, flags });
             }
-            Message::ResetGraphics { width, height, monitors } => {
+            Message::ResetGraphics {
+                width,
+                height,
+                monitors,
+            } => {
                 self.tally.command(gfx::CMD_RESET_GRAPHICS);
                 affordable(width, height)?;
                 let monitors = gfx::arrangement(width, height, &monitors);
@@ -1046,9 +1241,18 @@ impl Graphics {
                     surface.invalid.clear();
                     surface.gpu.clear();
                 }
-                updates.push(Update::Reset { width, height, monitors });
+                updates.push(Update::Reset {
+                    width,
+                    height,
+                    monitors,
+                });
             }
-            Message::CreateSurface { surface, width, height, format } => {
+            Message::CreateSurface {
+                surface,
+                width,
+                height,
+                format,
+            } => {
                 self.tally.command(gfx::CMD_CREATE_SURFACE);
                 let bytes = usize::from(width) * usize::from(height) * 4;
                 // One budget for every surface together: a host may create as many
@@ -1061,17 +1265,23 @@ impl Graphics {
                     .filter(|(id, _)| **id != surface)
                     .map(|(_, held)| held.pixels.len())
                     .sum::<usize>()
-                    + self.progressive.as_ref().map_or(0, |progressive| progressive.held_except(surface));
+                    + self
+                        .progressive
+                        .as_ref()
+                        .map_or(0, |progressive| progressive.held_except(surface));
                 // Summed with the overflow looked for: the largest surface the wire
                 // can name is within a megabyte of what 32 bits count to.
                 anyhow::ensure!(
-                    held.checked_add(bytes).is_some_and(|total| total <= MAX_DESKTOP_BYTES),
+                    held.checked_add(bytes)
+                        .is_some_and(|total| total <= MAX_DESKTOP_BYTES),
                     "the host created a {width}x{height} graphics surface, which with the {} MiB \
                      of surfaces it already has is more than the {} MiB this client will hold",
                     held >> 20,
                     MAX_DESKTOP_BYTES >> 20
                 );
-                debug!("rdp: graphics surface {surface} created, {width}x{height}, format {format:#04x}");
+                debug!(
+                    "rdp: graphics surface {surface} created, {width}x{height}, format {format:#04x}"
+                );
                 let created = Surface {
                     width: u32::from(width),
                     height: u32::from(height),
@@ -1107,7 +1317,9 @@ impl Graphics {
                         // FreeRDP keeps them too.
                         found.mapped = Some((x, y));
                     }
-                    None => warn!("rdp: the host mapped graphics surface {surface}, which does not exist"),
+                    None => warn!(
+                        "rdp: the host mapped graphics surface {surface}, which does not exist"
+                    ),
                 }
             }
             Message::StartFrame { frame, .. } => {
@@ -1126,9 +1338,18 @@ impl Graphics {
                 }
                 self.present(framebuffer, updates);
                 self.decoded = self.decoded.wrapping_add(1);
-                updates.push(Update::Frame { id: frame, decoded: self.decoded });
+                updates.push(Update::Frame {
+                    id: frame,
+                    decoded: self.decoded,
+                });
             }
-            Message::WireToSurface1 { surface, codec, format, rect, data } => {
+            Message::WireToSurface1 {
+                surface,
+                codec,
+                format,
+                rect,
+                data,
+            } => {
                 self.tally.command(gfx::CMD_WIRE_TO_SURFACE_1);
                 self.tally.codec(codec);
                 if avc::carries(codec) {
@@ -1139,7 +1360,13 @@ impl Graphics {
                     self.draw(surface, codec, format, rect, data);
                 }
             }
-            Message::WireToSurface2 { surface, codec, format, data, .. } => {
+            Message::WireToSurface2 {
+                surface,
+                codec,
+                format,
+                data,
+                ..
+            } => {
                 self.tally.command(gfx::CMD_WIRE_TO_SURFACE_2);
                 self.tally.codec(codec);
                 if codec == gfx::CODEC_CAPROGRESSIVE {
@@ -1148,19 +1375,37 @@ impl Graphics {
                     self.tally.unhandled("codec", codec, gfx::codec_name(codec));
                 }
             }
-            Message::SolidFill { surface, color, rects } => {
+            Message::SolidFill {
+                surface,
+                color,
+                rects,
+            } => {
                 self.tally.command(gfx::CMD_SOLID_FILL);
                 self.solid_fill(surface, color, &rects);
             }
-            Message::SurfaceToSurface { src, dst, rect, points } => {
+            Message::SurfaceToSurface {
+                src,
+                dst,
+                rect,
+                points,
+            } => {
                 self.tally.command(gfx::CMD_SURFACE_TO_SURFACE);
                 self.surface_to_surface(src, dst, rect, &points);
             }
-            Message::SurfaceToCache { surface, slot, rect, .. } => {
+            Message::SurfaceToCache {
+                surface,
+                slot,
+                rect,
+                ..
+            } => {
                 self.tally.command(gfx::CMD_SURFACE_TO_CACHE);
                 self.surface_to_cache(surface, slot, rect);
             }
-            Message::CacheToSurface { slot, surface, points } => {
+            Message::CacheToSurface {
+                slot,
+                surface,
+                points,
+            } => {
                 self.tally.command(gfx::CMD_CACHE_TO_SURFACE);
                 self.cache_to_surface(slot, surface, &points);
             }
@@ -1210,7 +1455,12 @@ impl Graphics {
                 let need = usize::from(width) * usize::from(height) * 4;
                 match data.get(..need) {
                     Some(pixels) => Ok(pixels),
-                    None => Err(Malformed::Short { what: "an uncompressed graphics rectangle", len: data.len(), at: 0, need }),
+                    None => Err(Malformed::Short {
+                        what: "an uncompressed graphics rectangle",
+                        len: data.len(),
+                        at: 0,
+                        need,
+                    }),
                 }
             }
             gfx::CODEC_PLANAR => {
@@ -1220,11 +1470,20 @@ impl Graphics {
             gfx::CODEC_CLEARCODEC => {
                 // Onto the surface itself, over what it holds: the host encodes a
                 // ClearCodec rectangle against that picture (see `clear`).
-                let clear = self.clear.get_or_insert_with(|| Box::new(clear::Clear::new()));
+                let clear = self
+                    .clear
+                    .get_or_insert_with(|| Box::new(clear::Clear::new()));
                 let (surface_width, surface_height) = (found.width as usize, found.height as usize);
-                let mut canvas = clear::Canvas::new(&mut found.pixels, surface_width, surface_height);
-                let outcome =
-                    clear.decompress(data, &mut canvas, usize::from(rect.left), usize::from(rect.top), width, height);
+                let mut canvas =
+                    clear::Canvas::new(&mut found.pixels, surface_width, surface_height);
+                let outcome = clear.decompress(
+                    data,
+                    &mut canvas,
+                    usize::from(rect.left),
+                    usize::from(rect.top),
+                    width,
+                    height,
+                );
                 let spilled = canvas.painted();
                 // Whatever the outcome: the layers before a fault are on the surface
                 // already, and a band's columns can land beside the rectangle.
@@ -1235,10 +1494,17 @@ impl Graphics {
                     height: u32::from(height),
                 });
                 if let Some((x, y, w, h)) = spilled {
-                    found.invalidate(Rect { x: x as u32, y: y as u32, width: w as u32, height: h as u32 });
+                    found.invalidate(Rect {
+                        x: x as u32,
+                        y: y as u32,
+                        width: w as u32,
+                        height: h as u32,
+                    });
                 }
                 if let Err(e) = outcome {
-                    warn!("rdp: leaving part of a {width}x{height} ClearCodec rectangle unpainted: {e}");
+                    warn!(
+                        "rdp: leaving part of a {width}x{height} ClearCodec rectangle unpainted: {e}"
+                    );
                 }
                 return;
             }
@@ -1250,7 +1516,10 @@ impl Graphics {
         match decoded {
             Ok(bgrx) => found.write(rect, bgrx),
             // One rectangle the server will draw again; not the session.
-            Err(e) => warn!("rdp: leaving a {width}x{height} {} rectangle unpainted: {e}", gfx::codec_name(codec)),
+            Err(e) => warn!(
+                "rdp: leaving a {width}x{height} {} rectangle unpainted: {e}",
+                gfx::codec_name(codec)
+            ),
         }
     }
 
@@ -1265,14 +1534,20 @@ impl Graphics {
         let stream = match avc::Stream::read(codec, data) {
             Ok(stream) => stream,
             Err(e) => {
-                warn!("rdp: leaving a {} stream unpainted: {e}", gfx::codec_name(codec));
+                warn!(
+                    "rdp: leaving a {} stream unpainted: {e}",
+                    gfx::codec_name(codec)
+                );
                 return;
             }
         };
         let first = self.unit;
         self.unit += stream.units();
         let (luma, chroma) = stream.numbers();
-        if let Some(unit) = luma.map(|at| first + at).filter(|unit| self.on_gpu.contains(unit)) {
+        if let Some(unit) = luma
+            .map(|at| first + at)
+            .filter(|unit| self.on_gpu.contains(unit))
+        {
             self.show_avc_on_gpu(surface, codec, &stream, unit);
             return;
         }
@@ -1286,12 +1561,21 @@ impl Graphics {
         // surface's pixels.
         let mut state = found.avc.take().unwrap_or_default();
         let size = (found.width, found.height);
-        let outcome = state.draw(&stream, luma.as_ref(), chroma.as_ref(), size, &mut |rect, rows, stride| {
-            found.copy_rows(to_rect(rect), rows, stride);
-        });
+        let outcome = state.draw(
+            &stream,
+            luma.as_ref(),
+            chroma.as_ref(),
+            size,
+            &mut |rect, rows, stride| {
+                found.copy_rows(to_rect(rect), rows, stride);
+            },
+        );
         found.avc = Some(state);
         if let Err(e) = outcome {
-            warn!("rdp: leaving a {} stream's rectangles unpainted: {e:#}", gfx::codec_name(codec));
+            warn!(
+                "rdp: leaving a {} stream's rectangles unpainted: {e:#}",
+                gfx::codec_name(codec)
+            );
         }
     }
 
@@ -1302,16 +1586,25 @@ impl Graphics {
             return;
         };
         let Some(regions) = stream.alone() else {
-            warn!("rdp: leaving a {} stream unpainted: its views combine, and its luma view's picture was not supplied", gfx::codec_name(codec));
+            warn!(
+                "rdp: leaving a {} stream unpainted: its views combine, and its luma view's picture was not supplied",
+                gfx::codec_name(codec)
+            );
             return;
         };
         let bounds = found.bounds();
-        let rects: Vec<Rect> = regions.iter().filter_map(|region| to_rect(region.rect).clipped(bounds)).collect();
+        let rects: Vec<Rect> = regions
+            .iter()
+            .filter_map(|region| to_rect(region.rect).clipped(bounds))
+            .collect();
         for rect in &rects {
             found.show_on_gpu(*rect, unit);
         }
         found.join_gpu();
-        found.avc.get_or_insert_default().shown_on_gpu(stream, &rects);
+        found
+            .avc
+            .get_or_insert_default()
+            .shown_on_gpu(stream, &rects);
     }
 
     /// A Progressive PDU for a surface: its blocks carry their own rectangles, in
@@ -1327,15 +1620,26 @@ impl Graphics {
             warn!("rdp: dropping a graphics draw in pixel format {format:#04x}");
             return;
         }
-        let progressive = self.progressive.get_or_insert_with(|| Box::new(progressive::Progressive::new()));
+        let progressive = self
+            .progressive
+            .get_or_insert_with(|| Box::new(progressive::Progressive::new()));
         let budget = MAX_DESKTOP_BYTES.saturating_sub(surfaces);
-        let outcome = progressive.decompress(surface, found.width, found.height, data, budget, |rect, rows, stride| {
-            found.copy_rows(to_rect(rect), rows, stride);
-        });
+        let outcome = progressive.decompress(
+            surface,
+            found.width,
+            found.height,
+            data,
+            budget,
+            |rect, rows, stride| {
+                found.copy_rows(to_rect(rect), rows, stride);
+            },
+        );
         if let Err(e) = outcome {
             // The regions before the fault are painted; the host will draw the rest
             // again. Not the session.
-            warn!("rdp: leaving part of a Progressive update to graphics surface {surface} unpainted: {e}");
+            warn!(
+                "rdp: leaving part of a Progressive update to graphics surface {surface} unpainted: {e}"
+            );
         }
     }
 
@@ -1391,7 +1695,11 @@ impl Graphics {
     /// leave the larger one's entries held past it.
     fn fit_caches(&mut self) {
         while self.cached > self.cache_budget {
-            let Some(slot) = self.caches.iter().max_by_key(|(_, cache)| cache.pixels.len()).map(|(slot, _)| *slot)
+            let Some(slot) = self
+                .caches
+                .iter()
+                .max_by_key(|(_, cache)| cache.pixels.len())
+                .map(|(slot, _)| *slot)
             else {
                 break;
             };
@@ -1420,7 +1728,9 @@ impl Graphics {
             return;
         };
         if !source.holds(rect) {
-            warn!("rdp: dropping a cache of a rectangle that does not fit graphics surface {surface}");
+            warn!(
+                "rdp: dropping a cache of a rectangle that does not fit graphics surface {surface}"
+            );
             return;
         }
         let (width, height) = (u32::from(rect.width()), u32::from(rect.height()));
@@ -1443,7 +1753,14 @@ impl Graphics {
         let mut pixels = Vec::new();
         source.copy_out(to_rect(rect), &mut pixels);
         self.cached = held + pixels.len();
-        self.caches.insert(slot, Cache { width, height, pixels });
+        self.caches.insert(
+            slot,
+            Cache {
+                width,
+                height,
+                pixels,
+            },
+        );
     }
 
     /// Stamp a cached rectangle down onto a surface at each of a list of points.
@@ -1462,7 +1779,9 @@ impl Graphics {
             if target.contains(x, y, width, height) {
                 target.copy_in(x, y, width, height, &cache.pixels);
             } else {
-                warn!("rdp: dropping a cache draw to {x},{y} that does not fit graphics surface {surface}");
+                warn!(
+                    "rdp: dropping a cache draw to {x},{y} that does not fit graphics surface {surface}"
+                );
             }
         }
     }
@@ -1477,17 +1796,31 @@ impl Graphics {
             }
             return;
         };
-        let output = Rect { x: 0, y: 0, width, height };
+        let output = Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
         for surface in self.surfaces.values_mut() {
             let invalid = std::mem::take(&mut surface.invalid);
             let Some((ox, oy)) = surface.mapped else {
                 continue;
             };
             // What the GPU shows is the page's to draw, and not here.
-            for rect in invalid.into_iter().filter_map(|rect| rect.clipped(surface.bounds())) {
+            for rect in invalid
+                .into_iter()
+                .filter_map(|rect| rect.clipped(surface.bounds()))
+            {
                 for rect in surface.off_gpu(rect) {
-                    let placed = Rect { x: ox.saturating_add(rect.x), y: oy.saturating_add(rect.y), ..rect };
-                    let Some(placed) = placed.clipped(output) else { continue };
+                    let placed = Rect {
+                        x: ox.saturating_add(rect.x),
+                        y: oy.saturating_add(rect.y),
+                        ..rect
+                    };
+                    let Some(placed) = placed.clipped(output) else {
+                        continue;
+                    };
                     // The source pixel under the placed rectangle's corner.
                     let origin = ((placed.x - ox) as usize, (placed.y - oy) as usize);
                     if framebuffer.blit_from(&surface.pixels, surface.stride(), origin, placed) {
@@ -1556,7 +1889,12 @@ impl Seen {
     /// Where it lies on the output, if it is mapped.
     fn placed(&self) -> Option<Rect> {
         let (x, y) = self.mapped?;
-        Some(Rect { x, y, width: self.size.0, height: self.size.1 })
+        Some(Rect {
+            x,
+            y,
+            width: self.size.0,
+            height: self.size.1,
+        })
     }
 }
 
@@ -1564,19 +1902,38 @@ impl Seen {
 /// and read back from where it lands: the surface is mapped, wholly inside the
 /// output, and no other mapped surface overlaps it.
 fn placeable(surfaces: &BTreeMap<u16, Seen>, output: Option<(u32, u32)>, surface: u16) -> bool {
-    let Some((width, height)) = output else { return false };
-    let output = Rect { x: 0, y: 0, width, height };
-    let Some(placed) = surfaces.get(&surface).and_then(Seen::placed) else { return false };
+    let Some((width, height)) = output else {
+        return false;
+    };
+    let output = Rect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    let Some(placed) = surfaces.get(&surface).and_then(Seen::placed) else {
+        return false;
+    };
     placed.clipped(output) == Some(placed)
-        && surfaces.iter().all(|(id, other)| *id == surface || other.placed().is_none_or(|other| !other.overlaps(&placed)))
+        && surfaces.iter().all(|(id, other)| {
+            *id == surface || other.placed().is_none_or(|other| !other.overlaps(&placed))
+        })
 }
 
 impl Drop for Graphics {
     /// The measurement, said once when the channel is done with.
     fn drop(&mut self) {
         if !self.tally.commands.is_empty() {
-            let frames = self.tally.commands.get(&gfx::CMD_END_FRAME).copied().unwrap_or(0);
-            info!("rdp: the graphics pipeline carried {frames} frames; {}", self.tally.summary());
+            let frames = self
+                .tally
+                .commands
+                .get(&gfx::CMD_END_FRAME)
+                .copied()
+                .unwrap_or(0);
+            info!(
+                "rdp: the graphics pipeline carried {frames} frames; {}",
+                self.tally.summary()
+            );
         }
     }
 }
@@ -1585,10 +1942,10 @@ impl Drop for Graphics {
 mod tests {
     use super::*;
     use crate::proto::gfx::{
-        CMD_CACHE_TO_SURFACE, CMD_CAPS_CONFIRM, CMD_CREATE_SURFACE, CMD_END_FRAME, CMD_MAP_SURFACE_TO_OUTPUT,
-        CMD_RESET_GRAPHICS, CMD_SOLID_FILL, CMD_START_FRAME, CMD_SURFACE_TO_CACHE,
-        CMD_SURFACE_TO_SURFACE, CMD_WIRE_TO_SURFACE_1, CMD_WIRE_TO_SURFACE_2, CODEC_CAPROGRESSIVE, CODEC_PLANAR,
-        CODEC_UNCOMPRESSED, PIXEL_XRGB_8888, pdu,
+        CMD_CACHE_TO_SURFACE, CMD_CAPS_CONFIRM, CMD_CREATE_SURFACE, CMD_END_FRAME,
+        CMD_MAP_SURFACE_TO_OUTPUT, CMD_RESET_GRAPHICS, CMD_SOLID_FILL, CMD_START_FRAME,
+        CMD_SURFACE_TO_CACHE, CMD_SURFACE_TO_SURFACE, CMD_WIRE_TO_SURFACE_1, CMD_WIRE_TO_SURFACE_2,
+        CODEC_CAPROGRESSIVE, CODEC_PLANAR, CODEC_UNCOMPRESSED, PIXEL_XRGB_8888, pdu,
     };
     use crate::proto::wire::Writer;
 
@@ -1725,8 +2082,14 @@ mod tests {
         zgfx::wrap(&pdus.concat())
     }
 
-    fn receive(graphics: &mut Graphics, framebuffer: &Framebuffer, pdus: &[Vec<u8>]) -> Vec<Update> {
-        graphics.receive(&packet(pdus), framebuffer).expect("well-formed PDUs")
+    fn receive(
+        graphics: &mut Graphics,
+        framebuffer: &Framebuffer,
+        pdus: &[Vec<u8>],
+    ) -> Vec<Update> {
+        graphics
+            .receive(&packet(pdus), framebuffer)
+            .expect("well-formed PDUs")
     }
 
     /// The whole shape of a first frame: a reset sizes the output, a surface is
@@ -1736,19 +2099,50 @@ mod tests {
     fn a_frame_reaches_the_framebuffer_at_its_end_and_not_before() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        let updates = receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
-        assert_eq!(updates, vec![Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] }]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
+        assert_eq!(
+            updates,
+            vec![Update::Reset {
+                width: 4,
+                height: 4,
+                monitors: vec![gfx::Placed {
+                    x: 0,
+                    y: 0,
+                    w: 4,
+                    h: 4
+                }]
+            }]
+        );
         framebuffer.with(|frame| assert_eq!((frame.width, frame.height), (4, 4)));
 
         // Two BGRX pixels at (1, 2) and (2, 2).
         let pixels = [10, 20, 30, 0xFF, 11, 21, 31, 0xFF];
-        let updates = receive(&mut graphics, &framebuffer, &[start(1), wire(1, CODEC_UNCOMPRESSED, (1, 2, 3, 3), &pixels)]);
-        assert!(updates.is_empty(), "nothing shows before the EndFrame: {updates:?}");
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[start(1), wire(1, CODEC_UNCOMPRESSED, (1, 2, 3, 3), &pixels)],
+        );
+        assert!(
+            updates.is_empty(),
+            "nothing shows before the EndFrame: {updates:?}"
+        );
         framebuffer.with(|frame| assert!(frame.pixels.iter().all(|b| *b == 0)));
 
         let updates = receive(&mut graphics, &framebuffer, &[end(1)]);
-        let painted = Rect { x: 1, y: 2, width: 2, height: 1 };
-        assert_eq!(updates, vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]);
+        let painted = Rect {
+            x: 1,
+            y: 2,
+            width: 2,
+            height: 1,
+        };
+        assert_eq!(
+            updates,
+            vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]
+        );
         framebuffer.with(|frame| {
             let row: Vec<_> = frame.rows(painted).collect();
             assert_eq!(row, vec![&[30, 20, 10, 0, 31, 21, 11, 0][..]]);
@@ -1761,15 +2155,35 @@ mod tests {
     fn a_mapped_surface_is_placed_at_its_origin_and_clipped_to_the_output() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 2), create(7, 2, 2), map(7, 3, 1)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 2), create(7, 2, 2), map(7, 3, 1)],
+        );
         // A 2x2 planar rectangle, three flat planes: red 1, green 2, blue 3.
         let planar = [0x20, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 0];
-        let updates = receive(&mut graphics, &framebuffer, &[start(5), wire(7, CODEC_PLANAR, (0, 0, 2, 2), &planar), end(5)]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(5),
+                wire(7, CODEC_PLANAR, (0, 0, 2, 2), &planar),
+                end(5),
+            ],
+        );
         // Only the one pixel of it inside a 4x2 output at (3, 1).
-        assert_eq!(updates, vec![
-            Update::Paint(Rect { x: 3, y: 1, width: 1, height: 1 }),
-            Update::Frame { id: 5, decoded: 1 },
-        ]);
+        assert_eq!(
+            updates,
+            vec![
+                Update::Paint(Rect {
+                    x: 3,
+                    y: 1,
+                    width: 1,
+                    height: 1
+                }),
+                Update::Frame { id: 5, decoded: 1 },
+            ]
+        );
         framebuffer.with(|frame| {
             assert_eq!(&frame.pixels[(4 + 3) * 4..], &[1, 2, 3, 0]);
             assert!(frame.pixels[..(4 + 3) * 4].iter().all(|b| *b == 0));
@@ -1782,17 +2196,32 @@ mod tests {
     fn a_codec_with_no_decoder_leaves_the_rectangle_alone_and_the_frame_still_ends() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
-        let updates = receive(&mut graphics, &framebuffer, &[
-            start(2),
-            wire(1, CODEC_CAPROGRESSIVE, (0, 0, 4, 4), &[0xAA; 16]),
-            wire(1, CODEC_CAPROGRESSIVE, (0, 0, 2, 2), &[0xAA; 4]),
-            end(2),
-        ]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(2),
+                wire(1, CODEC_CAPROGRESSIVE, (0, 0, 4, 4), &[0xAA; 16]),
+                wire(1, CODEC_CAPROGRESSIVE, (0, 0, 2, 2), &[0xAA; 4]),
+                end(2),
+            ],
+        );
         assert_eq!(updates, vec![Update::Frame { id: 2, decoded: 1 }]);
         assert_eq!(graphics.tally.codecs.get(&CODEC_CAPROGRESSIVE), Some(&2));
-        assert_eq!(graphics.tally.commands.get(&CMD_WIRE_TO_SURFACE_1), Some(&2));
-        assert!(graphics.tally.summary().contains("Progressive 2"), "{}", graphics.tally.summary());
+        assert_eq!(
+            graphics.tally.commands.get(&CMD_WIRE_TO_SURFACE_1),
+            Some(&2)
+        );
+        assert!(
+            graphics.tally.summary().contains("Progressive 2"),
+            "{}",
+            graphics.tally.summary()
+        );
     }
 
     /// A rectangle whose payload does not decode is a hole, not the end: the
@@ -1801,15 +2230,23 @@ mod tests {
     fn a_payload_that_does_not_decode_costs_the_rectangle_and_not_the_session() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
-        let updates = receive(&mut graphics, &framebuffer, &[
-            start(3),
-            wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[0; 8]), // half the pixels
-            wire(1, CODEC_PLANAR, (0, 0, 2, 2), &[0x21, 0]),    // a colour loss level
-            wire(2, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[0; 4]), // no such surface
-            wire(1, CODEC_UNCOMPRESSED, (3, 3, 5, 5), &[0; 16]), // past the surface
-            end(3),
-        ]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(3),
+                wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[0; 8]), // half the pixels
+                wire(1, CODEC_PLANAR, (0, 0, 2, 2), &[0x21, 0]),    // a colour loss level
+                wire(2, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[0; 4]), // no such surface
+                wire(1, CODEC_UNCOMPRESSED, (3, 3, 5, 5), &[0; 16]), // past the surface
+                end(3),
+            ],
+        );
         assert_eq!(updates, vec![Update::Frame { id: 3, decoded: 1 }]);
     }
 
@@ -1821,8 +2258,15 @@ mod tests {
         let mut graphics = Graphics::new();
         let mut truncated = create(1, 4, 4);
         truncated.pop();
-        assert!(graphics.receive(&zgfx::wrap(&truncated), &framebuffer).is_err());
-        assert!(graphics.receive(&[0xE2], &framebuffer).is_err(), "and so does a bad wrapper");
+        assert!(
+            graphics
+                .receive(&zgfx::wrap(&truncated), &framebuffer)
+                .is_err()
+        );
+        assert!(
+            graphics.receive(&[0xE2], &framebuffer).is_err(),
+            "and so does a bad wrapper"
+        );
     }
 
     /// A reset in the middle of a session resizes the framebuffer at once — before
@@ -1831,27 +2275,63 @@ mod tests {
     fn a_reset_resizes_before_the_paints_that_follow_it() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(2, 2), create(1, 2, 2), map(1, 0, 0)]);
-        receive(&mut graphics, &framebuffer, &[start(1), wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[9; 16]), end(1)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(2, 2), create(1, 2, 2), map(1, 0, 0)],
+        );
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[9; 16]),
+                end(1),
+            ],
+        );
         framebuffer.with(|frame| assert!(frame.pixels.iter().all(|b| *b == 9 || *b == 0)));
 
-        let updates = receive(&mut graphics, &framebuffer, &[
-            reset(4, 4),
-            create(1, 4, 4),
-            map(1, 0, 0),
-            start(2),
-            wire(1, CODEC_UNCOMPRESSED, (3, 3, 4, 4), &[5, 6, 7, 0]),
-            end(2),
-        ]);
-        assert_eq!(updates, vec![
-            Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] },
-            Update::Paint(Rect { x: 3, y: 3, width: 1, height: 1 }),
-            Update::Frame { id: 2, decoded: 2 },
-        ]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                reset(4, 4),
+                create(1, 4, 4),
+                map(1, 0, 0),
+                start(2),
+                wire(1, CODEC_UNCOMPRESSED, (3, 3, 4, 4), &[5, 6, 7, 0]),
+                end(2),
+            ],
+        );
+        assert_eq!(
+            updates,
+            vec![
+                Update::Reset {
+                    width: 4,
+                    height: 4,
+                    monitors: vec![gfx::Placed {
+                        x: 0,
+                        y: 0,
+                        w: 4,
+                        h: 4
+                    }]
+                },
+                Update::Paint(Rect {
+                    x: 3,
+                    y: 3,
+                    width: 1,
+                    height: 1
+                }),
+                Update::Frame { id: 2, decoded: 2 },
+            ]
+        );
         framebuffer.with(|frame| {
             assert_eq!((frame.width, frame.height), (4, 4));
             assert_eq!(&frame.pixels[60..], &[7, 6, 5, 0]);
-            assert!(frame.pixels[..60].iter().all(|b| *b == 0), "the old picture is gone");
+            assert!(
+                frame.pixels[..60].iter().all(|b| *b == 0),
+                "the old picture is gone"
+            );
         });
     }
 
@@ -1860,14 +2340,36 @@ mod tests {
     /// EndFrame; the tiles are kept, so a later PDU on the same surface finds them.
     #[test]
     fn a_progressive_pdu_paints_its_region_and_keeps_its_tiles() {
-        use crate::proto::progressive::testing::{empty_upgrade, flat_tile, grey, pdu as progressive, region};
+        use crate::proto::progressive::testing::{
+            empty_upgrade, flat_tile, grey, pdu as progressive, region,
+        };
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(100, 70), create(1, 100, 70), map(1, 0, 0)]);
-        let first = progressive(&[region(&[(60, 66, 100, 100)], 1, &[flat_tile(0xCCC6, 1, 1, 9)])]);
-        let updates = receive(&mut graphics, &framebuffer, &[start(1), wire2(1, CODEC_CAPROGRESSIVE, &first), end(1)]);
-        let painted = Rect { x: 64, y: 66, width: 36, height: 4 };
-        assert_eq!(updates, vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(100, 70), create(1, 100, 70), map(1, 0, 0)],
+        );
+        let first = progressive(&[region(
+            &[(60, 66, 100, 100)],
+            1,
+            &[flat_tile(0xCCC6, 1, 1, 9)],
+        )]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[start(1), wire2(1, CODEC_CAPROGRESSIVE, &first), end(1)],
+        );
+        let painted = Rect {
+            x: 64,
+            y: 66,
+            width: 36,
+            height: 4,
+        };
+        assert_eq!(
+            updates,
+            vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]
+        );
         let expected = grey(9);
         framebuffer.with(|frame| {
             for row in frame.rows(painted) {
@@ -1876,12 +2378,30 @@ mod tests {
                 }
             }
             // The pixel left of the region is untouched.
-            assert_eq!(&frame.pixels[(66 * 100 + 63) * 4..(66 * 100 + 64) * 4], &[0, 0, 0, 0]);
+            assert_eq!(
+                &frame.pixels[(66 * 100 + 63) * 4..(66 * 100 + 64) * 4],
+                &[0, 0, 0, 0]
+            );
         });
         // An upgrade with nothing to add finds the tile and repaints it, not a refusal.
         let again = progressive(&[region(&[(64, 64, 36, 6)], 1, &[empty_upgrade(1, 1)])]);
-        let updates = receive(&mut graphics, &framebuffer, &[start(2), wire2(1, CODEC_CAPROGRESSIVE, &again), end(2)]);
-        assert_eq!(updates, vec![Update::Paint(Rect { x: 64, y: 64, width: 36, height: 6 }), Update::Frame { id: 2, decoded: 2 }]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[start(2), wire2(1, CODEC_CAPROGRESSIVE, &again), end(2)],
+        );
+        assert_eq!(
+            updates,
+            vec![
+                Update::Paint(Rect {
+                    x: 64,
+                    y: 64,
+                    width: 36,
+                    height: 6
+                }),
+                Update::Frame { id: 2, decoded: 2 }
+            ]
+        );
     }
 
     /// A solid fill paints one colour, and a rectangle that pokes past the surface
@@ -1890,15 +2410,31 @@ mod tests {
     fn a_solid_fill_paints_one_colour_clipped_to_the_surface() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
         // Fill R=10 G=20 B=30 (wire order B, G, R, A) over a rectangle past the edge.
-        let updates = receive(&mut graphics, &framebuffer, &[
-            start(1),
-            solidfill(1, [30, 20, 10, 0xFF], &[(2, 2, 6, 6)]),
-            end(1),
-        ]);
-        let painted = Rect { x: 2, y: 2, width: 2, height: 2 };
-        assert_eq!(updates, vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                solidfill(1, [30, 20, 10, 0xFF], &[(2, 2, 6, 6)]),
+                end(1),
+            ],
+        );
+        let painted = Rect {
+            x: 2,
+            y: 2,
+            width: 2,
+            height: 2,
+        };
+        assert_eq!(
+            updates,
+            vec![Update::Paint(painted), Update::Frame { id: 1, decoded: 1 }]
+        );
         framebuffer.with(|frame| {
             for row in frame.rows(painted) {
                 for px in row.as_chunks::<4>().0 {
@@ -1914,14 +2450,22 @@ mod tests {
     fn a_rectangle_cached_and_stamped_back_lands_where_it_is_told() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
-        receive(&mut graphics, &framebuffer, &[
-            start(1),
-            wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[30, 20, 10, 0xFF]),
-            s2c(1, 5, (0, 0, 1, 1)),
-            c2s(5, 1, &[(3, 3)]),
-            end(1),
-        ]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[30, 20, 10, 0xFF]),
+                s2c(1, 5, (0, 0, 1, 1)),
+                c2s(5, 1, &[(3, 3)]),
+                end(1),
+            ],
+        );
         framebuffer.with(|frame| {
             assert_eq!(&frame.pixels[..4], &[10, 20, 30, 0]);
             assert_eq!(&frame.pixels[(3 * 4 + 3) * 4..], &[10, 20, 30, 0]);
@@ -1934,14 +2478,27 @@ mod tests {
     fn a_scroll_copies_a_rectangle_over_itself_correctly() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(2, 2), create(1, 2, 2), map(1, 0, 0)]);
-        receive(&mut graphics, &framebuffer, &[
-            start(1),
-            // The top row is one colour; copy it down onto the bottom row.
-            wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 1), &[30, 20, 10, 0xFF, 30, 20, 10, 0xFF]),
-            s2s(1, 1, (0, 0, 2, 1), &[(0, 1)]),
-            end(1),
-        ]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(2, 2), create(1, 2, 2), map(1, 0, 0)],
+        );
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                // The top row is one colour; copy it down onto the bottom row.
+                wire(
+                    1,
+                    CODEC_UNCOMPRESSED,
+                    (0, 0, 2, 1),
+                    &[30, 20, 10, 0xFF, 30, 20, 10, 0xFF],
+                ),
+                s2s(1, 1, (0, 0, 2, 1), &[(0, 1)]),
+                end(1),
+            ],
+        );
         framebuffer.with(|frame| {
             assert_eq!(&frame.pixels[..4], &[10, 20, 30, 0]);
             assert_eq!(&frame.pixels[8..12], &[10, 20, 30, 0]);
@@ -1954,16 +2511,24 @@ mod tests {
     fn a_bad_copy_or_cache_costs_the_rectangle_and_not_the_session() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)]);
-        let updates = receive(&mut graphics, &framebuffer, &[
-            start(1),
-            c2s(9, 1, &[(0, 0)]),           // empty slot
-            s2s(2, 1, (0, 0, 2, 2), &[(0, 0)]), // no such source surface
-            wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[0; 16]),
-            s2c(1, 3, (0, 0, 2, 2)),
-            c2s(3, 1, &[(3, 3)]),            // 2x2 at (3,3) does not fit a 4x4
-            end(1),
-        ]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4, 4), map(1, 0, 0)],
+        );
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                c2s(9, 1, &[(0, 0)]),               // empty slot
+                s2s(2, 1, (0, 0, 2, 2), &[(0, 0)]), // no such source surface
+                wire(1, CODEC_UNCOMPRESSED, (0, 0, 2, 2), &[0; 16]),
+                s2c(1, 3, (0, 0, 2, 2)),
+                c2s(3, 1, &[(3, 3)]), // 2x2 at (3,3) does not fit a 4x4
+                end(1),
+            ],
+        );
         assert_eq!(updates.last(), Some(&Update::Frame { id: 1, decoded: 1 }));
     }
 
@@ -1973,14 +2538,20 @@ mod tests {
     fn an_absurd_surface_or_output_is_refused_before_it_is_allocated() {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        let err = graphics.receive(&packet(&[create(1, 32766, 32766)]), &framebuffer).unwrap_err();
+        let err = graphics
+            .receive(&packet(&[create(1, 32766, 32766)]), &framebuffer)
+            .unwrap_err();
         assert!(format!("{err}").contains("32766x32766"), "{err}");
         // And beside a surface already held, where the two together are past what 32
         // bits count to.
         receive(&mut graphics, &framebuffer, &[create(1, 1024, 1024)]);
-        let err = graphics.receive(&packet(&[create(2, 32766, 32766)]), &framebuffer).unwrap_err();
+        let err = graphics
+            .receive(&packet(&[create(2, 32766, 32766)]), &framebuffer)
+            .unwrap_err();
         assert!(format!("{err}").contains("32766x32766"), "{err}");
-        let err = graphics.receive(&packet(&[reset(32766, 32766)]), &framebuffer).unwrap_err();
+        let err = graphics
+            .receive(&packet(&[reset(32766, 32766)]), &framebuffer)
+            .unwrap_err();
         assert!(format!("{err}").contains("32766x32766"), "{err}");
     }
 
@@ -1994,7 +2565,9 @@ mod tests {
         // Exactly the budget, in one surface. Zeroed pages the kernel hands out
         // lazily, so this costs the test nothing but address space.
         receive(&mut graphics, &framebuffer, &[create(1, 16384, 8192)]);
-        let err = graphics.receive(&packet(&[create(2, 1, 1)]), &framebuffer).unwrap_err();
+        let err = graphics
+            .receive(&packet(&[create(2, 1, 1)]), &framebuffer)
+            .unwrap_err();
         assert!(format!("{err}").contains("512 MiB of surfaces"), "{err}");
         receive(&mut graphics, &framebuffer, &[create(1, 16384, 8192)]);
         assert_eq!(graphics.surfaces.len(), 1);
@@ -2008,20 +2581,51 @@ mod tests {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
         // A 4096x2048 rectangle is exactly the small cache's budget when lifted whole.
-        receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)]);
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 2048))]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)],
+        );
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[s2c(1, 1, (0, 0, 4096, 2048))],
+        );
         assert_eq!(graphics.caches.len(), 1);
         receive(&mut graphics, &framebuffer, &[s2c(1, 2, (0, 0, 1, 1))]);
-        assert!(!graphics.caches.contains_key(&2), "the second entry was dropped");
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 4096, 2048))]);
-        assert_eq!(graphics.caches.len(), 1, "the slot's own entry is replaced, not added to");
+        assert!(
+            !graphics.caches.contains_key(&2),
+            "the second entry was dropped"
+        );
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[s2c(1, 1, (0, 0, 4096, 2048))],
+        );
+        assert_eq!(
+            graphics.caches.len(),
+            1,
+            "the slot's own entry is replaced, not added to"
+        );
         // Now the slot holds a small one; the next big one has room.
-        receive(&mut graphics, &framebuffer, &[s2c(1, 1, (0, 0, 1, 1)), s2c(1, 2, (0, 0, 4096, 2047))]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[s2c(1, 1, (0, 0, 1, 1)), s2c(1, 2, (0, 0, 4096, 2047))],
+        );
         assert_eq!(graphics.caches.len(), 2);
-        assert_eq!(graphics.cached, 4 + 4096 * 2047 * 4, "the bytes held are counted as entries come and go");
+        assert_eq!(
+            graphics.cached,
+            4 + 4096 * 2047 * 4,
+            "the bytes held are counted as entries come and go"
+        );
         let mut w = Writer::new();
         w.u16_le(2);
-        receive(&mut graphics, &framebuffer, &[pdu(gfx::CMD_EVICT_CACHE_ENTRY, &w.finish())]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[pdu(gfx::CMD_EVICT_CACHE_ENTRY, &w.finish())],
+        );
         assert_eq!(graphics.cached, 4, "an evicted entry gives its bytes back");
     }
 
@@ -2036,18 +2640,40 @@ mod tests {
         w.u32_le(4);
         w.u32_le(gfx::CAPS_AVC_DISABLED);
         let large = pdu(CMD_CAPS_CONFIRM, &w.finish());
-        receive(&mut graphics, &framebuffer, &[large, reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[large, reset(4, 4), create(1, 4096, 4096), map(1, 0, 0)],
+        );
         // Three 64 MiB entries are 192 MiB, under the 200 MiB budget; a fourth is not.
         for slot in 1..=4 {
-            receive(&mut graphics, &framebuffer, &[s2c(1, slot, (0, 0, 4096, 4096))]);
+            receive(
+                &mut graphics,
+                &framebuffer,
+                &[s2c(1, slot, (0, 0, 4096, 4096))],
+            );
         }
-        assert_eq!(graphics.caches.keys().copied().collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            graphics.caches.keys().copied().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
         // Confirmed again with the small cache, the entries held are evicted until
         // they fit its budget, and a new one is taken within it.
         receive(&mut graphics, &framebuffer, &[confirm()]);
-        let held: usize = graphics.caches.values().map(|cache| cache.pixels.len()).sum();
-        assert_eq!(graphics.cached, held, "the count kept is what the entries hold");
-        assert!(held <= graphics.cache_budget, "{held} bytes held past the {} budget", graphics.cache_budget);
+        let held: usize = graphics
+            .caches
+            .values()
+            .map(|cache| cache.pixels.len())
+            .sum();
+        assert_eq!(
+            graphics.cached, held,
+            "the count kept is what the entries hold"
+        );
+        assert!(
+            held <= graphics.cache_budget,
+            "{held} bytes held past the {} budget",
+            graphics.cache_budget
+        );
         assert_eq!(graphics.cache_budget, 32 << 20);
         receive(&mut graphics, &framebuffer, &[s2c(1, 5, (0, 0, 1, 1))]);
         assert!(graphics.caches.contains_key(&5));
@@ -2060,16 +2686,28 @@ mod tests {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
         receive(&mut graphics, &framebuffer, &[reset(4, 4), create(1, 4, 4)]);
-        let updates = receive(&mut graphics, &framebuffer, &[
-            start(1),
-            wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[30, 20, 10, 0xFF]),
-            map(1, 0, 0),
-            end(1),
-        ]);
-        assert_eq!(updates, vec![
-            Update::Paint(Rect { x: 0, y: 0, width: 1, height: 1 }),
-            Update::Frame { id: 1, decoded: 1 },
-        ]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                start(1),
+                wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[30, 20, 10, 0xFF]),
+                map(1, 0, 0),
+                end(1),
+            ],
+        );
+        assert_eq!(
+            updates,
+            vec![
+                Update::Paint(Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1
+                }),
+                Update::Frame { id: 1, decoded: 1 },
+            ]
+        );
     }
 
     /// The host's CapsConfirm is the moment the session learns that its frames will
@@ -2084,7 +2722,25 @@ mod tests {
         w.u32_le(0); // flags
         let confirm = pdu(CMD_CAPS_CONFIRM, &w.finish());
         let updates = receive(&mut graphics, &framebuffer, &[confirm, reset(4, 4)]);
-        assert_eq!(updates, vec![Update::Confirmed { version: 0x000A_0002, flags: 0 }, Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] }]);
+        assert_eq!(
+            updates,
+            vec![
+                Update::Confirmed {
+                    version: 0x000A_0002,
+                    flags: 0
+                },
+                Update::Reset {
+                    width: 4,
+                    height: 4,
+                    monitors: vec![gfx::Placed {
+                        x: 0,
+                        y: 0,
+                        w: 4,
+                        h: 4
+                    }]
+                }
+            ]
+        );
     }
 
     fn confirm() -> Vec<u8> {
@@ -2104,25 +2760,46 @@ mod tests {
         let mut graphics = Graphics::passing();
         let opening = [confirm(), reset(4, 4), create(1, 4, 4), map(1, 0, 0)];
         let empty = [start(1), end(1)];
-        let first = [start(2), wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[1, 2, 3, 0]), end(2)];
+        let first = [
+            start(2),
+            wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[1, 2, 3, 0]),
+            end(2),
+        ];
         let second = [start(3), wire(1, CODEC_PLANAR, (0, 0, 1, 1), &[]), end(3)];
-        let pdus: Vec<Vec<u8>> = opening.iter().chain(&empty).chain(&first).chain(&second).cloned().collect();
+        let pdus: Vec<Vec<u8>> = opening
+            .iter()
+            .chain(&empty)
+            .chain(&first)
+            .chain(&second)
+            .cloned()
+            .collect();
 
         let updates = receive(&mut graphics, &framebuffer, &pdus);
         let mut uncompressed = Fidelity::default();
         uncompressed.saw(CODEC_UNCOMPRESSED, &[]);
         let mut both = uncompressed.clone();
         both.saw(CODEC_PLANAR, &[]);
-        assert_eq!(updates[2..], [
-            Update::Drawn(uncompressed.clone()),
-            Update::Opened(uncompressed),
-            Update::Drawn(both),
-            Update::Passed { wrapped: packet(&pdus), frames: vec![1, 2, 3] },
-        ]);
+        assert_eq!(
+            updates[2..],
+            [
+                Update::Drawn(uncompressed.clone()),
+                Update::Opened(uncompressed),
+                Update::Drawn(both),
+                Update::Passed {
+                    wrapped: packet(&pdus),
+                    frames: vec![1, 2, 3]
+                },
+            ]
+        );
 
         let later = [start(4), wire(1, CODEC_PLANAR, (0, 0, 1, 1), &[]), end(4)];
         let updates = receive(&mut graphics, &framebuffer, &later);
-        assert!(!updates.iter().any(|update| matches!(update, Update::Opened(_))), "{updates:?}");
+        assert!(
+            !updates
+                .iter()
+                .any(|update| matches!(update, Update::Opened(_))),
+            "{updates:?}"
+        );
     }
 
     /// A passing pipeline hands every message on as the host sent it, still
@@ -2134,22 +2811,53 @@ mod tests {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::passing();
         let opening = [confirm(), reset(4, 4), create(1, 4, 4), map(1, 0, 0)];
-        let first = [start(1), wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[1, 2, 3, 0]), end(1)];
+        let first = [
+            start(1),
+            wire(1, CODEC_UNCOMPRESSED, (0, 0, 1, 1), &[1, 2, 3, 0]),
+            end(1),
+        ];
         let second = [start(2), solidfill(1, [9, 9, 9, 0], &[(0, 0, 2, 2)])];
-        let pdus: Vec<Vec<u8>> = opening.iter().chain(&first).chain(&second).cloned().collect();
+        let pdus: Vec<Vec<u8>> = opening
+            .iter()
+            .chain(&first)
+            .chain(&second)
+            .cloned()
+            .collect();
 
         let updates = receive(&mut graphics, &framebuffer, &pdus);
         let mut drawn = Fidelity::default();
         drawn.saw(CODEC_UNCOMPRESSED, &[]);
-        assert_eq!(updates, vec![
-            Update::Confirmed { version: gfx::CAPVERSION_10, flags: 0x22 },
-            Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] },
-            Update::Drawn(drawn.clone()),
-            Update::Opened(drawn),
-            Update::Passed { wrapped: packet(&pdus), frames: vec![1] },
-        ]);
-        framebuffer.with(|frame| assert_eq!((frame.width, frame.height), (0, 0), "nothing is drawn here"));
-        assert!(graphics.surfaces.is_empty() && graphics.clear.is_none(), "and nothing is kept");
+        assert_eq!(
+            updates,
+            vec![
+                Update::Confirmed {
+                    version: gfx::CAPVERSION_10,
+                    flags: 0x22
+                },
+                Update::Reset {
+                    width: 4,
+                    height: 4,
+                    monitors: vec![gfx::Placed {
+                        x: 0,
+                        y: 0,
+                        w: 4,
+                        h: 4
+                    }]
+                },
+                Update::Drawn(drawn.clone()),
+                Update::Opened(drawn),
+                Update::Passed {
+                    wrapped: packet(&pdus),
+                    frames: vec![1]
+                },
+            ]
+        );
+        framebuffer
+            .with(|frame| assert_eq!((frame.width, frame.height), (0, 0), "nothing is drawn here"));
+        assert!(
+            graphics.surfaces.is_empty() && graphics.clear.is_none(),
+            "and nothing is kept"
+        );
     }
 
     /// A frame that ends in a later message is passed as it arrives, and the message
@@ -2159,15 +2867,39 @@ mod tests {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::passing();
         let head = [reset(4, 4), create(1, 4, 4), map(1, 0, 0), start(7)];
-        let tail = [solidfill(1, [1, 2, 3, 0], &[(0, 0, 4, 4)]), end(7), start(8), end(8), start(9)];
-        assert_eq!(receive(&mut graphics, &framebuffer, &head), vec![
-            Update::Reset { width: 4, height: 4, monitors: vec![gfx::Placed { x: 0, y: 0, w: 4, h: 4 }] },
-            Update::Passed { wrapped: packet(&head), frames: Vec::new() },
-        ]);
-        assert_eq!(receive(&mut graphics, &framebuffer, &tail), vec![Update::Passed {
-            wrapped: packet(&tail),
-            frames: vec![7, 8],
-        }]);
+        let tail = [
+            solidfill(1, [1, 2, 3, 0], &[(0, 0, 4, 4)]),
+            end(7),
+            start(8),
+            end(8),
+            start(9),
+        ];
+        assert_eq!(
+            receive(&mut graphics, &framebuffer, &head),
+            vec![
+                Update::Reset {
+                    width: 4,
+                    height: 4,
+                    monitors: vec![gfx::Placed {
+                        x: 0,
+                        y: 0,
+                        w: 4,
+                        h: 4
+                    }]
+                },
+                Update::Passed {
+                    wrapped: packet(&head),
+                    frames: Vec::new()
+                },
+            ]
+        );
+        assert_eq!(
+            receive(&mut graphics, &framebuffer, &tail),
+            vec![Update::Passed {
+                wrapped: packet(&tail),
+                frames: vec![7, 8],
+            }]
+        );
     }
 
     /// The history a compositor unwraps against is the pipeline's: a message may
@@ -2199,12 +2931,32 @@ mod tests {
         let opening = [reset(4, 4), create(1, 4, 4), map(1, 0, 0)].concat();
         assert_eq!(
             compositor.compose(&opening).unwrap(),
-            Composed { resized: Some((4, 4)), painted: Vec::new(), frames: 0, gpu: Vec::new() }
+            Composed {
+                resized: Some((4, 4)),
+                painted: Vec::new(),
+                frames: 0,
+                gpu: Vec::new()
+            }
         );
-        let frame = [start(1), solidfill(1, [10, 20, 30, 0], &[(1, 1, 3, 2)]), end(1)].concat();
+        let frame = [
+            start(1),
+            solidfill(1, [10, 20, 30, 0], &[(1, 1, 3, 2)]),
+            end(1),
+        ]
+        .concat();
         assert_eq!(
             compositor.compose(&frame).unwrap(),
-            Composed { resized: None, painted: vec![Rect { x: 1, y: 1, width: 2, height: 1 }], frames: 1, gpu: Vec::new() }
+            Composed {
+                resized: None,
+                painted: vec![Rect {
+                    x: 1,
+                    y: 1,
+                    width: 2,
+                    height: 1
+                }],
+                frames: 1,
+                gpu: Vec::new()
+            }
         );
         compositor.framebuffer().with(|picture| {
             let at = (picture.width as usize + 1) * 4;
@@ -2238,10 +2990,14 @@ mod tests {
         for update in receive(&mut passing, &Framebuffer::new(), &pdus) {
             if let Update::Passed { wrapped, .. } = update {
                 let commands = compositor.unwrap(&wrapped).expect("a well-formed message");
-                composer.compose(&commands, &relayed).expect("well-formed commands");
+                composer
+                    .compose(&commands, &relayed)
+                    .expect("well-formed commands");
             }
         }
-        let pixels = |framebuffer: &Framebuffer| framebuffer.with(|frame| (frame.width, frame.height, frame.pixels.clone()));
+        let pixels = |framebuffer: &Framebuffer| {
+            framebuffer.with(|frame| (frame.width, frame.height, frame.pixels.clone()))
+        };
         assert_eq!(pixels(&relayed), pixels(&direct));
         assert_eq!(pixels(&direct).0, 4, "a picture was made at all");
     }
@@ -2265,37 +3021,69 @@ mod tests {
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::streaming();
         let luma = masked((0, 0, 8, 8));
-        let chroma = [crate::proto::avc::tests::metablock(&[((0, 0, 8, 8), 20, 100)]), vec![0, 0, 1, 0x41]].concat();
+        let chroma = [
+            crate::proto::avc::tests::metablock(&[((0, 0, 8, 8), 20, 100)]),
+            vec![0, 0, 1, 0x41],
+        ]
+        .concat();
         let whole = (0, 0, 32, 32);
-        let updates = receive(&mut graphics, &framebuffer, &[
-            confirm(),
-            reset(64, 32),
-            create(1, 32, 32),
-            map(1, 32, 0),
-            start(1),
-            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
-            solidfill(1, [1, 2, 3, 0xFF], &[(0, 0, 4, 4)]),
-            end(1),
-            start(2),
-            wire(1, CODEC_AVC420, whole, &luma),
-            end(2),
-            // A chroma view is a picture of the stream that cannot be passed,
-            // with its luma view or alone: the stream is lost.
-            start(3),
-            wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), Some(&chroma))),
-            wire(1, CODEC_AVC444_V2, whole, &wrap444(None, Some(&chroma))),
-            end(3),
-        ]);
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                confirm(),
+                reset(64, 32),
+                create(1, 32, 32),
+                map(1, 32, 0),
+                start(1),
+                wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
+                solidfill(1, [1, 2, 3, 0xFF], &[(0, 0, 4, 4)]),
+                end(1),
+                start(2),
+                wire(1, CODEC_AVC420, whole, &luma),
+                end(2),
+                // A chroma view is a picture of the stream that cannot be passed,
+                // with its luma view or alone: the stream is lost.
+                start(3),
+                wire(
+                    1,
+                    CODEC_AVC444_V2,
+                    whole,
+                    &wrap444(Some(&luma), Some(&chroma)),
+                ),
+                wire(1, CODEC_AVC444_V2, whole, &wrap444(None, Some(&chroma))),
+                end(3),
+            ],
+        );
         let unit = vec![0, 0, 1, 0x65];
         let units: Vec<&Update> = updates
             .iter()
-            .filter(|u| matches!(u, Update::Unit { .. } | Update::Mapped { .. } | Update::Ended { .. } | Update::Lost { .. }))
+            .filter(|u| {
+                matches!(
+                    u,
+                    Update::Unit { .. }
+                        | Update::Mapped { .. }
+                        | Update::Ended { .. }
+                        | Update::Lost { .. }
+                )
+            })
             .collect();
         assert_eq!(
             units,
             [
-                &Update::Mapped { surface: 1, rect: Rect { x: 32, y: 0, width: 32, height: 32 } },
-                &Update::Unit { surface: 1, unit: unit.clone() },
+                &Update::Mapped {
+                    surface: 1,
+                    rect: Rect {
+                        x: 32,
+                        y: 0,
+                        width: 32,
+                        height: 32
+                    }
+                },
+                &Update::Unit {
+                    surface: 1,
+                    unit: unit.clone()
+                },
                 &Update::Ended { frame: 1 },
                 &Update::Unit { surface: 1, unit },
                 &Update::Ended { frame: 2 },
@@ -2305,7 +3093,10 @@ mod tests {
             ]
         );
         assert!(matches!(updates[0], Update::Confirmed { .. }));
-        assert!(!updates.iter().any(|u| matches!(u, Update::Paint(_) | Update::Frame { .. } | Update::Passed { .. })));
+        assert!(!updates.iter().any(|u| matches!(
+            u,
+            Update::Paint(_) | Update::Frame { .. } | Update::Passed { .. }
+        )));
         framebuffer.with(|frame| assert_eq!(frame.width, 0, "nothing is composed"));
 
         let gone = receive(&mut graphics, &framebuffer, &[delete(1)]);
@@ -2319,14 +3110,26 @@ mod tests {
         use crate::proto::gfx::CODEC_AVC444_V2;
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::streaming();
-        let updates = receive(&mut graphics, &framebuffer, &[
-            reset(32, 32),
-            create(1, 32, 32),
-            start(1),
-            wire(1, CODEC_AVC444_V2, (0, 0, 32, 32), &[0xff, 0xff, 0xff, 0xff]),
-            end(1),
-        ]);
-        assert!(updates.contains(&Update::Lost { surface: 1 }), "{updates:?}");
+        let updates = receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                reset(32, 32),
+                create(1, 32, 32),
+                start(1),
+                wire(
+                    1,
+                    CODEC_AVC444_V2,
+                    (0, 0, 32, 32),
+                    &[0xff, 0xff, 0xff, 0xff],
+                ),
+                end(1),
+            ],
+        );
+        assert!(
+            updates.contains(&Update::Lost { surface: 1 }),
+            "{updates:?}"
+        );
         assert!(updates.contains(&Update::Ended { frame: 1 }));
     }
 
@@ -2343,8 +3146,20 @@ mod tests {
 
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(64, 32), create(1, 32, 32), map(1, 0, 0), create(2, 32, 32), map(2, 32, 0)]);
-        let masked = |rect: (u16, u16, u16, u16)| [metablock(&[(rect, 20, 100)]), vec![0, 0, 1, 0x65]].concat();
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                reset(64, 32),
+                create(1, 32, 32),
+                map(1, 0, 0),
+                create(2, 32, 32),
+                map(2, 32, 0),
+            ],
+        );
+        let masked = |rect: (u16, u16, u16, u16)| {
+            [metablock(&[(rect, 20, 100)]), vec![0, 0, 1, 0x65]].concat()
+        };
         let whole = (0, 0, 32, 32);
         let run = [
             start(1),
@@ -2355,13 +3170,22 @@ mod tests {
             // Unit 1, for a surface that does not exist: counted all the same.
             wire(7, CODEC_AVC420, whole, &masked((0, 0, 8, 8))),
             // Units 2 and 3, the two views of one picture on the second surface.
-            wire(2, CODEC_AVC444, whole, &wrap444(Some(&masked((0, 0, 16, 16))), Some(&masked((0, 0, 16, 16))))),
+            wire(
+                2,
+                CODEC_AVC444,
+                whole,
+                &wrap444(Some(&masked((0, 0, 16, 16))), Some(&masked((0, 0, 16, 16)))),
+            ),
             // Unit 4, which is supplied no picture.
             wire(2, CODEC_AVC420, whole, &masked((16, 16, 32, 32))),
             end(1),
         ]
         .concat();
-        let units = scan(&run).unwrap().into_iter().filter(|found| matches!(found, Scanned::Unit(_))).count();
+        let units = scan(&run)
+            .unwrap()
+            .into_iter()
+            .filter(|found| matches!(found, Scanned::Unit(_)))
+            .count();
         assert_eq!(units, 5, "the scan numbers what the compositor counts");
 
         let (first, second) = ([140u8, 90, 170], [100u8, 80, 160]);
@@ -2371,13 +3195,38 @@ mod tests {
         // the chroma view's luma plane holds U's odd rows in its top eight rows and
         // V's in its bottom eight, and its chroma planes the odd columns.
         let mut aux = flat(32, 32, [0, second[1], second[2]]);
-        for (row, luma) in aux.data[..32 * 32].as_chunks_mut::<32>().0.iter_mut().enumerate() {
+        for (row, luma) in aux.data[..32 * 32]
+            .as_chunks_mut::<32>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             luma.fill(if row & 15 < 8 { second[1] } else { second[2] });
         }
         graphics.supply(3, aux);
         let updates = graphics.compose(&run, &framebuffer).unwrap();
-        let painted = [Rect { x: 2, y: 2, width: 28, height: 18 }, Rect { x: 32, y: 0, width: 16, height: 16 }];
-        assert_eq!(updates, vec![Update::Paint(painted[0]), Update::Paint(painted[1]), Update::Frame { id: 1, decoded: 1 }]);
+        let painted = [
+            Rect {
+                x: 2,
+                y: 2,
+                width: 28,
+                height: 18,
+            },
+            Rect {
+                x: 32,
+                y: 0,
+                width: 16,
+                height: 16,
+            },
+        ];
+        assert_eq!(
+            updates,
+            vec![
+                Update::Paint(painted[0]),
+                Update::Paint(painted[1]),
+                Update::Frame { id: 1, decoded: 1 }
+            ]
+        );
         framebuffer.with(|frame| {
             for (rect, yuv) in painted.iter().zip([first, second]) {
                 for row in frame.rows(*rect) {
@@ -2386,20 +3235,47 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(&frame.pixels[..4], &[0, 0, 0, 0], "outside the mask is untouched");
+            assert_eq!(
+                &frame.pixels[..4],
+                &[0, 0, 0, 0],
+                "outside the mask is untouched"
+            );
             let unsupplied = &frame.pixels[(20 * 64 + 52) * 4..][..4];
-            assert_eq!(unsupplied, &[0, 0, 0, 0], "a unit with no picture paints nothing");
+            assert_eq!(
+                unsupplied,
+                &[0, 0, 0, 0],
+                "a unit with no picture paints nothing"
+            );
         });
-        assert!(graphics.supplied.is_empty(), "a run's pictures do not outlive it");
+        assert!(
+            graphics.supplied.is_empty(),
+            "a run's pictures do not outlive it"
+        );
 
         // The next run counts from nothing again, and a picture left over from
         // this one is not there to be taken by it.
         graphics.supply(1, flat(32, 32, first));
-        let next = [start(2), wire(1, CODEC_AVC420, whole, &masked((0, 0, 4, 4))), end(2)].concat();
-        assert_eq!(graphics.compose(&next, &framebuffer).unwrap(), vec![Update::Frame { id: 2, decoded: 2 }]);
+        let next = [
+            start(2),
+            wire(1, CODEC_AVC420, whole, &masked((0, 0, 4, 4))),
+            end(2),
+        ]
+        .concat();
+        assert_eq!(
+            graphics.compose(&next, &framebuffer).unwrap(),
+            vec![Update::Frame { id: 2, decoded: 2 }]
+        );
         graphics.supply(0, flat(32, 32, second));
         let updates = graphics.compose(&next, &framebuffer).unwrap();
-        assert_eq!(updates[0], Update::Paint(Rect { x: 0, y: 0, width: 4, height: 4 }));
+        assert_eq!(
+            updates[0],
+            Update::Paint(Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4
+            })
+        );
     }
     /// An H.264 unit's rectangles in a stream of its own, for the GPU tests below.
     fn masked(rect: (u16, u16, u16, u16)) -> Vec<u8> {
@@ -2432,7 +3308,11 @@ mod tests {
 
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(64, 32), create(1, 32, 32), map(1, 16, 0)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(64, 32), create(1, 32, 32), map(1, 16, 0)],
+        );
         let run = [
             start(1),
             solidfill(1, [9, 9, 9, 0], &[(0, 0, 32, 32)]),
@@ -2441,39 +3321,100 @@ mod tests {
         ]
         .concat();
         let plan = graphics.plan(&run).unwrap();
-        assert_eq!(plan, Plan { gpu: vec![true], restore: vec![] });
+        assert_eq!(
+            plan,
+            Plan {
+                gpu: vec![true],
+                restore: vec![]
+            }
+        );
         graphics.show_on_gpu(0);
         let updates = graphics.compose(&run, &framebuffer).unwrap();
-        let shown = Rect { x: 20, y: 4, width: 16, height: 16 };
+        let shown = Rect {
+            x: 20,
+            y: 4,
+            width: 16,
+            height: 16,
+        };
         let counts = covered(&updates, 64, 32);
         for y in 0..32 {
             for x in 16..48 {
-                let pixel = Rect { x, y, width: 1, height: 1 };
+                let pixel = Rect {
+                    x,
+                    y,
+                    width: 1,
+                    height: 1,
+                };
                 let want = u32::from(!shown.overlaps(&pixel));
                 assert_eq!(counts[(y * 64 + x) as usize], want, "pixel {x},{y}");
             }
         }
-        assert_eq!(graphics.take_gpu_paints(), vec![GpuPaint { unit: 0, output: shown, source: (4, 4) }]);
-        let area = GpuArea { surface: 1, rect: Rect { x: 4, y: 4, width: 16, height: 16 }, output: shown };
+        assert_eq!(
+            graphics.take_gpu_paints(),
+            vec![GpuPaint {
+                unit: 0,
+                output: shown,
+                source: (4, 4)
+            }]
+        );
+        let area = GpuArea {
+            surface: 1,
+            rect: Rect {
+                x: 4,
+                y: 4,
+                width: 16,
+                height: 16,
+            },
+            output: shown,
+        };
         assert_eq!(graphics.gpu_areas(), vec![area]);
 
         // A copy out of it: planned as a read of what the GPU shows, read back, and
         // then carried where it goes like any other pixels.
         let copy = [start(2), s2s(1, 1, (8, 8, 12, 12), &[(24, 24)]), end(2)].concat();
         let plan = graphics.plan(&copy).unwrap();
-        assert_eq!(plan, Plan { gpu: vec![], restore: vec![area] });
+        assert_eq!(
+            plan,
+            Plan {
+                gpu: vec![],
+                restore: vec![area]
+            }
+        );
         let read_back: Vec<u8> = [40u8, 50, 60, 255].repeat(16 * 16);
-        graphics.restore(1, area.rect, &read_back, &framebuffer).unwrap();
-        assert_eq!(graphics.gpu_areas(), vec![], "read back, the pixels are the surface's again");
+        graphics
+            .restore(1, area.rect, &read_back, &framebuffer)
+            .unwrap();
+        assert_eq!(
+            graphics.gpu_areas(),
+            vec![],
+            "read back, the pixels are the surface's again"
+        );
         framebuffer.with(|frame| {
             for row in frame.rows(shown) {
-                assert_eq!(row, [40u8, 50, 60, 0].repeat(16), "the framebuffer takes what was read back");
+                assert_eq!(
+                    row,
+                    [40u8, 50, 60, 0].repeat(16),
+                    "the framebuffer takes what was read back"
+                );
             }
         });
         let updates = graphics.compose(&copy, &framebuffer).unwrap();
-        assert_eq!(updates[0], Update::Paint(Rect { x: 40, y: 24, width: 4, height: 4 }));
+        assert_eq!(
+            updates[0],
+            Update::Paint(Rect {
+                x: 40,
+                y: 24,
+                width: 4,
+                height: 4
+            })
+        );
         framebuffer.with(|frame| {
-            for row in frame.rows(Rect { x: 40, y: 24, width: 4, height: 4 }) {
+            for row in frame.rows(Rect {
+                x: 40,
+                y: 24,
+                width: 4,
+                height: 4,
+            }) {
                 for px in row.as_chunks::<4>().0 {
                     assert_eq!(px, &[40, 50, 60, 0]);
                 }
@@ -2489,7 +3430,11 @@ mod tests {
 
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(32, 32), create(1, 32, 32), map(1, 0, 0)]);
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(32, 32), create(1, 32, 32), map(1, 0, 0)],
+        );
         let run = [
             start(1),
             wire(1, CODEC_AVC420, (0, 0, 32, 32), &masked((0, 0, 16, 16))),
@@ -2500,12 +3445,37 @@ mod tests {
         assert_eq!(graphics.plan(&run).unwrap().gpu, vec![true]);
         graphics.show_on_gpu(0);
         let updates = graphics.compose(&run, &framebuffer).unwrap();
-        assert_eq!(updates[0], Update::Paint(Rect { x: 0, y: 0, width: 16, height: 8 }));
-        let rest = Rect { x: 0, y: 8, width: 16, height: 8 };
-        assert_eq!(graphics.take_gpu_paints(), vec![GpuPaint { unit: 0, output: rest, source: (0, 8) }]);
+        assert_eq!(
+            updates[0],
+            Update::Paint(Rect {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 8
+            })
+        );
+        let rest = Rect {
+            x: 0,
+            y: 8,
+            width: 16,
+            height: 8,
+        };
+        assert_eq!(
+            graphics.take_gpu_paints(),
+            vec![GpuPaint {
+                unit: 0,
+                output: rest,
+                source: (0, 8)
+            }]
+        );
 
         // And in a later run: the fill is copied, and nothing is left to draw.
-        let later = [start(2), solidfill(1, [9, 9, 9, 0], &[(0, 8, 16, 16)]), end(2)].concat();
+        let later = [
+            start(2),
+            solidfill(1, [9, 9, 9, 0], &[(0, 8, 16, 16)]),
+            end(2),
+        ]
+        .concat();
         assert_eq!(graphics.plan(&later).unwrap(), Plan::default());
         let updates = graphics.compose(&later, &framebuffer).unwrap();
         assert_eq!(updates[0], Update::Paint(rest));
@@ -2523,18 +3493,52 @@ mod tests {
 
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(64, 64), create(1, 64, 64), map(1, 0, 0)]);
-        let tiles: Vec<_> =
-            (0..16u16).map(|i| (((i % 4) * 16, (i / 4) * 16, (i % 4) * 16 + 16, (i / 4) * 16 + 16), 20, 100)).collect();
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[reset(64, 64), create(1, 64, 64), map(1, 0, 0)],
+        );
+        let tiles: Vec<_> = (0..16u16)
+            .map(|i| {
+                (
+                    (
+                        (i % 4) * 16,
+                        (i / 4) * 16,
+                        (i % 4) * 16 + 16,
+                        (i / 4) * 16 + 16,
+                    ),
+                    20,
+                    100,
+                )
+            })
+            .collect();
         let tiled = [metablock(&tiles), vec![0, 0, 1, 0x65]].concat();
         let whole = (0, 0, 64, 64);
         for (frame, mask) in [(1, tiled), (2, masked((8, 8, 40, 40)))] {
-            let run = [start(frame), wire(1, CODEC_AVC420, whole, &mask), end(frame)].concat();
+            let run = [
+                start(frame),
+                wire(1, CODEC_AVC420, whole, &mask),
+                end(frame),
+            ]
+            .concat();
             assert_eq!(graphics.plan(&run).unwrap().gpu, vec![true]);
             graphics.show_on_gpu(0);
             graphics.compose(&run, &framebuffer).unwrap();
-            let all = Rect { x: 0, y: 0, width: 64, height: 64 };
-            assert_eq!(graphics.gpu_areas(), vec![GpuArea { surface: 1, rect: all, output: all }], "frame {frame}");
+            let all = Rect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64,
+            };
+            assert_eq!(
+                graphics.gpu_areas(),
+                vec![GpuArea {
+                    surface: 1,
+                    rect: all,
+                    output: all
+                }],
+                "frame {frame}"
+            );
         }
     }
 
@@ -2552,27 +3556,67 @@ mod tests {
         receive(
             &mut graphics,
             &framebuffer,
-            &[reset(64, 32), create(1, 32, 32), map(1, 0, 0), create(2, 16, 16), create(3, 32, 32), map(3, 48, 0)],
+            &[
+                reset(64, 32),
+                create(1, 32, 32),
+                map(1, 0, 0),
+                create(2, 16, 16),
+                create(3, 32, 32),
+                map(3, 48, 0),
+            ],
         );
         let whole = (0, 0, 32, 32);
         let unit = |surface: u16| wire(surface, CODEC_AVC420, whole, &masked((0, 0, 8, 8)));
         let plan = |commands: &[Vec<u8>]| graphics.plan(&commands.concat()).unwrap().gpu;
 
         assert_eq!(plan(&[start(1), unit(1), end(1)]), vec![true]);
-        assert_eq!(plan(&[start(1), unit(1)]), vec![false], "its frame ends in another run");
-        assert_eq!(plan(&[start(1), unit(1), s2c(1, 0, (0, 0, 4, 4)), end(1)]), vec![false], "the run reads it");
         assert_eq!(
-            plan(&[start(1), unit(1), wire(1, CODEC_CLEARCODEC, (20, 20, 24, 24), &[0]), end(1)]),
+            plan(&[start(1), unit(1)]),
+            vec![false],
+            "its frame ends in another run"
+        );
+        assert_eq!(
+            plan(&[start(1), unit(1), s2c(1, 0, (0, 0, 4, 4)), end(1)]),
+            vec![false],
+            "the run reads it"
+        );
+        assert_eq!(
+            plan(&[
+                start(1),
+                unit(1),
+                wire(1, CODEC_CLEARCODEC, (20, 20, 24, 24), &[0]),
+                end(1)
+            ]),
             vec![false],
             "a ClearCodec rectangle is drawn over what the surface holds"
         );
-        assert_eq!(plan(&[start(1), unit(2), end(1)]), vec![false], "an unmapped surface");
-        assert_eq!(plan(&[start(1), map(2, 0, 0), unit(2), end(1)]), vec![false], "under another surface");
-        assert_eq!(plan(&[start(1), unit(2), map(2, 32, 0), end(1)]), vec![true], "mapped by its frame's end");
-        assert_eq!(plan(&[start(1), unit(3), end(1)]), vec![false], "partly off the output");
+        assert_eq!(
+            plan(&[start(1), unit(2), end(1)]),
+            vec![false],
+            "an unmapped surface"
+        );
+        assert_eq!(
+            plan(&[start(1), map(2, 0, 0), unit(2), end(1)]),
+            vec![false],
+            "under another surface"
+        );
+        assert_eq!(
+            plan(&[start(1), unit(2), map(2, 32, 0), end(1)]),
+            vec![true],
+            "mapped by its frame's end"
+        );
+        assert_eq!(
+            plan(&[start(1), unit(3), end(1)]),
+            vec![false],
+            "partly off the output"
+        );
         let luma = masked((0, 0, 8, 8));
         assert_eq!(
-            plan(&[start(1), wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)), end(1)]),
+            plan(&[
+                start(1),
+                wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
+                end(1)
+            ]),
             vec![true],
             "a luma view alone"
         );
@@ -2580,7 +3624,12 @@ mod tests {
             plan(&[
                 start(1),
                 wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), None)),
-                wire(1, CODEC_AVC444_V2, whole, &wrap444(Some(&luma), Some(&luma))),
+                wire(
+                    1,
+                    CODEC_AVC444_V2,
+                    whole,
+                    &wrap444(Some(&luma), Some(&luma))
+                ),
                 end(1),
             ]),
             vec![false, false, false],
@@ -2597,37 +3646,76 @@ mod tests {
 
         let framebuffer = Framebuffer::new();
         let mut graphics = Graphics::new();
-        receive(&mut graphics, &framebuffer, &[reset(64, 32), create(1, 32, 32), map(1, 0, 0), create(2, 16, 16)]);
-        let unit = |surface: u16| wire(surface, CODEC_AVC420, (0, 0, 32, 32), &masked((0, 0, 8, 8)));
+        receive(
+            &mut graphics,
+            &framebuffer,
+            &[
+                reset(64, 32),
+                create(1, 32, 32),
+                map(1, 0, 0),
+                create(2, 16, 16),
+            ],
+        );
+        let unit =
+            |surface: u16| wire(surface, CODEC_AVC420, (0, 0, 32, 32), &masked((0, 0, 8, 8)));
         let shown = [start(1), unit(1), end(1)].concat();
         assert_eq!(graphics.plan(&shown).unwrap().gpu, vec![true]);
         graphics.show_on_gpu(0);
         graphics.compose(&shown, &framebuffer).unwrap();
         let area = GpuArea {
             surface: 1,
-            rect: Rect { x: 0, y: 0, width: 8, height: 8 },
-            output: Rect { x: 0, y: 0, width: 8, height: 8 },
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 8,
+            },
+            output: Rect {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 8,
+            },
         };
         assert_eq!(graphics.gpu_areas(), vec![area]);
 
         let moved = [start(2), unit(1), end(2), map(1, 32, 0), unit(1), end(3)].concat();
         assert_eq!(
             graphics.plan(&moved).unwrap(),
-            Plan { gpu: vec![false, true], restore: vec![area] },
+            Plan {
+                gpu: vec![false, true],
+                restore: vec![area]
+            },
             "moved, the picture shown before the move is read back and the unit before it supplied"
         );
-        assert_eq!(graphics.plan(&[start(2), map(1, 0, 0), unit(1), end(2)].concat()).unwrap(), Plan {
-            gpu: vec![true],
-            restore: vec![],
-        }, "mapped where it is, nothing changes");
+        assert_eq!(
+            graphics
+                .plan(&[start(2), map(1, 0, 0), unit(1), end(2)].concat())
+                .unwrap(),
+            Plan {
+                gpu: vec![true],
+                restore: vec![],
+            },
+            "mapped where it is, nothing changes"
+        );
 
         let over = [start(2), unit(1), end(2), map(2, 4, 4), unit(1), end(3)].concat();
         assert_eq!(
             graphics.plan(&over).unwrap(),
-            Plan { gpu: vec![false, false], restore: vec![area] },
+            Plan {
+                gpu: vec![false, false],
+                restore: vec![area]
+            },
             "another surface over it: read back, and nothing more shown under it"
         );
         let beside = [start(2), map(2, 40, 0), unit(1), end(2)].concat();
-        assert_eq!(graphics.plan(&beside).unwrap(), Plan { gpu: vec![true], restore: vec![] }, "mapped beside it");
+        assert_eq!(
+            graphics.plan(&beside).unwrap(),
+            Plan {
+                gpu: vec![true],
+                restore: vec![]
+            },
+            "mapped beside it"
+        );
     }
 }

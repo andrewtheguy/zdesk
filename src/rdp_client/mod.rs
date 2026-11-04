@@ -99,10 +99,10 @@ pub mod proto;
 mod session;
 
 pub use camera::{Camera, CameraFeed, CameraSink, Fed};
-pub use microphone::{MicrophoneFeed, MicrophoneSink};
 pub use error::Error;
 pub use input::{Input, MouseButton, sanitise_scale, sanitise_size};
+pub use microphone::{MicrophoneFeed, MicrophoneSink};
 pub use pointer::{Cursor, CursorImage};
+pub use session::{AudioSink, Connect, Event, Placed, Session};
 pub use zdesk_rdp_graphics::fidelity::Fidelity;
 pub use zdesk_rdp_graphics::{Composed, Compositor, Frame, Framebuffer, Rect};
-pub use session::{AudioSink, Connect, Event, Placed, Session};

@@ -23,10 +23,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use zdesk::config::{AppConfig, Protocol, Subtype, TargetConfig};
-use zdesk::server;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
+use zdesk::config::{AppConfig, Protocol, Subtype, TargetConfig};
+use zdesk::server;
 
 const TARGET: &str = "wlshare-dummy";
 
@@ -45,7 +45,9 @@ async fn wait_for_vnc_port(port: u16) {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let attempt = async {
-                let mut stream = TcpStream::connect((common::container_host(), port)).await.ok()?;
+                let mut stream = TcpStream::connect((common::container_host(), port))
+                    .await
+                    .ok()?;
                 let mut greeting = [0u8; 12];
                 stream.read_exact(&mut greeting).await.ok()?;
                 greeting.starts_with(b"RFB ").then_some(())
@@ -74,7 +76,10 @@ async fn spawn_app(vnc_port: u16) -> SocketAddr {
     let config = AppConfig {
         listen: zdesk::config::ListenAddr::Tcp("127.0.0.1:0".to_owned()),
         auth: common::test_auth(),
-        branding: zdesk::config::Branding { text: "zdesk".to_owned(), logo: None },
+        branding: zdesk::config::Branding {
+            text: "zdesk".to_owned(),
+            logo: None,
+        },
         dev_hostname: None,
         meter: None,
         hevc_wasm: None,
@@ -159,9 +164,7 @@ impl View {
     /// last announced size, failing on a session error or an access unit of
     /// another size.
     async fn until(&mut self, ws: &mut common::Ws, what: &str, done: impl Fn(&Self) -> bool) {
-        let painted = |view: &Self| {
-            view.size.is_some() && view.painted && done(view)
-        };
+        let painted = |view: &Self| view.size.is_some() && view.painted && done(view);
         tokio::time::timeout(Duration::from_secs(60), async {
             while !painted(self) {
                 let Some(msg) = ws.next().await else {
@@ -171,14 +174,21 @@ impl View {
                     Message::Text(text) => self.control(&text),
                     Message::Binary(frame) => {
                         self.units(&frame);
-                        ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                        ws.send(Message::text(common::paint_ack(&frame)))
+                            .await
+                            .expect("acknowledge a batch");
                     }
                     _ => {}
                 }
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("timed out waiting for {what}: sizes {:?}, displays {:?}", self.sizes, self.displays));
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for {what}: sizes {:?}, displays {:?}",
+                self.sizes, self.displays
+            )
+        });
     }
 
     fn control(&mut self, text: &str) {
@@ -201,7 +211,12 @@ impl View {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .map(|d| (d["id"].as_u64().unwrap(), d["label"].as_str().unwrap().to_owned()))
+                    .map(|d| {
+                        (
+                            d["id"].as_u64().unwrap(),
+                            d["label"].as_str().unwrap().to_owned(),
+                        )
+                    })
                     .collect();
                 self.displays = Some((msg["active"].as_u64().unwrap(), entries));
             }
@@ -210,7 +225,10 @@ impl View {
             }
             Some("tilesStart") => self.tiles = true,
             Some("regionFormat") => {
-                self.regions.push((msg["stream"].as_u64().unwrap(), msg["decode"].as_str().unwrap().to_owned()));
+                self.regions.push((
+                    msg["stream"].as_u64().unwrap(),
+                    msg["decode"].as_str().unwrap().to_owned(),
+                ));
             }
             _ => {}
         }
@@ -237,7 +255,8 @@ impl View {
                 }
                 common::BatchRecord::Region(region) => {
                     assert!(
-                        u64::from(region.x) + u64::from(region.w) <= size.w && u64::from(region.y) + u64::from(region.h) <= size.h,
+                        u64::from(region.x) + u64::from(region.w) <= size.w
+                            && u64::from(region.y) + u64::from(region.h) <= size.h,
                         "region {} is not inside the {}x{} desktop",
                         region.stream,
                         size.w,
@@ -245,12 +264,25 @@ impl View {
                     );
                 }
                 common::BatchRecord::Copy(copy) => {
-                    let inside = |x: u16, y: u16| u64::from(x) + u64::from(copy.w) <= size.w && u64::from(y) + u64::from(copy.h) <= size.h;
-                    assert!(inside(copy.sx, copy.sy) && inside(copy.x, copy.y), "a copy not inside the {}x{} desktop", size.w, size.h);
+                    let inside = |x: u16, y: u16| {
+                        u64::from(x) + u64::from(copy.w) <= size.w
+                            && u64::from(y) + u64::from(copy.h) <= size.h
+                    };
+                    assert!(
+                        inside(copy.sx, copy.sy) && inside(copy.x, copy.y),
+                        "a copy not inside the {}x{} desktop",
+                        size.w,
+                        size.h
+                    );
                 }
                 common::BatchRecord::Cache(cache) => {
-                    let inside = u64::from(cache.x) + 64 <= size.w.next_multiple_of(64) && u64::from(cache.y) + 64 <= size.h.next_multiple_of(64);
-                    assert!(inside, "a cache's tile at ({}, {}) not on the {}x{} desktop", cache.x, cache.y, size.w, size.h);
+                    let inside = u64::from(cache.x) + 64 <= size.w.next_multiple_of(64)
+                        && u64::from(cache.y) + 64 <= size.h.next_multiple_of(64);
+                    assert!(
+                        inside,
+                        "a cache's tile at ({}, {}) not on the {}x{} desktop",
+                        cache.x, cache.y, size.w, size.h
+                    );
                 }
             }
         }
@@ -311,7 +343,11 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
     ws.send(Message::text(format!(r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1728,"h":1117,"scale":200}},"choices":{{"size":"window"}}}}"#)))
     .await
     .unwrap();
-    let doubled = Size { w: 2048, h: 1536, scale: 2.0 };
+    let doubled = Size {
+        w: 2048,
+        h: 1536,
+        scale: 2.0,
+    };
     view.until(&mut ws, "HEADLESS-1 at 2x, its logical size kept", |v| {
         v.size == Some(doubled) && v.displays.is_some()
     })
@@ -324,7 +360,11 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
     );
     let first = view.output("HEADLESS-1");
     let second = view.output("HEADLESS-2");
-    assert_eq!(view.active(), Some(ALL_DISPLAYS), "two outputs start shown beside each other");
+    assert_eq!(
+        view.active(),
+        Some(ALL_DISPLAYS),
+        "two outputs start shown beside each other"
+    );
     assert_eq!(
         view.displays.as_ref().map(|(_, entries)| entries[0].0),
         Some(first),
@@ -333,9 +373,16 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
     assert_eq!(sway_output(&container, "HEADLESS-1"), (2048, 1536, 2.0));
 
     // The window's points are asked for in the output's pixels.
-    ws.send(Message::text(r#"{"type":"viewport","w":800,"h":600}"#)).await.unwrap();
-    let window = Size { w: 1600, h: 1200, scale: 2.0 };
-    view.until(&mut ws, "the viewport at 2x", |v| v.size == Some(window)).await;
+    ws.send(Message::text(r#"{"type":"viewport","w":800,"h":600}"#))
+        .await
+        .unwrap();
+    let window = Size {
+        w: 1600,
+        h: 1200,
+        scale: 2.0,
+    };
+    view.until(&mut ws, "the viewport at 2x", |v| v.size == Some(window))
+        .await;
     assert_eq!(sway_output(&container, "HEADLESS-1"), (1600, 1200, 2.0));
 
     // Switch outputs. The checkmark moves when wlshare says it moved, and the
@@ -345,9 +392,11 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
     // none of HEADLESS-1's tiles counting towards it.
     view.painted = false;
     view.coverage = Some(common::Coverage::new(window.w as u16, window.h as u16));
-    ws.send(Message::text(format!(r#"{{"type":"selectDisplay","id":{second}}}"#)))
-        .await
-        .unwrap();
+    ws.send(Message::text(format!(
+        r#"{{"type":"selectDisplay","id":{second}}}"#
+    )))
+    .await
+    .unwrap();
     view.until(&mut ws, "the window on HEADLESS-2", |v| {
         v.active() == Some(second) && v.size == Some(window)
     })
@@ -365,8 +414,14 @@ async fn wlshare_follows_the_browsers_density_size_and_output() {
         "wlshare was not asked for its video encoding:\n{}",
         container.logs()
     );
-    let decode = view.decode.as_deref().expect("a video format was announced");
-    assert!(decode.starts_with("avc1."), "the stream was announced as {decode}");
+    let decode = view
+        .decode
+        .as_deref()
+        .expect("a video format was announced");
+    assert!(
+        decode.starts_with("avc1."),
+        "the stream was announced as {decode}"
+    );
 }
 
 /// The entry that shows both outputs, as the gateway lists it.
@@ -391,46 +446,90 @@ async fn all_displays_shows_the_second_output_in_a_tab_of_its_own() {
     ws.send(Message::text(format!(r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1728,"h":1117,"scale":200}},"choices":{{"size":"window"}}}}"#)))
     .await
     .unwrap();
-    let doubled = Size { w: 2048, h: 1536, scale: 2.0 };
-    view.until(&mut ws, "HEADLESS-1 at 2x", |v| v.size == Some(doubled) && v.displays.is_some()).await;
+    let doubled = Size {
+        w: 2048,
+        h: 1536,
+        scale: 2.0,
+    };
+    view.until(&mut ws, "HEADLESS-1 at 2x", |v| {
+        v.size == Some(doubled) && v.displays.is_some()
+    })
+    .await;
     let first = view.output("HEADLESS-1");
-    assert_eq!(view.output("All Displays"), ALL_DISPLAYS, "two outputs are listed with the entry for both");
+    assert_eq!(
+        view.output("All Displays"),
+        ALL_DISPLAYS,
+        "two outputs are listed with the entry for both"
+    );
     // A desk of two starts on it, with nothing chosen.
-    view.until(&mut ws, "All Displays", |v| v.active() == Some(ALL_DISPLAYS)).await;
+    view.until(&mut ws, "All Displays", |v| {
+        v.active() == Some(ALL_DISPLAYS)
+    })
+    .await;
 
     // The tab: its window is the second output's size, in the browser's pixels.
     let mut tab = common::connect_display_ws(addr, &cookie, 2).await;
-    tab.send(Message::text(r#"{"type":"viewport","w":640,"h":480}"#)).await.unwrap();
+    tab.send(Message::text(r#"{"type":"viewport","w":640,"h":480}"#))
+        .await
+        .unwrap();
     let mut shown = View::new();
-    let window = Size { w: 1280, h: 960, scale: 2.0 };
+    let window = Size {
+        w: 1280,
+        h: 960,
+        scale: 2.0,
+    };
     tokio::time::timeout(Duration::from_secs(60), async {
         while !(shown.size == Some(window) && shown.painted) {
-            match tab.next().await.expect("display 2's socket closed").expect("websocket receive") {
+            match tab
+                .next()
+                .await
+                .expect("display 2's socket closed")
+                .expect("websocket receive")
+            {
                 Message::Text(text) => shown.control(&text),
                 Message::Binary(frame) => {
                     shown.units(&frame);
-                    tab.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    tab.send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                 }
                 _ => {}
             }
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out waiting for HEADLESS-2 in the tab: sizes {:?}", shown.sizes));
+    .unwrap_or_else(|_| {
+        panic!(
+            "timed out waiting for HEADLESS-2 in the tab: sizes {:?}",
+            shown.sizes
+        )
+    });
     assert_eq!(sway_output(&container, "HEADLESS-2"), (1280, 960, 2.0));
-    assert_eq!(sway_output(&container, "HEADLESS-1"), (2048, 1536, 2.0), "the first output is the canvas's still");
-    assert!(shown.displays.is_none(), "the tab has no picker to list for");
+    assert_eq!(
+        sway_output(&container, "HEADLESS-1"),
+        (2048, 1536, 2.0),
+        "the first output is the canvas's still"
+    );
     assert!(
-        container.logs().contains("showing output HEADLESS-2 beside"),
+        shown.displays.is_none(),
+        "the tab has no picker to list for"
+    );
+    assert!(
+        container
+            .logs()
+            .contains("showing output HEADLESS-2 beside"),
         "wlshare showed no output beside:\n{}",
         container.logs()
     );
 
     // One display again: the session closes the tab's socket.
-    ws.send(Message::text(format!(r#"{{"type":"selectDisplay","id":{first}}}"#)))
-        .await
-        .unwrap();
-    view.until(&mut ws, "HEADLESS-1 alone", |v| v.active() == Some(first)).await;
+    ws.send(Message::text(format!(
+        r#"{{"type":"selectDisplay","id":{first}}}"#
+    )))
+    .await
+    .unwrap();
+    view.until(&mut ws, "HEADLESS-1 alone", |v| v.active() == Some(first))
+        .await;
     tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(Ok(msg)) = tab.next().await {
             if matches!(msg, Message::Close(_)) {
@@ -463,7 +562,8 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
     )))
     .await
     .unwrap();
-    view.until(&mut ws, "the desktop at the server's own size", |v| v.tiles).await;
+    view.until(&mut ws, "the desktop at the server's own size", |v| v.tiles)
+        .await;
     // A while longer, for a resize that should never come.
     let _ = tokio::time::timeout(Duration::from_secs(3), async {
         while let Some(msg) = ws.next().await {
@@ -471,7 +571,9 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
                 Message::Text(text) => view.control(&text),
                 Message::Binary(frame) => {
                     view.units(&frame);
-                    ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                    ws.send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
                 }
                 _ => {}
             }
@@ -480,16 +582,32 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
     .await;
 
     assert!(view.tiles, "the picture is the tiles coded here");
-    assert_eq!(view.decode, None, "a stream was announced to a plain target");
+    assert_eq!(
+        view.decode, None,
+        "a stream was announced to a plain target"
+    );
     assert!(
         view.sizes.iter().all(|size| size.scale == 1.0),
         "a plain target takes no density from the server or the browser: {:?}",
         view.sizes
     );
     let first = view.sizes[0];
-    assert!(view.sizes.iter().all(|size| (size.w, size.h) == (first.w, first.h)), "a plain target was resized: {:?}", view.sizes);
-    assert_eq!(sway_output(&container, "HEADLESS-1"), (first.w, first.h, 1.0), "the output is at its own size, at its own 1x");
-    assert!(view.displays.is_none(), "a plain target is sent no output list");
+    assert!(
+        view.sizes
+            .iter()
+            .all(|size| (size.w, size.h) == (first.w, first.h)),
+        "a plain target was resized: {:?}",
+        view.sizes
+    );
+    assert_eq!(
+        sway_output(&container, "HEADLESS-1"),
+        (first.w, first.h, 1.0),
+        "the output is at its own size, at its own 1x"
+    );
+    assert!(
+        view.displays.is_none(),
+        "a plain target is sent no output list"
+    );
     assert!(
         !container.logs().contains("asked for video"),
         "a plain target asked wlshare for its video encoding:\n{}",
@@ -516,12 +634,23 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
     )))
     .await
     .unwrap();
-    view.until(&mut ws, "wlshare's tiles of the whole desktop", |v| v.tiles).await;
+    view.until(&mut ws, "wlshare's tiles of the whole desktop", |v| v.tiles)
+        .await;
 
-    assert!(view.decode.is_none(), "a session on the tiles was announced a stream: {:?}", view.decode);
+    assert!(
+        view.decode.is_none(),
+        "a session on the tiles was announced a stream: {:?}",
+        view.decode
+    );
     let logs = container.logs();
-    assert!(logs.contains("asked for tiles at quality"), "wlshare was not asked for its tiles with motion:\n{logs}");
-    assert!(!logs.contains("asked for video"), "wlshare was asked for its video as well:\n{logs}");
+    assert!(
+        logs.contains("asked for tiles at quality"),
+        "wlshare was not asked for its tiles with motion:\n{logs}"
+    );
+    assert!(
+        !logs.contains("asked for video"),
+        "wlshare was asked for its video as well:\n{logs}"
+    );
 }
 
 /// What a session started with `passthrough` shows of the desktop after `secs`:
@@ -529,7 +658,11 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 /// is drawn as the page draws it — a PNG by its decoder, a progressive tile by the
 /// page's RemoteFX Progressive decoder in its turn, a copy from the picture — and
 /// every batch acknowledged, so wlshare keeps sending what it owes.
-async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16, Vec<u8>, std::collections::BTreeSet<u8>) {
+async fn picture_of(
+    addr: SocketAddr,
+    passthrough: &str,
+    secs: u64,
+) -> (u16, u16, Vec<u8>, std::collections::BTreeSet<u8>) {
     use zdesk::protocol::batch;
     let cookie = common::login(addr).await;
     let token = common::claim_session(addr, &cookie).await;
@@ -539,7 +672,8 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
     )))
     .await
     .unwrap();
-    let (mut size, mut picture, mut formats) = ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
+    let (mut size, mut picture, mut formats) =
+        ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
     let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
     let mut still: Option<ruzstd::decoding::FrameDecoder> = None;
     let mut frame_no = 0;
@@ -547,11 +681,15 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
     while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
         match msg.expect("websocket receive") {
             Message::Text(text) => {
-                let msg: serde_json::Value = serde_json::from_str(&text).expect("control message is JSON");
+                let msg: serde_json::Value =
+                    serde_json::from_str(&text).expect("control message is JSON");
                 match msg["type"].as_str() {
                     Some("error") => panic!("session failed: {text}"),
                     Some("resize") => {
-                        size = (msg["w"].as_u64().unwrap() as u16, msg["h"].as_u64().unwrap() as u16);
+                        size = (
+                            msg["w"].as_u64().unwrap() as u16,
+                            msg["h"].as_u64().unwrap() as u16,
+                        );
                         picture = vec![0u8; usize::from(size.0) * usize::from(size.1) * 3];
                     }
                     _ => {}
@@ -560,72 +698,158 @@ async fn picture_of(addr: SocketAddr, passthrough: &str, secs: u64) -> (u16, u16
             Message::Binary(frame) => {
                 let line = usize::from(size.0) * 3;
                 for record in common::batch_records(&frame) {
-                    let common::BatchRecord::Tile(tile) = record else { continue };
-                    formats.insert(tile.format);
-                    let mut put = |x: u16, y: u16, w: usize, rows: &[u8], stride: usize, step: usize| {
-                        for (row, src) in rows.chunks(stride).enumerate() {
-                            let at = (usize::from(y) + row) * line + usize::from(x) * 3;
-                            for col in 0..w {
-                                picture[at + col * 3..at + col * 3 + 3].copy_from_slice(&src[col * step..col * step + 3]);
-                            }
-                        }
+                    let common::BatchRecord::Tile(tile) = record else {
+                        continue;
                     };
+                    formats.insert(tile.format);
+                    let mut put =
+                        |x: u16, y: u16, w: usize, rows: &[u8], stride: usize, step: usize| {
+                            for (row, src) in rows.chunks(stride).enumerate() {
+                                let at = (usize::from(y) + row) * line + usize::from(x) * 3;
+                                for col in 0..w {
+                                    picture[at + col * 3..at + col * 3 + 3]
+                                        .copy_from_slice(&src[col * step..col * step + 3]);
+                                }
+                            }
+                        };
                     match tile.format {
                         batch::TILE_PNG => {
                             let mut png = png::Decoder::new(std::io::Cursor::new(&tile.image));
                             png.set_transformations(png::Transformations::EXPAND);
                             let mut reader = png.read_info().expect("a PNG");
-                            let mut rgb = vec![0; reader.output_buffer_size().expect("a PNG's size")];
+                            let mut rgb =
+                                vec![0; reader.output_buffer_size().expect("a PNG's size")];
                             let info = reader.next_frame(&mut rgb).expect("a PNG's pixels");
                             let step = info.color_type.samples();
-                            put(tile.x, tile.y, usize::from(tile.w), &rgb[..info.buffer_size()], info.line_size, step);
+                            put(
+                                tile.x,
+                                tile.y,
+                                usize::from(tile.w),
+                                &rgb[..info.buffer_size()],
+                                info.line_size,
+                                step,
+                            );
                         }
                         batch::TILE_PROGRESSIVE => {
                             frame_no += 1;
-                            let stream = wlshare_proto::progressive::stream(frame_no, &[(tile.x, tile.y, tile.w, tile.h)], &[&tile.image]);
+                            let stream = wlshare_proto::progressive::stream(
+                                frame_no,
+                                &[(tile.x, tile.y, tile.w, tile.h)],
+                                &[&tile.image],
+                            );
                             decoder.start_frame();
                             decoder
-                                .decompress(1, u32::from(size.0), u32::from(size.1), &stream, usize::MAX, |rect, rows, stride| {
-                                    let w = usize::from(rect.right - rect.left);
-                                    put(rect.left, rect.top, w, &rows[..stride * usize::from(rect.bottom - rect.top)], stride, 4);
-                                })
+                                .decompress(
+                                    1,
+                                    u32::from(size.0),
+                                    u32::from(size.1),
+                                    &stream,
+                                    usize::MAX,
+                                    |rect, rows, stride| {
+                                        let w = usize::from(rect.right - rect.left);
+                                        put(
+                                            rect.left,
+                                            rect.top,
+                                            w,
+                                            &rows[..stride * usize::from(rect.bottom - rect.top)],
+                                            stride,
+                                            4,
+                                        );
+                                    },
+                                )
                                 .expect("the page's decoder reads wlshare's progressive tile");
                         }
                         batch::TILE_PLANAR => {
-                            let (mut planes, mut bgrx, mut bitmap) = (Vec::new(), Vec::new(), Vec::new());
-                            let mut frame = ruzstd::decoding::StreamingDecoder::new(&tile.image[..]).expect("a zstd frame");
-                            std::io::Read::read_to_end(&mut frame, &mut bitmap).expect("the page's decoder reads wlshare's zstd frame");
-                            zdesk_rdp_graphics::proto::planar::decompress(&bitmap, &mut planes, &mut bgrx, tile.w, tile.h)
-                                .expect("the page's decoder reads wlshare's planar bitmap");
-                            let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
-                            put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);
+                            let (mut planes, mut bgrx, mut bitmap) =
+                                (Vec::new(), Vec::new(), Vec::new());
+                            let mut frame =
+                                ruzstd::decoding::StreamingDecoder::new(&tile.image[..])
+                                    .expect("a zstd frame");
+                            std::io::Read::read_to_end(&mut frame, &mut bitmap)
+                                .expect("the page's decoder reads wlshare's zstd frame");
+                            zdesk_rdp_graphics::proto::planar::decompress(
+                                &bitmap,
+                                &mut planes,
+                                &mut bgrx,
+                                tile.w,
+                                tile.h,
+                            )
+                            .expect("the page's decoder reads wlshare's planar bitmap");
+                            let rgb: Vec<u8> = bgrx
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .flat_map(|px| [px[2], px[1], px[0]])
+                                .collect();
+                            put(
+                                tile.x,
+                                tile.y,
+                                usize::from(tile.w),
+                                &rgb,
+                                usize::from(tile.w) * 3,
+                                3,
+                            );
                         }
                         batch::TILE_STILL => {
                             let mut source = &tile.image[..];
                             if source.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
                                 let mut frame = ruzstd::decoding::FrameDecoder::new();
-                                frame.init(&mut source).expect("the still stream's frame header");
+                                frame
+                                    .init(&mut source)
+                                    .expect("the still stream's frame header");
                                 still = Some(frame);
                             }
-                            let frame = still.as_mut().expect("a still that starts the stream before any that continues it");
+                            let frame = still.as_mut().expect(
+                                "a still that starts the stream before any that continues it",
+                            );
                             // What the bodies before left held back is theirs; the
                             // body's flushed blocks decode whole, and its bitmap is
                             // what the frame holds back past them.
                             frame.collect_to_writer(std::io::sink()).unwrap();
-                            let before = { let (a, b) = frame.peek(); a.len() + b.len() };
-                            let (read, _) = frame.decode_from_to(source, &mut []).expect("the page's decoder reads wlshare's still stream");
+                            let before = {
+                                let (a, b) = frame.peek();
+                                a.len() + b.len()
+                            };
+                            let (read, _) = frame
+                                .decode_from_to(source, &mut [])
+                                .expect("the page's decoder reads wlshare's still stream");
                             assert_eq!(read, source.len(), "a still body of whole blocks");
-                            let bitmap = { let (a, b) = frame.peek(); [a, b].concat().split_off(before) };
+                            let bitmap = {
+                                let (a, b) = frame.peek();
+                                [a, b].concat().split_off(before)
+                            };
                             let (mut planes, mut bgrx) = (Vec::new(), Vec::new());
-                            zdesk_rdp_graphics::proto::planar::decompress(&bitmap, &mut planes, &mut bgrx, tile.w, tile.h)
-                                .expect("the page's decoder reads wlshare's planar bitmap");
-                            let rgb: Vec<u8> = bgrx.as_chunks::<4>().0.iter().flat_map(|px| [px[2], px[1], px[0]]).collect();
-                            put(tile.x, tile.y, usize::from(tile.w), &rgb, usize::from(tile.w) * 3, 3);
+                            zdesk_rdp_graphics::proto::planar::decompress(
+                                &bitmap,
+                                &mut planes,
+                                &mut bgrx,
+                                tile.w,
+                                tile.h,
+                            )
+                            .expect("the page's decoder reads wlshare's planar bitmap");
+                            let rgb: Vec<u8> = bgrx
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .flat_map(|px| [px[2], px[1], px[0]])
+                                .collect();
+                            put(
+                                tile.x,
+                                tile.y,
+                                usize::from(tile.w),
+                                &rgb,
+                                usize::from(tile.w) * 3,
+                                3,
+                            );
                         }
-                        other => panic!("a tile of format {other:#x} in a test that draws PNG, progressive and planar tiles"),
+                        other => panic!(
+                            "a tile of format {other:#x} in a test that draws PNG, progressive and planar tiles"
+                        ),
                     }
                 }
-                ws.send(Message::text(common::paint_ack(&frame))).await.expect("acknowledge a batch");
+                ws.send(Message::text(common::paint_ack(&frame)))
+                    .await
+                    .expect("acknowledge a batch");
             }
             _ => {}
         }
@@ -644,15 +868,37 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
     let (w, h, lossless, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are lossless PNG while nothing moves");
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_PNG].into(),
+        "tiles with motion are lossless PNG while nothing moves"
+    );
     let (pw, ph, progressive, formats) = picture_of(addr, "wlshare-tiles-progressive", 6).await;
     assert_eq!((pw, ph), (w, h), "the same desktop");
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_PROGRESSIVE].into(), "progressive tiles alone");
-    let se: f64 = lossless.iter().zip(&progressive).map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2)).sum();
-    let psnr = if se == 0.0 { f64::INFINITY } else { 10.0 * (255.0f64.powi(2) * lossless.len() as f64 / se).log10() };
-    assert!(psnr > 40.0, "the progressive picture is {psnr:.1} dB from the lossless one");
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_PROGRESSIVE].into(),
+        "progressive tiles alone"
+    );
+    let se: f64 = lossless
+        .iter()
+        .zip(&progressive)
+        .map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2))
+        .sum();
+    let psnr = if se == 0.0 {
+        f64::INFINITY
+    } else {
+        10.0 * (255.0f64.powi(2) * lossless.len() as f64 / se).log10()
+    };
+    assert!(
+        psnr > 40.0,
+        "the progressive picture is {psnr:.1} dB from the lossless one"
+    );
     let logs = container.logs();
-    assert!(logs.contains("asked for progressive tiles up to quality"), "wlshare was not asked for its progressive tiles:\n{logs}");
+    assert!(
+        logs.contains("asked for progressive tiles up to quality"),
+        "wlshare was not asked for its progressive tiles:\n{logs}"
+    );
 }
 
 /// A session started with wlshare's lossless tiles is sent them alone, passed:
@@ -666,13 +912,27 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
     let (w, h, png, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_PNG].into(), "tiles with motion are lossless PNG while nothing moves");
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_PNG].into(),
+        "tiles with motion are lossless PNG while nothing moves"
+    );
     let (lw, lh, planar, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
     assert_eq!((lw, lh), (w, h), "the same desktop");
-    assert_eq!(formats, [zdesk::protocol::batch::TILE_STILL].into(), "a still desktop's planar tiles, in the still stream alone");
-    assert!(planar == png, "the lossless tiles show the desktop exactly as the PNG tiles do");
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_STILL].into(),
+        "a still desktop's planar tiles, in the still stream alone"
+    );
+    assert!(
+        planar == png,
+        "the lossless tiles show the desktop exactly as the PNG tiles do"
+    );
     let logs = container.logs();
-    assert!(logs.contains("asked for lossless tiles"), "wlshare was not asked for its lossless tiles:\n{logs}");
+    assert!(
+        logs.contains("asked for lossless tiles"),
+        "wlshare was not asked for its lossless tiles:\n{logs}"
+    );
 }
 
 /// A moving desktop's lossless tiles are both kinds, each read as the page reads
@@ -681,7 +941,8 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
 /// body of it read in order.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
-async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed_where_it_is_still() {
+async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed_where_it_is_still()
+{
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     play_video(&container, "ball").await;
@@ -689,7 +950,11 @@ async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed
     let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-lossless", 6).await;
     assert_eq!(
         formats,
-        [zdesk::protocol::batch::TILE_PLANAR, zdesk::protocol::batch::TILE_STILL].into(),
+        [
+            zdesk::protocol::batch::TILE_PLANAR,
+            zdesk::protocol::batch::TILE_STILL
+        ]
+        .into(),
         "what moves framed, what is still streamed"
     );
 }
@@ -710,7 +975,9 @@ async fn play_video(container: &Arc<common::Container>, pattern: &str) {
             container.copy_in(std::path::Path::new(&path), "/tmp/video");
             "filesrc location=/tmp/video ! decodebin".to_owned()
         }
-        None => format!("videotestsrc is-live=true pattern={pattern} ! video/x-raw,width=1024,height=768,framerate=30/1"),
+        None => format!(
+            "videotestsrc is-live=true pattern={pattern} ! video/x-raw,width=1024,height=768,framerate=30/1"
+        ),
     };
     exec(
         container,
@@ -721,7 +988,11 @@ async fn play_video(container: &Arc<common::Container>, pattern: &str) {
     )
     .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    exec(container, "kill -0 \"$(cat /tmp/video.pid)\" || { cat /tmp/video.log >&2; exit 1; }".to_owned()).await;
+    exec(
+        container,
+        "kill -0 \"$(cat /tmp/video.pid)\" || { cat /tmp/video.log >&2; exit 1; }".to_owned(),
+    )
+    .await;
 }
 
 /// A desktop playing a video is sent wlshare's progressive tiles a batch to an
@@ -750,7 +1021,10 @@ async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
     while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
         match msg.expect("websocket receive") {
-            Message::Text(text) => assert!(!text.contains(r#""type":"error""#), "session failed: {text}"),
+            Message::Text(text) => assert!(
+                !text.contains(r#""type":"error""#),
+                "session failed: {text}"
+            ),
             Message::Binary(frame) => {
                 batches += 1;
                 records += common::batch_records(&frame).len() as u64;
@@ -758,7 +1032,9 @@ async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
                 let ack = common::paint_ack(&frame);
                 // On the wire: two bytes of header, four of mask, and the text.
                 acks += 6 + ack.len() as u64;
-                ws.send(Message::text(ack)).await.expect("acknowledge a batch");
+                ws.send(Message::text(ack))
+                    .await
+                    .expect("acknowledge a batch");
             }
             _ => {}
         }
@@ -770,8 +1046,14 @@ async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
         mbit(bytes),
         mbit(acks)
     );
-    assert!(records as f64 / secs > 100.0, "the desktop hardly moved: {records} records in {secs} s");
-    assert!(records >= 32 * batches, "{records} records in {batches} batches: not a batch to an update");
+    assert!(
+        records as f64 / secs > 100.0,
+        "the desktop hardly moved: {records} records in {secs} s"
+    );
+    assert!(
+        records >= 32 * batches,
+        "{records} records in {batches} batches: not a batch to an update"
+    );
 }
 
 /// How long the desktop's application records the microphone.
@@ -804,7 +1086,10 @@ async fn start_wlshare() -> (Arc<common::Container>, u16) {
 
 /// Run a shell script in the container off the runtime's thread, which the gateway
 /// under test shares. The future owns its container, so it can be spawned.
-fn exec(container: &Arc<common::Container>, script: String) -> impl Future<Output = String> + 'static {
+fn exec(
+    container: &Arc<common::Container>,
+    script: String,
+) -> impl Future<Output = String> + 'static {
     let container = Arc::clone(container);
     async move {
         tokio::task::spawn_blocking(move || container.exec(&["sh", "-c", &script]))
@@ -816,15 +1101,26 @@ fn exec(container: &Arc<common::Container>, script: String) -> impl Future<Outpu
 /// The name of the wlshare node PipeWire lists under `prefix`, if it lists one:
 /// `wlshare-microphone-` or `wlshare-camera-`.
 async fn pipewire_node(container: &Arc<common::Container>, prefix: &str) -> Option<String> {
-    let nodes = exec(container, "XDG_RUNTIME_DIR=/tmp/xdg pw-cli ls Node".to_owned()).await;
+    let nodes = exec(
+        container,
+        "XDG_RUNTIME_DIR=/tmp/xdg pw-cli ls Node".to_owned(),
+    )
+    .await;
     nodes.lines().find_map(|line| {
-        let name = line.trim().strip_prefix("node.name = \"")?.strip_suffix('"')?;
+        let name = line
+            .trim()
+            .strip_prefix("node.name = \"")?
+            .strip_suffix('"')?;
         name.starts_with(prefix).then(|| name.to_owned())
     })
 }
 
 /// Poll until the node under `prefix` is there (`Some`) or gone (`None`).
-async fn until_node(container: &Arc<common::Container>, prefix: &str, present: bool) -> Option<String> {
+async fn until_node(
+    container: &Arc<common::Container>,
+    prefix: &str,
+    present: bool,
+) -> Option<String> {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let node = pipewire_node(container, prefix).await;
@@ -835,7 +1131,12 @@ async fn until_node(container: &Arc<common::Container>, prefix: &str, present: b
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("no {prefix}* node became {}", if present { "present" } else { "absent" }))
+    .unwrap_or_else(|_| {
+        panic!(
+            "no {prefix}* node became {}",
+            if present { "present" } else { "absent" }
+        )
+    })
 }
 
 /// The next control message on an uplink socket, whose only text is the remote's
@@ -843,7 +1144,9 @@ async fn until_node(container: &Arc<common::Container>, prefix: &str, present: b
 async fn uplink_signal(ws: &mut common::Socket) -> serde_json::Value {
     loop {
         match ws.next().await {
-            Some(Ok(Message::Text(text))) => return serde_json::from_str(&text).expect("uplink signal is JSON"),
+            Some(Ok(Message::Text(text))) => {
+                return serde_json::from_str(&text).expect("uplink signal is JSON");
+            }
             Some(Ok(_)) => {}
             other => panic!("the uplink socket ended: {other:?}"),
         }
@@ -855,8 +1158,14 @@ async fn uplink_signal(ws: &mut common::Socket) -> serde_json::Value {
 async fn open_session(ws: &mut common::Ws, choices: &str) -> serde_json::Value {
     common::connect_target_with(ws, TARGET, choices).await;
     loop {
-        if let Message::Text(text) = ws.next().await.expect("session socket open").expect("websocket receive") {
-            let msg: serde_json::Value = serde_json::from_str(&text).expect("control message is JSON");
+        if let Message::Text(text) = ws
+            .next()
+            .await
+            .expect("session socket open")
+            .expect("websocket receive")
+        {
+            let msg: serde_json::Value =
+                serde_json::from_str(&text).expect("control message is JSON");
             match msg["type"].as_str() {
                 Some("connected") => return msg,
                 Some("error") => panic!("session failed: {text}"),
@@ -869,7 +1178,8 @@ async fn open_session(ws: &mut common::Ws, choices: &str) -> serde_json::Value {
 /// 60 ms Opus packets of a continuous tone, mono at 48 kHz in voice mode — what the
 /// browser's encoder sends — each framed as the mic socket takes it.
 fn tone_frames(count: usize) -> Vec<Vec<u8>> {
-    let mut encoder = opus::Encoder::new(48_000, opus::Channels::Mono, opus::Application::Voip).unwrap();
+    let mut encoder =
+        opus::Encoder::new(48_000, opus::Channels::Mono, opus::Application::Voip).unwrap();
     encoder.set_bitrate(opus::Bitrate::Bits(16_000)).unwrap();
     (0..count)
         .map(|packet| {
@@ -915,7 +1225,10 @@ async fn wlshare_lends_the_desktop_the_browsers_microphone() {
     let token = common::claim_session(addr, &cookie).await;
     let mut ws = common::connect_ws(addr, &token, &cookie).await;
     let connected = open_session(&mut ws, r#"{"size":"window","microphone":true}"#).await;
-    assert_eq!(connected["microphone"], true, "the session offers a microphone: {connected}");
+    assert_eq!(
+        connected["microphone"], true,
+        "the session offers a microphone: {connected}"
+    );
 
     // `connected` is sent as the engine starts, ahead of its RFB handshake, so the
     // microphone is plugged before the engine can have heard wlshare's answer. How far
@@ -925,7 +1238,9 @@ async fn wlshare_lends_the_desktop_the_browsers_microphone() {
     // nothing backs up behind it.
     let session = tokio::spawn(async move { while let Some(Ok(_)) = ws.next().await {} });
 
-    let node = until_node(&container, "wlshare-microphone-", true).await.expect("a node");
+    let node = until_node(&container, "wlshare-microphone-", true)
+        .await
+        .expect("a node");
     let recording = tokio::spawn(exec(
         &container,
         format!(
@@ -934,7 +1249,11 @@ async fn wlshare_lends_the_desktop_the_browsers_microphone() {
              --rate 48000 --channels 1 --format s16 - | base64 -w0"
         ),
     ));
-    assert_eq!(uplink_signal(&mut mic).await["type"], "micOpen", "recording opens the browser's microphone");
+    assert_eq!(
+        uplink_signal(&mut mic).await["type"],
+        "micOpen",
+        "recording opens the browser's microphone"
+    );
 
     // Sent in real time until the recording's end closes the microphone.
     let frames = tone_frames(50);
@@ -958,8 +1277,15 @@ async fn wlshare_lends_the_desktop_the_browsers_microphone() {
     .expect("the recording never ended");
 
     let recording = recording.await.expect("recording task");
-    let raw = base64::engine::general_purpose::STANDARD.decode(recording.trim()).expect("base64 recording");
-    let samples: Vec<f64> = raw.as_chunks::<2>().0.iter().map(|s| f64::from(i16::from_le_bytes(*s))).collect();
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(recording.trim())
+        .expect("base64 recording");
+    let samples: Vec<f64> = raw
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|s| f64::from(i16::from_le_bytes(*s)))
+        .collect();
     // What the desktop heard of the tone, past the silence before the first packet: the
     // 20 ms blocks with anything in them.
     let heard: Vec<f64> = samples
@@ -1010,7 +1336,11 @@ fn access_units(stream: &[u8]) -> Vec<AccessUnit> {
     let mut at = 0;
     while at + 3 <= stream.len() {
         if stream[at..].starts_with(&[0, 0, 1]) {
-            let begin = if at > 0 && stream[at - 1] == 0 { at - 1 } else { at };
+            let begin = if at > 0 && stream[at - 1] == 0 {
+                at - 1
+            } else {
+                at
+            };
             starts.push((begin, at + 3));
             at += 3;
         } else {
@@ -1027,7 +1357,10 @@ fn access_units(stream: &[u8]) -> Vec<AccessUnit> {
         let first_slice = slice && stream[header + 1] & 0x80 != 0;
         let starts_unit = units.is_empty() || previous_was_slice && (!slice || first_slice);
         if starts_unit {
-            units.push(AccessUnit { data: Vec::new(), keyframe: false });
+            units.push(AccessUnit {
+                data: Vec::new(),
+                keyframe: false,
+            });
         }
         let unit = units.last_mut().expect("a unit");
         unit.data.extend_from_slice(&stream[begin..end]);
@@ -1041,7 +1374,12 @@ fn access_units(stream: &[u8]) -> Vec<AccessUnit> {
 fn the_camera_fixture_is_thirty_pictures_with_a_keyframe_every_fifteen() {
     let units = access_units(CAMERA_H264);
     assert_eq!(units.len(), 30);
-    let keyframes: Vec<usize> = units.iter().enumerate().filter(|(_, u)| u.keyframe).map(|(n, _)| n).collect();
+    let keyframes: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| u.keyframe)
+        .map(|(n, _)| n)
+        .collect();
     assert_eq!(keyframes, [0, 15]);
 }
 
@@ -1060,7 +1398,10 @@ async fn wlshare_lends_the_desktop_the_browsers_camera() {
     let token = common::claim_session(addr, &cookie).await;
     let mut ws = common::connect_ws(addr, &token, &cookie).await;
     let connected = open_session(&mut ws, r#"{"size":"window","camera":true}"#).await;
-    assert_eq!(connected["camera"], true, "the session offers a camera: {connected}");
+    assert_eq!(
+        connected["camera"], true,
+        "the session offers a camera: {connected}"
+    );
 
     // As the page does, the format goes the moment the socket opens: ahead of the
     // engine's RFB handshake, as the microphone's plug does.
@@ -1073,7 +1414,9 @@ async fn wlshare_lends_the_desktop_the_browsers_camera() {
         .unwrap();
     let session = tokio::spawn(async move { while let Some(Ok(_)) = ws.next().await {} });
 
-    let node = until_node(&container, "wlshare-camera-", true).await.expect("a node");
+    let node = until_node(&container, "wlshare-camera-", true)
+        .await
+        .expect("a node");
     // The application: GStreamer's PipeWire source, which ends after a count of
     // pictures and fails on a caps it cannot take. It prints the caps it negotiated.
     // Its stream names no media type of its own, and WirePlumber's linking scripts
@@ -1094,9 +1437,17 @@ async fn wlshare_lends_the_desktop_the_browsers_camera() {
         start = uplink_signal(&mut camera) => start,
         ended = &mut application => panic!("the application ended before the camera started: {ended:?}"),
     };
-    assert_eq!(start["type"], "cameraStart", "opening the camera starts the browser's: {start}");
     assert_eq!(
-        (&start["width"], &start["height"], &start["fpsNumerator"], &start["fpsDenominator"]),
+        start["type"], "cameraStart",
+        "opening the camera starts the browser's: {start}"
+    );
+    assert_eq!(
+        (
+            &start["width"],
+            &start["height"],
+            &start["fpsNumerator"],
+            &start["fpsDenominator"]
+        ),
         (&320.into(), &240.into(), &15.into(), &1.into()),
         "the remote starts the format the browser plugged: {start}"
     );
@@ -1106,7 +1457,11 @@ async fn wlshare_lends_the_desktop_the_browsers_camera() {
     // start. An application linking can stop and restart the stream as it settles its
     // format, so a stop is not the end; the application ending is.
     let units = access_units(CAMERA_H264);
-    let next_keyframe = |from: usize| (from..).find(|n| units[n % units.len()].keyframe).expect("a keyframe");
+    let next_keyframe = |from: usize| {
+        (from..)
+            .find(|n| units[n % units.len()].keyframe)
+            .expect("a keyframe")
+    };
     let mut tick = tokio::time::interval(Duration::from_millis(1000 / 15));
     let mut streaming = true;
     let mut next = 0;
@@ -1148,7 +1503,9 @@ async fn wlshare_lends_the_desktop_the_browsers_camera() {
         .expect("the application's leaving stops the browser's camera");
     }
     assert!(
-        negotiated.contains("video/x-raw") && negotiated.contains("width=(int)320") && negotiated.contains("height=(int)240"),
+        negotiated.contains("video/x-raw")
+            && negotiated.contains("width=(int)320")
+            && negotiated.contains("height=(int)240"),
         "the application takes pictures of the plugged size:\n{negotiated}"
     );
 

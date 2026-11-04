@@ -187,7 +187,9 @@ impl Default for AudioPlan {
     /// Opus at [`AUDIO_BITRATE_KBPS`], walking down to the floor when the link
     /// is behind.
     fn default() -> Self {
-        Self { bitrate_bps: AUDIO_BITRATE_KBPS as i32 * 1000 }
+        Self {
+            bitrate_bps: AUDIO_BITRATE_KBPS as i32 * 1000,
+        }
     }
 }
 
@@ -428,7 +430,12 @@ impl Passthrough {
     pub fn chosen(self) -> bool {
         match self {
             Self::RdpGraphics | Self::WlshareVideo => false,
-            Self::AppleMedia | Self::AppleH264 | Self::AppleAdaptive | Self::WlshareTilesMotion | Self::WlshareTilesProgressive | Self::WlshareTilesLossless => true,
+            Self::AppleMedia
+            | Self::AppleH264
+            | Self::AppleAdaptive
+            | Self::WlshareTilesMotion
+            | Self::WlshareTilesProgressive
+            | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -440,7 +447,12 @@ impl Passthrough {
         match self {
             Self::RdpGraphics | Self::AppleAdaptive => false,
             // wlshare starts over at a keyframe, or sends the whole desktop again.
-            Self::AppleMedia | Self::AppleH264 | Self::WlshareVideo | Self::WlshareTilesMotion | Self::WlshareTilesProgressive | Self::WlshareTilesLossless => true,
+            Self::AppleMedia
+            | Self::AppleH264
+            | Self::WlshareVideo
+            | Self::WlshareTilesMotion
+            | Self::WlshareTilesProgressive
+            | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -654,7 +666,7 @@ pub enum Pipeline {
     /// With the pipeline's codecs other than H.264.
     #[default]
     HighQuality,
-    /// ALPHA. The whole desktop in H.264 (`AVC_THINCLIENT`, MS-RDPEGFX
+    /// BETA. The whole desktop in H.264 (`AVC_THINCLIENT`, MS-RDPEGFX
     /// 2.2.3.6), which a Windows host answers in AVC444v2, rate-controlled by the
     /// host to the page's link.
     ///
@@ -802,7 +814,13 @@ impl Decoders {
         rdp_video: bool,
         tight_memory: bool,
     ) -> Self {
-        Self { apple_media: native_hevc || (page_hevc && serves_hevc), rdp_graphics, rdp_h264, rdp_video, tight_memory }
+        Self {
+            apple_media: native_hevc || (page_hevc && serves_hevc),
+            rdp_graphics,
+            rdp_h264,
+            rdp_video,
+            tight_memory,
+        }
     }
 
     /// Whether it decodes the H.264, if any, an RDP host draws `pipeline` with.
@@ -820,7 +838,9 @@ impl Decoders {
     /// ([`RenderPlan::rdp_video`]), and is taken by a browser that decodes it.
     pub fn takes_drawn(self, passthrough: Passthrough, pipeline: Pipeline) -> bool {
         match (passthrough, pipeline) {
-            (Passthrough::RdpGraphics, Pipeline::AdaptiveDesktop) => self.rdp_graphics || self.rdp_video,
+            (Passthrough::RdpGraphics, Pipeline::AdaptiveDesktop) => {
+                self.rdp_graphics || self.rdp_video
+            }
             _ => self.takes(passthrough),
         }
     }
@@ -832,11 +852,15 @@ impl Decoders {
             // H.264, a Mac's or wlshare's, the whole desktop or its moving regions:
             // the gateway is not told, and the page greys it where its decoder
             // refuses it.
-            Passthrough::AppleH264 | Passthrough::WlshareVideo | Passthrough::WlshareTilesMotion => true,
+            Passthrough::AppleH264
+            | Passthrough::WlshareVideo
+            | Passthrough::WlshareTilesMotion => true,
             // The page decodes it in WebAssembly, which every page that starts has.
             Passthrough::AppleAdaptive => true,
             // Decoded by the module that composes the pipeline, on its threads.
-            Passthrough::RdpGraphics | Passthrough::WlshareTilesProgressive | Passthrough::WlshareTilesLossless => self.rdp_graphics,
+            Passthrough::RdpGraphics
+            | Passthrough::WlshareTilesProgressive
+            | Passthrough::WlshareTilesLossless => self.rdp_graphics,
         }
     }
 }
@@ -844,7 +868,13 @@ impl Decoders {
 #[cfg(test)]
 impl Decoders {
     /// A browser that takes every passthrough, for tests about everything else.
-    pub const ALL: Self = Self { apple_media: true, rdp_graphics: true, rdp_h264: true, rdp_video: true, tight_memory: false };
+    pub const ALL: Self = Self {
+        apple_media: true,
+        rdp_graphics: true,
+        rdp_h264: true,
+        rdp_video: true,
+        tight_memory: false,
+    };
 }
 
 impl RenderPlan {
@@ -1145,9 +1175,15 @@ impl TargetConfig {
         let size = match sizing {
             Sizing::Target => self.kept_size(),
             Sizing::BuiltIn => DEFAULT_SIZE,
-            Sizing::Window => display.filter(|d| !d.fit).map_or(DEFAULT_SIZE, |d| (d.w, d.h)),
+            Sizing::Window => display
+                .filter(|d| !d.fit)
+                .map_or(DEFAULT_SIZE, |d| (d.w, d.h)),
         };
-        if self.has_virtual_display() { crate::vnc_apple::raised_to_minimum(size) } else { size }
+        if self.has_virtual_display() {
+            crate::vnc_apple::raised_to_minimum(size)
+        } else {
+            size
+        }
     }
 
     /// The size this target's desktop is kept at where the window does not
@@ -1190,10 +1226,15 @@ impl TargetConfig {
         // Every Standard session has one of the Mac's qualities: Adaptive where
         // it was chosen, and the Mac's Full quality, inflated here, otherwise.
         let apple_standard = self.standard_mode().then(|| {
-            if passthrough == Some(Passthrough::AppleAdaptive) { StandardQuality::Adaptive } else { StandardQuality::Full }
+            if passthrough == Some(Passthrough::AppleAdaptive) {
+                StandardQuality::Adaptive
+            } else {
+                StandardQuality::Full
+            }
         });
         let rdp_graphics = passthrough == Some(Passthrough::RdpGraphics);
-        let apple_combined = self.offers().standard_view && choices.standard_view == StandardView::Combined;
+        let apple_combined =
+            self.offers().standard_view && choices.standard_view == StandardView::Combined;
         let rdp_h264 = rdp_graphics && choices.pipeline.h264() && decoders.draws(choices.pipeline);
         let rdp_video = rdp_h264 && choices.pipeline == Pipeline::AdaptiveDesktop;
         let rdp_small_cache = rdp_graphics && decoders.tight_memory;
@@ -1233,7 +1274,11 @@ impl TargetConfig {
             (Protocol::Rdp, _) => Offers {
                 resize: self.egfx(),
                 audio: true,
-                passthrough: if self.egfx() { &[Passthrough::RdpGraphics] } else { &[] },
+                passthrough: if self.egfx() {
+                    &[Passthrough::RdpGraphics]
+                } else {
+                    &[]
+                },
                 placement: self.virtual_displays > 1,
                 pipeline: self.egfx(),
                 standard_view: false,
@@ -1259,7 +1304,12 @@ impl TargetConfig {
             (Protocol::Vnc, Some(Subtype::Wlshare)) => Offers {
                 resize: true,
                 audio: true,
-                passthrough: &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless],
+                passthrough: &[
+                    Passthrough::WlshareVideo,
+                    Passthrough::WlshareTilesProgressive,
+                    Passthrough::WlshareTilesMotion,
+                    Passthrough::WlshareTilesLossless,
+                ],
                 placement: false,
                 pipeline: false,
                 standard_view: false,
@@ -1273,18 +1323,16 @@ impl TargetConfig {
             // composed here; or, chosen on one screen at a time, the Mac's own
             // Adaptive picture passed. A virtual display is one screen, and has no
             // Combined Display to choose.
-            (Protocol::Vnc, Some(Subtype::Ard)) => {
-                Offers {
-                    resize: self.virtual_display,
-                    audio: false,
-                    passthrough: &[Passthrough::AppleAdaptive],
-                    placement: false,
-                    pipeline: false,
-                    standard_view: !self.virtual_display,
-                    camera: false,
-                    microphone: false,
-                }
-            }
+            (Protocol::Vnc, Some(Subtype::Ard)) => Offers {
+                resize: self.virtual_display,
+                audio: false,
+                passthrough: &[Passthrough::AppleAdaptive],
+                placement: false,
+                pipeline: false,
+                standard_view: !self.virtual_display,
+                camera: false,
+                microphone: false,
+            },
             // The sound comes with the picture, so it is not a choice, and the
             // Mac places a second virtual display itself. Its picture passes in
             // either codec the Mac sends.
@@ -1313,8 +1361,16 @@ impl TargetConfig {
                 choices.size == Sizing::BuiltIn && !(offers.resize && self.size.is_some()),
             ),
             ("sound", choices.audio != Sound::Off && !offers.audio),
-            ("a passthrough", choices.passthrough.is_some_and(|named| !offers.passthrough.contains(&named))),
-            ("Combined Display", choices.standard_view == StandardView::Combined && !offers.standard_view),
+            (
+                "a passthrough",
+                choices
+                    .passthrough
+                    .is_some_and(|named| !offers.passthrough.contains(&named)),
+            ),
+            (
+                "Combined Display",
+                choices.standard_view == StandardView::Combined && !offers.standard_view,
+            ),
             // Combined Display is composed here, so it passes nothing.
             (
                 "a passthrough on Combined Display",
@@ -1323,22 +1379,34 @@ impl TargetConfig {
             // A High Performance Mac's picture is its media stream, in one codec
             // or the other, so a session that names neither is refused: nothing of
             // it is coded here. A Standard Mac that names none is sent the tiles.
-            ("a picture encoded here", self.passthrough(choices).is_none() && self.media_stream()),
+            (
+                "a picture encoded here",
+                self.passthrough(choices).is_none() && self.media_stream(),
+            ),
             (
                 "a picture in one tile",
                 choices.whole
-                    && !matches!(self.passthrough(choices), Some(Passthrough::AppleMedia | Passthrough::AppleH264)),
+                    && !matches!(
+                        self.passthrough(choices),
+                        Some(Passthrough::AppleMedia | Passthrough::AppleH264)
+                    ),
             ),
             (
                 "a place for the second display",
                 choices.placement != Placement::default() && !offers.placement,
             ),
-            ("adaptive H.264", choices.pipeline != Pipeline::HighQuality && !offers.pipeline),
+            (
+                "adaptive H.264",
+                choices.pipeline != Pipeline::HighQuality && !offers.pipeline,
+            ),
             ("a camera", choices.camera && !offers.camera),
             ("a microphone", choices.microphone && !offers.microphone),
         ];
         match refused.into_iter().find(|(_, refused)| *refused) {
-            Some((choice, _)) => Err(NotOffered { target: self.name.clone(), choice }),
+            Some((choice, _)) => Err(NotOffered {
+                target: self.name.clone(),
+                choice,
+            }),
             None => Ok(()),
         }
     }
@@ -1355,14 +1423,20 @@ impl TargetConfig {
         choices
             .passthrough
             .filter(|named| offered.contains(named))
-            .or_else(|| offered.iter().copied().find(|passthrough| !passthrough.chosen()))
+            .or_else(|| {
+                offered
+                    .iter()
+                    .copied()
+                    .find(|passthrough| !passthrough.chosen())
+            })
     }
 
     /// The passthrough a session started with `choices` runs on that `decoders`'
     /// browser cannot take ([`Decoders::takes_drawn`]). Such a browser is not
     /// started one, and its own ends.
     pub fn beyond(&self, choices: Choices, decoders: Decoders) -> Option<Passthrough> {
-        self.passthrough(choices).filter(|&passthrough| !decoders.takes_drawn(passthrough, choices.pipeline))
+        self.passthrough(choices)
+            .filter(|&passthrough| !decoders.takes_drawn(passthrough, choices.pipeline))
     }
 
     /// Whether a session started with `choices` carries the remote's sound: where
@@ -1383,16 +1457,39 @@ impl TargetConfig {
     /// picture, and a `wlshare` target's its tiles beside its video.
     pub fn render_summary(&self) -> String {
         let offered = self.offers().passthrough;
-        let decoders = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false, tight_memory: false };
+        let decoders = Decoders {
+            apple_media: false,
+            rdp_graphics: true,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
         let plan = self.render_plan(Choices::default(), decoders).describe();
         if self.wlshare() {
-            let tiles = |passthrough| self.render_plan(Choices { passthrough: Some(passthrough), ..Choices::default() }, decoders).describe();
-            return format!("{plan}, or {}, or {}, or {}", tiles(Passthrough::WlshareTilesProgressive), tiles(Passthrough::WlshareTilesMotion), tiles(Passthrough::WlshareTilesLossless));
+            let tiles = |passthrough| {
+                self.render_plan(
+                    Choices {
+                        passthrough: Some(passthrough),
+                        ..Choices::default()
+                    },
+                    decoders,
+                )
+                .describe()
+            };
+            return format!(
+                "{plan}, or {}, or {}, or {}",
+                tiles(Passthrough::WlshareTilesProgressive),
+                tiles(Passthrough::WlshareTilesMotion),
+                tiles(Passthrough::WlshareTilesLossless)
+            );
         }
         if offered.is_empty() || self.passthrough(Choices::default()).is_some() {
             return plan;
         }
-        let streams: Vec<&str> = offered.iter().map(|passthrough| passthrough.stream()).collect();
+        let streams: Vec<&str> = offered
+            .iter()
+            .map(|passthrough| passthrough.stream())
+            .collect();
         let passed = format!("{}, passed through", streams.join(" or "));
         if self.media_stream() {
             return passed;
@@ -1748,7 +1845,10 @@ fn resolve_logo(value: &str) -> anyhow::Result<Logo> {
         .filter(|prefix| prefix.eq_ignore_ascii_case("data:"));
     let Some(scheme) = scheme else {
         let path = PathBuf::from(value);
-        return Ok(Logo { mime: logo_mime(&path)?, source: LogoSource::File(path) });
+        return Ok(Logo {
+            mime: logo_mime(&path)?,
+            source: LogoSource::File(path),
+        });
     };
     let uri = &value[scheme.len()..];
 
@@ -1767,12 +1867,21 @@ fn resolve_logo(value: &str) -> anyhow::Result<Logo> {
 
     // A wrapped blob is the normal shape of base64 in a file, and TOML keeps the
     // newlines of a multi-line string verbatim.
-    let payload: String = payload.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let payload: String = payload
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&payload)
         .context("[branding].logo is a data: URL whose base64 does not decode")?;
-    anyhow::ensure!(!bytes.is_empty(), "[branding].logo decodes to no image at all");
-    Ok(Logo { mime, source: LogoSource::Inline(Bytes::from(bytes)) })
+    anyhow::ensure!(
+        !bytes.is_empty(),
+        "[branding].logo decodes to no image at all"
+    );
+    Ok(Logo {
+        mime,
+        source: LogoSource::Inline(Bytes::from(bytes)),
+    })
 }
 
 /// Who a config file is for, and therefore which rules it is held to.
@@ -1936,12 +2045,14 @@ impl ConfigFile {
                      always opens a virtual display: the key is subtype \"ard\"'s. Remove it.",
                     target.name
                 ),
-                (Protocol::Vnc, None | Some(Subtype::Wlshare)) | (Protocol::Rdp, _) => anyhow::bail!(
-                    "target {:?} sets virtual_display, which only subtype \"ard\" takes: it \
+                (Protocol::Vnc, None | Some(Subtype::Wlshare)) | (Protocol::Rdp, _) => {
+                    anyhow::bail!(
+                        "target {:?} sets virtual_display, which only subtype \"ard\" takes: it \
                      opens Standard Screen Sharing on one of the Mac's virtual displays, \
                      and nothing else here has one to open. Remove the key.",
-                    target.name
-                ),
+                        target.name
+                    )
+                }
             }
             if let Some(relay) = &target.relay {
                 anyhow::ensure!(
@@ -1996,11 +2107,17 @@ impl ConfigFile {
         }
         if let Some(meter) = &config.meter {
             anyhow::ensure!(
-                meter.database.as_ref().is_none_or(|database| !database.as_os_str().is_empty()),
+                meter
+                    .database
+                    .as_ref()
+                    .is_none_or(|database| !database.as_os_str().is_empty()),
                 "[meter].database is empty — name the SQLite file, or leave the key out for \
                  meter.sqlite3 in the gateway's state directory"
             );
-            anyhow::ensure!(meter.max_records >= 1, "[meter].max_records must be at least 1");
+            anyhow::ensure!(
+                meter.max_records >= 1,
+                "[meter].max_records must be at least 1"
+            );
         }
         if let Some(hevc_wasm) = &config.hevc_wasm {
             anyhow::ensure!(
@@ -2041,7 +2158,10 @@ impl ConfigFile {
             // A Mac's virtual display is asked for no less than its own client's
             // smallest window: below it the Mac sends no picture of some sizes.
             anyhow::ensure!(
-                !target.has_virtual_display() || target.size.is_none_or(|size| !crate::vnc_apple::under_minimum(size)),
+                !target.has_virtual_display()
+                    || target
+                        .size
+                        .is_none_or(|size| !crate::vnc_apple::under_minimum(size)),
                 "target {:?} sets a {} size, but a Mac's virtual display is asked for at least \
                  {}x{} points, the smallest Apple's own Screen Sharing window: set a larger \
                  size, or leave the key out",
@@ -2077,7 +2197,10 @@ impl ConfigFile {
             );
             let most = crate::rdp_client::proto::display::MAX_DIMENSION;
             anyhow::ensure!(
-                !bitmap_path || target.size.is_none_or(|(w, h)| u32::from(w) <= most && u32::from(h) <= most),
+                !bitmap_path
+                    || target
+                        .size
+                        .is_none_or(|(w, h)| u32::from(w) <= most && u32::from(h) <= most),
                 "target {:?} sets a {} size, but a Windows host opens a desktop of at most \
                  {most} pixels a side — set a smaller size, or leave the key out",
                 target.name,
@@ -2296,12 +2419,17 @@ impl ConfigFile {
     /// password, and so whether this file needs its master password before it can
     /// serve. A placeholder needs none.
     pub fn needs_master(&self) -> bool {
-        self.site_passwd_hash().is_some() || self.targets.iter().any(|target| {
-            [&target.password_ref, &target.vnc_password_ref]
-                .into_iter()
-                .flatten()
-                .any(|name| self.passwords.get(name).is_some_and(|value| !value.is_empty()))
-        })
+        self.site_passwd_hash().is_some()
+            || self.targets.iter().any(|target| {
+                [&target.password_ref, &target.vnc_password_ref]
+                    .into_iter()
+                    .flatten()
+                    .any(|name| {
+                        self.passwords
+                            .get(name)
+                            .is_some_and(|value| !value.is_empty())
+                    })
+            })
     }
 
     /// The key that opens this file's `[passwords]`, from `master`.
@@ -2321,7 +2449,8 @@ impl ConfigFile {
         if !self.needs_master() {
             return Ok(());
         }
-        let key = key.context("the config names passwords, and nothing gave its master password")?;
+        let key =
+            key.context("the config names passwords, and nothing gave its master password")?;
         if self.site_passwd_hash().is_some()
             && let Some(server) = &mut self.server
         {
@@ -2352,14 +2481,18 @@ impl ConfigFile {
         let file = self
             .served_master_file()?
             .context("the config names no [server].master_password_file")?;
-        MasterPassword::read_file(&config_dir.join(file)).context("invalid [server].master_password_file")
+        MasterPassword::read_file(&config_dir.join(file))
+            .context("invalid [server].master_password_file")
     }
 
     /// `[server].master_password_file`, which a served config that names passwords
     /// must set. Checked without reading the file, so `check-config` refuses what
     /// `serve` would.
     fn served_master_file(&self) -> anyhow::Result<Option<&Path>> {
-        let file = self.server.as_ref().and_then(|server| server.master_password_file.as_deref());
+        let file = self
+            .server
+            .as_ref()
+            .and_then(|server| server.master_password_file.as_deref());
         anyhow::ensure!(
             file.is_some() || !self.needs_master(),
             "the config names passwords: name a file holding the master password in \
@@ -2412,18 +2545,26 @@ impl ConfigFile {
         match section {
             // `join` keeps an absolute path as written.
             Some(section) => Some(data_dir.join(section.archive)),
-            None => Some(data_dir.join(crate::hevc_wasm::archive_name())).filter(|archive| archive.is_file()),
+            None => Some(data_dir.join(crate::hevc_wasm::archive_name()))
+                .filter(|archive| archive.is_file()),
         }
     }
 
     /// The `[meter]` table resolved, its database placed in `state_dir`. `None` unless
     /// the table says `enabled = true`. Its values were checked by [`Self::parse_with`].
     fn resolve_meter(section: Option<MeterSection>, state_dir: &Path) -> Option<MeterConfig> {
-        section.filter(|section| section.enabled).map(|section| MeterConfig {
-            // `join` keeps an absolute path as written.
-            database: state_dir.join(section.database.as_deref().unwrap_or(Path::new(METER_DATABASE))),
-            max_records: section.max_records,
-        })
+        section
+            .filter(|section| section.enabled)
+            .map(|section| MeterConfig {
+                // `join` keeps an absolute path as written.
+                database: state_dir.join(
+                    section
+                        .database
+                        .as_deref()
+                        .unwrap_or(Path::new(METER_DATABASE)),
+                ),
+                max_records: section.max_records,
+            })
     }
 
     /// The `[branding]` table resolved: the display name (or
@@ -2444,11 +2585,7 @@ impl ConfigFile {
                 .filter(|s| !s.is_empty())
                 .unwrap_or(DEFAULT_BRANDING)
                 .to_owned(),
-            logo: section
-                .logo
-                .as_deref()
-                .map(resolve_logo)
-                .transpose()?,
+            logo: section.logo.as_deref().map(resolve_logo).transpose()?,
         })
     }
 
@@ -2482,8 +2619,16 @@ impl ConfigFile {
             (None, Some(value)) => parse_listen(value).context("invalid [server].listen")?,
             (None, None) => ListenAddr::Tcp(DEFAULT_LISTEN.to_owned()),
         };
-        let username = server.site_username.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let hash = server.site_passwd_hash.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let username = server
+            .site_username
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let hash = server
+            .site_passwd_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         let (Some(username), Some(hash)) = (username, hash) else {
             anyhow::bail!(
                 "[server].site_username and [server].site_passwd_hash are required — \
@@ -2605,9 +2750,7 @@ fn dev_hostname(label: &str) -> anyhow::Result<String> {
         "{label:?} is longer than a DNS label may be (63 characters)"
     );
     anyhow::ensure!(
-        label
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
         "{label:?} must be one DNS label — ASCII letters, digits and hyphens only, \
          and no dots (it is used as <label>.zdesk.localhost)"
     );
@@ -2656,7 +2799,6 @@ pub fn read_candidate(path: Option<&Path>) -> anyhow::Result<String> {
         }
     }
 }
-
 
 /// Which config file to read: the one named, or the installed one.
 pub fn config_path(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
@@ -2761,7 +2903,9 @@ fn installed_layout_for_exe(exe: &Path) -> Option<InstalledLayout> {
     // outside that tree, under %ProgramData%, for the same reason as /etc above —
     // replacing the unpacked release must not touch a file holding credentials.
     #[cfg(windows)]
-    if bin_dir.file_name().is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+    if bin_dir
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
         && let Some(program_data) = std::env::var_os("ProgramData")
     {
         let program_data = PathBuf::from(program_data).join("zdesk");
@@ -2809,7 +2953,8 @@ pub(crate) fn vaulted(text: &str) -> String {
             text.to_owned()
         };
     }
-    let mut out = format!("{text}\n\n[master]\nsalt = \"{SALT}\"\ncheck = \"{SALT}\"\n\n[passwords]\n");
+    let mut out =
+        format!("{text}\n\n[master]\nsalt = \"{SALT}\"\ncheck = \"{SALT}\"\n\n[passwords]\n");
     for name in names {
         out.push_str(&format!("{name} = \"{value}\"\n"));
     }
@@ -2842,22 +2987,23 @@ mod tests {
         // the package's tree, which is the arm below.
         #[cfg(unix)]
         {
-            let quick = installed_layout_for_exe(Path::new(
-                "/srv/zdesk/versions/0.0.144/bin/zdesk",
-            ))
-            .unwrap();
+            let quick =
+                installed_layout_for_exe(Path::new("/srv/zdesk/versions/0.0.144/bin/zdesk"))
+                    .unwrap();
             assert_eq!(quick.config, Path::new("/srv/zdesk/etc/zdesk.toml"));
             assert_eq!(quick.state_dir, Path::new("/srv/zdesk/var"));
         }
 
         #[cfg(windows)]
         {
-            let installed = installed_layout_for_exe(Path::new(
-                r"C:\Program Files\zdesk\bin\zdesk.exe",
-            ))
-            .unwrap();
+            let installed =
+                installed_layout_for_exe(Path::new(r"C:\Program Files\zdesk\bin\zdesk.exe"))
+                    .unwrap();
             let program_data = PathBuf::from(std::env::var_os("ProgramData").unwrap());
-            assert_eq!(installed.config, program_data.join("zdesk").join("zdesk.toml"));
+            assert_eq!(
+                installed.config,
+                program_data.join("zdesk").join("zdesk.toml")
+            );
             assert_eq!(installed.state_dir, program_data.join("zdesk"));
         }
 
@@ -2867,8 +3013,16 @@ mod tests {
     #[test]
     fn the_data_directory_is_share_zdesk_in_each_release_tree() {
         let data = |exe: &str| data_dir_for_exe(Path::new(exe));
-        assert_eq!(data("/usr/bin/zdesk"), Some("/usr/share/zdesk".into()), ".deb and .rpm");
-        assert_eq!(data("/usr/local/bin/zdesk"), Some("/usr/local/share/zdesk".into()), ".pkg");
+        assert_eq!(
+            data("/usr/bin/zdesk"),
+            Some("/usr/share/zdesk".into()),
+            ".deb and .rpm"
+        );
+        assert_eq!(
+            data("/usr/local/bin/zdesk"),
+            Some("/usr/local/share/zdesk".into()),
+            ".pkg"
+        );
         assert_eq!(
             data("/opt/zdesk/versions/0.0.294/bin/zdesk"),
             Some("/opt/zdesk/versions/0.0.294/share/zdesk".into()),
@@ -2890,8 +3044,15 @@ mod tests {
 
     #[test]
     fn a_config_outside_an_installation_keeps_state_in_its_own_directory() {
-        assert_eq!(state_dir(Path::new("/home/me/zdesk/uat.toml")), Path::new("/home/me/zdesk"));
-        assert_eq!(state_dir(Path::new("uat.toml")), Path::new(""), "the working directory");
+        assert_eq!(
+            state_dir(Path::new("/home/me/zdesk/uat.toml")),
+            Path::new("/home/me/zdesk")
+        );
+        assert_eq!(
+            state_dir(Path::new("uat.toml")),
+            Path::new(""),
+            "the working directory"
+        );
     }
 
     /// A value with a login hash's shape that no password gives.
@@ -2902,7 +3063,10 @@ mod tests {
     /// The web login's `site_username` and `site_passwd_hash` lines, for configs
     /// that get resolved — resolve requires the login.
     fn site_login_lines() -> String {
-        format!("site_username = \"admin\"\nsite_passwd_hash = \"{}\"", a_login_hash())
+        format!(
+            "site_username = \"admin\"\nsite_passwd_hash = \"{}\"",
+            a_login_hash()
+        )
     }
 
     fn minimal() -> String {
@@ -2931,7 +3095,10 @@ mod tests {
 
     #[test]
     fn minimal_config_gets_defaults() {
-        let config = ConfigFile::parse_fixture(&minimal()).unwrap().resolve().unwrap();
+        let config = ConfigFile::parse_fixture(&minimal())
+            .unwrap()
+            .resolve()
+            .unwrap();
         assert_eq!(config.listen.to_string(), DEFAULT_LISTEN);
         let login = config.auth.login().expect("a served gateway logs in");
         assert_eq!(login.username(), "admin");
@@ -2942,10 +3109,23 @@ mod tests {
         assert_eq!((t.host.as_str(), t.port), ("192.0.2.10", 3389));
         assert_eq!(t.size, None, "no size is configured");
         assert_eq!(t.kept_size(), DEFAULT_SIZE);
-        assert_eq!((t.username.as_str(), t.password_ref.as_deref(), t.domain.as_deref()), ("u", Some("p"), None));
-        assert!(t.password.is_empty(), "a password is the vault's to open, not the parser's");
+        assert_eq!(
+            (
+                t.username.as_str(),
+                t.password_ref.as_deref(),
+                t.domain.as_deref()
+            ),
+            ("u", Some("p"), None)
+        );
+        assert!(
+            t.password.is_empty(),
+            "a password is the vault's to open, not the parser's"
+        );
         assert!(t.egfx(), "the graphics pipeline is on unless turned off");
-        assert!(!t.sound(Choices::default()), "the remote's sound is taken only where it is chosen");
+        assert!(
+            !t.sound(Choices::default()),
+            "the remote's sound is taken only where it is chosen"
+        );
     }
 
     /// A config with one `[server]` line under test.
@@ -2977,16 +3157,28 @@ mod tests {
     /// One key, and it carries both halves, an IPv6 host in brackets.
     #[test]
     fn a_listen_address_is_one_key() {
-        assert_eq!(resolved(r#"listen = "0.0.0.0:8080""#).listen.to_string(), "0.0.0.0:8080");
-        assert_eq!(resolved(r#"listen = "[::1]:52380""#).listen.to_string(), "[::1]:52380");
+        assert_eq!(
+            resolved(r#"listen = "0.0.0.0:8080""#).listen.to_string(),
+            "0.0.0.0:8080"
+        );
+        assert_eq!(
+            resolved(r#"listen = "[::1]:52380""#).listen.to_string(),
+            "[::1]:52380"
+        );
         assert_eq!(
             resolved(r#"listen = "localhost:52380""#).listen.to_string(),
             "localhost:52380"
         );
         // Trimmed: a stray space cannot become part of an address.
-        assert_eq!(resolved(r#"listen = "  127.0.0.1:1  ""#).listen.to_string(), "127.0.0.1:1");
+        assert_eq!(
+            resolved(r#"listen = "  127.0.0.1:1  ""#).listen.to_string(),
+            "127.0.0.1:1"
+        );
         // Port 0 is how the kernel is asked for an ephemeral one.
-        assert_eq!(resolved(r#"listen = "127.0.0.1:0""#).listen.to_string(), "127.0.0.1:0");
+        assert_eq!(
+            resolved(r#"listen = "127.0.0.1:0""#).listen.to_string(),
+            "127.0.0.1:0"
+        );
     }
 
     /// The other kind of address, for a gateway that answers a reverse proxy on
@@ -3012,7 +3204,9 @@ mod tests {
         );
         // It round-trips through the display form, which is what the log prints.
         assert_eq!(
-            resolved(r#"listen = "unix:/run/gw.sock""#).listen.to_string(),
+            resolved(r#"listen = "unix:/run/gw.sock""#)
+                .listen
+                .to_string(),
             "unix:/run/gw.sock"
         );
         // A prefix and nothing else names no socket.
@@ -3032,7 +3226,10 @@ mod tests {
             .expect_err("no Unix sockets on this platform");
         let text = format!("{err:#}");
         assert!(text.contains("not supported on Windows"), "{text}");
-        assert!(text.contains("unix:/run/gw.sock"), "it names the address: {text}");
+        assert!(
+            text.contains("unix:/run/gw.sock"),
+            "it names the address: {text}"
+        );
     }
 
     #[test]
@@ -3077,12 +3274,20 @@ mod tests {
     fn the_command_line_listen_address_wins_and_is_checked() {
         let file = ConfigFile::parse_fixture(&with_server(r#"listen = "127.0.0.1:1""#)).unwrap();
         assert_eq!(
-            file.clone().resolve_with(Some("0.0.0.0:8080"), Path::new(""), Path::new("")).unwrap().listen.to_string(),
+            file.clone()
+                .resolve_with(Some("0.0.0.0:8080"), Path::new(""), Path::new(""))
+                .unwrap()
+                .listen
+                .to_string(),
             "0.0.0.0:8080"
         );
         // Absent, the file still decides.
         assert_eq!(
-            file.clone().resolve_with(None, Path::new(""), Path::new("")).unwrap().listen.to_string(),
+            file.clone()
+                .resolve_with(None, Path::new(""), Path::new(""))
+                .unwrap()
+                .listen
+                .to_string(),
             "127.0.0.1:1"
         );
         // And a config with no address at all falls back to the default.
@@ -3096,7 +3301,9 @@ mod tests {
             DEFAULT_LISTEN
         );
 
-        let err = file.resolve_with(Some("0.0.0.0"), Path::new(""), Path::new("")).unwrap_err();
+        let err = file
+            .resolve_with(Some("0.0.0.0"), Path::new(""), Path::new(""))
+            .unwrap_err();
         assert!(
             format!("{err:#}").contains("--listen"),
             "a bad override must name where it came from: {err:#}"
@@ -3118,12 +3325,16 @@ mod tests {
         assert_eq!(resolved(r#"dev_subdomain = "  ""#).dev_hostname, None);
         // Trimmed, so a stray space cannot become part of a hostname.
         assert_eq!(
-            resolved(r#"dev_subdomain = "  b  ""#).dev_hostname.as_deref(),
+            resolved(r#"dev_subdomain = "  b  ""#)
+                .dev_hostname
+                .as_deref(),
             Some("b.zdesk.localhost")
         );
         // Digits and inner hyphens are legal in a DNS label.
         assert_eq!(
-            resolved(r#"dev_subdomain = "gw-2""#).dev_hostname.as_deref(),
+            resolved(r#"dev_subdomain = "gw-2""#)
+                .dev_hostname
+                .as_deref(),
             Some("gw-2.zdesk.localhost")
         );
     }
@@ -3165,7 +3376,10 @@ mod tests {
     #[test]
     fn branding_defaults_and_overrides() {
         // Unset → the default name, no logo.
-        let config = ConfigFile::parse_fixture(&minimal()).unwrap().resolve().unwrap();
+        let config = ConfigFile::parse_fixture(&minimal())
+            .unwrap()
+            .resolve()
+            .unwrap();
         assert_eq!(config.branding.text, DEFAULT_BRANDING);
         assert!(config.branding.logo.is_none());
 
@@ -3211,7 +3425,11 @@ mod tests {
         let state = Path::new("/var/lib/zdesk");
         let meter = |table: &str| {
             let toml = format!("{table}\n{}", minimal());
-            ConfigFile::parse_fixture(&toml).unwrap().resolve_with(None, state, Path::new("")).unwrap().meter
+            ConfigFile::parse_fixture(&toml)
+                .unwrap()
+                .resolve_with(None, state, Path::new(""))
+                .unwrap()
+                .meter
         };
         assert_eq!(meter(""), None, "no [meter] records nothing");
         assert_eq!(
@@ -3233,12 +3451,19 @@ mod tests {
             Path::new("/srv/meter/zdesk.sqlite3")
         );
         assert_eq!(
-            meter("[meter]\nenabled = true\ndatabase = \"meter/uat.sqlite3\"").unwrap().database,
+            meter("[meter]\nenabled = true\ndatabase = \"meter/uat.sqlite3\"")
+                .unwrap()
+                .database,
             Path::new("/var/lib/zdesk/meter/uat.sqlite3"),
             "a relative database is taken from the state directory"
         );
 
-        assert_eq!(meter("[meter]\nenabled = true\nmax_records = 12").unwrap().max_records, 12);
+        assert_eq!(
+            meter("[meter]\nenabled = true\nmax_records = 12")
+                .unwrap()
+                .max_records,
+            12
+        );
         assert!(
             ConfigFile::parse_fixture(&format!(
                 "[meter]\nenabled = true\ninterval_secs = 60\n{}",
@@ -3271,13 +3496,25 @@ mod tests {
             Some(data.join("decoders/hevc.tar.gz"))
         );
         // A whole path where this runs: on Windows one without a drive is not.
-        let elsewhere = if cfg!(windows) { r"C:\opt\hevc.tar.gz" } else { "/opt/hevc.tar.gz" };
+        let elsewhere = if cfg!(windows) {
+            r"C:\opt\hevc.tar.gz"
+        } else {
+            "/opt/hevc.tar.gz"
+        };
         let named = format!("[hevc_wasm]\narchive = '{elsewhere}'");
         assert_eq!(archive(&named), Some(PathBuf::from(elsewhere)));
         let released = data.join(crate::hevc_wasm::archive_name());
         std::fs::write(&released, b"").unwrap();
-        assert_eq!(archive(""), Some(released), "the archive is found where the release puts it");
-        assert_eq!(archive(&named), Some(PathBuf::from(elsewhere)), "a named archive is the one read");
+        assert_eq!(
+            archive(""),
+            Some(released),
+            "the archive is found where the release puts it"
+        );
+        assert_eq!(
+            archive(&named),
+            Some(PathBuf::from(elsewhere)),
+            "a named archive is the one read"
+        );
         for (bad, says) in [
             ("", "archive"),
             ("archive = \"\"", "[hevc_wasm].archive"),
@@ -3308,19 +3545,54 @@ mod tests {
         assert!(mac.software(true));
         assert!(!mac.software(false), "not on a gateway without the decoder");
 
-        let stated = |native_hevc, page_hevc, serves_hevc| Decoders::stated(native_hevc, page_hevc, serves_hevc, false, false, false, false);
-        let passed = Choices { passthrough: Some(Passthrough::AppleMedia), ..Choices::default() };
-        assert_eq!(mac.beyond(passed, stated(true, false, false)), None, "the browser's own decoder");
-        assert_eq!(mac.beyond(passed, stated(false, true, true)), None, "the page's decoder");
-        assert_eq!(mac.beyond(passed, stated(false, true, false)), Some(Passthrough::AppleMedia), "not served");
-        assert_eq!(mac.beyond(passed, stated(false, false, true)), Some(Passthrough::AppleMedia), "cannot run it");
+        let stated = |native_hevc, page_hevc, serves_hevc| {
+            Decoders::stated(
+                native_hevc,
+                page_hevc,
+                serves_hevc,
+                false,
+                false,
+                false,
+                false,
+            )
+        };
+        let passed = Choices {
+            passthrough: Some(Passthrough::AppleMedia),
+            ..Choices::default()
+        };
+        assert_eq!(
+            mac.beyond(passed, stated(true, false, false)),
+            None,
+            "the browser's own decoder"
+        );
+        assert_eq!(
+            mac.beyond(passed, stated(false, true, true)),
+            None,
+            "the page's decoder"
+        );
+        assert_eq!(
+            mac.beyond(passed, stated(false, true, false)),
+            Some(Passthrough::AppleMedia),
+            "not served"
+        );
+        assert_eq!(
+            mac.beyond(passed, stated(false, false, true)),
+            Some(Passthrough::AppleMedia),
+            "cannot run it"
+        );
     }
 
     /// The gateway has no decoder of a High Performance Mac's picture, so no key
     /// says where one is.
     #[test]
     fn no_decoder_is_configured() {
-        assert!(ConfigFile::parse_fixture(&format!("[hp_decoders]\nffmpeg_dir = \"/opt/ffmpeg\"\n{}", minimal())).is_err());
+        assert!(
+            ConfigFile::parse_fixture(&format!(
+                "[hp_decoders]\nffmpeg_dir = \"/opt/ffmpeg\"\n{}",
+                minimal()
+            ))
+            .is_err()
+        );
     }
 
     /// The keys are checked as written, enabled or not: a disabled table is still a
@@ -3332,9 +3604,18 @@ mod tests {
             ("database = \"u.sqlite3\"", "enabled"),
             ("enabled = false\ndatabase = \"\"", "[meter].database"),
             ("enabled = true\ndatabase = \"\"", "[meter].database"),
-            ("enabled = true\ndatabase = \"u.sqlite3\"\ninterval_secs = 60", "interval_secs"),
-            ("enabled = true\ndatabase = \"u.sqlite3\"\nmax_records = 0", "[meter].max_records"),
-            ("enabled = true\ndatabase = \"u.sqlite3\"\nmax_count = 3", "max_count"),
+            (
+                "enabled = true\ndatabase = \"u.sqlite3\"\ninterval_secs = 60",
+                "interval_secs",
+            ),
+            (
+                "enabled = true\ndatabase = \"u.sqlite3\"\nmax_records = 0",
+                "[meter].max_records",
+            ),
+            (
+                "enabled = true\ndatabase = \"u.sqlite3\"\nmax_count = 3",
+                "max_count",
+            ),
         ] {
             let toml = format!("[meter]\n{bad}\n{}", minimal());
             let err = ConfigFile::parse_fixture(&toml).expect_err(bad);
@@ -3347,7 +3628,10 @@ mod tests {
     /// including by `check-config`, which resolves on the way through.
     #[test]
     fn a_logo_that_is_not_an_image_is_refused() {
-        for bad in ["logo = \"/etc/zdesk/logo.pdf\"", "logo = \"/etc/zdesk/logo\""] {
+        for bad in [
+            "logo = \"/etc/zdesk/logo.pdf\"",
+            "logo = \"/etc/zdesk/logo\"",
+        ] {
             let toml = format!("[branding]\n{bad}\n{}", minimal());
             let err = ConfigFile::parse_fixture(&toml)
                 .and_then(ConfigFile::resolve)
@@ -3377,10 +3661,18 @@ mod tests {
 
         // Through a real config, and wrapped the way `base64` prints it: TOML keeps
         // a multi-line string's newlines, so the payload arrives with them in it.
-        let wrapped = PNG_DATA_URL.replace("base64,", "base64,\n").replace("AAAA", "AAAA\n  ");
-        let toml = format!("[branding]\nlogo = \"\"\"\n{wrapped}\n\"\"\"\n{}", minimal());
+        let wrapped = PNG_DATA_URL
+            .replace("base64,", "base64,\n")
+            .replace("AAAA", "AAAA\n  ");
+        let toml = format!(
+            "[branding]\nlogo = \"\"\"\n{wrapped}\n\"\"\"\n{}",
+            minimal()
+        );
         let config = ConfigFile::parse_fixture(&toml).unwrap().resolve().unwrap();
-        let Some(Logo { source: LogoSource::Inline(from_file), mime }) = config.branding.logo
+        let Some(Logo {
+            source: LogoSource::Inline(from_file),
+            mime,
+        }) = config.branding.logo
         else {
             panic!("the wrapped data: URL is the same image");
         };
@@ -3474,17 +3766,27 @@ mod tests {
             host = "192.0.2.10"
         "#;
         let refused = |text: &str| {
-            let err = ConfigFile::parse_fixture(text).unwrap().resolve().unwrap_err();
+            let err = ConfigFile::parse_fixture(text)
+                .unwrap()
+                .resolve()
+                .unwrap_err();
             let msg = format!("{err:#}");
-            assert!(msg.contains("site_username") && msg.contains("password hash"), "{msg}");
+            assert!(
+                msg.contains("site_username") && msg.contains("password hash"),
+                "{msg}"
+            );
         };
         refused(toml);
         let value = a_login_hash();
         refused(&format!("[server]\nsite_passwd_hash = \"{value}\"\n{toml}"));
         refused(&format!("[server]\nsite_username = \"admin\"\n{toml}"));
         // Whitespace-only is as good as absent.
-        refused(&format!("[server]\nsite_username = \"  \"\nsite_passwd_hash = \"{value}\"\n{toml}"));
-        refused(&format!("[server]\nsite_username = \"admin\"\nsite_passwd_hash = \"  \"\n{toml}"));
+        refused(&format!(
+            "[server]\nsite_username = \"  \"\nsite_passwd_hash = \"{value}\"\n{toml}"
+        ));
+        refused(&format!(
+            "[server]\nsite_username = \"admin\"\nsite_passwd_hash = \"  \"\n{toml}"
+        ));
     }
 
     /// A password written as it is, rather than hashed, is refused when the file is
@@ -3505,7 +3807,10 @@ mod tests {
         "#;
         let err = ConfigFile::parse_fixture(toml).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("[server].site_passwd_hash") && msg.contains("zdesk password hash"), "{msg}");
+        assert!(
+            msg.contains("[server].site_passwd_hash") && msg.contains("zdesk password hash"),
+            "{msg}"
+        );
     }
 
     /// The web login's hash is checked under the file's `[master]`, and a file that
@@ -3539,12 +3844,24 @@ mod tests {
         let mut file = ConfigFile::parse(&empty).unwrap();
         file.unlock(Some(&key)).unwrap();
         let err = file.resolve().unwrap_err();
-        assert!(format!("{err:#}").contains("the login password is empty"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("the login password is empty"),
+            "{err:#}"
+        );
 
         // Without [master] there is nothing to open it with.
-        let text = text.replace(&format!("[master]\nsalt = \"{}\"\ncheck = \"{}\"\n", section.salt, section.check), "");
+        let text = text.replace(
+            &format!(
+                "[master]\nsalt = \"{}\"\ncheck = \"{}\"\n",
+                section.salt, section.check
+            ),
+            "",
+        );
         let err = ConfigFile::parse(&text).unwrap_err();
-        assert!(format!("{err:#}").contains("site_passwd_hash has no [master]"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("site_passwd_hash has no [master]"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -3638,12 +3955,14 @@ mod tests {
                 apple_media: false,
                 apple_h264: false,
                 hevc_instead: false,
-                apple_standard: None, apple_combined: false,
+                apple_standard: None,
+                apple_combined: false,
                 rdp_graphics: false,
                 rdp_h264: false,
                 rdp_video: false,
                 rdp_small_cache: false,
-                wlshare: false, wlshare_tiles: None,
+                wlshare: false,
+                wlshare_tiles: None,
             }
         );
     }
@@ -3654,9 +3973,16 @@ mod tests {
     fn no_key_tunes_the_picture() {
         for key in ["video_quality = 60", "render_adaptive = false"] {
             let err = parse_target(key).unwrap_err();
-            assert!(format!("{err:#}").contains("unknown field"), "{key}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("unknown field"),
+                "{key}: {err:#}"
+            );
             #[cfg(feature = "wlshare")]
-            assert!(ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\n{key}"))).is_err(), "{key}");
+            assert!(
+                ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\n{key}")))
+                    .is_err(),
+                "{key}"
+            );
         }
     }
 
@@ -3665,13 +3991,32 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[test]
     fn a_card_describes_the_picture() {
-        assert_eq!(parse_target("").unwrap().targets[0].render_summary(), "tiles");
+        assert_eq!(
+            parse_target("").unwrap().targets[0].render_summary(),
+            "tiles"
+        );
         let plain = &ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets[0];
         assert_eq!(plain.render_summary(), "tiles");
-        assert_eq!(plain.render_plan(Choices::default(), Decoders::ALL).describe(), "tiles");
-        let wlshare = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).unwrap().targets.remove(0);
-        assert_eq!(wlshare.render_summary(), "H.264 video, or progressive tiles, or tiles with motion, or lossless tiles");
-        assert_eq!(wlshare.render_plan(Choices::default(), Decoders::ALL).describe(), "H.264 video");
+        assert_eq!(
+            plain
+                .render_plan(Choices::default(), Decoders::ALL)
+                .describe(),
+            "tiles"
+        );
+        let wlshare = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\""))
+            .unwrap()
+            .targets
+            .remove(0);
+        assert_eq!(
+            wlshare.render_summary(),
+            "H.264 video, or progressive tiles, or tiles with motion, or lossless tiles"
+        );
+        assert_eq!(
+            wlshare
+                .render_plan(Choices::default(), Decoders::ALL)
+                .describe(),
+            "H.264 video"
+        );
     }
 
     // Nothing in a target says what the remote runs. The engines discover it
@@ -3779,10 +4124,15 @@ mod tests {
     fn a_plain_vnc_target_takes_an_account_or_the_servers_own_password() {
         let err = ConfigFile::parse_fixture(&vnc_toml(r#"username = "andrew""#)).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("username without password_ref") && msg.contains("RSA-AES"), "{msg}");
+        assert!(
+            msg.contains("username without password_ref") && msg.contains("RSA-AES"),
+            "{msg}"
+        );
 
-        let account = ConfigFile::parse_fixture(&vnc_toml("username = \"andrew\"\npassword_ref = \"hunter2\""))
-            .unwrap();
+        let account = ConfigFile::parse_fixture(&vnc_toml(
+            "username = \"andrew\"\npassword_ref = \"hunter2\"",
+        ))
+        .unwrap();
         assert_eq!(account.targets[0].username, "andrew");
         assert_eq!(account.targets[0].password_ref.as_deref(), Some("hunter2"));
         assert!(account.targets[0].subtype.is_none());
@@ -3797,8 +4147,12 @@ mod tests {
 
         // A plain target takes the server's own password, and nothing at all is
         // still a target: a VNC server may need no credential whatsoever.
-        let plain = ConfigFile::parse_fixture(&vnc_toml(r#"vnc_password_ref = "hunter2""#)).unwrap();
-        assert_eq!(plain.targets[0].vnc_password_ref.as_deref(), Some("hunter2"));
+        let plain =
+            ConfigFile::parse_fixture(&vnc_toml(r#"vnc_password_ref = "hunter2""#)).unwrap();
+        assert_eq!(
+            plain.targets[0].vnc_password_ref.as_deref(),
+            Some("hunter2")
+        );
         assert!(plain.targets[0].subtype.is_none());
         assert!(ConfigFile::parse_fixture(&vnc_toml("")).is_ok());
     }
@@ -3811,18 +4165,31 @@ mod tests {
     fn a_target_names_its_password_in_the_vault() {
         for inline in [r#"password = "hunter2""#, r#"vnc_password = "hunter2""#] {
             let err = ConfigFile::parse(&vnc_toml(inline)).unwrap_err();
-            assert!(format!("{err:#}").contains("unknown field"), "{inline}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("unknown field"),
+                "{inline}: {err:#}"
+            );
         }
         let err = ConfigFile::parse(&vnc_toml(r#"vnc_password_ref = "pi""#)).unwrap_err();
-        assert!(format!("{err:#}").contains("zdesk password encrypt"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("zdesk password encrypt"),
+            "{err:#}"
+        );
 
         let vaulted = vaulted(&vnc_toml(r#"vnc_password_ref = "pi""#));
         let typed = vaulted.replace(&format!("pi = \"{}", crate::vault::PREFIX), "pi = \"");
         let err = ConfigFile::parse(&typed).unwrap_err();
-        assert!(format!("{err:#}").contains("not an encrypted value"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("not an encrypted value"),
+            "{err:#}"
+        );
 
         let (no_master, _) = vaulted.split_once("[master]").unwrap();
-        let orphaned = format!("{no_master}[passwords]\npi = \"{}{}\"\n", crate::vault::PREFIX, "A".repeat(40));
+        let orphaned = format!(
+            "{no_master}[passwords]\npi = \"{}{}\"\n",
+            crate::vault::PREFIX,
+            "A".repeat(40)
+        );
         let err = ConfigFile::parse(&orphaned).unwrap_err();
         assert!(format!("{err:#}").contains("no [master]"), "{err:#}");
     }
@@ -3846,10 +4213,17 @@ mod tests {
     /// `check-config` refuses one that does not, as `serve` would.
     #[test]
     fn a_served_config_names_its_master_password_file() {
-        for text in [vaulted(&vnc_toml(r#"vnc_password_ref = "pi""#)), vaulted(&vnc_toml(""))] {
+        for text in [
+            vaulted(&vnc_toml(r#"vnc_password_ref = "pi""#)),
+            vaulted(&vnc_toml("")),
+        ] {
             let err = check(&text).unwrap_err();
-            assert!(format!("{err:#}").contains("[server].master_password_file"), "{err:#}");
-            check(&text.replacen("[server]", "[server]\nmaster_password_file = \"mp\"", 1)).unwrap();
+            assert!(
+                format!("{err:#}").contains("[server].master_password_file"),
+                "{err:#}"
+            );
+            check(&text.replacen("[server]", "[server]\nmaster_password_file = \"mp\"", 1))
+                .unwrap();
         }
     }
 
@@ -3857,7 +4231,9 @@ mod tests {
     /// that declaration implies and refuses the ones it does not use.
     #[test]
     fn the_ard_subtype_wants_an_account_and_nothing_else() {
-        let ard = |extra: &str| ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"ard\"\n{extra}")));
+        let ard = |extra: &str| {
+            ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"ard\"\n{extra}")))
+        };
 
         let target = &ard("username = \"andrew\"\npassword_ref = \"hunter2\"")
             .unwrap()
@@ -3867,7 +4243,10 @@ mod tests {
 
         // Half a credential is no credential.
         let err = ard(r#"username = "andrew""#).unwrap_err();
-        assert!(format!("{err:#}").contains("no username and password"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no username and password"),
+            "{err:#}"
+        );
 
         // The machine's own password has no part in it.
         let err = ard("username = \"andrew\"\npassword_ref = \"h\"\nvnc_password_ref = \"other\"")
@@ -3877,7 +4256,9 @@ mod tests {
         // Standard mode exposes physical displays, which this gateway never resizes,
         // and never touches the Mac's sound: the picker offers its picture alone,
         // the tiles of the Mac's Full quality or its Adaptive picture passed.
-        let standard = &ard("username = \"andrew\"\npassword_ref = \"h\"").unwrap().targets[0];
+        let standard = &ard("username = \"andrew\"\npassword_ref = \"h\"")
+            .unwrap()
+            .targets[0];
         assert_eq!(
             standard.offers(),
             Offers {
@@ -3958,12 +4339,16 @@ mod tests {
         // The key says nothing on High Performance, and nothing else has a virtual
         // display to open.
         let refused = [
-            ("subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n", "always opens a virtual display"),
+            (
+                "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n",
+                "always opens a virtual display",
+            ),
             ("", "only subtype \"ard\" takes"),
         ];
         for (subtype, reason) in refused {
-            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{subtype}virtual_display = true")))
-                .unwrap_err();
+            let err =
+                ConfigFile::parse_fixture(&vnc_toml(&format!("{subtype}virtual_display = true")))
+                    .unwrap_err();
             assert!(format!("{err:#}").contains(reason), "{err:#}");
         }
         let err = ConfigFile::parse_fixture(&format!(
@@ -3972,15 +4357,21 @@ mod tests {
             site_login_lines()
         ))
         .unwrap_err();
-        assert!(format!("{err:#}").contains("only subtype \"ard\" takes"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("only subtype \"ard\" takes"),
+            "{err:#}"
+        );
     }
 
     /// A relay is High Performance's alone, and is written host:port.
     #[test]
     fn a_relay_is_a_high_performance_targets_host_and_port() {
-        let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
+        let hp =
+            "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
         for relay in ["macwork.lan:15900", "10.0.0.1:15900", "[fdb8::1]:15900"] {
-            let target = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap().targets[0];
+            let target = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\"")))
+                .unwrap()
+                .targets[0];
             assert_eq!(target.relay.as_deref(), Some(relay));
         }
         for relay in [
@@ -3994,12 +4385,20 @@ mod tests {
             "[10.0.0.1]:15900",
             "mac]work:15900",
         ] {
-            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\""))).unwrap_err();
-            assert!(format!("{err:#}").contains("is not host:port"), "{relay}: {err:#}");
+            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}relay = \"{relay}\"")))
+                .unwrap_err();
+            assert!(
+                format!("{err:#}").contains("is not host:port"),
+                "{relay}: {err:#}"
+            );
         }
         let ard = "subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
-        let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}relay = \"10.0.0.1:15900\""))).unwrap_err();
-        assert!(format!("{err:#}").contains("only an ard-high-performance target takes"), "{err:#}");
+        let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}relay = \"10.0.0.1:15900\"")))
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("only an ard-high-performance target takes"),
+            "{err:#}"
+        );
     }
 
     /// The high-performance subtype carries the same account credentials as plain
@@ -4025,7 +4424,10 @@ mod tests {
             "subtype = \"ard-high-performance\"\nvnc_password_ref = \"other\"",
         ))
         .unwrap_err();
-        assert!(format!("{err:#}").contains("no username and password"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no username and password"),
+            "{err:#}"
+        );
     }
 
     /// A Standard Mac's picture is the tiles of its Full quality, inflated here,
@@ -4034,12 +4436,23 @@ mod tests {
     /// the tiles, on one screen at a time and on Combined Display alike.
     #[test]
     fn a_standard_session_is_the_tiles_unless_the_macs_adaptive_picture_is_chosen() {
-        let standard = ConfigFile::parse_fixture(&vnc_toml("subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\n"))
-            .unwrap()
-            .targets
-            .remove(0);
-        let adaptive = Choices { passthrough: Some(Passthrough::AppleAdaptive), ..Choices::default() };
-        let none = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
+        let standard = ConfigFile::parse_fixture(&vnc_toml(
+            "subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\n",
+        ))
+        .unwrap()
+        .targets
+        .remove(0);
+        let adaptive = Choices {
+            passthrough: Some(Passthrough::AppleAdaptive),
+            ..Choices::default()
+        };
+        let none = Decoders {
+            apple_media: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
 
         assert!(standard.standard_mode());
         assert_eq!(standard.accepts(Choices::default()), Ok(()));
@@ -4048,16 +4461,26 @@ mod tests {
         assert_eq!(plan.apple_standard, Some(StandardQuality::Full));
         assert!(!plan.apple_combined);
         assert_eq!(plan.passthrough(), None);
-        assert!(plan.resumes(), "the tiles start over for a browser that comes back");
+        assert!(
+            plan.resumes(),
+            "the tiles start over for a browser that comes back"
+        );
         assert_eq!(plan.describe(), "the Mac's Full quality, tiles");
 
         assert_eq!(standard.accepts(adaptive), Ok(()));
-        assert_eq!(standard.beyond(adaptive, none), None, "every browser takes it");
+        assert_eq!(
+            standard.beyond(adaptive, none),
+            None,
+            "every browser takes it"
+        );
         let plan = standard.render_plan(adaptive, none);
         assert_eq!(plan.apple_standard, Some(StandardQuality::Adaptive));
         assert_eq!(plan.passthrough(), Some(Passthrough::AppleAdaptive));
         assert!(!plan.resumes(), "drawn against what the page holds");
-        assert_eq!(plan.describe(), "the Mac's Adaptive picture, passed through");
+        assert_eq!(
+            plan.describe(),
+            "the Mac's Adaptive picture, passed through"
+        );
         assert_eq!(Passthrough::AppleAdaptive.name(), "apple-adaptive");
 
         assert_eq!(
@@ -4067,22 +4490,43 @@ mod tests {
 
         // Combined Display is a view of its own, composed here from the Mac's Full
         // quality: it names no passthrough, and its picture is the tiles.
-        let combined = Choices { standard_view: StandardView::Combined, ..Choices::default() };
+        let combined = Choices {
+            standard_view: StandardView::Combined,
+            ..Choices::default()
+        };
         assert_eq!(standard.accepts(combined), Ok(()));
         let plan = standard.render_plan(combined, none);
         assert!(plan.apple_combined);
-        assert_eq!((plan.apple_standard, plan.passthrough()), (Some(StandardQuality::Full), None));
-        assert!(plan.resumes(), "the tiles start over for a browser that comes back");
+        assert_eq!(
+            (plan.apple_standard, plan.passthrough()),
+            (Some(StandardQuality::Full), None)
+        );
+        assert!(
+            plan.resumes(),
+            "the tiles start over for a browser that comes back"
+        );
         assert_eq!(plan.describe(), "Combined Display, tiles");
         assert_eq!(
-            standard.accepts(Choices { passthrough: Some(Passthrough::AppleAdaptive), ..combined }),
-            Err(NotOffered { target: standard.name.clone(), choice: "a passthrough on Combined Display" })
+            standard.accepts(Choices {
+                passthrough: Some(Passthrough::AppleAdaptive),
+                ..combined
+            }),
+            Err(NotOffered {
+                target: standard.name.clone(),
+                choice: "a passthrough on Combined Display"
+            })
         );
 
         // No other target has a Standard quality.
-        let plain = ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets.remove(0);
+        let plain = ConfigFile::parse_fixture(&vnc_toml(""))
+            .unwrap()
+            .targets
+            .remove(0);
         assert!(!plain.standard_mode());
-        assert_eq!(plain.render_plan(Choices::default(), none).apple_standard, None);
+        assert_eq!(
+            plain.render_plan(Choices::default(), none).apple_standard,
+            None
+        );
     }
 
     /// The Mac's stream is passed in the codec the session was started with,
@@ -4101,12 +4545,34 @@ mod tests {
             .remove(0)
         };
         let hp = mac("ard-high-performance");
-        let takes = Decoders { apple_media: true, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
-        let declines = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
-        let passed = Choices { passthrough: Some(Passthrough::AppleMedia), ..Choices::default() };
-        let h264 = Choices { passthrough: Some(Passthrough::AppleH264), ..Choices::default() };
+        let takes = Decoders {
+            apple_media: true,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
+        let declines = Decoders {
+            apple_media: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
+        let passed = Choices {
+            passthrough: Some(Passthrough::AppleMedia),
+            ..Choices::default()
+        };
+        let h264 = Choices {
+            passthrough: Some(Passthrough::AppleH264),
+            ..Choices::default()
+        };
 
-        assert_eq!(hp.offers().passthrough, [Passthrough::AppleMedia, Passthrough::AppleH264], "the picker's order");
+        assert_eq!(
+            hp.offers().passthrough,
+            [Passthrough::AppleMedia, Passthrough::AppleH264],
+            "the picker's order"
+        );
         assert!(hp.render_plan(passed, takes).apple_media);
         assert_eq!(
             hp.render_plan(passed, takes).describe(),
@@ -4115,7 +4581,10 @@ mod tests {
         assert_eq!(hp.accepts(passed), Ok(()));
         assert_eq!(
             hp.accepts(Choices::default()),
-            Err(NotOffered { target: "mac".to_owned(), choice: "a picture encoded here" }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "a picture encoded here"
+            }),
             "neither stream named"
         );
         assert_eq!(hp.beyond(passed, takes), None);
@@ -4133,11 +4602,20 @@ mod tests {
         // that takes it.
         assert!(!plan.hevc_instead);
         assert!(hp.render_plan(h264, takes).hevc_instead);
-        assert!(!hp.render_plan(passed, takes).hevc_instead, "the HEVC is what it passes");
+        assert!(
+            !hp.render_plan(passed, takes).hevc_instead,
+            "the HEVC is what it passes"
+        );
         assert_eq!(Passthrough::AppleH264.name(), "apple-h264");
         assert_eq!(
-            hp.accepts(Choices { passthrough: Some(Passthrough::RdpGraphics), ..Choices::default() }),
-            Err(NotOffered { target: "mac".to_owned(), choice: "a passthrough" }),
+            hp.accepts(Choices {
+                passthrough: Some(Passthrough::RdpGraphics),
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "a passthrough"
+            }),
             "another type's stream"
         );
         assert_eq!(
@@ -4150,32 +4628,72 @@ mod tests {
         assert!(!hp.offers().audio);
         assert!(hp.sound(Choices::default()));
         assert_eq!(
-            hp.accepts(Choices { audio: Sound::Opus, ..Choices::default() }),
-            Err(NotOffered { target: "mac".to_owned(), choice: "sound" })
+            hp.accepts(Choices {
+                audio: Sound::Opus,
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "sound"
+            })
         );
 
         // One tile is asked of a Mac whose picture is passed, and of no other.
-        assert_eq!(hp.accepts(Choices { whole: true, ..passed }), Ok(()));
-        assert_eq!(hp.accepts(Choices { whole: true, ..h264 }), Ok(()));
+        assert_eq!(
+            hp.accepts(Choices {
+                whole: true,
+                ..passed
+            }),
+            Ok(())
+        );
+        assert_eq!(
+            hp.accepts(Choices {
+                whole: true,
+                ..h264
+            }),
+            Ok(())
+        );
 
         let standard = mac("ard");
         assert_eq!(
-            standard.accepts(Choices { whole: true, passthrough: Some(Passthrough::AppleAdaptive), ..Choices::default() }),
-            Err(NotOffered { target: "mac".to_owned(), choice: "a picture in one tile" })
+            standard.accepts(Choices {
+                whole: true,
+                passthrough: Some(Passthrough::AppleAdaptive),
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "a picture in one tile"
+            })
         );
         assert_eq!(
-            standard.accepts(Choices { whole: true, ..Choices::default() }),
-            Err(NotOffered { target: "mac".to_owned(), choice: "a picture in one tile" }),
+            standard.accepts(Choices {
+                whole: true,
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "a picture in one tile"
+            }),
             "the Full quality is the tiles, which have no one tile to ask for"
         );
         assert_eq!(standard.offers().passthrough, [Passthrough::AppleAdaptive]);
         assert_eq!(
             standard.accepts(passed),
-            Err(NotOffered { target: "mac".to_owned(), choice: "a passthrough" })
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "a passthrough"
+            })
         );
         assert_eq!(
-            standard.accepts(Choices { size: Sizing::Window, ..Choices::default() }),
-            Err(NotOffered { target: "mac".to_owned(), choice: "resize" })
+            standard.accepts(Choices {
+                size: Sizing::Window,
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice: "resize"
+            })
         );
     }
 
@@ -4185,12 +4703,27 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[test]
     fn the_opening_size_is_the_kept_size_or_the_clients_screen() {
-        let screen = HostDisplay { w: 1728, h: 1117, scale: 200, fit: false };
-        let phone = HostDisplay { w: 430, h: 932, scale: 300, fit: true };
+        let screen = HostDisplay {
+            w: 1728,
+            h: 1117,
+            scale: 200,
+            fit: false,
+        };
+        let phone = HostDisplay {
+            w: 430,
+            h: 932,
+            scale: 300,
+            fit: true,
+        };
 
-        let sized = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"\nsize = \"1600x1000\"")).unwrap().targets[0];
+        let sized =
+            &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"\nsize = \"1600x1000\""))
+                .unwrap()
+                .targets[0];
         assert_eq!(sized.kept_size(), (1600, 1000));
-        let unsized_ = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).unwrap().targets[0];
+        let unsized_ = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\""))
+            .unwrap()
+            .targets[0];
         assert_eq!(unsized_.kept_size(), DEFAULT_SIZE);
 
         for display in [Some(screen), Some(phone), None] {
@@ -4205,8 +4738,14 @@ mod tests {
         // at the client's screen. A pinch-zoom client's screen is not an opening
         // size, and neither is no screen at all.
         for target in [sized, unsized_] {
-            assert_eq!(target.opening_size(Sizing::Window, Some(screen)), (1728, 1117));
-            assert_eq!(target.opening_size(Sizing::Window, Some(phone)), DEFAULT_SIZE);
+            assert_eq!(
+                target.opening_size(Sizing::Window, Some(screen)),
+                (1728, 1117)
+            );
+            assert_eq!(
+                target.opening_size(Sizing::Window, Some(phone)),
+                DEFAULT_SIZE
+            );
             assert_eq!(target.opening_size(Sizing::Window, None), DEFAULT_SIZE);
         }
     }
@@ -4214,9 +4753,21 @@ mod tests {
     /// One key, a width by a height.
     #[test]
     fn a_size_is_written_as_a_width_by_a_height() {
-        for wrong in ["1600", "1600x", "x1000", "1600 x 1000", "1600X1000", "1600x1000x2", "70000x1000"] {
-            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("size = \"{wrong}\""))).unwrap_err();
-            assert!(format!("{err:#}").contains("is not a width by a height"), "{wrong}: {err:#}");
+        for wrong in [
+            "1600",
+            "1600x",
+            "x1000",
+            "1600 x 1000",
+            "1600X1000",
+            "1600x1000x2",
+            "70000x1000",
+        ] {
+            let err =
+                ConfigFile::parse_fixture(&vnc_toml(&format!("size = \"{wrong}\""))).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("is not a width by a height"),
+                "{wrong}: {err:#}"
+            );
         }
     }
 
@@ -4225,12 +4776,15 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[test]
     fn a_size_a_retina_client_would_shrink_is_refused_on_a_virtual_display() {
-        let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
+        let hp =
+            "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
         let virt = "subtype = \"ard\"\nvirtual_display = true\nusername = \"andrew\"\npassword_ref = \"h\"\n";
         for mac in [hp, virt] {
-            ConfigFile::parse_fixture(&vnc_toml(&format!("{mac}size = \"1920x1080\""))).expect("the most it holds at 2x");
+            ConfigFile::parse_fixture(&vnc_toml(&format!("{mac}size = \"1920x1080\"")))
+                .expect("the most it holds at 2x");
             for over in ["2560x1440", "1921x1080", "1920x1200"] {
-                let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{mac}size = \"{over}\""))).unwrap_err();
+                let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{mac}size = \"{over}\"")))
+                    .unwrap_err();
                 assert!(format!("{err:#}").contains("at most 1920x1080"), "{err:#}");
             }
         }
@@ -4245,12 +4799,14 @@ mod tests {
         let ard = "subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
         let standard = &ConfigFile::parse_fixture(&vnc_toml(ard)).unwrap().targets[0];
         assert!(!standard.sized());
-        let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}size = \"1600x1000\""))).unwrap_err();
+        let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}size = \"1600x1000\"")))
+            .unwrap_err();
         assert!(format!("{err:#}").contains("never sizes them"), "{err:#}");
-        let virtual_display =
-            &ConfigFile::parse_fixture(&vnc_toml(&format!("{ard}virtual_display = true\nsize = \"1600x1000\"")))
-                .unwrap()
-                .targets[0];
+        let virtual_display = &ConfigFile::parse_fixture(&vnc_toml(&format!(
+            "{ard}virtual_display = true\nsize = \"1600x1000\""
+        )))
+        .unwrap()
+        .targets[0];
         assert!(virtual_display.sized());
     }
 
@@ -4262,8 +4818,14 @@ mod tests {
         let plain = &ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets[0];
         assert!(!plain.sized());
         let err = ConfigFile::parse_fixture(&vnc_toml("size = \"1600x1000\"")).unwrap_err();
-        assert!(format!("{err:#}").contains("own size and never sizes it"), "{err:#}");
-        let wlshare = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"\nsize = \"1600x1000\"")).unwrap().targets[0];
+        assert!(
+            format!("{err:#}").contains("own size and never sizes it"),
+            "{err:#}"
+        );
+        let wlshare =
+            &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"\nsize = \"1600x1000\""))
+                .unwrap()
+                .targets[0];
         assert!(wlshare.sized());
     }
 
@@ -4275,37 +4837,75 @@ mod tests {
     #[cfg(feature = "wlshare")]
     #[test]
     fn virtual_displays_are_one_unless_asked_and_only_where_they_are_created() {
-        let one = ConfigFile::parse_fixture(&rdp_toml("")).unwrap().targets.remove(0);
+        let one = ConfigFile::parse_fixture(&rdp_toml(""))
+            .unwrap()
+            .targets
+            .remove(0);
         assert_eq!(one.virtual_displays, 1);
         assert_eq!(one.offers().passthrough, [Passthrough::RdpGraphics]);
 
-        let two = ConfigFile::parse_fixture(&rdp_toml("virtual_displays = 2")).unwrap().targets.remove(0);
+        let two = ConfigFile::parse_fixture(&rdp_toml("virtual_displays = 2"))
+            .unwrap()
+            .targets
+            .remove(0);
         assert_eq!(two.virtual_displays, 2);
         // Two displays are passed, never encoded: the bitmap path is one.
-        let err = ConfigFile::parse_fixture(&rdp_toml("virtual_displays = 2\negfx = false")).unwrap_err();
+        let err =
+            ConfigFile::parse_fixture(&rdp_toml("virtual_displays = 2\negfx = false")).unwrap_err();
         assert!(format!("{err:#}").contains("never encoded here"), "{err:#}");
-        assert_eq!(two.offers().passthrough, [Passthrough::RdpGraphics], "the passthrough shows one display of the span");
-        assert!(two.offers().resize, "the window still drives each display's size");
-        assert_eq!(two.accepts(Choices { passthrough: Some(Passthrough::RdpGraphics), ..Choices::default() }), Ok(()));
+        assert_eq!(
+            two.offers().passthrough,
+            [Passthrough::RdpGraphics],
+            "the passthrough shows one display of the span"
+        );
+        assert!(
+            two.offers().resize,
+            "the window still drives each display's size"
+        );
+        assert_eq!(
+            two.accepts(Choices {
+                passthrough: Some(Passthrough::RdpGraphics),
+                ..Choices::default()
+            }),
+            Ok(())
+        );
         // Where the second sits is chosen only where there is a second, on a host
         // that is told where: the Mac places its own.
-        let below = Choices { placement: Placement::Bottom, ..Choices::default() };
+        let below = Choices {
+            placement: Placement::Bottom,
+            ..Choices::default()
+        };
         assert_eq!(two.accepts(below), Ok(()));
-        assert_eq!(one.accepts(below).unwrap_err().choice, "a place for the second display");
+        assert_eq!(
+            one.accepts(below).unwrap_err().choice,
+            "a place for the second display"
+        );
 
         for bad in ["virtual_displays = 0", "virtual_displays = 3"] {
             let err = ConfigFile::parse_fixture(&rdp_toml(bad)).unwrap_err();
-            assert!(format!("{err:#}").contains("must be 1 to 2"), "{bad}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("must be 1 to 2"),
+                "{bad}: {err:#}"
+            );
         }
-        let err = ConfigFile::parse_fixture(&vnc_toml("virtual_displays = 2
-vnc_password_ref = \"x\"")).unwrap_err();
-        assert!(format!("{err:#}").contains("lays out more than one virtual display"), "{err:#}");
+        let err = ConfigFile::parse_fixture(&vnc_toml(
+            "virtual_displays = 2
+vnc_password_ref = \"x\"",
+        ))
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("lays out more than one virtual display"),
+            "{err:#}"
+        );
         // Standard mode's unofficial virtual display is one.
         let err = ConfigFile::parse_fixture(&vnc_toml(
             "subtype = \"ard\"\nusername = \"andrew\"\npassword_ref = \"h\"\nvirtual_display = true\nvirtual_displays = 2",
         ))
         .unwrap_err();
-        assert!(format!("{err:#}").contains("lays out more than one virtual display"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("lays out more than one virtual display"),
+            "{err:#}"
+        );
         // wlshare makes them on sway, so the key is taken.
         let wlshare = ConfigFile::parse_fixture(&vnc_toml(
             "subtype = \"wlshare\"\nusername = \"andrew\"\npassword_ref = \"h\"\nvirtual_displays = 2",
@@ -4322,10 +4922,16 @@ vnc_password_ref = \"x\"")).unwrap_err();
         .remove(0);
         assert_eq!(mac.virtual_displays, 2);
         assert!(mac.accepts(below).is_err());
-        assert!(mac.offers().passthrough.contains(&Passthrough::AppleMedia), "each display is a stream of its own");
+        assert!(
+            mac.offers().passthrough.contains(&Passthrough::AppleMedia),
+            "each display is a stream of its own"
+        );
         // One is every target's default and so is accepted anywhere.
-        ConfigFile::parse_fixture(&vnc_toml("virtual_displays = 1
-vnc_password_ref = \"x\"")).unwrap();
+        ConfigFile::parse_fixture(&vnc_toml(
+            "virtual_displays = 1
+vnc_password_ref = \"x\"",
+        ))
+        .unwrap();
     }
 
     /// Which sizings a target takes: following a window where the window can drive
@@ -4333,9 +4939,20 @@ vnc_password_ref = \"x\"")).unwrap();
     #[cfg(feature = "wlshare")]
     #[test]
     fn a_sizing_is_refused_where_the_target_does_not_offer_it() {
-        let window = Choices { size: Sizing::Window, ..Choices::default() };
-        let built_in = Choices { size: Sizing::BuiltIn, ..Choices::default() };
-        let refused = |choice| Err(NotOffered { target: "mac".to_owned(), choice });
+        let window = Choices {
+            size: Sizing::Window,
+            ..Choices::default()
+        };
+        let built_in = Choices {
+            size: Sizing::BuiltIn,
+            ..Choices::default()
+        };
+        let refused = |choice| {
+            Err(NotOffered {
+                target: "mac".to_owned(),
+                choice,
+            })
+        };
 
         // A plain target is shown at its server's own size and never follows a window.
         let plain = &ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets[0];
@@ -4345,7 +4962,10 @@ vnc_password_ref = \"x\"")).unwrap();
         assert_eq!(plain.accepts(built_in), refused("the default size"));
 
         let wlshare = |extra: &str| {
-            ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\n{extra}"))).unwrap().targets.remove(0)
+            ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\n{extra}")))
+                .unwrap()
+                .targets
+                .remove(0)
         };
         let sized = wlshare("size = \"1600x1000\"");
         for choices in [Choices::default(), window, built_in] {
@@ -4372,7 +4992,8 @@ vnc_password_ref = \"x\"")).unwrap();
             .expect("the bitmap path's tiles have no ceiling");
         // Up to what a Windows host opens, 8192 a side, which it would clamp a
         // larger size to: a desktop the operator did not configure.
-        ConfigFile::parse_fixture(&rdp_toml("size = \"8192x8192\"\negfx = false")).expect("the host's own most");
+        ConfigFile::parse_fixture(&rdp_toml("size = \"8192x8192\"\negfx = false"))
+            .expect("the host's own most");
         let err = ConfigFile::parse_fixture(&rdp_toml("size = \"8194x4000\"\negfx = false"))
             .expect_err("a side past the host's most parsed");
         assert!(format!("{err:#}").contains("8192"), "{err:#}");
@@ -4384,22 +5005,51 @@ vnc_password_ref = \"x\"")).unwrap();
     #[cfg(feature = "wlshare")]
     #[test]
     fn a_mac_is_not_sized_under_its_own_clients_smallest_window() {
-        let hp = "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
+        let hp =
+            "subtype = \"ard-high-performance\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
         for size in ["640x480", "800x599", "799x600"] {
-            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}size = \"{size}\""))).unwrap_err();
+            let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}size = \"{size}\"")))
+                .unwrap_err();
             assert!(format!("{err:#}").contains("800x600"), "{err:#}");
-            ConfigFile::parse_fixture(&vnc_toml(&format!("subtype = \"wlshare\"\nsize = \"{size}\"")))
-                .expect("a wlshare target takes it");
+            ConfigFile::parse_fixture(&vnc_toml(&format!(
+                "subtype = \"wlshare\"\nsize = \"{size}\""
+            )))
+            .expect("a wlshare target takes it");
         }
-        let mac = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}size = \"800x600\""))).unwrap().targets[0];
+        let mac = &ConfigFile::parse_fixture(&vnc_toml(&format!("{hp}size = \"800x600\"")))
+            .unwrap()
+            .targets[0];
         assert_eq!(mac.kept_size(), (800, 600));
-        let wlshare = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).unwrap().targets[0];
-        for (small, raised) in [((640, 480), (800, 600)), ((800, 599), (800, 600)), ((799, 900), (800, 900))] {
-            let small = HostDisplay { w: small.0, h: small.1, scale: 100, fit: false };
-            assert_eq!(mac.opening_size(Sizing::Window, Some(small)), raised, "raised side by side");
-            assert_eq!(wlshare.opening_size(Sizing::Window, Some(small)), (small.w, small.h));
+        let wlshare = &ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\""))
+            .unwrap()
+            .targets[0];
+        for (small, raised) in [
+            ((640, 480), (800, 600)),
+            ((800, 599), (800, 600)),
+            ((799, 900), (800, 900)),
+        ] {
+            let small = HostDisplay {
+                w: small.0,
+                h: small.1,
+                scale: 100,
+                fit: false,
+            };
+            assert_eq!(
+                mac.opening_size(Sizing::Window, Some(small)),
+                raised,
+                "raised side by side"
+            );
+            assert_eq!(
+                wlshare.opening_size(Sizing::Window, Some(small)),
+                (small.w, small.h)
+            );
         }
-        let least = HostDisplay { w: 800, h: 600, scale: 200, fit: false };
+        let least = HostDisplay {
+            w: 800,
+            h: 600,
+            scale: 200,
+            fit: false,
+        };
         assert_eq!(mac.opening_size(Sizing::Window, Some(least)), (800, 600));
     }
 
@@ -4413,8 +5063,8 @@ vnc_password_ref = \"x\"")).unwrap();
                 format!("subtype = \"{subtype}\"\nusername = \"andrew\"\npassword_ref = \"h\"\n")
             });
             for subtype in std::iter::once(String::new()).chain(apple) {
-                let err = ConfigFile::parse_fixture(&vnc_toml(&format!("{subtype}{size}")))
-                    .unwrap_err();
+                let err =
+                    ConfigFile::parse_fixture(&vnc_toml(&format!("{subtype}{size}"))).unwrap_err();
                 assert!(
                     format!("{err:#}").contains("width and height must both be greater than zero"),
                     "{err:#}"
@@ -4447,7 +5097,9 @@ vnc_password_ref = \"x\"")).unwrap();
 
     #[test]
     fn a_domain_on_a_vnc_target_is_rejected() {
-        let apple = APPLE_SUBTYPES.iter().map(|subtype| format!("subtype = \"{subtype}\"\n"));
+        let apple = APPLE_SUBTYPES
+            .iter()
+            .map(|subtype| format!("subtype = \"{subtype}\"\n"));
         for subtype in std::iter::once(String::new()).chain(apple) {
             let err = ConfigFile::parse_fixture(&vnc_toml(&format!(
                 "{subtype}username = \"u\"\npassword_ref = \"p\"\ndomain = \"CORP\""
@@ -4469,7 +5121,10 @@ vnc_password_ref = \"x\"")).unwrap();
             ))
             .unwrap_err();
             let msg = format!("{err:#}");
-            assert!(msg.contains("username") && msg.contains("password"), "{keys}: {msg}");
+            assert!(
+                msg.contains("username") && msg.contains("password"),
+                "{keys}: {msg}"
+            );
         }
     }
 
@@ -4494,7 +5149,10 @@ vnc_password_ref = \"x\"")).unwrap();
                 site_login_lines()
             ))
             .unwrap_err();
-            assert!(format!("{err:#}").contains("clipboard"), "{protocol}: {err:#}");
+            assert!(
+                format!("{err:#}").contains("clipboard"),
+                "{protocol}: {err:#}"
+            );
         }
     }
 
@@ -4516,7 +5174,10 @@ vnc_password_ref = \"x\"")).unwrap();
             .targets
             .remove(0)
         };
-        let sound = Choices { audio: Sound::Opus, ..Choices::default() };
+        let sound = Choices {
+            audio: Sound::Opus,
+            ..Choices::default()
+        };
 
         // A plain `vnc` target lists no audio extension.
         let plain = target("protocol = \"vnc\"");
@@ -4524,7 +5185,10 @@ vnc_password_ref = \"x\"")).unwrap();
         assert!(!plain.offers().audio);
         assert_eq!(
             plain.accepts(sound),
-            Err(NotOffered { target: "desk".to_owned(), choice: "sound" })
+            Err(NotOffered {
+                target: "desk".to_owned(),
+                choice: "sound"
+            })
         );
 
         // A `wlshare` target lists wlshare's audio extension where it was chosen.
@@ -4532,8 +5196,14 @@ vnc_password_ref = \"x\"")).unwrap();
         assert!(wlshare.offers().audio);
         assert_eq!(wlshare.accepts(sound), Ok(()));
         assert!(wlshare.sound(sound));
-        assert!(!wlshare.sound(Choices::default()), "a session started without it asks for none");
-        assert_eq!(wlshare.audio_source_format(), crate::vnc_audio::SOURCE_FORMAT);
+        assert!(
+            !wlshare.sound(Choices::default()),
+            "a session started without it asks for none"
+        );
+        assert_eq!(
+            wlshare.audio_source_format(),
+            crate::vnc_audio::SOURCE_FORMAT
+        );
 
         // An rdp target negotiates MS-RDPEA when it connects, and what the host
         // redirects is CD-quality PCM, which is the source format the encoder is
@@ -4554,22 +5224,38 @@ vnc_password_ref = \"x\"")).unwrap();
     #[test]
     fn a_camera_and_a_microphone_are_offered_on_rdp_and_wlshare_alone() {
         let parse = |target: &str| {
-            ConfigFile::parse_fixture(&format!("[server]\n{}\n\n[[targets]]\n{target}", site_login_lines()))
-                .and_then(|file| file.resolve())
-                .unwrap()
-                .targets
-                .remove(0)
+            ConfigFile::parse_fixture(&format!(
+                "[server]\n{}\n\n[[targets]]\n{target}",
+                site_login_lines()
+            ))
+            .and_then(|file| file.resolve())
+            .unwrap()
+            .targets
+            .remove(0)
         };
-        let camera = Choices { camera: true, ..Choices::default() };
-        let microphone = Choices { microphone: true, ..Choices::default() };
-        let win = parse("name = \"win\"\nprotocol = \"rdp\"\nusername = \"u\"\npassword_ref = \"p\"\nhost = \"10.0.0.5\"");
-        let desk = parse("name = \"desk\"\nprotocol = \"vnc\"\nsubtype = \"wlshare\"\nhost = \"10.0.0.7\"");
+        let camera = Choices {
+            camera: true,
+            ..Choices::default()
+        };
+        let microphone = Choices {
+            microphone: true,
+            ..Choices::default()
+        };
+        let win = parse(
+            "name = \"win\"\nprotocol = \"rdp\"\nusername = \"u\"\npassword_ref = \"p\"\nhost = \"10.0.0.5\"",
+        );
+        let desk = parse(
+            "name = \"desk\"\nprotocol = \"vnc\"\nsubtype = \"wlshare\"\nhost = \"10.0.0.7\"",
+        );
         for target in [&win, &desk] {
             let offers = target.offers();
             assert!(offers.camera && offers.microphone, "{}", target.name);
             target.accepts(camera).unwrap();
             target.accepts(microphone).unwrap();
-            assert!(!target.sound(microphone), "the microphone does not need the remote's sound");
+            assert!(
+                !target.sound(microphone),
+                "the microphone does not need the remote's sound"
+            );
         }
         let plain = parse("name = \"desk\"\nprotocol = \"vnc\"\nhost = \"10.0.0.7\"");
         let macs: Vec<TargetConfig> = APPLE_SUBTYPES
@@ -4585,10 +5271,26 @@ vnc_password_ref = \"x\"")).unwrap();
             assert!(!offers.camera && !offers.microphone, "{}", target.name);
             // With a picture a High Performance Mac accepts, so the device is what is refused.
             let picture = offers.passthrough.first().copied();
-            let camera = Choices { passthrough: picture, ..camera };
-            let microphone = Choices { passthrough: picture, ..microphone };
-            assert_eq!(target.accepts(camera).unwrap_err().choice, "a camera", "{}", target.name);
-            assert_eq!(target.accepts(microphone).unwrap_err().choice, "a microphone", "{}", target.name);
+            let camera = Choices {
+                passthrough: picture,
+                ..camera
+            };
+            let microphone = Choices {
+                passthrough: picture,
+                ..microphone
+            };
+            assert_eq!(
+                target.accepts(camera).unwrap_err().choice,
+                "a camera",
+                "{}",
+                target.name
+            );
+            assert_eq!(
+                target.accepts(microphone).unwrap_err().choice,
+                "a microphone",
+                "{}",
+                target.name
+            );
         }
     }
 
@@ -4614,7 +5316,10 @@ vnc_password_ref = \"x\"")).unwrap();
             .unwrap_err();
             let rendered = format!("{err:#}");
             assert!(rendered.contains("egfx"), "{rendered}");
-            assert!(rendered.contains("rdp"), "the protocol that has it is named: {rendered}");
+            assert!(
+                rendered.contains("rdp"),
+                "the protocol that has it is named: {rendered}"
+            );
         }
 
         let parse = |value: &str| {
@@ -4634,10 +5339,17 @@ vnc_password_ref = \"x\"")).unwrap();
                 site_login_lines()
             ))
         };
-        assert!(!parse("false").unwrap().resolve().unwrap().targets[0].egfx(), "the bitmap path is one key away");
+        assert!(
+            !parse("false").unwrap().resolve().unwrap().targets[0].egfx(),
+            "the bitmap path is one key away"
+        );
         assert!(parse("true").unwrap().resolve().unwrap().targets[0].egfx());
         // How the host draws it is the session's choice, not a value of the key.
-        for value in ["\"high-quality\"", "\"adaptive_h264_desktop\"", "\"disabled\""] {
+        for value in [
+            "\"high-quality\"",
+            "\"adaptive_h264_desktop\"",
+            "\"disabled\"",
+        ] {
             assert!(parse(value).is_err(), "{value} is not a switch");
         }
     }
@@ -4668,30 +5380,77 @@ vnc_password_ref = \"x\"")).unwrap();
             .targets
             .remove(0)
         };
-        let passed = Choices { passthrough: Some(Passthrough::RdpGraphics), ..Choices::default() };
+        let passed = Choices {
+            passthrough: Some(Passthrough::RdpGraphics),
+            ..Choices::default()
+        };
         let win = rdp("");
         assert_eq!(
             win.offers(),
-            Offers { resize: true, audio: true, passthrough: &[Passthrough::RdpGraphics], placement: false, pipeline: true, standard_view: false, camera: true, microphone: true }
+            Offers {
+                resize: true,
+                audio: true,
+                passthrough: &[Passthrough::RdpGraphics],
+                placement: false,
+                pipeline: true,
+                standard_view: false,
+                camera: true,
+                microphone: true
+            }
         );
-        let composes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: false, rdp_video: false, tight_memory: false };
+        let composes = Decoders {
+            apple_media: false,
+            rdp_graphics: true,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
         let plan = win.render_plan(passed, composes);
         assert!(plan.rdp_graphics);
-        assert_eq!(plan.describe(), "the host's graphics pipeline, passed through");
+        assert_eq!(
+            plan.describe(),
+            "the host's graphics pipeline, passed through"
+        );
         assert_eq!(win.beyond(passed, composes), None);
-        let cannot = Decoders { rdp_graphics: false, rdp_h264: false, ..composes };
+        let cannot = Decoders {
+            rdp_graphics: false,
+            rdp_h264: false,
+            ..composes
+        };
         assert_eq!(win.beyond(passed, cannot), Some(Passthrough::RdpGraphics));
-        assert!(!Passthrough::RdpGraphics.chosen(), "passing it is no choice");
+        assert!(
+            !Passthrough::RdpGraphics.chosen(),
+            "passing it is no choice"
+        );
         let unasked = Choices::default();
-        assert!(win.render_plan(unasked, composes).rdp_graphics, "it is passed unasked");
-        assert_eq!(win.beyond(unasked, cannot), Some(Passthrough::RdpGraphics), "and refused to a page that cannot");
-        assert_eq!(win.render_summary(), "the host's graphics pipeline, passed through");
+        assert!(
+            win.render_plan(unasked, composes).rdp_graphics,
+            "it is passed unasked"
+        );
+        assert_eq!(
+            win.beyond(unasked, cannot),
+            Some(Passthrough::RdpGraphics),
+            "and refused to a page that cannot"
+        );
+        assert_eq!(
+            win.render_summary(),
+            "the host's graphics pipeline, passed through"
+        );
 
         // H.264 on the pipeline is the session's choice and the browser's answer
         // together, and neither alone.
-        let decodes = Decoders { apple_media: false, rdp_graphics: true, rdp_h264: true, rdp_video: true, tight_memory: false };
+        let decodes = Decoders {
+            apple_media: false,
+            rdp_graphics: true,
+            rdp_h264: true,
+            rdp_video: true,
+            tight_memory: false,
+        };
         for pipeline in [Pipeline::AdaptiveDesktop, Pipeline::AdaptiveRegion] {
-            let adaptive = Choices { pipeline, ..Choices::default() };
+            let adaptive = Choices {
+                pipeline,
+                ..Choices::default()
+            };
             assert_eq!(win.accepts(adaptive), Ok(()));
             let plan = win.render_plan(adaptive, decodes);
             assert!(plan.rdp_graphics && plan.rdp_h264, "{pipeline:?}");
@@ -4707,43 +5466,102 @@ vnc_password_ref = \"x\"")).unwrap();
                     "the host's graphics pipeline with H.264, passed through"
                 }
             );
-            let cannot = Decoders { rdp_h264: false, rdp_video: false, ..decodes };
+            let cannot = Decoders {
+                rdp_h264: false,
+                rdp_video: false,
+                ..decodes
+            };
             let without = win.render_plan(adaptive, cannot);
-            assert!(without.rdp_graphics && !without.rdp_h264, "a browser that cannot is passed a pipeline without it");
+            assert!(
+                without.rdp_graphics && !without.rdp_h264,
+                "a browser that cannot is passed a pipeline without it"
+            );
             assert_eq!(win.beyond(adaptive, cannot), None, "and is not turned away");
-            assert!(!cannot.draws(pipeline), "but is not started one that chose it");
+            assert!(
+                !cannot.draws(pipeline),
+                "but is not started one that chose it"
+            );
         }
-        assert!(!win.render_plan(unasked, decodes).rdp_h264, "high quality unless chosen");
+        assert!(
+            !win.render_plan(unasked, decodes).rdp_h264,
+            "high quality unless chosen"
+        );
 
         // The whole desktop's H.264 is composed by nothing, so a browser that
         // decodes it and cannot compose is served it, and nothing else.
-        let video_only = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: true, tight_memory: false };
-        let whole = Choices { pipeline: Pipeline::AdaptiveDesktop, ..Choices::default() };
+        let video_only = Decoders {
+            apple_media: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: true,
+            tight_memory: false,
+        };
+        let whole = Choices {
+            pipeline: Pipeline::AdaptiveDesktop,
+            ..Choices::default()
+        };
         assert_eq!(win.beyond(whole, video_only), None);
         assert!(video_only.draws(Pipeline::AdaptiveDesktop));
         assert!(win.render_plan(whole, video_only).rdp_video);
         for pipeline in [Pipeline::HighQuality, Pipeline::AdaptiveRegion] {
-            let composed = Choices { pipeline, ..Choices::default() };
-            assert_eq!(win.beyond(composed, video_only), Some(Passthrough::RdpGraphics), "{pipeline:?}");
+            let composed = Choices {
+                pipeline,
+                ..Choices::default()
+            };
+            assert_eq!(
+                win.beyond(composed, video_only),
+                Some(Passthrough::RdpGraphics),
+                "{pipeline:?}"
+            );
         }
         // And a browser that composes but decodes no video is not started it.
-        let compose_only = Decoders { rdp_video: false, ..decodes };
+        let compose_only = Decoders {
+            rdp_video: false,
+            ..decodes
+        };
         assert!(!compose_only.draws(Pipeline::AdaptiveDesktop));
         assert!(!win.render_plan(whole, compose_only).rdp_h264);
 
         let bitmap = rdp("egfx = false");
-        assert_eq!(bitmap.offers(), Offers { resize: false, audio: true, passthrough: &[], placement: false, pipeline: false, standard_view: false, camera: true, microphone: true });
+        assert_eq!(
+            bitmap.offers(),
+            Offers {
+                resize: false,
+                audio: true,
+                passthrough: &[],
+                placement: false,
+                pipeline: false,
+                standard_view: false,
+                camera: true,
+                microphone: true
+            }
+        );
         assert_eq!(
             bitmap.accepts(passed),
-            Err(NotOffered { target: "win".to_owned(), choice: "a passthrough" })
+            Err(NotOffered {
+                target: "win".to_owned(),
+                choice: "a passthrough"
+            })
         );
         assert_eq!(
-            bitmap.accepts(Choices { size: Sizing::Window, ..Choices::default() }),
-            Err(NotOffered { target: "win".to_owned(), choice: "resize" })
+            bitmap.accepts(Choices {
+                size: Sizing::Window,
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "win".to_owned(),
+                choice: "resize"
+            })
         );
         assert_eq!(
-            bitmap.accepts(Choices { pipeline: Pipeline::AdaptiveDesktop, ..Choices::default() }),
-            Err(NotOffered { target: "win".to_owned(), choice: "adaptive H.264" })
+            bitmap.accepts(Choices {
+                pipeline: Pipeline::AdaptiveDesktop,
+                ..Choices::default()
+            }),
+            Err(NotOffered {
+                target: "win".to_owned(),
+                choice: "adaptive H.264"
+            })
         );
     }
 
@@ -4754,12 +5572,16 @@ vnc_password_ref = \"x\"")).unwrap();
     fn a_standard_mac_carries_no_sound() {
         let target = "[[targets]]\nname = \"mac\"\nprotocol = \"vnc\"\nsubtype = \"ard\"\n\
                       host = \"10.0.0.5\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
-        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
-            .unwrap()
-            .resolve()
-            .unwrap();
+        let config =
+            ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
+                .unwrap()
+                .resolve()
+                .unwrap();
         assert!(!config.targets[0].offers().audio);
-        assert!(!config.targets[0].sound(Choices { audio: Sound::Opus, ..Choices::default() }));
+        assert!(!config.targets[0].sound(Choices {
+            audio: Sound::Opus,
+            ..Choices::default()
+        }));
     }
 
     /// High Performance brings the Mac's sound on its own media stream, beside the
@@ -4768,14 +5590,18 @@ vnc_password_ref = \"x\"")).unwrap();
     fn high_performance_carries_its_media_streams_sound() {
         let target = "[[targets]]\nname = \"mac\"\nprotocol = \"vnc\"\nsubtype = \"ard-high-performance\"\n\
                       host = \"10.0.0.5\"\nusername = \"andrew\"\npassword_ref = \"h\"\n";
-        let config = ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
-            .unwrap()
-            .resolve()
-            .unwrap();
+        let config =
+            ConfigFile::parse_fixture(&format!("[server]\n{}\n{target}", site_login_lines()))
+                .unwrap()
+                .resolve()
+                .unwrap();
         let mac = &config.targets[0];
         assert_eq!(mac.subtype, Some(Subtype::ArdHighPerformance));
         assert!(mac.media_stream());
-        assert!(mac.sound(Choices::default()), "the sound leg comes with the picture");
+        assert!(
+            mac.sound(Choices::default()),
+            "the sound leg comes with the picture"
+        );
         assert!(!mac.offers().audio, "so there is nothing to choose");
     }
 
@@ -4792,7 +5618,10 @@ vnc_password_ref = \"x\"")).unwrap();
         .unwrap()
         .resolve()
         .unwrap();
-        assert_eq!(rdp.targets[0].audio_source_format(), crate::audio::PCM_CD_QUALITY);
+        assert_eq!(
+            rdp.targets[0].audio_source_format(),
+            crate::audio::PCM_CD_QUALITY
+        );
 
         // A wlshare target's is the format this client asks the extension
         // for, which is the same 48 kHz stereo and needs no resampling either.
@@ -4803,7 +5632,10 @@ vnc_password_ref = \"x\"")).unwrap();
         .unwrap()
         .resolve()
         .unwrap();
-        assert_eq!(vnc.targets[0].audio_source_format(), crate::vnc_audio::SOURCE_FORMAT);
+        assert_eq!(
+            vnc.targets[0].audio_source_format(),
+            crate::vnc_audio::SOURCE_FORMAT
+        );
         assert_eq!(crate::vnc_audio::SOURCE_FORMAT.sample_rate, 48_000);
         assert_eq!(crate::vnc_audio::SOURCE_FORMAT.bits_per_sample, 16);
     }
@@ -4859,7 +5691,10 @@ vnc_password_ref = \"x\"")).unwrap();
     fn lossless_sound_is_chosen_at_the_picker_where_there_is_sound_to_choose() {
         let wlshare = parse_audio_target("").unwrap().targets[0].clone();
         let rdp = parse_target("").unwrap().targets[0].clone();
-        let chose = |audio| Choices { audio, ..Choices::default() };
+        let chose = |audio| Choices {
+            audio,
+            ..Choices::default()
+        };
 
         for target in [&wlshare, &rdp] {
             for audio in [Sound::Off, Sound::Opus] {
@@ -4869,10 +5704,20 @@ vnc_password_ref = \"x\"")).unwrap();
             assert!(target.sound(chose(Sound::Flac)) && target.lossless(chose(Sound::Flac)));
         }
 
-        assert!(parse_target("audio_format = \"flac\"").is_err(), "not a key of the file");
-        assert!(serde_json::from_str::<Sound>("\"pcm\"").is_err(), "no third format");
+        assert!(
+            parse_target("audio_format = \"flac\"").is_err(),
+            "not a key of the file"
+        );
+        assert!(
+            serde_json::from_str::<Sound>("\"pcm\"").is_err(),
+            "no third format"
+        );
         // No sound to choose a format for: a plain vnc target, and both Macs.
-        for kind in ["", "subtype = \"ard\"\nusername = \"u\"", "subtype = \"ard-high-performance\"\nusername = \"u\""] {
+        for kind in [
+            "",
+            "subtype = \"ard\"\nusername = \"u\"",
+            "subtype = \"ard-high-performance\"\nusername = \"u\"",
+        ] {
             let target = ConfigFile::parse_fixture(&format!(
                 "[server]\n{}\n[[targets]]\nname = \"v\"\nprotocol = \"vnc\"\n{kind}\nhost = \"h\"\npassword_ref = \"p\"\n",
                 site_login_lines()
@@ -4883,7 +5728,10 @@ vnc_password_ref = \"x\"")).unwrap();
             .remove(0);
             assert_eq!(
                 target.accepts(chose(Sound::Flac)),
-                Err(NotOffered { target: "v".to_owned(), choice: "sound" }),
+                Err(NotOffered {
+                    target: "v".to_owned(),
+                    choice: "sound"
+                }),
                 "{kind}"
             );
             assert!(!target.lossless(chose(Sound::Flac)), "{kind}");
@@ -4897,36 +5745,104 @@ vnc_password_ref = \"x\"")).unwrap();
     #[cfg(feature = "wlshare")]
     #[test]
     fn wlshares_tiles_are_a_choice_at_the_picker() {
-        let video = Choices { passthrough: Some(Passthrough::WlshareVideo), ..Choices::default() };
-        let cfg = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\"")).expect("a wlshare target");
+        let video = Choices {
+            passthrough: Some(Passthrough::WlshareVideo),
+            ..Choices::default()
+        };
+        let cfg = ConfigFile::parse_fixture(&vnc_toml("subtype = \"wlshare\""))
+            .expect("a wlshare target");
         let target = &cfg.targets[0];
-        assert_eq!(target.offers().passthrough, &[Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless]);
+        assert_eq!(
+            target.offers().passthrough,
+            &[
+                Passthrough::WlshareVideo,
+                Passthrough::WlshareTilesProgressive,
+                Passthrough::WlshareTilesMotion,
+                Passthrough::WlshareTilesLossless
+            ]
+        );
         for (passthrough, kind, describe) in [
-            (Passthrough::WlshareTilesProgressive, WlshareTiles::Progressive, "progressive tiles"),
-            (Passthrough::WlshareTilesMotion, WlshareTiles::Motion, "tiles with motion"),
-            (Passthrough::WlshareTilesLossless, WlshareTiles::Lossless, "lossless tiles"),
+            (
+                Passthrough::WlshareTilesProgressive,
+                WlshareTiles::Progressive,
+                "progressive tiles",
+            ),
+            (
+                Passthrough::WlshareTilesMotion,
+                WlshareTiles::Motion,
+                "tiles with motion",
+            ),
+            (
+                Passthrough::WlshareTilesLossless,
+                WlshareTiles::Lossless,
+                "lossless tiles",
+            ),
         ] {
-            let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
+            let tiles = Choices {
+                passthrough: Some(passthrough),
+                ..Choices::default()
+            };
             target.accepts(tiles).expect("the tiles are offered");
             let plan = target.render_plan(tiles, Decoders::ALL);
-            assert_eq!(plan, RenderPlan { apple_media: false, apple_h264: false, hevc_instead: false, apple_standard: None, apple_combined: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, rdp_small_cache: false, wlshare: true, wlshare_tiles: Some(kind) }, "{passthrough:?}");
+            assert_eq!(
+                plan,
+                RenderPlan {
+                    apple_media: false,
+                    apple_h264: false,
+                    hevc_instead: false,
+                    apple_standard: None,
+                    apple_combined: false,
+                    rdp_graphics: false,
+                    rdp_h264: false,
+                    rdp_video: false,
+                    rdp_small_cache: false,
+                    wlshare: true,
+                    wlshare_tiles: Some(kind)
+                },
+                "{passthrough:?}"
+            );
             assert_eq!(plan.describe(), describe);
             assert_eq!(plan.passthrough(), Some(passthrough));
         }
         // The progressive and the lossless tiles are decoded by the module that
         // composes an RDP host's pipeline: a browser without it is beyond them, and
         // no other.
-        let moduleless = Decoders { apple_media: false, rdp_graphics: false, rdp_h264: false, rdp_video: false, tight_memory: false };
-        for passthrough in [Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesLossless] {
-            let tiles = Choices { passthrough: Some(passthrough), ..Choices::default() };
+        let moduleless = Decoders {
+            apple_media: false,
+            rdp_graphics: false,
+            rdp_h264: false,
+            rdp_video: false,
+            tight_memory: false,
+        };
+        for passthrough in [
+            Passthrough::WlshareTilesProgressive,
+            Passthrough::WlshareTilesLossless,
+        ] {
+            let tiles = Choices {
+                passthrough: Some(passthrough),
+                ..Choices::default()
+            };
             assert_eq!(target.beyond(tiles, moduleless), Some(passthrough));
             assert_eq!(target.beyond(tiles, Decoders::ALL), None);
         }
-        assert_eq!(target.beyond(Choices { passthrough: Some(Passthrough::WlshareTilesMotion), ..Choices::default() }, moduleless), None);
+        assert_eq!(
+            target.beyond(
+                Choices {
+                    passthrough: Some(Passthrough::WlshareTilesMotion),
+                    ..Choices::default()
+                },
+                moduleless
+            ),
+            None
+        );
         for choices in [video, Choices::default()] {
             let plan = target.render_plan(choices, Decoders::ALL);
             assert!(plan.wlshare && plan.wlshare_tiles.is_none(), "{choices:?}");
-            assert_eq!(plan.passthrough(), Some(Passthrough::WlshareVideo), "{choices:?}");
+            assert_eq!(
+                plan.passthrough(),
+                Some(Passthrough::WlshareVideo),
+                "{choices:?}"
+            );
         }
     }
 
@@ -4935,12 +5851,29 @@ vnc_password_ref = \"x\"")).unwrap();
     /// names either.
     #[test]
     fn wlshares_pictures_are_refused_elsewhere() {
-        let plain = ConfigFile::parse_fixture(&vnc_toml("")).unwrap().targets.remove(0);
+        let plain = ConfigFile::parse_fixture(&vnc_toml(""))
+            .unwrap()
+            .targets
+            .remove(0);
         let rdp = parse_target("").unwrap().targets.remove(0);
         for target in [&plain, &rdp] {
-            for passthrough in [Passthrough::WlshareVideo, Passthrough::WlshareTilesProgressive, Passthrough::WlshareTilesMotion, Passthrough::WlshareTilesLossless] {
-                let err = target.accepts(Choices { passthrough: Some(passthrough), ..Choices::default() }).unwrap_err();
-                assert_eq!(err.choice, "a passthrough", "{:?} {passthrough:?}", target.protocol);
+            for passthrough in [
+                Passthrough::WlshareVideo,
+                Passthrough::WlshareTilesProgressive,
+                Passthrough::WlshareTilesMotion,
+                Passthrough::WlshareTilesLossless,
+            ] {
+                let err = target
+                    .accepts(Choices {
+                        passthrough: Some(passthrough),
+                        ..Choices::default()
+                    })
+                    .unwrap_err();
+                assert_eq!(
+                    err.choice, "a passthrough",
+                    "{:?} {passthrough:?}",
+                    target.protocol
+                );
             }
         }
     }

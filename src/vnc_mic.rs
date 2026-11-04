@@ -33,9 +33,9 @@ use log::{info, warn};
 use tokio::sync::{Notify, mpsc};
 use wlshare_proto::microphone::{self, MAX_SAMPLE};
 
-use crate::mic::{MicBridge, MicControl, MicFormat};
 #[cfg(doc)]
 use crate::mic::MicSignal;
+use crate::mic::{MicBridge, MicControl, MicFormat};
 
 /// How many buffers may wait for the engine's loop to write them: at the bridge's
 /// 20 ms, a third of a second. A full queue drops its oldest, so a link that was
@@ -44,7 +44,10 @@ const SAMPLE_QUEUE: usize = 16;
 
 /// The format a start names, as the bridge carries it.
 pub fn bridge_format(format: microphone::MicrophoneFormat) -> MicFormat {
-    MicFormat { channels: format.channels, sample_rate: format.frequency }
+    MicFormat {
+        channels: format.channels,
+        sample_rate: format.frequency,
+    }
 }
 
 /// What a plug or an unplug decided: the message to send, if any, and whether a
@@ -88,14 +91,20 @@ impl Device {
         if !self.announced {
             info!("vnc: holding the microphone's plug until the server says it takes one");
         }
-        Decision { message: self.announced.then(|| microphone::plug().to_vec()), closed }
+        Decision {
+            message: self.announced.then(|| microphone::plug().to_vec()),
+            closed,
+        }
     }
 
     /// The browser disabled its microphone.
     pub fn unplug(&mut self) -> Decision {
         let closed = std::mem::take(&mut self.recording);
         let was = std::mem::take(&mut self.plugged);
-        Decision { message: (self.announced && was).then(|| microphone::unplug().to_vec()), closed }
+        Decision {
+            message: (self.announced && was).then(|| microphone::unplug().to_vec()),
+            closed,
+        }
     }
 
     /// The server's start. Heard only for a microphone plugged on the wire: a start
@@ -142,7 +151,10 @@ struct Samples {
 
 impl Samples {
     fn pop(&self) -> Option<Vec<u8>> {
-        self.buffers.lock().expect("microphone sample lock").pop_front()
+        self.buffers
+            .lock()
+            .expect("microphone sample lock")
+            .pop_front()
     }
 }
 
@@ -181,8 +193,17 @@ impl Queues {
 pub fn attach(bridge: &Arc<MicBridge>) -> (Link, Queues) {
     let (commands_tx, commands) = mpsc::unbounded_channel();
     let samples = Arc::new(Samples::default());
-    bridge.set_control(Arc::new(Control { commands: commands_tx, samples: Arc::clone(&samples) }));
-    (Link { bridge: Arc::clone(bridge), device: Mutex::new(Device::default()) }, Queues { commands, samples })
+    bridge.set_control(Arc::new(Control {
+        commands: commands_tx,
+        samples: Arc::clone(&samples),
+    }));
+    (
+        Link {
+            bridge: Arc::clone(bridge),
+            device: Mutex::new(Device::default()),
+        },
+        Queues { commands, samples },
+    )
 }
 
 struct Control {
@@ -192,7 +213,11 @@ struct Control {
 
 impl Control {
     fn clear(&self) {
-        self.samples.buffers.lock().expect("microphone sample lock").clear();
+        self.samples
+            .buffers
+            .lock()
+            .expect("microphone sample lock")
+            .clear();
     }
 }
 
@@ -210,7 +235,10 @@ impl MicControl for Control {
 
     fn sample(&self, pcm: Vec<u8>) -> bool {
         if pcm.len() > MAX_SAMPLE {
-            warn!("vnc: dropped {} bytes of microphone PCM, over the {MAX_SAMPLE} wlshare accepts", pcm.len());
+            warn!(
+                "vnc: dropped {} bytes of microphone PCM, over the {MAX_SAMPLE} wlshare accepts",
+                pcm.len()
+            );
             return false;
         }
         {
@@ -269,8 +297,14 @@ mod tests {
         assert_eq!(microphone::plug(), [0xE3, 0, 0, 0]);
         assert_eq!(decode(&microphone::plug()), Sent::Plug);
         assert_eq!(decode(&microphone::unplug()), Sent::Unplug);
-        assert_eq!(microphone::sample(&[0x34, 0x12]), [0xE3, 2, 0, 0, 0, 0, 0, 2, 0x34, 0x12]);
-        assert_eq!(decode(&microphone::sample(&[1, 2, 3, 4])), Sent::Sample(vec![1, 2, 3, 4]));
+        assert_eq!(
+            microphone::sample(&[0x34, 0x12]),
+            [0xE3, 2, 0, 0, 0, 0, 0, 2, 0x34, 0x12]
+        );
+        assert_eq!(
+            decode(&microphone::sample(&[1, 2, 3, 4])),
+            Sent::Sample(vec![1, 2, 3, 4])
+        );
     }
 
     /// A plug made before the server answers waits for the answer, and goes out with
@@ -279,21 +313,40 @@ mod tests {
     #[test]
     fn a_plug_before_the_announcement_goes_out_with_it() {
         let mut device = Device::default();
-        assert_eq!(device.plug(), Decision { message: None, closed: false });
-        assert!(!device.start(), "no start is heard for a plug the server has not seen");
+        assert_eq!(
+            device.plug(),
+            Decision {
+                message: None,
+                closed: false
+            }
+        );
+        assert!(
+            !device.start(),
+            "no start is heard for a plug the server has not seen"
+        );
         assert_eq!(device.sample(&[1, 0]), None);
         assert_eq!(device.announce().map(|m| decode(&m)), Some(Sent::Plug));
         assert_eq!(device.announce(), None);
         assert_eq!(device.sample(&[1, 0]), None, "nothing records yet");
         assert!(device.start());
-        assert_eq!(decode(&device.sample(&[1, 0]).unwrap()), Sent::Sample(vec![1, 0]));
+        assert_eq!(
+            decode(&device.sample(&[1, 0]).unwrap()),
+            Sent::Sample(vec![1, 0])
+        );
         assert!(device.stop());
         assert!(!device.stop(), "a stop ends one recording once");
         assert_eq!(device.sample(&[1, 0]), None);
         let unplugged = device.unplug();
         assert_eq!(unplugged.message.map(|m| decode(&m)), Some(Sent::Unplug));
         assert!(!unplugged.closed);
-        assert_eq!(device.unplug(), Decision { message: None, closed: false }, "not unplugged twice");
+        assert_eq!(
+            device.unplug(),
+            Decision {
+                message: None,
+                closed: false
+            },
+            "not unplugged twice"
+        );
     }
 
     /// Unplugging or replugging while the desktop records ends the recording at the
@@ -305,14 +358,37 @@ mod tests {
         device.announce();
         device.plug();
         assert!(device.start());
-        assert_eq!(device.unplug(), Decision { message: Some(microphone::unplug().to_vec()), closed: true });
+        assert_eq!(
+            device.unplug(),
+            Decision {
+                message: Some(microphone::unplug().to_vec()),
+                closed: true
+            }
+        );
         assert!(!device.start(), "a start for the unplugged microphone");
         assert_eq!(device.sample(&[1, 0]), None);
 
-        assert_eq!(device.plug(), Decision { message: Some(microphone::plug().to_vec()), closed: false });
+        assert_eq!(
+            device.plug(),
+            Decision {
+                message: Some(microphone::plug().to_vec()),
+                closed: false
+            }
+        );
         assert!(device.start());
-        assert_eq!(device.plug(), Decision { message: Some(microphone::plug().to_vec()), closed: true }, "a replug replaces it");
-        assert_eq!(device.sample(&[1, 0]), None, "until the new microphone's start");
+        assert_eq!(
+            device.plug(),
+            Decision {
+                message: Some(microphone::plug().to_vec()),
+                closed: true
+            },
+            "a replug replaces it"
+        );
+        assert_eq!(
+            device.sample(&[1, 0]),
+            None,
+            "until the new microphone's start"
+        );
     }
 
     /// Until wlshare answers, not a byte of the extension is sent, whatever the
@@ -335,12 +411,19 @@ mod tests {
         let (_link, mut queues) = attach(&bridge);
 
         bridge.plug();
-        let control = Control { commands: mpsc::unbounded_channel().0, samples: Arc::clone(&queues.samples) };
+        let control = Control {
+            commands: mpsc::unbounded_channel().0,
+            samples: Arc::clone(&queues.samples),
+        };
         for n in 0..=SAMPLE_QUEUE {
             assert!(control.sample(vec![n as u8]));
         }
         assert_eq!(queues.next().await, Some(Input::Plug));
-        assert_eq!(queues.next().await, Some(Input::Sample(vec![1])), "the oldest was dropped");
+        assert_eq!(
+            queues.next().await,
+            Some(Input::Sample(vec![1])),
+            "the oldest was dropped"
+        );
 
         control.reset();
         assert!(queues.samples.pop().is_none(), "a close drops the queue");
@@ -361,7 +444,10 @@ mod tests {
         let samples = Arc::clone(&queues.samples);
         let waiting = tokio::spawn(async move { queues.next().await });
         tokio::task::yield_now().await;
-        let control = Control { commands: mpsc::unbounded_channel().0, samples };
+        let control = Control {
+            commands: mpsc::unbounded_channel().0,
+            samples,
+        };
         assert!(control.sample(vec![7, 0]));
         assert_eq!(waiting.await.unwrap(), Some(Input::Sample(vec![7, 0])));
     }

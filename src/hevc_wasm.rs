@@ -83,11 +83,17 @@ impl HevcDecoder {
     /// The decoder in `bytes`, a gzipped tar whose SHA-256 must be `sha256`.
     fn from_archive(bytes: &[u8], sha256: &str) -> Result<Self> {
         let got = hex(&Sha256::digest(bytes));
-        ensure!(got == sha256, "its SHA-256 is {got}, not the pinned {sha256}");
+        ensure!(
+            got == sha256,
+            "its SHA-256 is {got}, not the pinned {sha256}"
+        );
         let mut js = None;
         let mut wasm = None;
         let mut archive = tar::Archive::new(GzDecoder::new(bytes));
-        for entry in archive.entries().context("the archive is not a gzipped tar")? {
+        for entry in archive
+            .entries()
+            .context("the archive is not a gzipped tar")?
+        {
             let mut entry = entry.context("the archive is not a gzipped tar")?;
             let path = entry.path().context("an archive entry has no path")?;
             let slot = match path.to_str() {
@@ -100,7 +106,10 @@ impl HevcDecoder {
                 .read_to_end(&mut data)
                 .context("an archive entry does not read")?;
             let sha256 = hex(&Sha256::digest(&data));
-            *slot = Some(DecoderFile { data: Bytes::from(data), sha256 });
+            *slot = Some(DecoderFile {
+                data: Bytes::from(data),
+                sha256,
+            });
         }
         match (js, wasm) {
             (Some(js), Some(wasm)) => Ok(Self { js, wasm }),
@@ -120,10 +129,12 @@ impl HevcDecoder {
 
 fn hex(digest: &[u8]) -> String {
     use std::fmt::Write as _;
-    digest.iter().fold(String::with_capacity(64), |mut out, byte| {
-        write!(out, "{byte:02x}").expect("writing to a String cannot fail");
-        out
-    })
+    digest
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            write!(out, "{byte:02x}").expect("writing to a String cannot fail");
+            out
+        })
 }
 
 #[cfg(test)]
@@ -177,7 +188,10 @@ pub(crate) mod tests {
     fn an_archive_missing_a_file_is_refused() {
         let bytes = archive(&[("hevc.js", b"a")]);
         let err = HevcDecoder::from_archive(&bytes, &hex(&Sha256::digest(&bytes))).unwrap_err();
-        assert!(format!("{err:#}").contains("both hevc.js and hevc.wasm"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("both hevc.js and hevc.wasm"),
+            "{err:#}"
+        );
     }
 
     #[test]

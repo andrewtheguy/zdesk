@@ -171,14 +171,14 @@ pub fn keysym(code: &str, shift: bool) -> Option<u32> {
     let printable = |unshifted: u32, shifted: u32| Some(if shift { shifted } else { unshifted });
     let sym = match code {
         // ── Printable keys: unshifted / shifted US-layout codepoint ─────
-        "Space" => 0x0020, // unaffected by Shift
-        "Quote" => return printable(0x0027, 0x0022),       // ' "
-        "Comma" => return printable(0x002C, 0x003C),       // , <
-        "Minus" => return printable(0x002D, 0x005F),       // - _
-        "Period" => return printable(0x002E, 0x003E),      // . >
-        "Slash" => return printable(0x002F, 0x003F),       // / ?
-        "Semicolon" => return printable(0x003B, 0x003A),   // ; :
-        "Equal" => return printable(0x003D, 0x002B),       // = +
+        "Space" => 0x0020,                                  // unaffected by Shift
+        "Quote" => return printable(0x0027, 0x0022),        // ' "
+        "Comma" => return printable(0x002C, 0x003C),        // , <
+        "Minus" => return printable(0x002D, 0x005F),        // - _
+        "Period" => return printable(0x002E, 0x003E),       // . >
+        "Slash" => return printable(0x002F, 0x003F),        // / ?
+        "Semicolon" => return printable(0x003B, 0x003A),    // ; :
+        "Equal" => return printable(0x003D, 0x002B),        // = +
         "BracketLeft" => return printable(0x005B, 0x007B),  // [ {
         "Backslash" => return printable(0x005C, 0x007C),    // \ |
         "BracketRight" => return printable(0x005D, 0x007D), // ] }
@@ -484,5 +484,4 @@ mod tests {
         assert_eq!(apple_keysym("KeyA", true), keysym("KeyA", true));
         assert_eq!(apple_keysym("ControlRight", false), Some(0xFFE4));
     }
-
 }

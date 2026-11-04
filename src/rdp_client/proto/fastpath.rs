@@ -114,7 +114,10 @@ fn header(bytes: &[u8]) -> Result<Option<Header>, Malformed> {
     if usize::from(length) < r.at() {
         return Err(r.refuse("its length", length));
     }
-    Ok(Some(Header { start: r.at(), length: usize::from(length) }))
+    Ok(Some(Header {
+        start: r.at(),
+        length: usize::from(length),
+    }))
 }
 
 /// Whether this piece is a whole update, or where it sits in one that was cut up.
@@ -148,7 +151,9 @@ pub struct Update<'a> {
 
 /// Every update in one whole fast-path output PDU, in order.
 pub fn updates(frame: &[u8]) -> Result<Updates<'_>, Malformed> {
-    Ok(Updates { r: Reader::new("a fast-path update", body(frame)?) })
+    Ok(Updates {
+        r: Reader::new("a fast-path update", body(frame)?),
+    })
 }
 
 /// A fast-path output PDU's updates, past its header and no further than its length.
@@ -156,7 +161,12 @@ pub fn body(frame: &[u8]) -> Result<&[u8], Malformed> {
     const WHAT: &str = "a fast-path output PDU";
 
     let Some(Header { start, length }) = header(frame)? else {
-        return Err(Malformed::Short { what: WHAT, len: frame.len(), at: frame.len(), need: 1 });
+        return Err(Malformed::Short {
+            what: WHAT,
+            len: frame.len(),
+            at: frame.len(),
+            need: 1,
+        });
     };
     let mut r = Reader::new(WHAT, frame);
     // The declared length is what the PDU is. Reading to the end of the buffer
@@ -202,7 +212,11 @@ impl<'a> Updates<'a> {
             0x20 => Fragment::First,
             _ => Fragment::Next,
         };
-        Ok(Piece { code: header & CODE, fragment, data })
+        Ok(Piece {
+            code: header & CODE,
+            fragment,
+            data,
+        })
     }
 }
 
@@ -224,7 +238,11 @@ impl Fragments {
     /// `limit` is the Multifragment Update capability the two ends settled on: the
     /// most bytes one reassembled update may come to.
     pub fn new(limit: u32) -> Self {
-        Self { code: None, buffer: Vec::new(), limit: limit.try_into().unwrap_or(usize::MAX) }
+        Self {
+            code: None,
+            buffer: Vec::new(),
+            limit: limit.try_into().unwrap_or(usize::MAX),
+        }
     }
 
     /// Add one piece, and hand back the update if this piece completed it.
@@ -237,7 +255,10 @@ impl Fragments {
             Fragment::Single if self.code.is_some() => {
                 Err(self.abandon("a whole update inside an unfinished one", piece.code))
             }
-            Fragment::Single => Ok(Some(Update { code: piece.code, data: piece.data })),
+            Fragment::Single => Ok(Some(Update {
+                code: piece.code,
+                data: piece.data,
+            })),
             Fragment::First if self.code.is_some() => {
                 Err(self.abandon("a first fragment inside an unfinished update", piece.code))
             }
@@ -256,7 +277,10 @@ impl Fragments {
                     return Ok(None);
                 }
                 self.code = None;
-                Ok(Some(Update { code, data: &self.buffer }))
+                Ok(Some(Update {
+                    code,
+                    data: &self.buffer,
+                }))
             }
         }
     }
@@ -346,7 +370,11 @@ mod tests {
         let frame = pdu(&[(BITMAP, &[0xAB; 200])]);
         assert_eq!(frame_length(&[]).unwrap(), None);
         assert_eq!(frame_length(&frame[..1]).unwrap(), None);
-        assert_eq!(frame_length(&frame[..2]).unwrap(), None, "the long length needs a third byte");
+        assert_eq!(
+            frame_length(&frame[..2]).unwrap(),
+            None,
+            "the long length needs a third byte"
+        );
         assert_eq!(frame_length(&frame[..3]).unwrap(), Some(frame.len()));
     }
 
@@ -367,10 +395,21 @@ mod tests {
     fn every_update_in_one_pdu_comes_out_in_order() {
         let frame = pdu(&[(BITMAP, &[0x01, 0x02]), (POINTER_POSITION, &[0x03, 0x04])]);
         let updates: Vec<_> = updates(&frame).unwrap().map(Result::unwrap).collect();
-        assert_eq!(updates, vec![
-            Piece { code: BITMAP, fragment: Fragment::Single, data: &[0x01, 0x02] },
-            Piece { code: POINTER_POSITION, fragment: Fragment::Single, data: &[0x03, 0x04] },
-        ]);
+        assert_eq!(
+            updates,
+            vec![
+                Piece {
+                    code: BITMAP,
+                    fragment: Fragment::Single,
+                    data: &[0x01, 0x02]
+                },
+                Piece {
+                    code: POINTER_POSITION,
+                    fragment: Fragment::Single,
+                    data: &[0x03, 0x04]
+                },
+            ]
+        );
     }
 
     /// The declared length is what the PDU is. A caller that read past it — off a
@@ -389,13 +428,25 @@ mod tests {
         // `compression` is the header's top two bits, and "used" is their value 2.
         let frame = wrap(&[BITMAP | 0x80, 0x00, 0x02, 0x00, 0xAB, 0xCD]);
         let piece = updates(&frame).unwrap().next().unwrap().unwrap();
-        assert_eq!(piece, Piece { code: BITMAP, fragment: Fragment::Single, data: &[0xAB, 0xCD] });
+        assert_eq!(
+            piece,
+            Piece {
+                code: BITMAP,
+                fragment: Fragment::Single,
+                data: &[0xAB, 0xCD]
+            }
+        );
 
         // And when they say it really was compressed, it is refused: a server may
         // only compress what the Client Info PDU asked it to.
         let frame = wrap(&[BITMAP | 0x80, PACKET_COMPRESSED, 0x02, 0x00, 0xAB, 0xCD]);
         assert_eq!(
-            updates(&frame).unwrap().next().unwrap().unwrap_err().to_string(),
+            updates(&frame)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap_err()
+                .to_string(),
             "a fast-path update carries its compression flags 0x20, which this client does not \
              accept"
         );
@@ -404,7 +455,12 @@ mod tests {
         // either of the values that do.
         let frame = wrap(&[BITMAP | 0x40, 0x02, 0x00, 0xAB, 0xCD]);
         assert_eq!(
-            updates(&frame).unwrap().next().unwrap().unwrap_err().to_string(),
+            updates(&frame)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap_err()
+                .to_string(),
             "a fast-path update carries its compression 0x40, which this client does not accept"
         );
     }
@@ -421,7 +477,11 @@ mod tests {
                     at if at == last => Fragment::Last,
                     _ => Fragment::Next,
                 };
-                Piece { code, fragment, data }
+                Piece {
+                    code,
+                    fragment,
+                    data,
+                }
             })
             .collect()
     }
@@ -453,14 +513,28 @@ mod tests {
     #[test]
     fn an_update_that_was_never_cut_up_is_handed_straight_back() {
         let mut fragments = Fragments::new(64);
-        let piece = Piece { code: POINTER_HIDDEN, fragment: Fragment::Single, data: &[] };
-        assert_eq!(fragments.push(piece).unwrap(), Some(Update { code: POINTER_HIDDEN, data: &[] }));
+        let piece = Piece {
+            code: POINTER_HIDDEN,
+            fragment: Fragment::Single,
+            data: &[],
+        };
+        assert_eq!(
+            fragments.push(piece).unwrap(),
+            Some(Update {
+                code: POINTER_HIDDEN,
+                data: &[]
+            })
+        );
     }
 
     #[test]
     fn a_fragment_that_continues_nothing_ends_the_connection() {
         let mut fragments = Fragments::new(64);
-        let piece = Piece { code: BITMAP, fragment: Fragment::Last, data: &[0x01] };
+        let piece = Piece {
+            code: BITMAP,
+            fragment: Fragment::Last,
+            data: &[0x01],
+        };
         assert_eq!(
             fragments.push(piece).unwrap_err().to_string(),
             "a fast-path update carries a fragment that continues nothing 0x1, which this client \
@@ -474,9 +548,17 @@ mod tests {
     fn an_update_beginning_inside_another_ends_the_connection() {
         let mut fragments = Fragments::new(64);
         fragments
-            .push(Piece { code: BITMAP, fragment: Fragment::First, data: &[0x01] })
+            .push(Piece {
+                code: BITMAP,
+                fragment: Fragment::First,
+                data: &[0x01],
+            })
             .unwrap();
-        let piece = Piece { code: COLOR_POINTER, fragment: Fragment::Single, data: &[0x02] };
+        let piece = Piece {
+            code: COLOR_POINTER,
+            fragment: Fragment::Single,
+            data: &[0x02],
+        };
         assert_eq!(
             fragments.push(piece).unwrap_err().to_string(),
             "a fast-path update carries a whole update inside an unfinished one 0x9, which this \
@@ -490,9 +572,17 @@ mod tests {
     fn a_reassembled_update_larger_than_the_two_ends_agreed_is_refused() {
         let mut fragments = Fragments::new(4);
         fragments
-            .push(Piece { code: BITMAP, fragment: Fragment::First, data: &[0x01, 0x02, 0x03] })
+            .push(Piece {
+                code: BITMAP,
+                fragment: Fragment::First,
+                data: &[0x01, 0x02, 0x03],
+            })
             .unwrap();
-        let piece = Piece { code: BITMAP, fragment: Fragment::Next, data: &[0x04, 0x05] };
+        let piece = Piece {
+            code: BITMAP,
+            fragment: Fragment::Next,
+            data: &[0x04, 0x05],
+        };
         assert_eq!(
             fragments.push(piece).unwrap_err().to_string(),
             "a reassembled fast-path update carries a total length 0x5, which this client does \

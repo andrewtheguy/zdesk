@@ -83,7 +83,12 @@ pub fn decompress(
         let skipped = if alpha { plane } else { 0 };
         let need = skipped + plane * PLANES + 1;
         if body.len() < need {
-            return Err(Malformed::Short { what: WHAT, len: src.len(), at: r.at(), need });
+            return Err(Malformed::Short {
+                what: WHAT,
+                len: src.len(),
+                at: r.at(),
+                need,
+            });
         }
         &body[skipped..skipped + plane * PLANES]
     };
@@ -112,7 +117,12 @@ fn unpack(
     }
     for index in 0..PLANES {
         let start = index * plane;
-        let taken = scanlines(rest(body, at)?, &mut planes[start..start + plane], width, height)?;
+        let taken = scanlines(
+            rest(body, at)?,
+            &mut planes[start..start + plane],
+            width,
+            height,
+        )?;
         at += taken;
     }
     Ok(())
@@ -197,7 +207,12 @@ fn compose(colors: &[u8], pixels: &mut Vec<u8>, plane: usize) {
 /// What is left of a buffer from `at`, as an error rather than a panic when a plane
 /// has claimed more than the bitmap carried.
 fn rest(bytes: &[u8], at: usize) -> Result<&[u8], Malformed> {
-    bytes.get(at..).ok_or(Malformed::Short { what: WHAT, len: bytes.len(), at, need: 1 })
+    bytes.get(at..).ok_or(Malformed::Short {
+        what: WHAT,
+        len: bytes.len(),
+        at,
+        need: 1,
+    })
 }
 
 #[cfg(test)]
@@ -225,12 +240,15 @@ mod tests {
     #[test]
     fn three_planes_are_woven_back_into_pixels_blue_first() {
         let stream = raw(NO_ALPHA, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(decoded(&stream, 2, 2), vec![
-            9, 5, 1, 0, //
-            10, 6, 2, 0, //
-            11, 7, 3, 0, //
-            12, 8, 4, 0,
-        ]);
+        assert_eq!(
+            decoded(&stream, 2, 2),
+            vec![
+                9, 5, 1, 0, //
+                10, 6, 2, 0, //
+                11, 7, 3, 0, //
+                12, 8, 4, 0,
+            ]
+        );
     }
 
     /// A desktop has no transparency, so an alpha plane is read past rather than
@@ -239,11 +257,10 @@ mod tests {
     fn an_alpha_plane_is_stepped_over_rather_than_rendered() {
         let mut planes = vec![0xFF; 4];
         planes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(decoded(&raw(0, &planes), 2, 2), decoded(
-            &raw(NO_ALPHA, &planes[4..]),
-            2,
-            2
-        ));
+        assert_eq!(
+            decoded(&raw(0, &planes), 2, 2),
+            decoded(&raw(NO_ALPHA, &planes[4..]), 2, 2)
+        );
     }
 
     /// One plane of an 8x2 bitmap: three literal bytes and a run of five more of the
@@ -274,7 +291,10 @@ mod tests {
         stream.extend(coded(200));
         let top = [200, 0, 100, 0];
         let below = [199, 255, 99, 0];
-        assert_eq!(decoded(&stream, 4, 2), [[top; 4].concat(), [below; 4].concat()].concat());
+        assert_eq!(
+            decoded(&stream, 4, 2),
+            [[top; 4].concat(), [below; 4].concat()].concat()
+        );
     }
 
     /// The long forms of the control byte, which are how a flat row of any width is

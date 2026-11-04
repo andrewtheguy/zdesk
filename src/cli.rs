@@ -24,7 +24,11 @@ pub const FEATURES: &[&str] = &[
 
 /// [`FEATURES`] as a terminal and the log spell them.
 pub fn features_line() -> String {
-    if FEATURES.is_empty() { "none".to_owned() } else { FEATURES.join(", ") }
+    if FEATURES.is_empty() {
+        "none".to_owned()
+    } else {
+        FEATURES.join(", ")
+    }
 }
 
 #[derive(Parser)]
@@ -187,13 +191,17 @@ pub enum MasterAction {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{features_line, Cli, Commands, MasterAction, PasswordAction, FEATURES};
+    use super::{Cli, Commands, FEATURES, MasterAction, PasswordAction, features_line};
 
     #[test]
     fn help_names_the_features_and_version_does_not() {
         let mut command = Cli::command();
         let help = command.render_help().to_string();
-        assert!(help.trim_end().ends_with(&format!("Features: {}", features_line())), "{help}");
+        assert!(
+            help.trim_end()
+                .ends_with(&format!("Features: {}", features_line())),
+            "{help}"
+        );
         assert_eq!(FEATURES.contains(&"tui"), cfg!(feature = "tui"));
         assert_eq!(
             command.render_version(),
@@ -254,8 +262,7 @@ mod tests {
     #[cfg(feature = "tui")]
     #[test]
     fn serve_worker_takes_the_one_path_the_launcher_knows() {
-        let cli = Cli::try_parse_from(["zdesk", "serve-worker", "--instance-dir", "/i"])
-            .unwrap();
+        let cli = Cli::try_parse_from(["zdesk", "serve-worker", "--instance-dir", "/i"]).unwrap();
         let Commands::ServeWorker { instance_dir } = cli.command else {
             panic!("expected the serve-worker subcommand");
         };
@@ -318,7 +325,10 @@ mod tests {
             panic!("expected the tui subcommand");
         };
         assert_eq!(port, 52380);
-        assert_eq!(instances_dir.as_deref(), Some(std::path::Path::new("/instances")));
+        assert_eq!(
+            instances_dir.as_deref(),
+            Some(std::path::Path::new("/instances"))
+        );
         assert!(
             Cli::try_parse_from(["zdesk", "tui", "--web-root", "/web"]).is_err(),
             "the SPA is in the binary; there is no web root to name"
@@ -329,17 +339,36 @@ mod tests {
     /// when told to.
     #[test]
     fn password_master_shows_or_creates_and_forces_only_on_request() {
-        assert!(Cli::try_parse_from(["zdesk", "password", "master"]).is_err(), "show or create");
+        assert!(
+            Cli::try_parse_from(["zdesk", "password", "master"]).is_err(),
+            "show or create"
+        );
         let master = |args: &[&str]| {
-            let cli = Cli::try_parse_from([&["zdesk", "password", "master"], args].concat()).unwrap();
-            let Commands::Password { action: PasswordAction::Master { action } } = cli.command else {
+            let cli =
+                Cli::try_parse_from([&["zdesk", "password", "master"], args].concat()).unwrap();
+            let Commands::Password {
+                action: PasswordAction::Master { action },
+            } = cli.command
+            else {
                 panic!("expected password master");
             };
             action
         };
-        assert!(matches!(master(&["show", "-c", "z.toml"]), MasterAction::Show { config: Some(_) }));
-        assert!(matches!(master(&["create"]), MasterAction::Create { config: None, force: false }));
-        assert!(matches!(master(&["create", "--force"]), MasterAction::Create { force: true, .. }));
+        assert!(matches!(
+            master(&["show", "-c", "z.toml"]),
+            MasterAction::Show { config: Some(_) }
+        ));
+        assert!(matches!(
+            master(&["create"]),
+            MasterAction::Create {
+                config: None,
+                force: false
+            }
+        ));
+        assert!(matches!(
+            master(&["create", "--force"]),
+            MasterAction::Create { force: true, .. }
+        ));
         assert!(Cli::try_parse_from(["zdesk", "password", "master", "show", "--force"]).is_err());
     }
 
@@ -350,16 +379,21 @@ mod tests {
         let Commands::CheckConfig { config, worker } = cli.command else {
             panic!("expected the check-config subcommand");
         };
-        assert!(config.is_none(), "stdin, which is what an unsaved editor has");
+        assert!(
+            config.is_none(),
+            "stdin, which is what an unsaved editor has"
+        );
         assert!(!worker, "a served gateway's rules unless asked otherwise");
 
-        let cli =
-            Cli::try_parse_from(["zdesk", "check-config", "--worker", "-c", "/i/zdesk.toml"])
-                .unwrap();
+        let cli = Cli::try_parse_from(["zdesk", "check-config", "--worker", "-c", "/i/zdesk.toml"])
+            .unwrap();
         let Commands::CheckConfig { config, worker } = cli.command else {
             panic!("expected the check-config subcommand");
         };
-        assert_eq!(config.as_deref(), Some(std::path::Path::new("/i/zdesk.toml")));
+        assert_eq!(
+            config.as_deref(),
+            Some(std::path::Path::new("/i/zdesk.toml"))
+        );
         assert!(worker);
     }
 
@@ -368,9 +402,7 @@ mod tests {
     fn worker_cli_is_absent_without_the_feature() {
         assert!(Cli::try_parse_from(["zdesk", "serve-worker"]).is_err());
         assert!(Cli::try_parse_from(["zdesk", "tui", "--port", "52380"]).is_err());
-        assert!(
-            Cli::try_parse_from(["zdesk", "check-config", "--worker"]).is_err()
-        );
+        assert!(Cli::try_parse_from(["zdesk", "check-config", "--worker"]).is_err());
 
         let cli = Cli::try_parse_from(["zdesk", "check-config"]).unwrap();
         let Commands::CheckConfig { config } = cli.command else {
@@ -378,5 +410,4 @@ mod tests {
         };
         assert!(config.is_none());
     }
-
 }

@@ -93,14 +93,19 @@ pub struct TooLong {
 /// is [`SHOW_PROTOCOL`] or nothing — see [`super::gcc::Channel::chunk_flags`].
 pub fn chunks(payload: &[u8], chunk: usize, channel: u32) -> Result<Vec<Vec<u8>>, TooLong> {
     if payload.len() > MAX_PDU {
-        return Err(TooLong { length: payload.len() });
+        return Err(TooLong {
+            length: payload.len(),
+        });
     }
     let total = u32::try_from(payload.len()).expect("a length MAX_PDU just bounded");
     let chunk = chunk.max(1); // a server that named nothing gets MIN_CHUNK; belt and braces
     let pieces = payload.chunks(chunk);
     let count = pieces.len().max(1);
     let mut written = Vec::with_capacity(count);
-    for (at, piece) in pieces.chain(payload.is_empty().then_some(&[][..])).enumerate() {
+    for (at, piece) in pieces
+        .chain(payload.is_empty().then_some(&[][..]))
+        .enumerate()
+    {
         let mut flags = channel;
         if at == 0 {
             flags |= FIRST;
@@ -228,7 +233,11 @@ impl Reassembly {
         self.buffer.clear();
         self.expected = None;
         self.dropping = None;
-        Malformed::Refused { what: WHAT, field, value: value.into() }
+        Malformed::Refused {
+            what: WHAT,
+            field,
+            value: value.into(),
+        }
     }
 }
 
@@ -260,7 +269,10 @@ mod tests {
         assert_eq!(written.len(), 3);
         let total = payload.len();
         assert_eq!(written[0], chunk(total, FIRST, &payload[..MIN_CHUNK]));
-        assert_eq!(written[1], chunk(total, 0, &payload[MIN_CHUNK..MIN_CHUNK * 2]));
+        assert_eq!(
+            written[1],
+            chunk(total, 0, &payload[MIN_CHUNK..MIN_CHUNK * 2])
+        );
         assert_eq!(written[2], chunk(total, LAST, &payload[MIN_CHUNK * 2..]));
 
         // And what was split reassembles into what went in, which is the whole point
@@ -291,7 +303,10 @@ mod tests {
     /// nothing — so it is one chunk carrying no data rather than no chunk at all.
     #[test]
     fn an_empty_payload_is_still_one_chunk() {
-        assert_eq!(chunks(&[], MIN_CHUNK, 0).unwrap(), vec![chunk(0, FIRST | LAST, &[])]);
+        assert_eq!(
+            chunks(&[], MIN_CHUNK, 0).unwrap(),
+            vec![chunk(0, FIRST | LAST, &[])]
+        );
     }
 
     /// The flag a channel was opened with rides on every chunk of every PDU, first,
@@ -327,21 +342,33 @@ mod tests {
     fn a_whole_pdu_arrives_borrowed_from_the_chunk_it_came_in() {
         let mut reassembly = Reassembly::new();
         let bytes = chunk(3, FIRST | LAST, &[1, 2, 3]);
-        assert_eq!(reassembly.push(&bytes).unwrap(), Chunk::Whole(&[1, 2, 3][..]));
+        assert_eq!(
+            reassembly.push(&bytes).unwrap(),
+            Chunk::Whole(&[1, 2, 3][..])
+        );
     }
 
     #[test]
     fn the_pieces_of_a_long_pdu_are_gathered_until_the_last_one() {
         let mut reassembly = Reassembly::new();
-        assert_eq!(reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(), Chunk::Partial);
-        assert_eq!(reassembly.push(&chunk(6, 0, &[3, 4])).unwrap(), Chunk::Partial);
+        assert_eq!(
+            reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(),
+            Chunk::Partial
+        );
+        assert_eq!(
+            reassembly.push(&chunk(6, 0, &[3, 4])).unwrap(),
+            Chunk::Partial
+        );
         assert_eq!(
             reassembly.push(&chunk(6, LAST, &[5, 6])).unwrap(),
             Chunk::Whole(&[1, 2, 3, 4, 5, 6][..])
         );
 
         // And the reassembler is ready for the next PDU rather than holding the last.
-        assert_eq!(reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(), Chunk::Whole(&[7][..]));
+        assert_eq!(
+            reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(),
+            Chunk::Whole(&[7][..])
+        );
     }
 
     /// A copy on the far end can be any size, and the session survives one that is
@@ -351,14 +378,23 @@ mod tests {
     fn a_pdu_too_long_to_hold_is_read_past_rather_than_ending_the_session() {
         let mut reassembly = Reassembly::new();
         let huge = MAX_PDU + 1;
-        assert_eq!(reassembly.push(&chunk(huge, FIRST, &[0; 4])).unwrap(), Chunk::Partial);
-        assert_eq!(reassembly.push(&chunk(huge, 0, &[0; 4])).unwrap(), Chunk::Partial);
+        assert_eq!(
+            reassembly.push(&chunk(huge, FIRST, &[0; 4])).unwrap(),
+            Chunk::Partial
+        );
+        assert_eq!(
+            reassembly.push(&chunk(huge, 0, &[0; 4])).unwrap(),
+            Chunk::Partial
+        );
         assert_eq!(
             reassembly.push(&chunk(huge, LAST, &[0; 4])).unwrap(),
             Chunk::Dropped { length: huge }
         );
         // Nothing was gathered, and the next PDU is read as a PDU.
-        assert_eq!(reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(), Chunk::Whole(&[7][..]));
+        assert_eq!(
+            reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(),
+            Chunk::Whole(&[7][..])
+        );
     }
 
     /// The chunk sizes a server may name cannot carry one of these in a single
@@ -369,13 +405,19 @@ mod tests {
         let length = MAX_PDU + 1;
         let piece = chunk(length, FIRST | LAST, &[0; 8]);
         assert_eq!(reassembly.push(&piece).unwrap(), Chunk::Dropped { length });
-        assert_eq!(reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(), Chunk::Whole(&[7][..]));
+        assert_eq!(
+            reassembly.push(&chunk(1, FIRST | LAST, &[7])).unwrap(),
+            Chunk::Whole(&[7][..])
+        );
     }
 
     #[test]
     fn a_sequence_that_does_not_add_up_is_refused_and_given_up_on() {
         let mut reassembly = Reassembly::new();
-        assert_eq!(reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(), Chunk::Partial);
+        assert_eq!(
+            reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(),
+            Chunk::Partial
+        );
         let err = reassembly.push(&chunk(6, LAST, &[3])).unwrap_err();
         assert_eq!(
             err.to_string(),
@@ -386,15 +428,23 @@ mod tests {
         let err = reassembly.push(&chunk(6, LAST, &[4])).unwrap_err();
         assert!(matches!(
             err,
-            Malformed::Refused { field: "a chunk that continues nothing, whose flags are", .. }
+            Malformed::Refused {
+                field: "a chunk that continues nothing, whose flags are",
+                ..
+            }
         ));
     }
 
     #[test]
     fn a_second_start_inside_an_unfinished_pdu_is_refused() {
         let mut reassembly = Reassembly::new();
-        assert_eq!(reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(), Chunk::Partial);
-        let err = reassembly.push(&chunk(2, FIRST | LAST, &[1, 2])).unwrap_err();
+        assert_eq!(
+            reassembly.push(&chunk(6, FIRST, &[1, 2])).unwrap(),
+            Chunk::Partial
+        );
+        let err = reassembly
+            .push(&chunk(2, FIRST | LAST, &[1, 2]))
+            .unwrap_err();
         let field = "a first chunk inside an unfinished PDU, whose flags are";
         assert!(matches!(err, Malformed::Refused { field: refused, .. } if refused == field));
     }
@@ -404,7 +454,9 @@ mod tests {
     #[test]
     fn compressed_channel_data_is_refused_by_name() {
         let mut reassembly = Reassembly::new();
-        let err = reassembly.push(&chunk(2, FIRST | LAST | COMPRESSED, &[1])).unwrap_err();
+        let err = reassembly
+            .push(&chunk(2, FIRST | LAST | COMPRESSED, &[1]))
+            .unwrap_err();
         assert_eq!(
             err.to_string(),
             "a virtual channel PDU carries compressed channel data, whose flags are 0x200003, \
@@ -415,6 +467,9 @@ mod tests {
     #[test]
     fn a_chunk_too_short_for_its_own_header_is_short_rather_than_a_panic() {
         let mut reassembly = Reassembly::new();
-        assert!(matches!(reassembly.push(&[0; 7]).unwrap_err(), Malformed::Short { .. }));
+        assert!(matches!(
+            reassembly.push(&[0; 7]).unwrap_err(),
+            Malformed::Short { .. }
+        ));
     }
 }

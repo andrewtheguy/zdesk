@@ -140,8 +140,8 @@ The host's own stream, passed through to the browser:
   nearly all of the picture's work off the gateway. It is tested against a
   physical Windows 11 computer, from a desktop browser and from a mobile browser
   on iOS, with sound and the clipboard beside it, and not yet with the camera or
-  the microphone. A session started with the picker's H.264 full screen or H.264
-  region (alpha) lets the host draw with H.264 on that pipeline, which the browser decodes,
+  the microphone. A session started with the picker's H.264 full screen (beta) or
+  H.264 region (alpha) lets the host draw with H.264 on that pipeline, which the browser decodes,
   rate-controlled to the browser's link; with the default High quality the host
   draws with the pipeline's other codecs alone. See
   [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
@@ -833,7 +833,7 @@ gateway's tiles; with the pipeline on, the pipeline is the only picture, and no
 bitmap update is decoded or coded.
 
 How the host draws the pipeline is chosen at the picker: High quality, the
-pipeline's codecs without H.264, by default; *H.264 full screen* (alpha), the
+pipeline's codecs without H.264, by default; *H.264 full screen* (beta), the
 whole desktop in H.264; or *H.264 region* (alpha), H.264 only where the desktop
 moves like video, both rate-controlled by the host to the browser's link.
 The gateway has no H.264 decoder and is not given one. Either H.264 choice is
@@ -1681,7 +1681,7 @@ the pipeline.
   times smaller on planar drawing, 2.07 times on scrolling. A compression of the
   gateway's own does better
   ([Roadmap](roadmap.md#the-pipeline-compressed-again-for-the-browser)).
-- **H.264, where the session chose H.264 full screen or H.264 region** (ALPHA). Otherwise the host is
+- **H.264, where the session chose H.264 full screen** (BETA) **or H.264 region** (ALPHA). Otherwise the host is
   told its client takes none. With it, a session
   whose page said it decodes H.264 advertises the capability sets that take it
   (`caps_advertise` in the graphics crate's `proto/gfx.rs`). Under *H.264 full
@@ -2453,7 +2453,7 @@ and `GET /api/targets` carries it:
   `src/config.rs`), offered by an `rdp` target with the pipeline on and refused
   elsewhere. The picker's Graphics group shows three: High quality, the
   pipeline's codecs without H.264, which is the default and which the host fits
-  to the link by frame rate alone; *H.264 full screen* (alpha), the whole desktop
+  to the link by frame rate alone; *H.264 full screen* (beta), the whole desktop
   in H.264 (`AVC_THINCLIENT`) the host rate-controls to the browser's link; and
   *H.264 region* (alpha), H.264 where the desktop moves like video, rate-controlled
   the same, and the pipeline's other codecs elsewhere, sent coarser while the

@@ -92,18 +92,32 @@ pub enum Button {
 pub enum Event {
     /// A key by RDP scancode. `extended` is the E0 prefix — right alt, the arrow
     /// cluster, the numeric-keypad Enter and slash, and the Windows keys.
-    Key { scancode: u8, extended: bool, down: bool },
+    Key {
+        scancode: u8,
+        extended: bool,
+        down: bool,
+    },
     /// The pointer, pressing nothing.
     Move { x: u16, y: u16 },
     /// A button, at a position. The position travels with the press rather than
     /// being remembered from the last move, because that is how the PDU is shaped —
     /// and a click whose coordinates came from an earlier event is where "it clicked
     /// the wrong thing" on a slow link comes from.
-    Button { button: Button, down: bool, x: u16, y: u16 },
+    Button {
+        button: Button,
+        down: bool,
+        x: u16,
+        y: u16,
+    },
     /// The wheel, by a signed number of rotation units: 120 is one notch of a
     /// conventional wheel, and positive is up, or right. Clamped to
     /// [`MAX_ROTATION`].
-    Wheel { rotation: i16, horizontal: bool, x: u16, y: u16 },
+    Wheel {
+        rotation: i16,
+        horizontal: bool,
+        x: u16,
+        y: u16,
+    },
 }
 
 /// Every event, as few PDUs as they fit in. An empty slice is no PDUs at all.
@@ -132,7 +146,11 @@ fn pdu(events: &[Event]) -> Vec<u8> {
     }
 
     let mut w = Writer::with_capacity(length);
-    w.u8(if counted == 0 { ACTION | (count << 2) } else { ACTION });
+    w.u8(if counted == 0 {
+        ACTION | (count << 2)
+    } else {
+        ACTION
+    });
     if length > SHORT_LENGTH {
         // Two bytes, most significant first, with the top bit marking the form.
         w.u16_be(0x8000 | u16::try_from(length).expect("a PDU of at most MAX_EVENTS events"));
@@ -149,7 +167,11 @@ fn pdu(events: &[Event]) -> Vec<u8> {
 impl Event {
     fn write(&self, w: &mut Writer) {
         match *self {
-            Event::Key { scancode, extended, down } => {
+            Event::Key {
+                scancode,
+                extended,
+                down,
+            } => {
                 let mut flags = if down { 0 } else { RELEASE };
                 if extended {
                     flags |= EXTENDED;
@@ -158,10 +180,20 @@ impl Event {
                 w.u8(scancode);
             }
             Event::Move { x, y } => mouse(w, MOVE, 0, x, y),
-            Event::Button { button: Button::X1, down, x, y } => {
+            Event::Button {
+                button: Button::X1,
+                down,
+                x,
+                y,
+            } => {
                 extended_mouse(w, X1_BUTTON, down, x, y);
             }
-            Event::Button { button: Button::X2, down, x, y } => {
+            Event::Button {
+                button: Button::X2,
+                down,
+                x,
+                y,
+            } => {
                 extended_mouse(w, X2_BUTTON, down, x, y);
             }
             Event::Button { button, down, x, y } => {
@@ -172,8 +204,17 @@ impl Event {
                 };
                 mouse(w, flags | if down { DOWN } else { 0 }, 0, x, y);
             }
-            Event::Wheel { rotation, horizontal, x, y } => {
-                let flags = if horizontal { HORIZONTAL_WHEEL } else { VERTICAL_WHEEL };
+            Event::Wheel {
+                rotation,
+                horizontal,
+                x,
+                y,
+            } => {
+                let flags = if horizontal {
+                    HORIZONTAL_WHEEL
+                } else {
+                    VERTICAL_WHEEL
+                };
                 mouse(w, flags, rotation, x, y);
             }
         }
@@ -216,11 +257,19 @@ mod tests {
     #[test]
     fn a_key_carries_its_release_and_extended_bits_beside_the_code() {
         assert_eq!(
-            one(Event::Key { scancode: 0x1E, extended: false, down: true }),
+            one(Event::Key {
+                scancode: 0x1E,
+                extended: false,
+                down: true
+            }),
             vec![0x04, 0x04, 0x00, 0x1E]
         );
         assert_eq!(
-            one(Event::Key { scancode: 0x48, extended: true, down: false }),
+            one(Event::Key {
+                scancode: 0x48,
+                extended: true,
+                down: false
+            }),
             vec![0x04, 0x04, RELEASE | EXTENDED, 0x48]
         );
     }
@@ -228,28 +277,56 @@ mod tests {
     #[test]
     fn a_move_presses_nothing_and_turns_no_wheel() {
         assert_eq!(
-            one(Event::Move { x: 0x0102, y: 0x0304 }),
+            one(Event::Move {
+                x: 0x0102,
+                y: 0x0304
+            }),
             vec![0x04, 0x09, 0x20, 0x00, 0x08, 0x02, 0x01, 0x04, 0x03]
         );
     }
 
     #[test]
     fn a_button_carries_its_own_down_bit() {
-        let down = one(Event::Button { button: Button::Left, down: true, x: 1, y: 2 });
+        let down = one(Event::Button {
+            button: Button::Left,
+            down: true,
+            x: 1,
+            y: 2,
+        });
         assert_eq!(&down[3..5], (LEFT_BUTTON | DOWN).to_le_bytes());
-        let up = one(Event::Button { button: Button::Left, down: false, x: 1, y: 2 });
+        let up = one(Event::Button {
+            button: Button::Left,
+            down: false,
+            x: 1,
+            y: 2,
+        });
         assert_eq!(&up[3..5], LEFT_BUTTON.to_le_bytes());
-        let middle = one(Event::Button { button: Button::Middle, down: true, x: 1, y: 2 });
+        let middle = one(Event::Button {
+            button: Button::Middle,
+            down: true,
+            x: 1,
+            y: 2,
+        });
         assert_eq!(&middle[3..5], (MIDDLE_BUTTON | DOWN).to_le_bytes());
     }
 
     /// The two extra buttons are a different event code, not a fourth and fifth flag.
     #[test]
     fn the_side_buttons_ride_an_event_of_their_own() {
-        let x1 = one(Event::Button { button: Button::X1, down: true, x: 1, y: 2 });
+        let x1 = one(Event::Button {
+            button: Button::X1,
+            down: true,
+            x: 1,
+            y: 2,
+        });
         assert_eq!(x1[2], EXTENDED_MOUSE << 5);
         assert_eq!(&x1[3..5], (X1_BUTTON | DOWN).to_le_bytes());
-        let x2 = one(Event::Button { button: Button::X2, down: false, x: 1, y: 2 });
+        let x2 = one(Event::Button {
+            button: Button::X2,
+            down: false,
+            x: 1,
+            y: 2,
+        });
         assert_eq!(x2[2], EXTENDED_MOUSE << 5);
         assert_eq!(&x2[3..5], X2_BUTTON.to_le_bytes());
     }
@@ -257,10 +334,20 @@ mod tests {
     /// The sign is a bit beside the magnitude, not the top bit of it.
     #[test]
     fn a_negative_wheel_sets_the_negative_bit_and_an_eight_bit_magnitude() {
-        let down = one(Event::Wheel { rotation: -1, horizontal: false, x: 1, y: 2 });
+        let down = one(Event::Wheel {
+            rotation: -1,
+            horizontal: false,
+            x: 1,
+            y: 2,
+        });
         let flags = u16::from_le_bytes([down[3], down[4]]);
         assert_eq!(flags, VERTICAL_WHEEL | WHEEL_NEGATIVE | 0x00FF);
-        let up = one(Event::Wheel { rotation: 120, horizontal: true, x: 1, y: 2 });
+        let up = one(Event::Wheel {
+            rotation: 120,
+            horizontal: true,
+            x: 1,
+            y: 2,
+        });
         let flags = u16::from_le_bytes([up[3], up[4]]);
         assert_eq!(flags, HORIZONTAL_WHEEL | 120);
     }
@@ -270,12 +357,22 @@ mod tests {
     #[test]
     fn an_oversized_rotation_cannot_reach_the_flag_bits() {
         for rotation in [i16::MAX, MAX_ROTATION + 1] {
-            let pdu = one(Event::Wheel { rotation, horizontal: false, x: 1, y: 2 });
+            let pdu = one(Event::Wheel {
+                rotation,
+                horizontal: false,
+                x: 1,
+                y: 2,
+            });
             let flags = u16::from_le_bytes([pdu[3], pdu[4]]);
             assert_eq!(flags, VERTICAL_WHEEL | u16::try_from(MAX_ROTATION).unwrap());
         }
         for rotation in [i16::MIN, -MAX_ROTATION - 1] {
-            let pdu = one(Event::Wheel { rotation, horizontal: false, x: 1, y: 2 });
+            let pdu = one(Event::Wheel {
+                rotation,
+                horizontal: false,
+                x: 1,
+                y: 2,
+            });
             let flags = u16::from_le_bytes([pdu[3], pdu[4]]);
             assert_eq!(flags, VERTICAL_WHEEL | WHEEL_NEGATIVE | 0x0001);
         }
@@ -283,18 +380,39 @@ mod tests {
 
     #[test]
     fn up_to_fifteen_events_are_counted_in_the_header_byte() {
-        let events = vec![Event::Key { scancode: 1, extended: false, down: true }; HEADER_EVENTS];
+        let events = vec![
+            Event::Key {
+                scancode: 1,
+                extended: false,
+                down: true
+            };
+            HEADER_EVENTS
+        ];
         let pdu = one_pdu(&events);
         assert_eq!(pdu[0], ACTION | (15 << 2));
-        assert_eq!(pdu[1], 2 + 15 * 2, "the length counts itself and the header");
+        assert_eq!(
+            pdu[1],
+            2 + 15 * 2,
+            "the length counts itself and the header"
+        );
         assert_eq!(pdu.len(), usize::from(pdu[1]));
     }
 
     #[test]
     fn past_fifteen_the_count_moves_to_a_byte_of_its_own() {
-        let events = vec![Event::Key { scancode: 1, extended: false, down: true }; 16];
+        let events = vec![
+            Event::Key {
+                scancode: 1,
+                extended: false,
+                down: true
+            };
+            16
+        ];
         let pdu = one_pdu(&events);
-        assert_eq!(pdu[0], ACTION, "a header count of zero says to look further on");
+        assert_eq!(
+            pdu[0], ACTION,
+            "a header count of zero says to look further on"
+        );
         assert_eq!(pdu[1], 3 + 16 * 2);
         assert_eq!(pdu[2], 16);
         assert_eq!(pdu.len(), usize::from(pdu[1]));
