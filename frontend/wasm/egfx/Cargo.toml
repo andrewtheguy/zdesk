@@ -7,7 +7,8 @@
 # gateway's workspace, which names it in `exclude`: it builds for
 # `wasm32-unknown-unknown` alone, with the profile, the lockfile and the toolchain
 # here. The toolchain is a nightly (rust-toolchain.toml), for the threads the
-# module decodes on (.cargo/config.toml).
+# module decodes on (.cargo/config.toml). Its unit tests are built natively, by
+# `bun run test`: on the default toolchain, without the threads.
 [package]
 name = "zdesk-egfx"
 version = "0.0.0"
