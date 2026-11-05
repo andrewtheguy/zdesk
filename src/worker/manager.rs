@@ -413,8 +413,9 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                         message = match bootstrap_file(&path, SETTINGS_TEMPLATE) {
                             Err(error) => format!("{error:#}"),
                             Ok(()) => {
-                                terminal.suspend()?;
-                                let edited = edit_config(&path).await;
+                                let editor = editor();
+                                terminal.hand_to_editor(&editor, &path)?;
+                                let edited = edit_config(&editor, &path).await;
                                 terminal.resume()?;
                                 screen.invalidate();
                                 events = EventStream::new();
@@ -533,8 +534,9 @@ pub async fn run_tui(options: TuiOptions) -> anyhow::Result<()> {
                         if let Some(instance) = instances.get(selected) {
                             let name = instance.name.clone();
                             let path = instance.config_path();
-                            terminal.suspend()?;
-                            let edited = edit_config(&path).await;
+                            let editor = editor();
+                            terminal.hand_to_editor(&editor, &path)?;
+                            let edited = edit_config(&editor, &path).await;
                             terminal.resume()?;
                             screen.invalidate();
                             events = EventStream::new();
@@ -684,14 +686,9 @@ fn foreign_master(path: &Path) -> String {
     )
 }
 
-/// Opens the instance config in the operator's editor and waits for it.
-///
-/// `VISUAL` and `EDITOR` hold a shell command line, not a program path: `subl -w`
-/// and `code --wait` are ordinary values, and every tool that honours these
-/// variables lets the shell split them. So the value is handed to the platform's
-/// shell with the path kept out of the words it splits.
-async fn edit_config(path: &Path) -> anyhow::Result<()> {
-    let editor = std::env::var("VISUAL")
+/// The operator's editor: `VISUAL`, else `EDITOR`, else the platform's own.
+fn editor() -> String {
+    std::env::var("VISUAL")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| {
@@ -699,8 +696,17 @@ async fn edit_config(path: &Path) -> anyhow::Result<()> {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
-        .unwrap_or_else(|| String::from(DEFAULT_EDITOR));
-    let status = editor_command(&editor, path)
+        .unwrap_or_else(|| String::from(DEFAULT_EDITOR))
+}
+
+/// Opens the instance config in `editor` and waits for it.
+///
+/// `VISUAL` and `EDITOR` hold a shell command line, not a program path: `subl -w`
+/// and `code --wait` are ordinary values, and every tool that honours these
+/// variables lets the shell split them. So the value is handed to the platform's
+/// shell with the path kept out of the words it splits.
+async fn edit_config(editor: &str, path: &Path) -> anyhow::Result<()> {
+    let status = editor_command(editor, path)
         .status()
         .await
         .with_context(|| format!("cannot start editor {editor}"))?;
@@ -826,7 +832,20 @@ fn validate_config(path: &Path) -> anyhow::Result<()> {
 }
 
 struct TerminalSession {
-    active: bool,
+    state: Terminal,
+}
+
+/// Who has the terminal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Terminal {
+    /// The TUI, drawing on the alternate screen in raw mode.
+    Drawn,
+    /// Something else, on the screen the TUI was started from.
+    Suspended,
+    /// An editor, on the alternate screen under a notice saying what it is
+    /// editing: a window of its own (`code --wait`, Notepad) leaves the notice
+    /// up while the TUI waits for it, and one in the terminal draws over it.
+    Editing,
 }
 
 impl TerminalSession {
@@ -844,25 +863,54 @@ impl TerminalSession {
             let _ = terminal::disable_raw_mode();
             return Err(error).context("cannot enter the alternate screen");
         }
-        Ok(Self { active: true })
+        Ok(Self {
+            state: Terminal::Drawn,
+        })
     }
 
     fn suspend(&mut self) -> anyhow::Result<()> {
-        if self.active {
-            execute!(std::io::stdout(), Show, LeaveAlternateScreen)
-                .context("cannot leave the alternate screen")?;
+        match self.state {
+            Terminal::Suspended => {}
+            Terminal::Drawn | Terminal::Editing => {
+                execute!(std::io::stdout(), Show, LeaveAlternateScreen)
+                    .context("cannot leave the alternate screen")?;
+                terminal::disable_raw_mode().context("cannot restore terminal input")?;
+                self.state = Terminal::Suspended;
+            }
+        }
+        Ok(())
+    }
+
+    /// Hands the terminal to `editor`, opening `path`, with a notice of it left
+    /// on the screen rather than whatever the TUI was started from, which would
+    /// look as if the TUI had quit.
+    fn hand_to_editor(&mut self, editor: &str, path: &Path) -> anyhow::Result<()> {
+        if self.state == Terminal::Drawn {
+            let (width, _) = terminal::size().unwrap_or((80, 24));
+            let mut notice = Vec::new();
+            editing_notice(&mut notice, width, editor, path)?;
+            let mut stdout = std::io::stdout();
+            stdout
+                .write_all(&notice)
+                .and_then(|()| stdout.flush())
+                .context("cannot write to the terminal")?;
             terminal::disable_raw_mode().context("cannot restore terminal input")?;
-            self.active = false;
+            self.state = Terminal::Editing;
         }
         Ok(())
     }
 
     fn resume(&mut self) -> anyhow::Result<()> {
-        if !self.active {
+        if self.state == Terminal::Editing {
+            discard_typed_ahead()?;
+        }
+        if self.state != Terminal::Drawn {
             terminal::enable_raw_mode().context("cannot enable terminal raw mode")?;
+            // Entered again from `Editing` too: an editor in the terminal leaves the
+            // alternate screen as it exits, whether or not it found the TUI there.
             execute!(std::io::stdout(), EnterAlternateScreen, Hide)
                 .context("cannot enter the alternate screen")?;
-            self.active = true;
+            self.state = Terminal::Drawn;
         }
         Ok(())
     }
@@ -870,11 +918,74 @@ impl TerminalSession {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        if self.active {
+        if self.state != Terminal::Suspended {
             let _ = execute!(std::io::stdout(), Show, LeaveAlternateScreen);
             let _ = terminal::disable_raw_mode();
         }
     }
+}
+
+/// Drops what was typed at the terminal while an editor in a window of its own
+/// had the file and the TUI waited, which it would otherwise read as its keys
+/// once back: an `x` meant for the editor would stop an instance. A terminal
+/// editor has read its own keys, and leaves nothing.
+#[cfg(unix)]
+fn discard_typed_ahead() -> anyhow::Result<()> {
+    // SAFETY: tcflush only discards the queue of the descriptor it is given.
+    if unsafe { libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("cannot discard typed-ahead keys");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn discard_typed_ahead() -> anyhow::Result<()> {
+    use windows_sys::Win32::System::Console::{
+        FlushConsoleInputBuffer, GetStdHandle, STD_INPUT_HANDLE,
+    };
+    // SAFETY: both take and return plain handles; the input handle is this
+    // process's console, which outlives the call.
+    if unsafe { FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE)) } == 0 {
+        return Err(std::io::Error::last_os_error()).context("cannot discard typed-ahead keys");
+    }
+    Ok(())
+}
+
+/// What the screen shows while an editor has `path` open: the file, the editor,
+/// and the way back. The path is not clipped, since it is what to look for in
+/// the editor's window; it wraps instead.
+fn editing_notice(
+    out: &mut impl Write,
+    width: u16,
+    editor: &str,
+    path: &Path,
+) -> std::io::Result<()> {
+    queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    line(
+        out,
+        0,
+        width,
+        &format!("zDesk {VERSION} · editing in {editor}"),
+        Some(Color::Cyan),
+        true,
+    )?;
+    let path = path.display().to_string();
+    queue!(out, MoveTo(0, 2), Print(&path))?;
+    let rows = path
+        .chars()
+        .count()
+        .div_ceil(usize::from(width.max(1)))
+        .max(1);
+    let next = 2 + u16::try_from(rows).unwrap_or(u16::MAX - 4);
+    line(
+        out,
+        next.saturating_add(1),
+        width,
+        "Save it and close the editor to come back here.",
+        None,
+        false,
+    )?;
+    queue!(out, MoveTo(0, next.saturating_add(3)), Show)
 }
 
 /// The frame currently on the terminal, so an identical one is not written again.
@@ -3175,6 +3286,19 @@ async fn write_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// While an editor has a config open the screen names the editor and the
+    /// whole path, however narrow the terminal, and the way back.
+    #[test]
+    fn the_editing_notice_names_the_whole_path() {
+        let path = Path::new("/home/someone/.local/share/zdesk/instances/office/zdesk.toml");
+        let mut notice = Vec::new();
+        editing_notice(&mut notice, 40, "code --wait", path).unwrap();
+        let notice = String::from_utf8(notice).unwrap();
+        assert!(notice.contains(&path.display().to_string()), "{notice}");
+        assert!(notice.contains("editing in"), "{notice}");
+        assert!(notice.contains("Save it and"), "{notice}");
+    }
 
     /// The tick is not a reason to touch the terminal. A repaint that changes
     /// nothing still erases the display, and a selection made over this screen
