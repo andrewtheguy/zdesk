@@ -454,8 +454,8 @@ pub struct WlshareTiles {
     /// The zstd decoders, kept so that their buffers and tables are made once,
     /// not for every frame: a lossless tile's, reset for each tile, and the
     /// still stream's, reset by a body that begins a stream.
-    planar: ruzstd::decoding::FrameDecoder,
-    still: ruzstd::decoding::FrameDecoder,
+    planar: ruzstd_decompress::decoding::FrameDecoder,
+    still: ruzstd_decompress::decoding::FrameDecoder,
     /// Whether `still` holds a stream: not before a body begins one, nor after
     /// a body that did not decode.
     in_still: bool,
@@ -472,9 +472,9 @@ impl WlshareTiles {
             bitmap: Vec::new(),
             planes: Vec::new(),
             pixels: Vec::new(),
-            planar: ruzstd::decoding::FrameDecoder::new(),
+            planar: ruzstd_decompress::decoding::FrameDecoder::new(),
             still: {
-                let mut frame = ruzstd::decoding::FrameDecoder::new();
+                let mut frame = ruzstd_decompress::decoding::FrameDecoder::new();
                 frame.set_max_window_size(STILL_WINDOW_MOST);
                 frame
             },
@@ -568,9 +568,11 @@ impl WlshareTiles {
         self.bitmap.clear();
         let most = planar_most(w, h);
         let mut source = body;
-        let frame =
-            ruzstd::decoding::StreamingDecoder::new_with_decoder(&mut source, &mut self.planar)
-                .map_err(|e| e.to_string())?;
+        let frame = ruzstd_decompress::decoding::StreamingDecoder::new_with_decoder(
+            &mut source,
+            &mut self.planar,
+        )
+        .map_err(|e| e.to_string())?;
         let mut capped = std::io::Read::take(frame, most as u64 + 1);
         std::io::Read::read_to_end(&mut capped, &mut self.bitmap).map_err(|e| e.to_string())?;
         if self.bitmap.len() > most {

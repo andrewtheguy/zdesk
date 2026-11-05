@@ -675,7 +675,7 @@ async fn picture_of(
     let (mut size, mut picture, mut formats) =
         ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
     let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
-    let mut still: Option<ruzstd::decoding::FrameDecoder> = None;
+    let mut still: Option<ruzstd_decompress::decoding::FrameDecoder> = None;
     let mut frame_no = 0;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
@@ -763,7 +763,7 @@ async fn picture_of(
                             let (mut planes, mut bgrx, mut bitmap) =
                                 (Vec::new(), Vec::new(), Vec::new());
                             let mut frame =
-                                ruzstd::decoding::StreamingDecoder::new(&tile.image[..])
+                                ruzstd_decompress::decoding::StreamingDecoder::new(&tile.image[..])
                                     .expect("a zstd frame");
                             std::io::Read::read_to_end(&mut frame, &mut bitmap)
                                 .expect("the page's decoder reads wlshare's zstd frame");
@@ -793,7 +793,7 @@ async fn picture_of(
                         batch::TILE_STILL => {
                             let mut source = &tile.image[..];
                             if source.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
-                                let mut frame = ruzstd::decoding::FrameDecoder::new();
+                                let mut frame = ruzstd_decompress::decoding::FrameDecoder::new();
                                 frame
                                     .init(&mut source)
                                     .expect("the still stream's frame header");
