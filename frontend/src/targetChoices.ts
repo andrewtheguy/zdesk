@@ -491,7 +491,7 @@ function pictureOptions(
 }
 
 // wlshare's pictures in their two kinds, the picker's order: adaptive, paced to
-// the link and never lossless, and lossless, for a wired link.
+// the link and never lossless, and lossless, for high speed LAN connection.
 const PICTURE_KINDS: {
   label: string;
   note: string;
