@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.515"
+version = "0.0.516"
 license = "MIT"
 edition = "2024"
 default-run = "zdesk"
@@ -284,12 +284,14 @@ libc = { version = "0.2", optional = true }
 # The control plane's private transport on Windows (src/worker/transport.rs): a
 # named pipe whose DACL admits this user alone, and the same owner-only DACL on the
 # instance directories that hold the targets' credentials — what a `0600` socket in
-# a `0700` directory is on Unix. The version tokio already links.
+# a `0700` directory is on Unix. The version tokio already links. Its console
+# drops the keys typed while the TUI waits for an editor.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_System_Console",
     "Win32_System_Threading",
 ] }
 
