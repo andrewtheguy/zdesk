@@ -582,7 +582,11 @@ test("a wlshare target's pictures are chosen kind first: adaptive, then lossless
   const options = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(kinds(options), [
     ["Adaptive", false, ["wlshare-video", "wlshare-tiles-progressive"]],
-    ["Lossless", false, ["wlshare-tiles-motion", "wlshare-tiles-lossless"]],
+    [
+      "Lossless (requires high bandwidth)",
+      false,
+      ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
+    ],
   ]);
   const [adaptive, lossless] = options.pictureKinds ?? [];
   assert.deepEqual(
@@ -593,7 +597,7 @@ test("a wlshare target's pictures are chosen kind first: adaptive, then lossless
     lossless?.pictures.map((picture) => picture.label),
     ["Settles to lossless", "Fully lossless (experimental)"],
   );
-  // Lossless is for a LAN, and not suggested for a phone, nor either of its
+  // Lossless wants a wired link, and is not suggested for a phone, nor either of its
   // pictures; the adaptive ones say nothing of it.
   for (const note of [
     lossless?.note,

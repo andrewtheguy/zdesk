@@ -491,7 +491,7 @@ function pictureOptions(
 }
 
 // wlshare's pictures in their two kinds, the picker's order: adaptive, paced to
-// the link and never lossless, and lossless, for a LAN.
+// the link and never lossless, and lossless, for a wired link.
 const PICTURE_KINDS: {
   label: string;
   note: string;
@@ -503,8 +503,8 @@ const PICTURE_KINDS: {
     pictures: ["wlshare-video", "wlshare-tiles-progressive"],
   },
   {
-    label: "Lossless",
-    note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. For a LAN; not recommended on a phone or tablet.",
+    label: "Lossless (requires high bandwidth)",
+    note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. A wired connection is recommended; not recommended on a phone or tablet.",
     pictures: ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
   },
 ];
