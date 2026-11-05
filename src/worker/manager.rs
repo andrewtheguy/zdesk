@@ -3951,13 +3951,16 @@ mod tests {
             supervisor.reload_settings().await.unwrap();
         }
 
+        // Whatever the order is by now, which the link above changes on Unix
+        // alone, a file that does not parse keeps it.
+        let before = names(&supervisor);
         std::fs::write(&settings, "order = [\"beta\", \"beta\"]\n").unwrap();
         supervisor.move_instance("beta", true).await.unwrap_err();
         assert_eq!(
             std::fs::read_to_string(&settings).unwrap(),
             "order = [\"beta\", \"beta\"]\n"
         );
-        assert_eq!(names(&supervisor), ["alpha", "beta", "gamma"]);
+        assert_eq!(names(&supervisor), before);
     }
 
     /// A path cmd would read as variables — `%TEMP%`, `!x!` — or as operators
