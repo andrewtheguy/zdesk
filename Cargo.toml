@@ -105,7 +105,7 @@ rayon = "1"
 # for this gateway and for wlshare, its own repository pinned at a release tag by
 # both, so a passed wlshare packet and one encoded here are the same stream by
 # construction and an encoder setting changes in one place.
-sound-opus = { git = "https://github.com/andrewtheguy/sound-opus", tag = "v0.0.8" }
+sound-opus = { git = "https://github.com/andrewtheguy/sound-opus", tag = "v0.0.9" }
 # libopus itself, for the microphone's decoder (src/mic.rs) and for the tests
 # that read the encoder's packets back; sound-opus links the same crate at the
 # same tag, so there is one libopus in the binary.
@@ -117,7 +117,7 @@ sound-opus = { git = "https://github.com/andrewtheguy/sound-opus", tag = "v0.0.8
 # no C build on this path any more, and nothing links a system `libopus.dylib`, so
 # the binary is self-contained on every runner without any env coaxing. The lib is
 # still named `opus`, so every `use opus::…` is untouched.
-opus = { package = "opus-prebuilt", git = "https://github.com/andrewtheguy/libopus-prebuilt", tag = "v1.6.1-20260906161304-8dd83e8" }
+opus = { package = "opus-prebuilt", git = "https://github.com/andrewtheguy/libopus-prebuilt", tag = "v1.6.1-20261106175320-d681e6f" }
 # There is deliberately no container. Opus packets travel as audio frames on the
 # dedicated audio WebSocket, which already delimits them, and the browser hands
 # them straight to a WebCodecs decoder — so an Ogg dependency would buy framing
