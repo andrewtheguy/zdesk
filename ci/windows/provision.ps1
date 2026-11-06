@@ -161,28 +161,6 @@ try {
     # toolchain its directory pins, which rustup installs on the module's first build.
     Log "rust: $(& 'C:\rust\cargo\bin\rustc.exe' --version)"
 
-    # --- pagefile: 2 GB of RAM is not enough for a thin-LTO release link -------
-    # System-managed sizing on this box stopped at 1.5 GB; a fixed 8 GB file keeps
-    # the linker and nmake from being killed rather than merely slow. Takes effect at
-    # the next reboot, which `remote.ps1 provision` does not do — reboot by hand.
-    $pf = Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'C:\pagefile.sys' }
-    if (-not $pf -or $pf.MaximumSize -lt 8192) {
-        $cs = Get-CimInstance Win32_ComputerSystem
-        if ($cs.AutomaticManagedPagefile) {
-            Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $false }
-            # Turning automatic management off creates the C:\pagefile.sys setting (0/0,
-            # system managed), so a New-CimInstance for it would find it already there.
-            $pf = Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'C:\pagefile.sys' }
-        }
-        if ($pf) {
-            Set-CimInstance -InputObject $pf -Property @{ InitialSize = [uint32]8192; MaximumSize = [uint32]8192 }
-        } else {
-            # The CIM properties are UInt32; a bare PowerShell integer is Int32 and is refused.
-            New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = 'C:\pagefile.sys'; InitialSize = [uint32]8192; MaximumSize = [uint32]8192 } | Out-Null
-        }
-        Log 'pagefile set to a fixed 8192 MB (takes effect after a reboot)'
-    } else { Log "pagefile already $($pf.MaximumSize) MB" }
-
     Log 'DONE-OK'
 } catch {
     Log "DONE-FAIL $($_.Exception.Message)"
