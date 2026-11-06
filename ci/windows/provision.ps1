@@ -126,6 +126,10 @@ try {
         & "$Root\dotnet-install.ps1" -Channel 10.0 -InstallDir 'C:\dotnet' -NoPath
     } else { Log 'dotnet already present' }
     Add-MachinePath 'C:\dotnet'
+    # wix.exe is an apphost, and an apphost never looks for .NET on PATH: outside the
+    # default C:\Program Files\dotnet it finds the runtime only through DOTNET_ROOT.
+    Set-MachineEnv 'DOTNET_ROOT' 'C:\dotnet'
+    $env:DOTNET_ROOT = 'C:\dotnet'
     Set-MachineEnv 'DOTNET_CLI_TELEMETRY_OPTOUT' '1'
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
@@ -135,7 +139,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed (exit $LASTEXITCODE)" }
     } else { Log 'wix already present' }
     Add-MachinePath 'C:\tools\wix'
-    Log "wix $(& 'C:\tools\wix\wix.exe' --version)"
+    $wixVersion = & 'C:\tools\wix\wix.exe' --version
+    if ($LASTEXITCODE -ne 0) { throw "wix --version failed (exit $LASTEXITCODE)" }
+    Log "wix $wixVersion"
 
     # --- rust: the components ci.ps1 uses ---------------------------------------
     $env:RUSTUP_HOME = 'C:\rust\rustup'
@@ -154,6 +160,9 @@ try {
         $cs = Get-CimInstance Win32_ComputerSystem
         if ($cs.AutomaticManagedPagefile) {
             Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $false }
+            # Turning automatic management off creates the C:\pagefile.sys setting (0/0,
+            # system managed), so a New-CimInstance for it would find it already there.
+            $pf = Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'C:\pagefile.sys' }
         }
         if ($pf) {
             Set-CimInstance -InputObject $pf -Property @{ InitialSize = [uint32]8192; MaximumSize = [uint32]8192 }
