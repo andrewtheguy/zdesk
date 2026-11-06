@@ -1847,7 +1847,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 [[package]]
 name = "libopus-prebuilt-sys"
 version = "0.1.0"
-source = "git+https://github.com/andrewtheguy/libopus-prebuilt?tag=v1.6.1-20260906161304-8dd83e8#8dd83e865b4913df74b66199236346f9bfab2912"
+source = "git+https://github.com/andrewtheguy/libopus-prebuilt?tag=v1.6.1-20261106175320-d681e6f#d681e6f7eb4d00940037b612499bd30488c99bf8"
 
 [[package]]
 name = "libredox"
@@ -2110,7 +2110,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 [[package]]
 name = "opus-prebuilt"
 version = "0.1.0"
-source = "git+https://github.com/andrewtheguy/libopus-prebuilt?tag=v1.6.1-20260906161304-8dd83e8#8dd83e865b4913df74b66199236346f9bfab2912"
+source = "git+https://github.com/andrewtheguy/libopus-prebuilt?tag=v1.6.1-20261106175320-d681e6f#d681e6f7eb4d00940037b612499bd30488c99bf8"
 dependencies = [
  "libopus-prebuilt-sys",
 ]
@@ -3266,8 +3266,8 @@ dependencies = [
 
 [[package]]
 name = "sound-opus"
-version = "0.0.8"
-source = "git+https://github.com/andrewtheguy/sound-opus?tag=v0.0.8#2c6cf268c7088a577fa8ab90d983dbac1a96784a"
+version = "0.0.9"
+source = "git+https://github.com/andrewtheguy/sound-opus?tag=v0.0.9#2f7ecbd2633d1d863ad71954679bcadc29576eb4"
 dependencies = [
  "opus-prebuilt",
  "thiserror",
