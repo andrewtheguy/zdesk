@@ -53,8 +53,9 @@ function Set-MachineEnv($name, $value) {
 # and a script that has no fixed digest — dotnet-install.ps1 is republished in place —
 # against the Authenticode signer on the bytes that arrived. The download lands in
 # `<out>.part` and takes its final name only after the check, so an interrupted run leaves
-# nothing a rerun would mistake for a finished file. Every URL names a version; `latest`
-# would make the pinned digest wrong at the next upstream release.
+# nothing a rerun would mistake for a finished file. Every URL names a version, the one its
+# digest belongs to: an unpinned tool (bun) resolves the latest release first and takes the
+# digest the API reports for that release.
 function Get-File($url, $out, $sha256, $signer) {
     if (Test-Path $out) { return }
     if (-not $sha256 -and -not $signer) { throw "Get-File ${url}: no digest or signer to check against" }
@@ -103,17 +104,26 @@ try {
     }
 
     # --- bun, for the frontend ------------------------------------------------
-    if (-not (Test-Path 'C:\tools\bun\bun.exe')) {
-        $zip = "$Root\bun-v1.4.0-windows-x64.zip"
-        Get-File 'https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-windows-x64.zip' $zip `
-            -Sha256 'e6f093d39da486b20262ca8cdd5ed6a9e8bc9c2f275b78e6d3a0c5b28cc95901'
+    # Not pinned: every run takes bun's latest release, checked against the digest
+    # GitHub's release API reports for that release's asset, and replaces an older one.
+    $bunRelease = Invoke-RestMethod 'https://api.github.com/repos/oven-sh/bun/releases/latest' -UseBasicParsing
+    $BunVersion = $bunRelease.tag_name -replace '^bun-v', ''
+    $bunAsset = $bunRelease.assets | Where-Object name -EQ 'bun-windows-x64.zip'
+    if (-not $bunAsset -or $bunAsset.digest -notmatch '^sha256:([0-9a-f]{64})$') {
+        throw "bun $BunVersion has no bun-windows-x64.zip with a sha256 digest"
+    }
+    $bunSha256 = $Matches[1]
+    $haveBun = if (Test-Path 'C:\tools\bun\bun.exe') { & 'C:\tools\bun\bun.exe' --version }
+    if ($haveBun -ne $BunVersion) {
+        $zip = "$Root\bun-v$BunVersion-windows-x64.zip"
+        Get-File $bunAsset.browser_download_url $zip -Sha256 $bunSha256
         New-Item -ItemType Directory -Force -Path 'C:\tools\bun' | Out-Null
         Expand-Archive -Path $zip -DestinationPath "$Root\bun-unpack" -Force
         $bunExe = Get-ChildItem "$Root\bun-unpack" -Recurse -Filter bun.exe | Select-Object -First 1
         if (-not $bunExe) { throw 'bun zip held no bun.exe' }
         Copy-Item $bunExe.FullName 'C:\tools\bun\bun.exe' -Force
         Remove-Item -Recurse -Force "$Root\bun-unpack"
-    } else { Log 'bun already present' }
+    } else { Log "bun $BunVersion already present" }
     Add-MachinePath 'C:\tools\bun'
     Log "bun $(& 'C:\tools\bun\bun.exe' --version)"
 
