@@ -1893,7 +1893,8 @@ encoder's statistics, which the Mac logs once a second:
   string, offer fields 7 and 2, and every RTCP request tested leave the encoder
   mode unchanged; one whole H.264 picture is the viewer-side escape.
 - **zDesk acknowledges each HEVC strip picture it hands on by its decoding
-  order number,** as it acknowledges a picture of one tile by its timestamp.
+  order number,** as it acknowledges a picture of one tile by its timestamp,
+  and offers the H.264 one tile, whose repeats the Mac drops on its clock.
 
 ### Rate control
 
