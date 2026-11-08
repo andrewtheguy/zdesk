@@ -1444,9 +1444,7 @@ the strip's number, a frame's strips sharing its timestamp.
 - **Strips predict from each other.** A keyframe is an IDR of strip 0 and a
   picture of each other strip that is not an IDR, and each strip decoded on its
   own named pictures it did not have. The Mac's H.264 encoder enables its
-  long-term-reference mode by default, as it did on both Macs measured; for
-  one class of hardware and some uses, the Mac picks the legacy software H.264
-  encoder instead, which has no such mode. Its reference planner gives all but one
+  long-term-reference mode by default, as it did on both Macs measured. Its reference planner gives all but one
   of the DPB's slots to long-term references and leaves one short-term
   reference, from which the common section planner builds the strip's list.
   That one is the picture immediately before it in the stream's decoding
@@ -1487,9 +1485,9 @@ the strip's number, a frame's strips sharing its timestamp.
   off, and turning field 2 on each left every strip without `0x10` and left its
   rate unchanged. Only a host-side encoder property changes the mode; the
   transmitter never sets it, so no path from an offer or an RTCP packet does.
-  A host-only preference can instead select the legacy software H.264 encoder,
-  which uses the ordinary token, as the hardware class above gets it without
-  one, but its behavior in strips was not read and a viewer cannot select it. zDesk
+  On an Apple silicon Mac, only a host-only preference selects instead the
+  legacy software H.264 encoder, which uses the ordinary token, but its
+  behavior in strips was not read and a viewer cannot select it. zDesk
   consequently cannot acknowledge or request an acknowledged-reference
   refresh of H.264, so a loss costs a keyframe.
 - **A refresh request brings no cheaper H.264 keyframe.** In one tile, at
