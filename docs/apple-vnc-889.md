@@ -1444,7 +1444,7 @@ the strip's number, a frame's strips sharing its timestamp.
 - **Strips predict from each other.** A keyframe is an IDR of strip 0 and a
   picture of each other strip that is not an IDR, and each strip decoded on its
   own named pictures it did not have. The Mac's H.264 encoder enables its
-  long-term-reference mode by default. Its reference planner gives all but one
+  long-term-reference mode by default, as it did on both Macs measured. Its reference planner gives all but one
   of the DPB's slots to long-term references and leaves one short-term
   reference, from which the common section planner builds the strip's list.
   That one is the picture immediately before it in the stream's decoding
@@ -1474,15 +1474,20 @@ the strip's number, a frame's strips sharing its timestamp.
   long-term-reference mode on, the encoder marks a picture with an LTR-specific
   acknowledgement token, while the transmitter reads only the ordinary token.
   The return path has the same mismatch: the encoder listens for LTR-specific
-  acknowledgements and the transmitter supplies only ordinary ones. It
+  acknowledgements and the transmitter supplies only ordinary ones. Nothing
+  between them, in the Mac's video processing or in VideoToolbox, turns one
+  token into the other. The transmitter's own names call its ordinary
+  acknowledgement path LTR, as the `LTR;` feature does; neither is the
+  encoder's LTR-specific token. The transmitter
   therefore neither marks the picture with the RTP extension's `0x10` bit nor
   registers its token, and an APP-name-5 acknowledgement has no token to
   reach. Removing `LTR;` from payload 123's features, turning offer field 7
   off, and turning field 2 on each left every strip without `0x10` and left its
-  rate unchanged. Only a host-side encoder property changes the mode; no path
-  from an offer or an RTCP packet sets it. A host-only preference can instead
-  select the legacy software H.264 encoder, which uses the ordinary token, but
-  its behavior in strips was not read and a viewer cannot select it. zDesk
+  rate unchanged. Only a host-side encoder property changes the mode; the
+  transmitter never sets it, so no path from an offer or an RTCP packet does.
+  On an Apple silicon Mac, only a host-only preference selects instead the
+  legacy software H.264 encoder, which uses the ordinary token, but its
+  behavior in strips was not read and a viewer cannot select it. zDesk
   consequently cannot acknowledge or request an acknowledged-reference
   refresh of H.264, so a loss costs a keyframe.
 - **A refresh request brings no cheaper H.264 keyframe.** In one tile, at
@@ -1888,7 +1893,8 @@ encoder's statistics, which the Mac logs once a second:
   string, offer fields 7 and 2, and every RTCP request tested leave the encoder
   mode unchanged; one whole H.264 picture is the viewer-side escape.
 - **zDesk acknowledges each HEVC strip picture it hands on by its decoding
-  order number,** as it acknowledges a picture of one tile by its timestamp.
+  order number,** as it acknowledges a picture of one tile by its timestamp,
+  and offers the H.264 one tile, whose repeats the Mac drops on its clock.
 
 ### Rate control
 
