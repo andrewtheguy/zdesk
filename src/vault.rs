@@ -669,6 +669,11 @@ mod tests {
         let key = file.key(&master).unwrap();
         file.unlock(Some(&key)).unwrap();
         assert_eq!(file.targets[0].password, "hunter2");
+        let dump = format!("{file:?}");
+        assert!(
+            dump.contains("TargetPassword(..)") && !dump.contains("hunter2"),
+            "{dump}"
+        );
     }
 
     #[test]

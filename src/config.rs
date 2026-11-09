@@ -998,7 +998,7 @@ pub struct TargetConfig {
     /// Never written in the file: it is `[passwords].<`[`Self::password_ref`]`>`,
     /// decrypted by [`ConfigFile::unlock`], and empty until then.
     #[serde(skip)]
-    pub password: String,
+    pub password: TargetPassword,
     /// The name [`Self::password`] is kept under in `[passwords]` — see
     /// [`crate::vault`].
     #[serde(default)]
@@ -1018,7 +1018,7 @@ pub struct TargetConfig {
     /// Kept in `[passwords]` like [`Self::password`], under
     /// [`Self::vnc_password_ref`].
     #[serde(skip)]
-    pub vnc_password: String,
+    pub vnc_password: TargetPassword,
     /// The name [`Self::vnc_password`] is kept under in `[passwords]`.
     #[serde(default)]
     pub vnc_password_ref: Option<String>,
@@ -1705,6 +1705,44 @@ pub struct ServerSection {
 
 /// Where the web login's password hash is, for its errors.
 const SITE_PASSWD_HASH: &str = "[server].site_passwd_hash";
+
+/// A target's password as [`ConfigFile::unlock`] decrypts it: a `str` to whatever
+/// logs in with it, and left out of `Debug`, so a config dump never prints it.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct TargetPassword(String);
+
+impl TargetPassword {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for TargetPassword {
+    fn from(password: String) -> Self {
+        Self(password)
+    }
+}
+
+impl std::ops::Deref for TargetPassword {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<&str> for TargetPassword {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+// Manual Debug, for the reason [`OpenedHash`]'s is.
+impl std::fmt::Debug for TargetPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TargetPassword(..)")
+    }
+}
 
 /// The bcrypt hash [`ServerSection::site_passwd_hash`] opens to.
 #[derive(Clone)]
@@ -2474,10 +2512,10 @@ impl ConfigFile {
         };
         for target in &mut self.targets {
             if let Some(name) = &target.password_ref {
-                target.password = open(name)?;
+                target.password = open(name)?.into();
             }
             if let Some(name) = &target.vnc_password_ref {
-                target.vnc_password = open(name)?;
+                target.vnc_password = open(name)?.into();
             }
         }
         Ok(())

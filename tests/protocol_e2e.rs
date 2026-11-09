@@ -1466,8 +1466,8 @@ fn target(protocol: Protocol, port: u16) -> TargetConfig {
             Protocol::Vnc => String::new(),
             _ => "tester".to_owned(),
         },
-        password: "s3cr3t-should-not-leak".to_owned(),
-        vnc_password: String::new(),
+        password: "s3cr3t-should-not-leak".to_owned().into(),
+        vnc_password: Default::default(),
         password_ref: None,
         vnc_password_ref: None,
         relay: None,
@@ -1485,7 +1485,7 @@ fn mac_target(port: u16) -> TargetConfig {
     TargetConfig {
         subtype: Some(zdesk::config::Subtype::ArdHighPerformance),
         username: MAC_USER.to_owned(),
-        password: MAC_PASSWORD.to_owned(),
+        password: MAC_PASSWORD.to_owned().into(),
         // No size: the virtual display opens at the screen the connect names.
         size: None,
         ..target(Protocol::Vnc, port)

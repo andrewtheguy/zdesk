@@ -87,7 +87,7 @@ fn connect() -> (Session, Page) {
         host: target.host.clone(),
         port: target.port,
         username: target.username.clone(),
-        password: target.password.clone(),
+        password: target.password.as_str().to_owned(),
         domain: target.domain.clone(),
         width: SIZE.0,
         height: SIZE.1,

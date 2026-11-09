@@ -535,7 +535,7 @@ async fn a_real_host_draws_for_a_slow_client() {
         host,
         port,
         username: target.username.clone(),
-        password: target.password.clone(),
+        password: target.password.as_str().to_owned(),
         domain: target.domain.clone(),
         width: size.0,
         height: size.1,
