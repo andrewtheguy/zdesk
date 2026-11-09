@@ -27,7 +27,7 @@
 //! username and password, and the TUI's PIN.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -292,9 +292,21 @@ const MAX_LOCKOUT: Duration = Duration::from_secs(60);
 /// The price is that someone guessing can keep the one user locked out too, for at
 /// most [`MAX_LOCKOUT`] past their last guess: for a single-user program, a short
 /// wait for its user over unlimited guesses for anyone.
-#[derive(Debug, Default)]
+///
+/// Attempts are checked one at a time, each taking its [`Self::turn`] first.
+#[derive(Debug)]
 pub struct LoginThrottle {
     state: Mutex<ThrottleState>,
+    turn: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for LoginThrottle {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            turn: Arc::new(tokio::sync::Semaphore::new(1)),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -304,6 +316,17 @@ struct ThrottleState {
 }
 
 impl LoginThrottle {
+    /// Wait, without holding a thread, for the one turn to make an attempt: a
+    /// check is a bcrypt verify on a blocking thread, so only the attempt being
+    /// checked takes one, and a burst waits here rather than filling the blocking
+    /// pool. Hold the turn until [`Self::attempt`] returns.
+    pub async fn turn(&self) -> tokio::sync::OwnedSemaphorePermit {
+        Arc::clone(&self.turn)
+            .acquire_owned()
+            .await
+            .expect("the login turn is never closed")
+    }
+
     /// Run the check `verify` makes, unless a lockout is running at `now`: then
     /// `Err` with how long it has left. The lockout, the check and its count are
     /// one step under the lock, so a burst of attempts sent at once is counted
@@ -482,6 +505,19 @@ mod tests {
                 "a success clears the count"
             );
         }
+    }
+
+    /// One attempt holds the turn at a time; the next gets it once that one ends.
+    #[tokio::test]
+    async fn one_attempt_takes_the_turn_at_a_time() {
+        let throttle = LoginThrottle::default();
+        let first = throttle.turn().await;
+        assert!(
+            throttle.turn.try_acquire().is_err(),
+            "none while the first holds it"
+        );
+        drop(first);
+        let _second = throttle.turn().await;
     }
 
     /// The empty password never logs in: no hash is made for it, a hash made for it

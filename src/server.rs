@@ -549,10 +549,12 @@ async fn login_handler(
     let login = login.clone();
     let throttle = Arc::clone(&state.login_throttle);
     // A check is a bcrypt verify, slow by design, so it runs off the async
-    // workers. The throttle holds its lock across the check, so a burst of
-    // attempts is checked one at a time, and those queued behind a lockout's start
-    // are refused without one.
+    // workers, one at a time: the turn is waited for here, holding no thread, and
+    // goes with the check, so it is held until the check ends even if the client
+    // has gone. Attempts queued behind a lockout's start are refused unchecked.
+    let turn = throttle.turn().await;
     let ok = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
         throttle.attempt(std::time::Instant::now(), || {
             login.verify(&req.username, &req.password)
         })

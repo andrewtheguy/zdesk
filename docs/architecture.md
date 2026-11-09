@@ -4170,9 +4170,10 @@ Guessing online is slowed by one process-wide throttle (`LoginThrottle` in
 `src/auth.rs`), not by client address, which behind a proxy is the proxy's and in a
 forwarded header is the client's to write. Five failures in a row are free; each
 after locks logins out for 1 s, doubling to 60 s, and an attempt during a lockout
-is answered 429 with `Retry-After` without being checked. The throttle holds its
-lock across a check, so attempts sent at once are checked one at a time, and those
-queued behind a lockout's start are refused unchecked. A success clears the
+is answered 429 with `Retry-After` without being checked. Attempts are checked one
+at a time: each waits for its turn on the async side, holding no thread, so only
+the bcrypt verify being made takes a blocking thread, and those queued behind a
+lockout's start are refused unchecked. A success clears the
 count. Someone guessing can keep the one user waiting up to 60 s past their last
 guess, which a single-user gateway takes over unlimited guesses.
 
