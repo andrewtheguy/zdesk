@@ -546,12 +546,20 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    let ok = state
-        .login_throttle
-        .attempt(std::time::Instant::now(), || {
+    let login = login.clone();
+    let throttle = Arc::clone(&state.login_throttle);
+    // A check is a bcrypt verify, slow by design, so it runs off the async
+    // workers. The throttle holds its lock across the check, so a burst of
+    // attempts is checked one at a time, and those queued behind a lockout's start
+    // are refused without one.
+    let ok = tokio::task::spawn_blocking(move || {
+        throttle.attempt(std::time::Instant::now(), || {
             login.verify(&req.username, &req.password)
         })
-        .map_err(AppError::LoginLocked)?;
+    })
+    .await
+    .map_err(|error| anyhow::Error::new(error).context("the login check stopped"))?
+    .map_err(AppError::LoginLocked)?;
     if !ok {
         return Err(AppError::Unauthorized);
     }

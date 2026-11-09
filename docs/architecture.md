@@ -4148,26 +4148,31 @@ password opens every config made under it, while each file's salt gives each
 its own key. Inline `password` and `vnc_password` are unknown keys.
 
 The web login's password is not among them. A gateway only ever checks it, so
-`[server].site_passwd_hash` keeps it as a one-way
-`$ZD;1;HMAC-SHA256;<base64(HMAC(login key, password))>`, the login key an HMAC
-of a fixed message under the file's key. Without the master password nobody
-holding the file can test a guess against it, and with it they hold every
-target's password anyway, so the hash is keyed rather than stretched: a login
-attempt costs one HMAC and a constant-time compare, and needs no turn, no
-blocking thread and no memory of its own. The gateway keeps the login key, not
-the password.
+`[server].site_passwd_hash` keeps its bcrypt hash (cost 12), as an htpasswd file
+would, sealed the same way under the same key: `$ZD;1;AES-256-GCM;…` of
+`$2b$12$…`. The two are independent layers. The key only seals the hash at
+rest: the hash is not derived from the key or bound to it, so once opened it checks
+a password on its own, exactly as htpasswd's would, and sealing the same hash under
+another `[master]` leaves the login as it was. Without the master password nobody
+holding the file has the hash to test a guess against; with it, they hold a bcrypt
+hash, whose cost every guess still pays. A gateway opens the hash at start and
+keeps it, not the password, and checks a login with one bcrypt verify on a
+blocking thread.
 
 A hash cannot tell its password's length, so the minimum of 8 characters
 (`MIN_PASSWORD_CHARS`, NIST SP 800-63B's) is checked where the password is still
 plain: `password hash` refuses a shorter one, and a login attempt shorter than it,
-the empty one included, is never right. A hash of the empty password is refused at
-start, since the key can tell that one.
+the empty one included, is never right. bcrypt reads 72 bytes, the last its NUL,
+so `password hash` refuses a password past 71 bytes rather than cut it, and an
+attempt past them is never right.
 
 Guessing online is slowed by one process-wide throttle (`LoginThrottle` in
 `src/auth.rs`), not by client address, which behind a proxy is the proxy's and in a
 forwarded header is the client's to write. Five failures in a row are free; each
 after locks logins out for 1 s, doubling to 60 s, and an attempt during a lockout
-is answered 429 with `Retry-After` without being checked. A success clears the
+is answered 429 with `Retry-After` without being checked. The throttle holds its
+lock across a check, so attempts sent at once are checked one at a time, and those
+queued behind a lockout's start are refused unchecked. A success clears the
 count. Someone guessing can keep the one user waiting up to 60 s past their last
 guess, which a single-user gateway takes over unlimited guesses.
 

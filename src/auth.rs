@@ -5,8 +5,9 @@
 //! is what keeps each mode free of the other's machinery.
 //!
 //! **The login.** `[server].site_username` names the one user, and
-//! `[server].site_passwd_hash` holds a one-way hash of that user's password, keyed
-//! from the config's master key (see [`crate::vault`]). `/api/auth/login` verifies a
+//! `[server].site_passwd_hash` holds a bcrypt hash of that user's password, as
+//! htpasswd keeps one, encrypted at rest under the config's master key (see
+//! [`crate::vault`]). `/api/auth/login` verifies a
 //! username/password pair against them and mints a session token, and everything
 //! guarded (the rest of `/api/*`, `/ws`) requires that token in the cookie.
 //! Sessions live in memory only — a server restart logs every browser out,
@@ -29,13 +30,12 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use anyhow::Context as _;
 #[cfg(feature = "tui")]
 use base64::Engine as _;
 #[cfg(feature = "tui")]
 use rand::RngExt as _;
 use sha2::Digest as _;
-
-use crate::vault::{LoginHash, LoginKey};
 
 /// Name of the auth session cookie.
 pub const COOKIE_NAME: &str = "zdesk_session";
@@ -54,7 +54,7 @@ fn long_enough(password: &str) -> bool {
 
 /// Refuse a web login password shorter than [`MIN_PASSWORD_CHARS`]: checked where
 /// the password is still plain, since a hash cannot tell its length.
-pub fn check_password_length(password: &str) -> anyhow::Result<()> {
+fn check_password_length(password: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         long_enough(password),
         "the web login password must be at least {MIN_PASSWORD_CHARS} characters"
@@ -62,22 +62,38 @@ pub fn check_password_length(password: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// bcrypt's cost for a web login's hash: the crate's default, 2^12 rounds, what
+/// `htpasswd -B` makes.
+const BCRYPT_COST: u32 = bcrypt::DEFAULT_COST;
+
+/// `password`'s bcrypt hash, for [`crate::vault::Key::hash`] to seal. A password
+/// shorter than [`MIN_PASSWORD_CHARS`] is refused, and so is one past the 71 bytes
+/// bcrypt reads rather than cut to them.
+pub fn hash_password(password: &str) -> anyhow::Result<String> {
+    hash_at(password, BCRYPT_COST)
+}
+
+fn hash_at(password: &str, cost: u32) -> anyhow::Result<String> {
+    check_password_length(password)?;
+    bcrypt::non_truncating_hash(password, cost)
+        .context("cannot hash the web login password (bcrypt takes at most 71 bytes)")
+}
+
 /// A served gateway's web login: the one username allowed to log in,
-/// `[server].site_username`, and `[server].site_passwd_hash` with the key it was
-/// made under, given by [`crate::config::ConfigFile::unlock`].
+/// `[server].site_username`, and the bcrypt hash `[server].site_passwd_hash`
+/// opens to under the config's key, given by
+/// [`crate::config::ConfigFile::unlock`].
 ///
 /// The username is kept as a SHA-256 digest, so it is compared at one length
-/// whatever was typed. The password is checked by one HMAC under the login key, so
-/// a check costs what serving a page does, and nothing the gateway holds is the
-/// password or opens to it.
+/// whatever was typed. The password is checked by bcrypt, so each guess costs
+/// what htpasswd makes it cost, and nothing the gateway holds is the password.
 #[derive(Clone)]
 pub struct SiteLogin {
     username: String,
     username_digest: [u8; 32],
-    hash: LoginHash,
     /// `None` when the config was only checked, never unlocked: such a login lets
     /// nobody in.
-    key: Option<LoginKey>,
+    hash: Option<String>,
 }
 
 // Manual Debug, so an AppConfig dump prints the username and nothing else.
@@ -90,28 +106,30 @@ impl std::fmt::Debug for SiteLogin {
 }
 
 impl SiteLogin {
-    /// The login for `username`, whose password `hash` was made under `key`. A
-    /// hash of the empty password is refused once the key can tell it.
-    pub fn new(username: &str, hash: LoginHash, key: Option<LoginKey>) -> anyhow::Result<Self> {
+    /// The login for `username`, whose password has the bcrypt `hash`, or `None`
+    /// when the config holding it was not unlocked.
+    pub fn new(username: &str, hash: Option<String>) -> anyhow::Result<Self> {
         anyhow::ensure!(!username.is_empty(), "the login username is empty");
-        anyhow::ensure!(
-            !key.as_ref().is_some_and(|key| key.verify("", &hash)),
-            "the login password is empty"
-        );
+        if let Some(hash) = &hash {
+            hash.parse::<bcrypt::HashParts>().map_err(|_| {
+                anyhow::anyhow!(
+                    "the login password hash is not bcrypt: paste what \
+                     `zdesk password hash` prints"
+                )
+            })?;
+        }
         Ok(Self {
             username: username.to_owned(),
             username_digest: digest(username),
             hash,
-            key,
         })
     }
 
-    /// The login for `username` and `password` made in memory, under a login key
-    /// of its own: for a gateway built without a config file.
+    /// The login for `username` and `password` made in memory: for a gateway built
+    /// without a config file. Hashed at bcrypt's lowest cost, since no file keeps
+    /// it for anyone to guess against.
     pub fn with_password(username: &str, password: &str) -> anyhow::Result<Self> {
-        check_password_length(password)?;
-        let key = LoginKey::generate();
-        Self::new(username, key.hash(password), Some(key))
+        Self::new(username, Some(hash_at(password, 4)?))
     }
 
     /// The username allowed to log in (for startup logging).
@@ -119,16 +137,17 @@ impl SiteLogin {
         &self.username
     }
 
-    /// Check a login attempt. Both halves are compared in full whatever the other
-    /// said, so a wrong username and a wrong password take the same time; and a
-    /// password shorter than [`MIN_PASSWORD_CHARS`], the empty one included, is
-    /// never right.
+    /// Check a login attempt: one bcrypt verify, a fraction of a second by
+    /// design, so call it off the async workers. Both halves are compared in full
+    /// whatever the other said, so a wrong username and a wrong password take the
+    /// same time; and a password shorter than [`MIN_PASSWORD_CHARS`], the empty
+    /// one included, or longer than bcrypt's 71 bytes, is never right.
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let username_ok = bytes_match(&digest(username), &self.username_digest);
         let password_ok = self
-            .key
-            .as_ref()
-            .is_some_and(|key| key.verify(password, &self.hash));
+            .hash
+            .as_deref()
+            .is_some_and(|hash| bcrypt::non_truncating_verify(password, hash).unwrap_or(false));
         username_ok & password_ok & long_enough(password)
     }
 }
@@ -182,10 +201,12 @@ impl GatewayAuth {
 /// The secret a worker and its one client share: 32 random bytes,
 /// base64url, minted per launch.
 ///
-/// Deliberately not hashed under the master key the way a [`SiteLogin`]'s password
-/// is. That protects a credential at rest against whoever reads where it rests,
-/// and this one never rests: it is generated in memory, written once to a pipe
-/// held by the process that spawned this one, and gone when this one exits.
+/// Deliberately not hashed the way a [`SiteLogin`]'s password is. That protects a
+/// credential at rest against whoever reads where it rests, and this one never
+/// rests: it is generated in memory, written once to a pipe held by the process
+/// that spawned this one, and gone when this one exits. Nor is there anyone to be
+/// slow for: bcrypt's cost makes guessing a person's password expensive, and 32
+/// random bytes are not guessable at any cost.
 #[cfg(feature = "tui")]
 #[derive(Clone)]
 pub struct WorkerToken(String);
@@ -377,8 +398,8 @@ mod tests {
     use super::*;
 
     fn login(password: &str, unlocked: bool) -> SiteLogin {
-        let key = LoginKey::generate();
-        SiteLogin::new("admin", key.hash(password), unlocked.then_some(key)).unwrap()
+        let hash = bcrypt::hash(password, 4).unwrap();
+        SiteLogin::new("admin", unlocked.then_some(hash)).unwrap()
     }
 
     #[test]
@@ -393,9 +414,24 @@ mod tests {
             "username must match too"
         );
         assert!(SiteLogin::with_password("", "hunter22").is_err());
+        assert!(
+            SiteLogin::new("admin", Some("hunter22".to_owned())).is_err(),
+            "a hash must be bcrypt"
+        );
     }
 
-    /// A config that is only checked resolves its login with no key: that login
+    /// bcrypt reads 72 bytes, the last a NUL: a password past 71 is refused when
+    /// hashed, and an attempt past them never matches a hash cut to them.
+    #[test]
+    fn a_password_past_71_bytes_is_never_cut() {
+        let long = "x".repeat(71);
+        assert!(hash_password(&format!("{long}y")).is_err());
+        let login = SiteLogin::new("admin", Some(bcrypt::hash(&long, 4).unwrap())).unwrap();
+        assert!(login.verify("admin", &long));
+        assert!(!login.verify("admin", &format!("{long}y")));
+    }
+
+    /// A config that is only checked resolves its login with no hash: that login
     /// must open to nothing.
     #[test]
     fn a_login_without_its_key_never_logs_in() {
@@ -448,13 +484,14 @@ mod tests {
         }
     }
 
-    /// The empty password never logs in: a login for it is refused when it is made,
-    /// and a login for another password turns it away.
+    /// The empty password never logs in: no hash is made for it, a hash made for it
+    /// elsewhere still lets nobody in, and a login for another password turns it
+    /// away.
     #[test]
     fn an_empty_password_never_logs_in() {
         assert!(SiteLogin::with_password("admin", "").is_err());
-        let key = LoginKey::generate();
-        assert!(SiteLogin::new("admin", key.hash(""), Some(key)).is_err());
+        assert!(hash_password("").is_err());
+        assert!(!login("", true).verify("admin", ""));
         assert!(!login("hunter22", true).verify("admin", ""));
     }
 
@@ -473,8 +510,8 @@ mod tests {
             "seven, in 21 bytes"
         );
         assert!(SiteLogin::with_password("admin", "hunter2").is_err());
-        let key = LoginKey::generate();
-        let short = SiteLogin::new("admin", key.hash("short"), Some(key)).unwrap();
+        assert!(hash_password("hunter2").is_err());
+        let short = login("short", true);
         assert!(
             !short.verify("admin", "short"),
             "a short hash made in code still lets nobody in"
