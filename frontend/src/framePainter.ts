@@ -884,10 +884,10 @@ export function createFramePainter(options: {
 
   // One of wlshare's progressive tiles, decoded in its turn against what the
   // decoder holds of the tile, or one of its lossless tiles, a planar bitmap
-  // decoded with the rest of its batch's, and put where it says. One that does not decode, or a decoder
-  // that does not load, leaves the canvas without it, so the whole picture is
-  // asked for, as for a tile that does not decode, and the decoder is broken
-  // until that picture starts.
+  // decoded with the rest of its batch's, and put where it says. One that does
+  // not decode, or a decoder that does not load, leaves the canvas without it,
+  // so the whole picture is asked for, as for a tile that does not decode, and
+  // the decoder is broken until that picture starts.
   const paintModuleTile = async (
     record: TileMsg,
     born: number,
