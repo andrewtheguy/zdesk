@@ -268,6 +268,10 @@ whose bitmap updates are sent as tiles by the gateway.
   `frontend/src/memoryBudget.ts`), and an RDP host is told it keeps the small
   bitmap cache, 16 MiB rather than 100; any other page keeps the large one
   ([The graphics pipeline](rdp-client.md#the-graphics-pipeline-ms-rdpegfx)).
+  A `wlshare` target's Lossless pictures are not meant for such a page, nor
+  for a phone or a tablet: nothing in them accommodates one, not its decoder's
+  speed, its memory, its screen or its link, and a change to them weighs none
+  of those.
 - On every page, what a session's picture alone loaded goes when the session
   leaves the page: at the gateway's `picker`, a takeover, or a logout. A
   WebAssembly memory grows and never
@@ -2423,7 +2427,8 @@ and `GET /api/targets` carries it:
   is Video, wlshare's H.264 of the whole desktop, which `connect` names as
   `wlshare-video` and which a session that names none is sent, taken first, and
   Tiles (alpha), `wlshare-tiles-progressive`. Lossless, for a LAN and not
-  recommended on a phone or tablet, is Settles to lossless,
+  meant for a phone, a tablet or a page of tight memory
+  ([The client and its bundle](#the-client-and-its-bundle)), is Settles to lossless,
   `wlshare-tiles-motion`, and Fully lossless (experimental),
   `wlshare-tiles-lossless`. All four are passed, so no label says so.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
