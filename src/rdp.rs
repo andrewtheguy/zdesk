@@ -445,7 +445,7 @@ fn connect_config(
         host: config.host.clone(),
         port: config.port,
         username: config.username.clone(),
-        password: config.password.clone(),
+        password: config.password.as_str().to_owned(),
         domain: config.domain.clone(),
         width: opening.w,
         height: opening.h,

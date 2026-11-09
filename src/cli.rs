@@ -146,10 +146,10 @@ pub enum PasswordAction {
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
-    /// Print the web login's password hashed one way under the config's
-    /// [master], to paste as [server].site_passwd_hash = "…". Prompts for it
-    /// (twice on a terminal; one line when piped); it must be at least 8
-    /// characters
+    /// Print the web login's password as a bcrypt hash encrypted under the
+    /// config's [master], to paste as [server].site_passwd_hash = "…". Prompts
+    /// for it (twice on a terminal; one line when piped); it must be 8 characters
+    /// to 71 bytes
     Hash {
         /// The config whose [master] to hash under; nothing in it is changed
         /// (default: the installed global config)

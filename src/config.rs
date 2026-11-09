@@ -20,7 +20,7 @@ use crate::auth::WorkerToken;
 use crate::auth::{GatewayAuth, SiteLogin};
 use crate::protocol::HostDisplay;
 use crate::throughput::MeterConfig;
-use crate::vault::{Key, LoginHash, MasterPassword, MasterSection};
+use crate::vault::{Key, MasterPassword, MasterSection};
 
 /// Remote-desktop protocol of a target. Each has a server-side engine feeding
 /// the same browser protocol (docs/architecture.md): `rdp` via the built-in RDP
@@ -998,7 +998,7 @@ pub struct TargetConfig {
     /// Never written in the file: it is `[passwords].<`[`Self::password_ref`]`>`,
     /// decrypted by [`ConfigFile::unlock`], and empty until then.
     #[serde(skip)]
-    pub password: String,
+    pub password: TargetPassword,
     /// The name [`Self::password`] is kept under in `[passwords]` — see
     /// [`crate::vault`].
     #[serde(default)]
@@ -1018,7 +1018,7 @@ pub struct TargetConfig {
     /// Kept in `[passwords]` like [`Self::password`], under
     /// [`Self::vnc_password_ref`].
     #[serde(skip)]
-    pub vnc_password: String,
+    pub vnc_password: TargetPassword,
     /// The name [`Self::vnc_password`] is kept under in `[passwords]`.
     #[serde(default)]
     pub vnc_password_ref: Option<String>,
@@ -1658,15 +1658,15 @@ pub struct ServerSection {
     /// login everything but the SPA shell and `/api/auth/*` refuses requests, so
     /// an empty value would lock the server to nobody.
     pub site_username: Option<String>,
-    /// The web login's password, hashed one way under a key derived from the
-    /// config's `[master]` key: what `zdesk password hash` prints, checked with the
-    /// same `[master]` and [`Self::master_password_file`] that open `[passwords]`.
+    /// The web login's password as a bcrypt hash, encrypted under the config's
+    /// `[master]` key: what `zdesk password hash` prints, opened with the same
+    /// `[master]` and [`Self::master_password_file`] that open `[passwords]`.
     /// Required with [`Self::site_username`].
     pub site_passwd_hash: Option<String>,
-    /// The key [`Self::site_passwd_hash`] is checked with, given by
+    /// The bcrypt hash [`Self::site_passwd_hash`] opens to, given by
     /// [`ConfigFile::unlock`], and `None` until then. Never written in the file.
     #[serde(skip)]
-    pub site_login_key: Option<crate::vault::LoginKey>,
+    pub site_passwd_bcrypt: Option<OpenedHash>,
     /// A file holding the master password that opens `[passwords]`: a container's
     /// secret (`/run/secrets/…`), a systemd credential, a file only the service's
     /// account reads. A relative path is taken from the config file's directory.
@@ -1705,6 +1705,55 @@ pub struct ServerSection {
 
 /// Where the web login's password hash is, for its errors.
 const SITE_PASSWD_HASH: &str = "[server].site_passwd_hash";
+
+/// A target's password as [`ConfigFile::unlock`] decrypts it: a `str` to whatever
+/// logs in with it, and left out of `Debug`, so a config dump never prints it.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct TargetPassword(String);
+
+impl TargetPassword {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for TargetPassword {
+    fn from(password: String) -> Self {
+        Self(password)
+    }
+}
+
+impl std::ops::Deref for TargetPassword {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<&str> for TargetPassword {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+// Manual Debug, for the reason [`OpenedHash`]'s is.
+impl std::fmt::Debug for TargetPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TargetPassword(..)")
+    }
+}
+
+/// The bcrypt hash [`ServerSection::site_passwd_hash`] opens to.
+#[derive(Clone)]
+pub struct OpenedHash(String);
+
+// Manual Debug, so a config dump leaves the hash out as a `SiteLogin`'s does.
+impl std::fmt::Debug for OpenedHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OpenedHash(..)")
+    }
+}
 
 /// The default display name when `[branding].text` is unset.
 pub const DEFAULT_BRANDING: &str = "zDesk";
@@ -1935,7 +1984,7 @@ pub struct ConfigFile {
     pub master: Option<MasterSection>,
     /// The `[passwords]` table: each target password, encrypted, by the name a
     /// target's `password_ref` or `vnc_password_ref` gives it. The web login's
-    /// password is not here: it is `[server].site_passwd_hash`, hashed under the same key. Written by
+    /// password is not here: it is `[server].site_passwd_hash`, a bcrypt hash sealed under the same key. Written by
     /// what `zdesk password encrypt` prints, or by the TUI's `p`. An empty value
     /// is a placeholder: the empty password, kept until a real one replaces it,
     /// and nothing to decrypt.
@@ -2397,7 +2446,7 @@ impl ConfigFile {
             }
         }
         if let Some(value) = self.site_passwd_hash() {
-            LoginHash::parse(SITE_PASSWD_HASH, value)?;
+            crate::vault::check_hash_value(SITE_PASSWD_HASH, value)?;
             anyhow::ensure!(
                 self.master.is_some(),
                 "{SITE_PASSWD_HASH} has no [master] block to check it with — `zdesk password master show` or `create` prints one"
@@ -2441,7 +2490,7 @@ impl ConfigFile {
         Key::derive(master, section)
     }
 
-    /// Give the web login the key its hash is checked with, and decrypt every
+    /// Open the web login's bcrypt hash, and decrypt every
     /// password a target names into the target, with the key from [`Self::key`]. A file that has none, or only
     /// placeholders, needs no key, and is given `None`; a placeholder leaves its
     /// password empty.
@@ -2451,10 +2500,11 @@ impl ConfigFile {
         }
         let key =
             key.context("the config names passwords, and nothing gave its master password")?;
-        if self.site_passwd_hash().is_some()
-            && let Some(server) = &mut self.server
-        {
-            server.site_login_key = Some(key.login_key());
+        if let Some(value) = self.site_passwd_hash() {
+            let hash = key.open_hash(SITE_PASSWD_HASH, value)?;
+            if let Some(server) = &mut self.server {
+                server.site_passwd_bcrypt = Some(OpenedHash(hash));
+            }
         }
         let open = |name: &str| match self.passwords[name].as_str() {
             "" => Ok(String::new()),
@@ -2462,10 +2512,10 @@ impl ConfigFile {
         };
         for target in &mut self.targets {
             if let Some(name) = &target.password_ref {
-                target.password = open(name)?;
+                target.password = open(name)?.into();
             }
             if let Some(name) = &target.vnc_password_ref {
-                target.vnc_password = open(name)?;
+                target.vnc_password = open(name)?.into();
             }
         }
         Ok(())
@@ -2635,10 +2685,10 @@ impl ConfigFile {
                  site_passwd_hash is what `zdesk password hash` prints"
             );
         };
-        let hash = LoginHash::parse(SITE_PASSWD_HASH, hash)?;
-        // The key is `None` here when the file was only checked, never unlocked;
+        crate::vault::check_hash_value(SITE_PASSWD_HASH, hash)?;
+        // The hash is `None` here when the file was only checked, never unlocked;
         // such a login lets nobody in (see `SiteLogin::verify`).
-        let login = SiteLogin::new(username, hash, server.site_login_key)
+        let login = SiteLogin::new(username, server.site_passwd_bcrypt.map(|hash| hash.0))
             .context("invalid [server] web login")?;
         let branding = Self::resolve_branding(self.branding.as_ref())?;
         Ok(AppConfig {
@@ -2947,7 +2997,7 @@ pub(crate) fn vaulted(text: &str) -> String {
         names.insert(rest[..end].to_owned());
     }
     if names.is_empty() {
-        return if text.contains(crate::vault::PREFIX) || text.contains(crate::vault::HASH_PREFIX) {
+        return if text.contains(crate::vault::PREFIX) {
             format!("{text}\n\n[master]\nsalt = \"{SALT}\"\ncheck = \"{SALT}\"\n")
         } else {
             text.to_owned()
@@ -3055,9 +3105,9 @@ mod tests {
         );
     }
 
-    /// A value with a login hash's shape that no password gives.
+    /// A value with a login hash's shape that no key opens.
     fn a_login_hash() -> String {
-        format!("{}{}=", crate::vault::HASH_PREFIX, "A".repeat(43))
+        format!("{}{}", crate::vault::PREFIX, "A".repeat(40))
     }
 
     /// The web login's `site_username` and `site_passwd_hash` lines, for configs
@@ -3813,7 +3863,7 @@ mod tests {
         );
     }
 
-    /// The web login's hash is checked under the file's `[master]`, and a file that
+    /// The web login's hash is opened under the file's `[master]`, and a file that
     /// encrypts nothing else still needs its master password for it.
     #[test]
     fn the_site_passwd_hash_is_checked_under_the_master() {
@@ -3823,7 +3873,7 @@ mod tests {
             "[server]\nsite_username = \"admin\"\nsite_passwd_hash = \"{}\"\n\n\
              [master]\nsalt = \"{}\"\ncheck = \"{}\"\n\n\
              [[targets]]\nname = \"one\"\nprotocol = \"vnc\"\nhost = \"192.0.2.10\"\n",
-            key.hash("hunter22"),
+            key.hash("hunter22").unwrap(),
             section.salt,
             section.check,
         );
@@ -3834,20 +3884,28 @@ mod tests {
         let checked = file.clone().resolve().unwrap();
         assert!(!checked.auth.login().unwrap().verify("admin", "hunter22"));
         file.unlock(Some(&key)).unwrap();
+        let dump = format!("{file:?}");
+        assert!(
+            dump.contains("OpenedHash(..)") && !dump.contains("$2b$"),
+            "{dump}"
+        );
         let config = file.resolve().unwrap();
         let login = config.auth.login().unwrap();
         assert!(login.verify("admin", "hunter22"));
         assert!(!login.verify("admin", "wrong"));
 
-        // A hash of the empty password is refused once the key can tell it.
-        let empty = text.replace(&key.hash("hunter22"), &key.hash(""));
-        let mut file = ConfigFile::parse(&empty).unwrap();
+        // A target's password pasted as the hash opens, but is no bcrypt hash.
+        let value = text
+            .lines()
+            .find_map(|line| line.strip_prefix("site_passwd_hash = \""))
+            .unwrap()
+            .trim_end_matches('"')
+            .to_owned();
+        let pasted = text.replace(&value, &key.encrypt("hunter22").unwrap());
+        let mut file = ConfigFile::parse(&pasted).unwrap();
         file.unlock(Some(&key)).unwrap();
         let err = file.resolve().unwrap_err();
-        assert!(
-            format!("{err:#}").contains("the login password is empty"),
-            "{err:#}"
-        );
+        assert!(format!("{err:#}").contains("not bcrypt"), "{err:#}");
 
         // Without [master] there is nothing to open it with.
         let text = text.replace(

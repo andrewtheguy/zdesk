@@ -32,8 +32,8 @@ async fn spawn_app() -> SocketAddr {
             host: "127.0.0.1".to_owned(),
             port: 9, // discard; never connected
             username: String::new(),
-            password: String::new(),
-            vnc_password: String::new(),
+            password: Default::default(),
+            vnc_password: Default::default(),
             password_ref: None,
             vnc_password_ref: None,
             relay: None,

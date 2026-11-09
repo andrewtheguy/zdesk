@@ -203,7 +203,7 @@ file the gateway reads its master password from:
 ```toml
 [server]
 site_username = "admin"
-site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
+site_passwd_hash = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -218,7 +218,7 @@ Then paste in the passwords, kept under your master password (see
 [Target passwords](https://zdesk.dev/guides/zdesk#target-passwords)): `password master create`
 asks for a new master password, writes it to that file, readable by you alone, and
 prints a `[master]` block for the config; `password hash` prints the web login's
-password hashed one way, pasted as `site_passwd_hash = "…"`, and `password encrypt`
+password as an encrypted bcrypt hash, pasted as `site_passwd_hash = "…"`, and `password encrypt`
 the target's, added as `workstation = "…"` under `[passwords]`.
 
 ```sh

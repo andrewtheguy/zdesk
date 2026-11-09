@@ -111,7 +111,7 @@ sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" \
 ```toml
 [server]
 site_username = "admin"
-site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
+site_passwd_hash = "$ZD;1;AES-256-GCM;…"
 master_password_file = "master-password"
 
 [[targets]]
@@ -122,7 +122,7 @@ username = "Administrator"
 password_ref = "workstation"
 ```
 
-接著貼上各個密碼，它們都在你的主密碼之下保存（請見[目標密碼](https://zdesk.dev/zh-TW/guides/zdesk#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password hash` 輸出網頁登入密碼的單向雜湊，以 `site_passwd_hash = "…"` 的形式貼上；`password encrypt` 輸出目標的加密密碼，以 `workstation = "…"` 的形式加到 `[passwords]` 下。
+接著貼上各個密碼，它們都在你的主密碼之下保存（請見[目標密碼](https://zdesk.dev/zh-TW/guides/zdesk#target-passwords)）：`password master create` 詢問新的主密碼，把它寫入該檔案（只有你能讀取），並輸出設定所需的 `[master]` 區塊；`password hash` 輸出網頁登入密碼經加密的 bcrypt 雜湊，以 `site_passwd_hash = "…"` 的形式貼上；`password encrypt` 輸出目標的加密密碼，以 `workstation = "…"` 的形式加到 `[passwords]` 下。
 
 ```sh
 zdesk password master create

@@ -546,12 +546,22 @@ async fn login_handler(
         // not be a panic in a running program.
         return Err(AppError::Forbidden);
     };
-    let ok = state
-        .login_throttle
-        .attempt(std::time::Instant::now(), || {
+    let login = login.clone();
+    let throttle = Arc::clone(&state.login_throttle);
+    // A check is a bcrypt verify, slow by design, so it runs off the async
+    // workers, one at a time: the turn is waited for here, holding no thread, and
+    // goes with the check, so it is held until the check ends even if the client
+    // has gone. Attempts queued behind a lockout's start are refused unchecked.
+    let turn = throttle.turn().await;
+    let ok = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
+        throttle.attempt(std::time::Instant::now(), || {
             login.verify(&req.username, &req.password)
         })
-        .map_err(AppError::LoginLocked)?;
+    })
+    .await
+    .map_err(|error| anyhow::Error::new(error).context("the login check stopped"))?
+    .map_err(AppError::LoginLocked)?;
     if !ok {
         return Err(AppError::Unauthorized);
     }
@@ -1118,8 +1128,8 @@ mod tests {
                 host: "127.0.0.1".to_owned(),
                 port: 9,
                 username: String::new(),
-                password: String::new(),
-                vnc_password: String::new(),
+                password: Default::default(),
+                vnc_password: Default::default(),
                 password_ref: None,
                 vnc_password_ref: None,
                 relay: None,

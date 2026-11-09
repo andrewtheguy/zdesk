@@ -107,7 +107,7 @@ Copy-Item "$env:ProgramFiles\zdesk\share\doc\zdesk\zdesk.example.toml" "$env:Pro
 notepad "$env:ProgramData\zdesk\zdesk.toml"
 ```
 
-在 `[server].site_username` 中设置网页登录的用户名，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。密码都不以明文写入：网页登录的密码是 `[server].site_passwd_hash`，一个单向哈希；目标通过 `password_ref` 引用自己的密码，以加密形式保存；两者都在你的主密码之下，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password hash` 和 `password encrypt` 从该文件读取主密码并各输出一个值：网页登录密码的哈希，以 `site_passwd_hash = "…"` 的形式粘贴；目标的加密密码，以 `example = "…"` 的形式粘贴到 `[passwords]` 下：
+在 `[server].site_username` 中设置网页登录的用户名，并把示例中的 `[[targets]]` 条目替换为要访问的远程桌面。密码都不以明文写入：网页登录的密码是 `[server].site_passwd_hash`，一个以加密形式保存的 bcrypt 哈希；目标通过 `password_ref` 引用自己的密码，以加密形式保存；两者都在你的主密码之下，网关从 `[server].master_password_file` 指定的文件中读取主密码。在配置中为它指定配置旁边的一个文件（`master_password_file = "master-password"`；相对路径以配置所在目录为基准）。然后 `password master create` 询问新的主密码，把它写入该文件（该文件沿用目录仅限你的账户访问的权限），并输出要粘贴到配置中的 `[master]` 块；`password hash` 和 `password encrypt` 从该文件读取主密码并各输出一个值：网页登录密码经加密的 bcrypt 哈希，以 `site_passwd_hash = "…"` 的形式粘贴；目标的加密密码，以 `example = "…"` 的形式粘贴到 `[passwords]` 下：
 
 ```sh
 zdesk password master create
@@ -132,7 +132,7 @@ zdesk serve
 ```toml
 [server]
 site_username = "admin"
-site_passwd_hash = "$ZD;1;HMAC-SHA256;…"
+site_passwd_hash = "$ZD;1;AES-256-GCM;…"
 master_password_file = "/run/secrets/zdesk_master"
 ```
 

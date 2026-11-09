@@ -118,8 +118,8 @@
 # The passwords. A target never writes one: it names it, with password_ref or
 # vnc_password_ref, and [passwords] keeps it under that name, encrypted with a
 # key derived from your master password and the salt in [master]; the web
-# login's is [server].site_passwd_hash, a one-way hash under the same key. None
-# of them is typed: each is printed for you to paste here.
+# login's is [server].site_passwd_hash, a bcrypt hash encrypted with the same
+# key. None of them is typed: each is printed for you to paste here.
 #
 #   zdesk password master create -c zdesk.toml  # writes the master password file, prints [master]
 #   zdesk password master show -c zdesk.toml    # prints [master] under the file already there
@@ -164,7 +164,7 @@
 # HTTP origin and up to five WebSocket paths, /ws/display from a second display's
 # tab — so whatever terminates the proxy is what it talks to.
 # Web login (required): the one username and password guarding the whole
-# surface. The password is kept as a one-way hash under [master]: paste what
+# surface. The password is kept as a bcrypt hash encrypted under [master]: paste what
 # `zdesk password hash -c zdesk.toml` prints.
 site_username = "admin"
 site_passwd_hash = ""

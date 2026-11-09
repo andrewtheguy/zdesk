@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.518"
+version = "0.0.519"
 license = "MIT"
 edition = "2024"
 default-run = "zdesk"
@@ -232,7 +232,7 @@ sspi = { version = "0.21", default-features = false }
 # PEM or DER.
 rsa = { version = "0.10.0-rc.18", default-features = false }
 eax = "0.6"
-# Also the web login's digests, compared in constant time (src/auth.rs).
+# Also the web login's username digest, compared in constant time (src/auth.rs).
 sha2 = "0.11"
 # SRTP's and SRTCP's HMAC-SHA1-80 tags on the High Performance media stream
 # (src/vnc_apple_media.rs), over the `sha1` above.
@@ -243,6 +243,9 @@ hmac = "0.13"
 # `eax` and `sha2` above are; no `password-hash`, since nothing here is a PHC string.
 aes-gcm = "0.11"
 argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
+# The web login's password (src/auth.rs): a bcrypt hash, as htpasswd keeps one,
+# sealed like a `[passwords]` value under the same key.
+bcrypt = "0.19"
 # `zdesk password` writes those entries into the file somebody edits, keeping its
 # comments and layout, which a round trip through `toml` would not.
 toml_edit = "0.25"
@@ -385,6 +388,10 @@ opt-level = 3
 # The master password's key derivation (src/vault.rs): 64 MiB of Argon2id takes a
 # debug gateway seconds to start without these.
 [profile.dev.package.argon2]
+opt-level = 3
+
+# The web login's bcrypt, so a debug gateway checks a login as fast as a released one.
+[profile.dev.package.blowfish]
 opt-level = 3
 
 [profile.dev.package.blake2]

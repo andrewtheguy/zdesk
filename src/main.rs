@@ -191,8 +191,7 @@ fn password(action: PasswordAction) -> anyhow::Result<()> {
         PasswordAction::Hash { config } => {
             let key = config_key(config.as_deref())?;
             let password = read_secret("Web login password", true)?;
-            zdesk::auth::check_password_length(&password)?;
-            println!("{}", key.hash(&password));
+            println!("{}", key.hash(&password)?);
         }
     }
     Ok(())
