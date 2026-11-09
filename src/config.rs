@@ -1666,7 +1666,7 @@ pub struct ServerSection {
     /// The bcrypt hash [`Self::site_passwd_hash`] opens to, given by
     /// [`ConfigFile::unlock`], and `None` until then. Never written in the file.
     #[serde(skip)]
-    pub site_passwd_bcrypt: Option<String>,
+    pub site_passwd_bcrypt: Option<OpenedHash>,
     /// A file holding the master password that opens `[passwords]`: a container's
     /// secret (`/run/secrets/…`), a systemd credential, a file only the service's
     /// account reads. A relative path is taken from the config file's directory.
@@ -1705,6 +1705,17 @@ pub struct ServerSection {
 
 /// Where the web login's password hash is, for its errors.
 const SITE_PASSWD_HASH: &str = "[server].site_passwd_hash";
+
+/// The bcrypt hash [`ServerSection::site_passwd_hash`] opens to.
+#[derive(Clone)]
+pub struct OpenedHash(String);
+
+// Manual Debug, so a config dump leaves the hash out as a `SiteLogin`'s does.
+impl std::fmt::Debug for OpenedHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OpenedHash(..)")
+    }
+}
 
 /// The default display name when `[branding].text` is unset.
 pub const DEFAULT_BRANDING: &str = "zDesk";
@@ -2454,7 +2465,7 @@ impl ConfigFile {
         if let Some(value) = self.site_passwd_hash() {
             let hash = key.open_hash(SITE_PASSWD_HASH, value)?;
             if let Some(server) = &mut self.server {
-                server.site_passwd_bcrypt = Some(hash);
+                server.site_passwd_bcrypt = Some(OpenedHash(hash));
             }
         }
         let open = |name: &str| match self.passwords[name].as_str() {
@@ -2639,7 +2650,7 @@ impl ConfigFile {
         crate::vault::check_hash_value(SITE_PASSWD_HASH, hash)?;
         // The hash is `None` here when the file was only checked, never unlocked;
         // such a login lets nobody in (see `SiteLogin::verify`).
-        let login = SiteLogin::new(username, server.site_passwd_bcrypt)
+        let login = SiteLogin::new(username, server.site_passwd_bcrypt.map(|hash| hash.0))
             .context("invalid [server] web login")?;
         let branding = Self::resolve_branding(self.branding.as_ref())?;
         Ok(AppConfig {
@@ -3835,6 +3846,11 @@ mod tests {
         let checked = file.clone().resolve().unwrap();
         assert!(!checked.auth.login().unwrap().verify("admin", "hunter22"));
         file.unlock(Some(&key)).unwrap();
+        let dump = format!("{file:?}");
+        assert!(
+            dump.contains("OpenedHash(..)") && !dump.contains("$2b$"),
+            "{dump}"
+        );
         let config = file.resolve().unwrap();
         let login = config.auth.login().unwrap();
         assert!(login.verify("admin", "hunter22"));
