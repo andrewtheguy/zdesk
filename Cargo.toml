@@ -341,8 +341,9 @@ tokio = { version = "1", features = ["test-util"] }
 # wlshare's end-to-end test reads its lossless tiles as the page does: each body a
 # zstd frame or the next blocks of the still stream, read by the page's own zstd
 # decoder, ruzstd-decompress, the fork of ruzstd that hands out the still
-# stream's newest bytes as soon as their blocks are decoded.
-ruzstd-decompress = { git = "https://github.com/andrewtheguy/ruzstd-decompress", tag = "v0.9.2-alpha.12" }
+# stream's newest bytes as soon as their blocks are decoded, and its moving
+# frames by the page's call, which decodes a batch's side by side (`rayon`).
+ruzstd-decompress = { git = "https://github.com/andrewtheguy/ruzstd-decompress", tag = "v0.9.2-alpha.15", features = ["rayon"] }
 
 [profile.release]
 strip = true

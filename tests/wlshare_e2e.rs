@@ -762,11 +762,20 @@ async fn picture_of(
                         batch::TILE_PLANAR => {
                             let (mut planes, mut bgrx, mut bitmap) =
                                 (Vec::new(), Vec::new(), Vec::new());
-                            let mut frame =
-                                ruzstd_decompress::decoding::StreamingDecoder::new(&tile.image[..])
-                                    .expect("a zstd frame");
-                            std::io::Read::read_to_end(&mut frame, &mut bitmap)
-                                .expect("the page's decoder reads wlshare's zstd frame");
+                            // As the page reads a batch's moving frames: side by side,
+                            // each into the room its headers bound it to.
+                            let bound =
+                                ruzstd_decompress::decoding::decompressed_bound(&tile.image)
+                                    .expect("a zstd frame's headers");
+                            bitmap.reserve(usize::try_from(bound).unwrap());
+                            let [decoded] = ruzstd_decompress::decoding::FrameDecoder::new()
+                                .decode_each_parallel(
+                                    &[&tile.image[..]],
+                                    std::slice::from_mut(&mut bitmap),
+                                )
+                                .try_into()
+                                .expect("one result for the one input");
+                            decoded.expect("the page's decoder reads wlshare's zstd frame");
                             zdesk_rdp_graphics::proto::planar::decompress(
                                 &bitmap,
                                 &mut planes,

@@ -156,6 +156,9 @@ function withGpu(run: ComposedRun): Uint32Array {
   return Uint32Array.from(rects);
 }
 
+// A lossless tile's `R, G, B, A` rows, out of its batch's, by the decoder given.
+type LosslessOf = (decoder: TilesDecoder, record: TileMsg) => Uint8Array;
+
 // A tile the module decodes rather than the browser: one of wlshare's progressive
 // tiles, or one of its lossless ones, framed alone or in its still stream.
 const isModuleTile = (record: TileMsg) =>
@@ -782,19 +785,57 @@ export function createFramePainter(options: {
     }
   };
 
+  // A batch's lossless tiles, decoded together in the turn of the first of them
+  // to be drawn, so that the module decodes them side by side; each tile's `R,
+  // G, B, A` rows then taken in its own turn. A decoding that throws is thrown at
+  // the tile whose turn it was, which breaks the decoder, so none after it asks.
+  const losslessOf = (records: readonly BatchRecord[]): LosslessOf => {
+    const batch = records.filter(
+      (record): record is TileMsg =>
+        record.kind === "tile" &&
+        (record.format === "planar" || record.format === "still"),
+    );
+    let decoded: {
+      decoder: TilesDecoder;
+      rgba: Map<TileMsg, Uint8Array>;
+    } | null = null;
+    return (decoder, record) => {
+      if (decoded?.decoder !== decoder) {
+        const rgba = decoder.lossless(
+          batch.map(({ format, w, h, data }) => ({
+            still: format === "still",
+            w,
+            h,
+            body: data,
+          })),
+        );
+        decoded = {
+          decoder,
+          rgba: new Map(batch.map((tile, i) => [tile, rgba[i]])),
+        };
+      }
+      const rgba = decoded.rgba.get(record);
+      if (!rgba) {
+        throw new Error("a lossless tile of no batch");
+      }
+      return rgba;
+    };
+  };
+
   // A tile of the module's, as `R, G, B, A` rows of its rectangle: a progressive
-  // one against what the decoder holds of it, on a desktop the canvas's size, a
-  // lossless one alone, or a still lossless one in the still stream.
+  // one against what the decoder holds of it, on a desktop the canvas's size, or
+  // a lossless one, alone or in the still stream, with its batch's.
   const decodeModuleTile = (
     decoder: TilesDecoder,
-    { format, x, y, w, h, data }: TileMsg,
+    record: TileMsg,
     canvas: { width: number; height: number },
+    lossless: LosslessOf,
   ): Uint8Array => {
+    const { format, x, y, w, h, data } = record;
     switch (format) {
       case "planar":
-        return decoder.planar(w, h, data);
       case "still":
-        return decoder.still(w, h, data);
+        return lossless(decoder, record);
       default:
         return decoder.progressive(
           canvas.width,
@@ -843,11 +884,15 @@ export function createFramePainter(options: {
 
   // One of wlshare's progressive tiles, decoded in its turn against what the
   // decoder holds of the tile, or one of its lossless tiles, a planar bitmap
-  // decoded alone, and put where it says. One that does not decode, or a decoder
+  // decoded with the rest of its batch's, and put where it says. One that does not decode, or a decoder
   // that does not load, leaves the canvas without it, so the whole picture is
   // asked for, as for a tile that does not decode, and the decoder is broken
   // until that picture starts.
-  const paintModuleTile = async (record: TileMsg, born: number) => {
+  const paintModuleTile = async (
+    record: TileMsg,
+    born: number,
+    lossless: LosslessOf,
+  ) => {
     if (!tiles || tileDecoderBroken) {
       return;
     }
@@ -860,7 +905,11 @@ export function createFramePainter(options: {
       if (generation !== born || !tiles || !ctx || tileDecoder !== loading) {
         return;
       }
-      putRgba(ctx, decodeModuleTile(decoder, record, ctx.canvas), record);
+      putRgba(
+        ctx,
+        decodeModuleTile(decoder, record, ctx.canvas, lossless),
+        record,
+      );
     } catch (error) {
       moduleTileFailed(record, born, error);
       return;
@@ -1171,6 +1220,7 @@ export function createFramePainter(options: {
     decoding: Promise<DecodedPicture | null>,
     image: Promise<ImageBitmap> | null,
     born: number,
+    lossless: LosslessOf,
   ) => {
     switch (record.kind) {
       case "graphics":
@@ -1181,7 +1231,7 @@ export function createFramePainter(options: {
         return;
       case "tile":
         if (isModuleTile(record)) {
-          await paintModuleTile(record, born);
+          await paintModuleTile(record, born, lossless);
         } else {
           await paintTile(record, image, born);
         }
@@ -1215,8 +1265,9 @@ export function createFramePainter(options: {
       // the slowest.
       const decodes = records.map(decode);
       const images = records.map(tileImage);
+      const lossless = losslessOf(records);
       for (let i = 0; i < records.length; i += 1) {
-        await drawRecord(records[i], decodes[i], images[i], born);
+        await drawRecord(records[i], decodes[i], images[i], born, lossless);
       }
     },
     clear() {
