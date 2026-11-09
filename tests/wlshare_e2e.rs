@@ -762,8 +762,16 @@ async fn picture_of(
                         batch::TILE_PLANAR => {
                             let (mut planes, mut bgrx, mut bitmap) =
                                 (Vec::new(), Vec::new(), Vec::new());
-                            // As the page reads a batch's moving frames: side by side,
-                            // each into the room its headers bound it to.
+                            // As the page reads a batch's moving frames: each one frame
+                            // and nothing after it, read side by side, each into the room
+                            // its headers bound it to.
+                            assert!(tile.image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]));
+                            assert_eq!(
+                                ruzstd_decompress::decoding::frame_compressed_size(&tile.image)
+                                    .expect("a zstd frame's headers"),
+                                tile.image.len(),
+                                "a body of one zstd frame"
+                            );
                             let bound =
                                 ruzstd_decompress::decoding::decompressed_bound(&tile.image)
                                     .expect("a zstd frame's headers");

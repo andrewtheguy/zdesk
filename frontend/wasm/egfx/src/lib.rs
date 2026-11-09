@@ -722,8 +722,11 @@ fn read_moving(
     for (i, (tile, bitmap)) in tiles {
         bitmap.clear();
         let most = planar_most(tile.w, tile.h);
-        match ruzstd_decompress::decoding::decompressed_bound(tile.body) {
-            Err(e) => results.push((i, Err(e.to_string()))),
+        let bound = one_frame(tile.body).and_then(|()| {
+            ruzstd_decompress::decoding::decompressed_bound(tile.body).map_err(|e| e.to_string())
+        });
+        match bound {
+            Err(e) => results.push((i, Err(e))),
             Ok(bound) if bound > most as u64 => results.push((
                 i,
                 Err(format!(
@@ -746,6 +749,20 @@ fn read_moving(
         results.push((i, decoded.map_err(|e| e.to_string())));
     }
     results
+}
+
+/// Whether `body` is one zstd frame and nothing after it, as a moving tile's body
+/// is: the decoders read every frame of an input, and skip skippable ones.
+fn one_frame(body: &[u8]) -> Result<(), String> {
+    if !body.starts_with(&ZSTD_MAGIC) {
+        return Err("a body that begins no zstd frame".into());
+    }
+    let len =
+        ruzstd_decompress::decoding::frame_compressed_size(body).map_err(|e| e.to_string())?;
+    if len != body.len() {
+        return Err(format!("{} bytes past its zstd frame", body.len() - len));
+    }
+    Ok(())
 }
 
 /// `tile`'s body read on in the still stream `frame` into `bitmap`: a block at a
@@ -904,18 +921,30 @@ mod tests {
         past.push(0);
         // 8x2's planar bitmap is 130 bytes at most.
         let large = tile(&bytes(6, 131));
+        // A body is one frame: neither a skippable frame nor another after
+        // it, nor a skippable frame before it, which the decoders would read.
+        let skippable = [&0x184D_2A50u32.to_le_bytes()[..], &1u32.to_le_bytes(), &[0]].concat();
+        let skipped = [&bodies[1][..], &skippable].concat();
+        let two = [&bodies[1][..], &bodies[1]].concat();
+        let after_skip = [&skippable[..], &bodies[1]].concat();
         let batch = [
             moving(8, 8, &bodies[0]),
             moving(8, 8, &cut[..cut.len() - 10]),
             moving(8, 8, &bodies[1]),
             moving(8, 8, &past),
             moving(8, 2, &large),
+            moving(8, 8, &skipped),
+            moving(8, 8, &two),
+            moving(8, 8, &after_skip),
             moving(8, 8, &bodies[2]),
         ];
         let read = tiles.read_lossless(&batch);
         let failed: Vec<bool> = read.iter().map(Result::is_err).collect();
-        assert_eq!(failed, [false, true, false, true, true, false]);
-        for (at, content) in [(0, &contents[0]), (2, &contents[1]), (5, &contents[2])] {
+        assert_eq!(
+            failed,
+            [false, true, false, true, true, true, true, true, false]
+        );
+        for (at, content) in [(0, &contents[0]), (2, &contents[1]), (8, &contents[2])] {
             assert_eq!(&tiles.bitmaps[at], content);
         }
         let content = bytes(7, 90);
