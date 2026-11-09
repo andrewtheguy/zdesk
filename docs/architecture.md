@@ -580,14 +580,15 @@ the stream already carried; a body that begins a zstd frame starts it over, as
 wlshare does wherever the picture starts over and after the cache-empty every
 repaint sends. Each is a rectangle inside the desktop of any size, passed as a
 `TILE` record of its own format (`TILE_PLANAR` framed, `TILE_STILL` streamed),
-and the page decodes it in wire order with the progressive ones, its zstd by
-ruzstd-decompress, a zstd decoder in Rust — the fork of ruzstd that hands out
-every byte as soon as its block is decoded, the still stream's newest among
-them, which ruzstd keeps
-back while a frame goes on —
-fed a block at a time and stopped past what a planar bitmap of the rectangle can
-be, and its bitmap by the same module's planar codec, the one that draws a
-Windows host's lossless pipeline; one that does not decode asks for the whole
+and the page decodes a batch's together, at the first one's turn, and draws each
+in wire order with the progressive ones. Its zstd is read by ruzstd-decompress, a
+zstd decoder in Rust — the fork of ruzstd that hands out every byte as soon as
+its block is decoded, the still stream's newest among them, which ruzstd keeps
+back while a frame goes on: the still bodies in order, fed a block at a time,
+beside the moving frames, which it decodes side by side on the module's threads;
+each held to what a planar bitmap of its rectangle can be. Every bitmap is then
+decoded side by side by the same module's planar codec, the one that draws a
+Windows host's lossless pipeline. A batch that does not decode asks for the whole
 picture as a progressive tile does, and so starts the still stream over.
 Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region

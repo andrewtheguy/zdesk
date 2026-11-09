@@ -154,8 +154,18 @@ export type DecodedFrame = Pick<
  * wlshare's tiles the page decodes in the module: its progressive tiles, by the
  * module's RemoteFX Progressive decoder over the desktop, which keeps every
  * tile's coefficients from one block to the next, so blocks go in in wire order;
- * and its lossless tiles, each planar bitmap alone or in its still stream.
+ * and its lossless tiles, a batch's at once, each planar bitmap alone or in its
+ * still stream.
  */
+/** One of wlshare's lossless tiles, for `TilesDecoder.lossless`. */
+export interface LosslessTile {
+  /** Whether its body is the still stream's, not a frame of its own. */
+  still: boolean;
+  w: number;
+  h: number;
+  body: Uint8Array;
+}
+
 export interface TilesDecoder {
   /**
    * The tile `block` is of, decoded against what this holds of it: `R, G, B, A`
@@ -173,19 +183,16 @@ export interface TilesDecoder {
     block: Uint8Array,
   ): Uint8Array;
   /**
-   * The pixels of `bitmap`, a planar bitmap of exactly a `w`×`h` rectangle that
-   * depends on nothing before it: `R, G, B, A` rows for the canvas to put there.
-   * Throws for one that does not decode.
+   * The pixels of a batch's lossless tiles, in their order: each tile's `R, G, B,
+   * A` rows of its rectangle, for the canvas to put there. A moving tile's body is
+   * a zstd frame of a planar bitmap of exactly its `w`×`h` rectangle, depending on
+   * nothing before it; a still one's is the still stream's bytes of one, read
+   * after the bodies before it, and one that begins a zstd frame starts the
+   * stream over. The moving frames, and then every bitmap, are decoded side by
+   * side on the module's threads. Throws for the first tile that does not decode,
+   * after which the still stream is lost until a body starts it over.
    */
-  planar(w: number, h: number, bitmap: Uint8Array): Uint8Array;
-  /**
-   * The pixels of `body`, the still stream's bytes of a planar bitmap of exactly
-   * a `w`×`h` rectangle, read after the bodies before it — one that begins a zstd
-   * frame starts the stream over: `R, G, B, A` rows for the canvas to put there.
-   * Throws for one that does not decode, after which the stream is lost until a
-   * body starts it over.
-   */
-  still(w: number, h: number, body: Uint8Array): Uint8Array;
+  lossless(tiles: readonly LosslessTile[]): Uint8Array[];
   /** Give the module back what it holds of every tile. */
   close(): void;
 }
@@ -203,8 +210,32 @@ export async function loadTilesDecoder(
   return {
     progressive: (width, height, x, y, w, h, block) =>
       tiles.progressive(width, height, x, y, w, h, block),
-    planar: (w, h, bitmap) => tiles.planar(w, h, bitmap),
-    still: (w, h, body) => tiles.still(w, h, body),
+    lossless: (batch) => {
+      const stills = new Uint8Array(batch.length);
+      const sizes = new Uint16Array(batch.length * 2);
+      const lens = new Uint32Array(batch.length);
+      let total = 0;
+      batch.forEach(({ still, w, h, body }, i) => {
+        stills[i] = still ? 1 : 0;
+        sizes[i * 2] = w;
+        sizes[i * 2 + 1] = h;
+        lens[i] = body.length;
+        total += body.length;
+      });
+      const bodies = new Uint8Array(total);
+      let at = 0;
+      for (const { body } of batch) {
+        bodies.set(body, at);
+        at += body.length;
+      }
+      const rgba = tiles.lossless(stills, sizes, lens, bodies);
+      let from = 0;
+      return batch.map(({ w, h }) => {
+        const part = rgba.subarray(from, from + w * h * 4);
+        from += w * h * 4;
+        return part;
+      });
+    },
     close: () => tiles.free(),
   };
 }

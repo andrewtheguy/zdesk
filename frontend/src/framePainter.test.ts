@@ -1981,20 +1981,23 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
           rgba[0] = block[0];
           return rgba;
         },
-        planar(w, h, bitmap) {
-          calls.push(`planar ${w}x${h} [${bitmap[0]}]`);
-          if (bitmap[0] === 0xee) {
+        lossless(batch) {
+          calls.push(
+            `lossless ${batch
+              .map(
+                ({ still, w, h, body }) =>
+                  `${still ? "still" : "planar"} ${w}x${h} [${body[0]}]`,
+              )
+              .join(", ")}`,
+          );
+          if (batch.some(({ body }) => body[0] === 0xee)) {
             throw new Error("not a planar bitmap");
           }
-          const rgba = new Uint8Array(w * h * 4);
-          rgba[0] = bitmap[0];
-          return rgba;
-        },
-        still(w, h, body) {
-          calls.push(`still ${w}x${h} [${body[0]}]`);
-          const rgba = new Uint8Array(w * h * 4);
-          rgba[0] = body[0];
-          return rgba;
+          return batch.map(({ w, h, body }) => {
+            const rgba = new Uint8Array(w * h * 4);
+            rgba[0] = body[0];
+            return rgba;
+          });
         },
         close() {
           closed += 1;
@@ -2082,8 +2085,9 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
     assert.equal(put.at(-1), "9 64x64 at 0,0");
     assert.equal(made, 3);
-    // A lossless tile is decoded by the same module, alone or in the still
-    // stream, and put where it says, in its turn among the rest.
+    // A batch's lossless tiles are decoded by the same module, together, alone
+    // or in the still stream, and each put where it says, in its turn among the
+    // rest.
     await p.draw(
       tileFrame([
         { format: 4, at: [0, 0, 100, 64], image: [10] },
@@ -2091,10 +2095,9 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
         { format: 5, at: [64, 64, 36, 16], image: [12] },
       ]),
     );
-    assert.deepEqual(calls.slice(-3), [
-      "planar 100x64 [10]",
+    assert.deepEqual(calls.slice(-2), [
+      "lossless planar 100x64 [10], still 36x16 [12]",
       "100x80 0,64 64x16 [11]",
-      "still 36x16 [12]",
     ]);
     assert.deepEqual(put.slice(-3), [
       "10 100x64 at 0,0",
@@ -2102,10 +2105,19 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
       "12 36x16 at 64,64",
     ]);
     assert.equal(made, 3, "the one decoder");
-    // And one that does not decode asks for the whole picture as a progressive
-    // one does.
+    // And a batch that does not decode asks for the whole picture once, as a
+    // progressive tile does, its tiles after the first not asked again.
     const asked = videoKeyframeAsks.length;
-    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [0xee] }]));
+    const tried = calls.length;
+    await p.draw(
+      tileFrame([
+        { format: 4, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 5, at: [64, 0, 36, 64], image: [13] },
+      ]),
+    );
+    assert.deepEqual(calls.slice(tried), [
+      "lossless planar 64x64 [238], still 36x64 [13]",
+    ]);
     assert.equal(videoKeyframeAsks.length, asked + 1);
     assert.match(
       videoKeyframeAsks.at(-1) ?? "",

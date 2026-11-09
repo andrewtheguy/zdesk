@@ -762,11 +762,28 @@ async fn picture_of(
                         batch::TILE_PLANAR => {
                             let (mut planes, mut bgrx, mut bitmap) =
                                 (Vec::new(), Vec::new(), Vec::new());
-                            let mut frame =
-                                ruzstd_decompress::decoding::StreamingDecoder::new(&tile.image[..])
-                                    .expect("a zstd frame");
-                            std::io::Read::read_to_end(&mut frame, &mut bitmap)
-                                .expect("the page's decoder reads wlshare's zstd frame");
+                            // As the page reads a batch's moving frames: each one frame
+                            // and nothing after it, read side by side, each into the room
+                            // its headers bound it to.
+                            assert!(tile.image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]));
+                            assert_eq!(
+                                ruzstd_decompress::decoding::frame_compressed_size(&tile.image)
+                                    .expect("a zstd frame's headers"),
+                                tile.image.len(),
+                                "a body of one zstd frame"
+                            );
+                            let bound =
+                                ruzstd_decompress::decoding::decompressed_bound(&tile.image)
+                                    .expect("a zstd frame's headers");
+                            bitmap.reserve(usize::try_from(bound).unwrap());
+                            let [decoded] = ruzstd_decompress::decoding::FrameDecoder::new()
+                                .decode_each_parallel(
+                                    &[&tile.image[..]],
+                                    std::slice::from_mut(&mut bitmap),
+                                )
+                                .try_into()
+                                .expect("one result for the one input");
+                            decoded.expect("the page's decoder reads wlshare's zstd frame");
                             zdesk_rdp_graphics::proto::planar::decompress(
                                 &bitmap,
                                 &mut planes,
