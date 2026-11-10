@@ -1783,7 +1783,11 @@ the pipeline.
   profile: AVC420 by region, and over the whole desktop, asked for with
   `AVC_THINCLIENT`, AVC444v2 in luma views alone. AVC444, and AVC444v2's chroma
   views, are implemented from the specification and tested against pictures
-  built from its tables; no host has been seen to send both of their views.
+  built from its tables; no host has been seen to send both of their views. A
+  Windows host sends chroma views only under its policy *Prioritize H.264/AVC
+  444 graphics mode*, which zDesk does not support, so text drawn through either
+  H.264 choice is 4:2:0
+  ([RDP client](rdp-client.md#444-by-the-hosts-policy-not-supported)).
 - **H.264 full screen, passed as video.** A session started with it is not
   composed: the RDP client reads the pipeline for its H.264
   (`Graphics::streaming` in `crates/zdesk-rdp-graphics/src/gfx.rs`) and hands
