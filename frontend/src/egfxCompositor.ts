@@ -154,16 +154,16 @@ export type DecodedFrame = Pick<
  * wlshare's tiles the page decodes in the module: its progressive tiles, by the
  * module's RemoteFX Progressive decoder over the desktop, which keeps every
  * tile's coefficients from one block to the next, so blocks go in in wire order;
- * and its lossless tiles, a batch's at once, each planar bitmap alone or in its
- * still stream, or a median predictor's residuals alone.
+ * and its lossless tiles, a batch's at once, each a planar bitmap in its still
+ * stream or a median predictor's residuals alone.
  */
 /** One of wlshare's lossless tiles, for `TilesDecoder.lossless`. */
 export interface LosslessTile {
   /**
-   * How its body carries it: a planar bitmap in a frame of its own, one in the
-   * still stream, or a median predictor's residuals in three frames of their own.
+   * How its body carries it: a planar bitmap in the still stream, or a median
+   * predictor's residuals in three frames of their own.
    */
-  kind: "planar" | "still" | "median";
+  kind: "still" | "median";
   w: number;
   h: number;
   body: Uint8Array;
@@ -187,14 +187,14 @@ export interface TilesDecoder {
   ): Uint8Array;
   /**
    * The pixels of a batch's lossless tiles, in their order: each tile's `R, G, B,
-   * A` rows of its rectangle, for the canvas to put there. A moving tile's body is
-   * a zstd frame of a planar bitmap of exactly its `w`×`h` rectangle, depending on
-   * nothing before it; a still one's is the still stream's bytes of one, read
-   * after the bodies before it, and one that begins a zstd frame starts the
-   * stream over; a median one's is three zstd frames of its planes' residuals,
-   * depending on nothing either. The moving frames, and then every bitmap, are decoded side by
-   * side on the module's threads. Throws for the first tile that does not decode,
-   * after which the still stream is lost until a body starts it over.
+   * A` rows of its rectangle, for the canvas to put there. A still tile's body is
+   * the still stream's bytes of a planar bitmap of exactly its `w`×`h` rectangle,
+   * read after the bodies before it, and one that begins a zstd frame starts the
+   * stream over; a moving one's is three zstd frames of its planes as a median
+   * predictor's residuals, depending on nothing before it. The moving frames, and
+   * then every bitmap and plane, are decoded side by side on the module's threads.
+   * Throws for the first tile that does not decode, after which the still stream
+   * is lost until a body starts it over.
    */
   lossless(tiles: readonly LosslessTile[]): Uint8Array[];
   /** Give the module back what it holds of every tile. */
@@ -202,7 +202,7 @@ export interface TilesDecoder {
 }
 
 // A lossless tile's kind as the module reads it (`WlshareTiles::lossless`).
-const LOSSLESS_KINDS = { planar: 0, still: 1, median: 2 } as const;
+const LOSSLESS_KINDS = { still: 0, median: 1 } as const;
 
 /**
  * A decoder of wlshare's tiles out of the module, loaded and its threads started

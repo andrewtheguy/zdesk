@@ -17,8 +17,8 @@
 //! the desktop takes from wlshare's nodes comes out.
 
 mod common;
-// The page's reader of wlshare's lossless tiles by its median predictor, the
-// module's own file.
+// The page's reader of the median predictor's residuals wlshare's lossless tiles
+// are where the desktop moves, the module's own file.
 #[path = "../frontend/wasm/egfx/src/median.rs"]
 mod page_median;
 
@@ -763,54 +763,6 @@ async fn picture_of(
                                 )
                                 .expect("the page's decoder reads wlshare's progressive tile");
                         }
-                        batch::TILE_PLANAR => {
-                            let (mut planes, mut bgrx, mut bitmap) =
-                                (Vec::new(), Vec::new(), Vec::new());
-                            // As the page reads a batch's moving frames: each one frame
-                            // and nothing after it, read side by side, each into the room
-                            // its headers bound it to.
-                            assert!(tile.image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]));
-                            assert_eq!(
-                                ruzstd_decompress::decoding::frame_compressed_size(&tile.image)
-                                    .expect("a zstd frame's headers"),
-                                tile.image.len(),
-                                "a body of one zstd frame"
-                            );
-                            let bound =
-                                ruzstd_decompress::decoding::decompressed_bound(&tile.image)
-                                    .expect("a zstd frame's headers");
-                            bitmap.reserve(usize::try_from(bound).unwrap());
-                            let [decoded] = ruzstd_decompress::decoding::FrameDecoder::new()
-                                .decode_each_parallel(
-                                    &[&tile.image[..]],
-                                    std::slice::from_mut(&mut bitmap),
-                                )
-                                .try_into()
-                                .expect("one result for the one input");
-                            decoded.expect("the page's decoder reads wlshare's zstd frame");
-                            zdesk_rdp_graphics::proto::planar::decompress(
-                                &bitmap,
-                                &mut planes,
-                                &mut bgrx,
-                                tile.w,
-                                tile.h,
-                            )
-                            .expect("the page's decoder reads wlshare's planar bitmap");
-                            let rgb: Vec<u8> = bgrx
-                                .as_chunks::<4>()
-                                .0
-                                .iter()
-                                .flat_map(|px| [px[2], px[1], px[0]])
-                                .collect();
-                            put(
-                                tile.x,
-                                tile.y,
-                                usize::from(tile.w),
-                                &rgb,
-                                usize::from(tile.w) * 3,
-                                3,
-                            );
-                        }
                         batch::TILE_STILL => {
                             let mut source = &tile.image[..];
                             if source.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
@@ -886,7 +838,7 @@ async fn picture_of(
                             put(tile.x, tile.y, w, &rgba, w * 4, 4);
                         }
                         other => panic!(
-                            "a tile of format {other:#x} in a test that draws PNG, progressive, planar and median tiles"
+                            "a tile of format {other:#x} in a test that draws PNG, progressive, still and median tiles"
                         ),
                     }
                 }
@@ -945,12 +897,15 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
 }
 
 /// A session started with wlshare's lossless tiles is sent them alone, passed:
-/// `TILE` records of the still format, the still stream's planar bitmaps, which
-/// the page's zstd and planar decoders read into exactly the desktop wlshare's
-/// tiles with motion show; and wlshare was asked for lossless tiles.
+/// where the desktop is still, `TILE` records of the still format, the still
+/// stream's planar bitmaps, which the page's zstd and planar decoders read into
+/// exactly the desktop wlshare's tiles with motion show; and where it moves — a
+/// ball, which crosses the link as fast as it moves — the median predictor's
+/// residuals, read as the page reads them, beside the still stream's bodies read
+/// in order. wlshare was asked for lossless tiles.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
-async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
+async fn a_session_started_with_lossless_tiles_is_sent_wlshares_still_and_median_tiles() {
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
@@ -960,15 +915,15 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
         [zdesk::protocol::batch::TILE_PNG].into(),
         "tiles with motion are lossless PNG while nothing moves"
     );
-    let (lw, lh, planar, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
+    let (lw, lh, lossless, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
     assert_eq!((lw, lh), (w, h), "the same desktop");
     assert_eq!(
         formats,
         [zdesk::protocol::batch::TILE_STILL].into(),
-        "a still desktop's planar tiles, in the still stream alone"
+        "a still desktop's tiles are planar, in the still stream alone"
     );
     assert!(
-        planar == png,
+        lossless == png,
         "the lossless tiles show the desktop exactly as the PNG tiles do"
     );
     let logs = container.logs();
@@ -976,72 +931,22 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_planar_tiles() {
         logs.contains("asked for lossless tiles"),
         "wlshare was not asked for its lossless tiles:\n{logs}"
     );
-}
 
-/// A moving desktop's lossless tiles are both kinds, each read as the page reads
-/// it: what moves — a ball, which crosses the link as fast as it moves — a planar
-/// bitmap in a zstd frame of its own, and what is still the still stream's, every
-/// body of it read in order.
-#[tokio::test]
-#[ignore = "requires Docker or Podman"]
-async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed_where_it_is_still()
-{
-    common::init_logging();
-    let (container, vnc_port) = start_wlshare().await;
     play_video(&container, "ball").await;
-    let addr = spawn_app(vnc_port).await;
     let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-lossless", 6).await;
-    assert_eq!(
-        formats,
-        [
-            zdesk::protocol::batch::TILE_PLANAR,
-            zdesk::protocol::batch::TILE_STILL
-        ]
-        .into(),
-        "what moves framed, what is still streamed"
-    );
-}
-
-/// A session started with wlshare's lossless tiles by its median predictor is
-/// sent what one started with its lossless tiles is where the desktop is still,
-/// the still stream's planar bitmaps, which the page's decoders read into exactly
-/// the desktop its tiles with motion show; and where it moves — a ball — the
-/// predictor's residuals, read as the page reads them, and no planar bitmap
-/// framed alone. wlshare was asked for the predictor.
-#[tokio::test]
-#[ignore = "requires Docker or Podman"]
-async fn a_session_started_with_median_tiles_is_sent_residuals_where_the_desktop_moves() {
-    common::init_logging();
-    let (container, vnc_port) = start_wlshare().await;
-    let addr = spawn_app(vnc_port).await;
-    let (w, h, png, _) = picture_of(addr, "wlshare-tiles-motion", 4).await;
-    let (mw, mh, median, formats) = picture_of(addr, "wlshare-tiles-median", 4).await;
-    assert_eq!((mw, mh), (w, h), "the same desktop");
-    assert_eq!(
-        formats,
-        [zdesk::protocol::batch::TILE_STILL].into(),
-        "a still desktop's tiles are planar, in the still stream alone"
-    );
+    // What moves is the predictor's residuals; the capture may or may not catch
+    // a still tile beside it.
     assert!(
-        median == png,
-        "the tiles show the desktop exactly as the PNG tiles do"
-    );
-    let logs = container.logs();
-    assert!(
-        logs.contains("what moves by the median predictor"),
-        "wlshare was not asked for its median predictor:\n{logs}"
-    );
-
-    play_video(&container, "ball").await;
-    let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-median", 6).await;
-    assert_eq!(
-        formats,
-        [
-            zdesk::protocol::batch::TILE_STILL,
-            zdesk::protocol::batch::TILE_MEDIAN
-        ]
-        .into(),
-        "what moves the predictor's residuals, what is still streamed"
+        formats.contains(&zdesk::protocol::batch::TILE_MEDIAN)
+            && formats.is_subset(
+                &[
+                    zdesk::protocol::batch::TILE_STILL,
+                    zdesk::protocol::batch::TILE_MEDIAN
+                ]
+                .into()
+            ),
+        "moving lossless tiles are the predictor's residuals, beside only still \
+         ones: {formats:?}"
     );
 }
 

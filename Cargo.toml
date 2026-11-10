@@ -23,7 +23,7 @@ exclude = ["frontend/wasm/egfx", "frontend/wasm/apple-adaptive"]
 
 [package]
 name = "zdesk"
-version = "0.0.520"
+version = "0.0.521"
 license = "MIT"
 edition = "2024"
 default-run = "zdesk"
@@ -137,7 +137,7 @@ sound-flac = { git = "https://github.com/andrewtheguy/sound-flac", tag = "v0.0.9
 # under it, behind the `wlshare` feature. Pinned at its protocol version's tag,
 # which a wlshare release that changes nothing of it leaves where it is: the
 # version is checked on the wire, and a wlshare of another is refused.
-wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v11", optional = true }
+wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v12", optional = true }
 # 44100 -> 48000, because libopus accepts only 8/12/16/24/48 kHz and RDP offers
 # no 48 kHz format. Pure Rust, and it resamples deinterleaved channels — which is
 # the point: the naive interleaved interpolation blends left into right.
@@ -341,11 +341,12 @@ aes = "0.9"
 # (src/session.rs, src/ws.rs): waiting out a real timeout in a unit test is a
 # stretch of doing nothing.
 tokio = { version = "1", features = ["test-util"] }
-# wlshare's end-to-end test reads its lossless tiles as the page does: each body a
-# zstd frame or the next blocks of the still stream, read by the page's own zstd
-# decoder, ruzstd-decompress, the fork of ruzstd that hands out the still
-# stream's newest bytes as soon as their blocks are decoded, and its moving
-# frames by the page's call, which decodes a batch's side by side (`rayon`).
+# wlshare's end-to-end test reads its lossless tiles as the page does: each body
+# three zstd frames, a plane of a median predictor's residuals each, or the next
+# blocks of the still stream, read by the page's own zstd decoder,
+# ruzstd-decompress, the fork of ruzstd that hands out the still stream's newest
+# bytes as soon as their blocks are decoded, and its moving frames by the page's
+# call, which decodes a batch's side by side (`rayon`).
 ruzstd-decompress = { git = "https://github.com/andrewtheguy/ruzstd-decompress", tag = "v0.9.2-alpha.16", features = ["rayon"] }
 
 [profile.release]

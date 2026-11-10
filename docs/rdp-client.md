@@ -524,7 +524,8 @@ about two fifths off the opening paint. SurfaceToSurface and the cache of
 11 frames unacknowledged. The Lossless host drew no more than 21 frames a
 second even where each was a kilobyte or two, against the stock host's 35;
 the two differ in edition as well as policy, so which of them that is was not
-separated. wlshare's lossless tiles model this picture
+separated. wlshare's lossless tiles model this picture where the desktop is
+still, and send what moves as a median predictor's residuals instead
 ([Lossless tiles](https://github.com/andrewtheguy/wlshare/blob/main/docs/architecture.md#the-tiles-encoding)).
 
 Lossless takes no H.264 either. A session that offered it, with something

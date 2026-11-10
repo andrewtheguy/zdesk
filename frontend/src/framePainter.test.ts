@@ -1848,11 +1848,12 @@ test("a malformed batch ends a Mac's own picture", async () => {
 
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
 // src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile, 4
-// a lossless tile's planar bitmap), x, y, w and h as u16, a u32 length, the
-// image, little-endian.
+// a still lossless tile's planar bitmap in the still stream, 5 a moving one's
+// median predictor's residuals), x, y, w and h as u16, a u32 length, the image,
+// little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4 | 5 | 6;
+    format: 1 | 2 | 3 | 4 | 5;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1988,7 +1989,7 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
               .join(", ")}`,
           );
           if (batch.some(({ body }) => body[0] === 0xee)) {
-            throw new Error("not a planar bitmap");
+            throw new Error("not a lossless tile");
           }
           return batch.map(({ w, h, body }) => {
             const rgba = new Uint8Array(w * h * 4);
@@ -2082,18 +2083,18 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
     assert.equal(put.at(-1), "9 64x64 at 0,0");
     assert.equal(made, 3);
-    // A batch's lossless tiles are decoded by the same module, together, alone
-    // or in the still stream, and each put where it says, in its turn among the
-    // rest.
+    // A batch's lossless tiles are decoded by the same module, together, a
+    // median predictor's residuals or in the still stream, and each put where it
+    // says, in its turn among the rest.
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 100, 64], image: [10] },
+        { format: 5, at: [0, 0, 100, 64], image: [10] },
         { format: 3, at: [0, 64, 64, 16], image: [11] },
-        { format: 5, at: [64, 64, 36, 16], image: [12] },
+        { format: 4, at: [64, 64, 36, 16], image: [12] },
       ]),
     );
     assert.deepEqual(calls.slice(-2), [
-      "lossless planar 100x64 [10], still 36x16 [12]",
+      "lossless median 100x64 [10], still 36x16 [12]",
       "100x80 0,64 64x16 [11]",
     ]);
     assert.deepEqual(put.slice(-3), [
@@ -2102,30 +2103,18 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
       "12 36x16 at 64,64",
     ]);
     assert.equal(made, 3, "the one decoder");
-    // A median predictor's residuals are a lossless tile of the batch's too.
-    await p.draw(
-      tileFrame([
-        { format: 6, at: [0, 0, 100, 64], image: [14] },
-        { format: 5, at: [0, 64, 100, 16], image: [15] },
-      ]),
-    );
-    assert.deepEqual(calls.slice(-1), [
-      "lossless median 100x64 [14], still 100x16 [15]",
-    ]);
-    assert.deepEqual(put.slice(-2), ["14 100x64 at 0,0", "15 100x16 at 0,64"]);
-    assert.equal(made, 3, "the one decoder");
     // And a batch that does not decode asks for the whole picture once, as a
     // progressive tile does, its tiles after the first not asked again.
     const asked = videoKeyframeAsks.length;
     const tried = calls.length;
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 64, 64], image: [0xee] },
-        { format: 5, at: [64, 0, 36, 64], image: [13] },
+        { format: 5, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 4, at: [64, 0, 36, 64], image: [13] },
       ]),
     );
     assert.deepEqual(calls.slice(tried), [
-      "lossless planar 64x64 [238], still 36x64 [13]",
+      "lossless median 64x64 [238], still 36x64 [13]",
     ]);
     assert.equal(videoKeyframeAsks.length, asked + 1);
     assert.match(

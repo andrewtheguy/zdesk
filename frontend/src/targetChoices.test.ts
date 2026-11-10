@@ -88,8 +88,8 @@ const STANDARD = target({
   standardView: true,
 });
 
-// As the gateway lists a `wlshare` target: its video, its progressive tiles and its
-// tiles with motion, all wlshare's own, passed.
+// As the gateway lists a `wlshare` target: its video, its progressive tiles, its
+// tiles with motion and its lossless tiles, all wlshare's own, passed.
 const WLSHARE = target({
   subtype: "wlshare",
   resize: true,
@@ -99,7 +99,6 @@ const WLSHARE = target({
     "wlshare-tiles-progressive",
     "wlshare-tiles-motion",
     "wlshare-tiles-lossless",
-    "wlshare-tiles-median",
   ],
   camera: true,
   microphone: true,
@@ -209,14 +208,13 @@ test("only what the target's type offers has a row", () => {
   const plain = targetOptions(target({}), undefined, ABLE);
   assert.equal(plain.pictures, null);
   assert.equal(plain.soundRow, null);
-  // wlshare's picture is one of its five, its video first, and its sound a choice.
+  // wlshare's picture is one of its four, its video first, and its sound a choice.
   const wlshare = targetOptions(WLSHARE, undefined, ABLE);
   assert.deepEqual(pictures(wlshare), [
     ["wlshare-video", false],
     ["wlshare-tiles-progressive", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-lossless", false],
-    ["wlshare-tiles-median", false],
   ]);
   assert.equal(wlshare.choices.passthrough, "wlshare-video");
   assert.deepEqual(formats(wlshare), ["opus", "flac"]);
@@ -543,7 +541,6 @@ test("a wlshare target's picture is its video or either of its tiles, passed", (
     ["wlshare-tiles-progressive", false],
     ["wlshare-tiles-motion", false],
     ["wlshare-tiles-lossless", false],
-    ["wlshare-tiles-median", false],
   ]);
   assert.equal(options.choices.passthrough, "wlshare-video", "the first");
   const tiles = targetOptions(
@@ -567,13 +564,6 @@ test("a wlshare target's picture is its video or either of its tiles, passed", (
   );
   assert.equal(lossless.choices.passthrough, "wlshare-tiles-lossless");
   assert.equal(lossless.blocked, null);
-  const median = targetOptions(
-    WLSHARE,
-    { passthrough: "wlshare-tiles-median" },
-    ABLE,
-  );
-  assert.equal(median.choices.passthrough, "wlshare-tiles-median");
-  assert.equal(median.blocked, null);
   // A picture remembered from another target's kind is not this one's.
   assert.equal(
     targetOptions(WLSHARE, { passthrough: "apple-media" }, ABLE).choices
@@ -595,11 +585,7 @@ test("a wlshare target's pictures are chosen kind first: adaptive, then lossless
     [
       "Lossless (requires high bandwidth)",
       false,
-      [
-        "wlshare-tiles-motion",
-        "wlshare-tiles-lossless",
-        "wlshare-tiles-median",
-      ],
+      ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
     ],
   ]);
   const [adaptive, lossless] = options.pictureKinds ?? [];
@@ -609,11 +595,7 @@ test("a wlshare target's pictures are chosen kind first: adaptive, then lossless
   );
   assert.deepEqual(
     lossless?.pictures.map((picture) => picture.label),
-    [
-      "Settles to lossless",
-      "Fully lossless (experimental)",
-      "Fully lossless, median predictor (experimental)",
-    ],
+    ["Settles to lossless", "Fully lossless (experimental)"],
   );
   // Lossless wants a wired link, and is not suggested for a phone, nor either of its
   // pictures; the adaptive ones say nothing of it.
@@ -704,7 +686,6 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
     ["wlshare-tiles-progressive", false],
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-lossless", false],
-    ["wlshare-tiles-median", false],
   ]);
   assert.match(
     videoless.pictures?.[0].note ?? "",
@@ -723,7 +704,6 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
     ["wlshare-tiles-progressive", true],
     ["wlshare-tiles-motion", true],
     ["wlshare-tiles-lossless", true],
-    ["wlshare-tiles-median", true],
   ]);
   // The progressive tiles' reason is wlshare's, not an RDP host's egfx.
   const progressive =
@@ -736,11 +716,6 @@ test("a wlshare target needs a browser that decodes one of its pictures", () => 
     unable.pictures?.find((option) => option.value === "wlshare-tiles-lossless")
       ?.note ?? "";
   assert.match(lossless, /lossless tiles: that needs WebGL 2/);
-  assert.match(
-    unable.pictures?.find((option) => option.value === "wlshare-tiles-median")
-      ?.note ?? "",
-    /lossless tiles: that needs WebGL 2/,
-  );
   assert.match(unable.blocked ?? "", /none of wlshare's pictures/);
   // A plain target, read through the RFB baseline, is sent the tiles.
   assert.equal(targetOptions(target({}), undefined, UNABLE).blocked, null);

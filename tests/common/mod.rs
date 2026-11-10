@@ -448,8 +448,6 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_PNG => image.starts_with(b"\x89PNG"),
                     // A first pass's block or an upgrade's: 0xCCC6 or 0xCCC7, little-endian.
                     batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
-                    // A zstd frame, of a planar bitmap.
-                    batch::TILE_PLANAR => image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]),
                     // The still stream's next bytes, a zstd frame's start or not.
                     batch::TILE_STILL => true,
                     // Three zstd frames, of a median predictor's residuals.

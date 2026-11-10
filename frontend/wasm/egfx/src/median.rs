@@ -1,4 +1,4 @@
-//! wlshare's lossless tiles by its median predictor, where the desktop moves
+//! wlshare's lossless tiles where the desktop moves, by a median predictor
 //! (`wlshare_proto::tiles`' `MEDIAN`): a rectangle's pixels as three planes of a
 //! byte a pixel, green, red less green and blue less green, each carried as its
 //! residuals from JPEG-LS's predictor and framed in zstd alone, the three frames

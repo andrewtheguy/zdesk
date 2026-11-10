@@ -33,13 +33,13 @@
 //! RemoteFX Progressive decoder ([`WlshareTiles`]): each a tile block the
 //! page hands in order, put in a stream of its own with the protocol's tables
 //! (`wlshare_proto::progressive`), its tile's pixels handed back. And so are
-//! its lossless tiles, by the planar codec that draws a Windows host's lossless
-//! pipeline, a batch's at once ([`WlshareTiles::lossless`]): the moving tiles'
-//! zstd frames side by side on the same pool, beside the still stream's bodies in
-//! order, then every tile's bitmap side by side, their pixels handed back. Its
-//! lossless tiles by its median predictor are a batch's the same way, a moving
-//! tile's three planes of residuals read in place of its planar bitmap
-//! ([`median`]).
+//! its lossless tiles, a batch's at once ([`WlshareTiles::lossless`]): what is
+//! still a planar bitmap in its still stream, read by the planar codec that
+//! draws a Windows host's lossless pipeline, and what moves three planes of a
+//! median predictor's residuals in zstd frames of their own ([`median`]). The
+//! moving tiles' frames are read side by side on the same pool, beside the still
+//! stream's bodies in order, then every tile's bitmap or planes side by side,
+//! their pixels handed back.
 
 mod median;
 
@@ -448,8 +448,8 @@ impl Default for Egfx {
 /// wlshare's progressive tiles as the page draws them: one RemoteFX Progressive
 /// decoder over the desktop, which keeps every tile's coefficients from one block
 /// to the next. A desktop of another size starts it over. Its lossless tiles too,
-/// a batch's at once ([`Self::lossless`]), each alone, a planar bitmap or a
-/// median predictor's residuals, or in its still stream.
+/// a batch's at once ([`Self::lossless`]), each a planar bitmap in its still
+/// stream or a median predictor's residuals alone.
 #[wasm_bindgen]
 pub struct WlshareTiles {
     decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
@@ -545,21 +545,20 @@ impl WlshareTiles {
     /// The pixels of a batch's lossless tiles, in their order: each tile's `R, G,
     /// B, A` rows of its rectangle, for the page to put there, one tile after
     /// another. Tile `i` is `sizes[2i]`×`sizes[2i + 1]` and its body the next
-    /// `lens[i]` bytes of `bodies`. Where `kinds[i]` is 0 the body is one zstd
-    /// frame of a planar bitmap of exactly that rectangle, which depends on
-    /// nothing before it; where it is 1 it is the still stream's bytes of one,
-    /// read after the bodies before it, and a body that begins a zstd frame
-    /// starts the stream over; and where it is 2 it is three zstd frames of the
-    /// rectangle's planes as a median predictor's residuals ([`median`]), which
-    /// depend on nothing before them either.
+    /// `lens[i]` bytes of `bodies`. Where `kinds[i]` is 0 the body is the still
+    /// stream's bytes of a planar bitmap of exactly that rectangle, read after the
+    /// bodies before it, and a body that begins a zstd frame starts the stream
+    /// over; and where it is 1 it is three zstd frames of the rectangle's planes as
+    /// a median predictor's residuals ([`median`]), which depend on nothing before
+    /// them.
     ///
-    /// The still bodies are read in order, beside the moving ones' frames, which
-    /// are decoded side by side on the module's pool, each held to what a planar
-    /// bitmap of its rectangle can be ([`planar_most`]), or to its three planes;
-    /// then every tile's bitmap or planes are decoded, side by side too. Throws
-    /// for the first tile that does not decode, or whose zstd holds more than
-    /// that, which is not read past; a still one loses the stream until a body
-    /// starts it over.
+    /// The still bodies are read in order, each held to what a planar bitmap of
+    /// its rectangle can be ([`planar_most`]), beside the moving ones' frames,
+    /// which are decoded side by side on the module's pool, each held to its three
+    /// planes; then every tile's bitmap or planes are decoded, side by side too.
+    /// Throws for the first tile that does not decode, or whose zstd holds more
+    /// than that, which is not read past; a still one loses the stream until a
+    /// body starts it over.
     pub fn lossless(
         &mut self,
         kinds: &[u8],
@@ -642,8 +641,6 @@ impl WlshareTiles {
 /// How a lossless tile's body carries its rectangle.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
-    /// A planar bitmap in a zstd frame of its own.
-    Planar,
     /// A planar bitmap in the still stream.
     Still,
     /// A median predictor's residuals, a zstd frame a plane.
@@ -651,7 +648,7 @@ enum Kind {
 }
 
 /// One of a batch's lossless tiles: a `w`×`h` rectangle's `body`, one of the
-/// still stream's or a moving one's frame or frames.
+/// still stream's or a moving one's frames.
 struct Tile<'a> {
     kind: Kind,
     w: u16,
@@ -667,31 +664,15 @@ impl Tile<'_> {
 
     fn failed(&self, e: &str) -> String {
         let kind = match self.kind {
-            Kind::Planar => "",
-            Kind::Still => "still ",
-            Kind::Median => "median ",
+            Kind::Still => "still",
+            Kind::Median => "median",
         };
-        format!("a {}x{} {kind}lossless tile: {e}", self.w, self.h)
-    }
-
-    /// The most bytes its body's zstd may hold, and whether the body is framed
-    /// as its kind is: a moving tile's, which is read whole.
-    fn framed(&self) -> Result<usize, String> {
-        match self.kind {
-            Kind::Median => {
-                median::check(self.body, self.w, self.h)?;
-                Ok(median::planes_len(self.w, self.h))
-            }
-            _ => {
-                one_frame(self.body)?;
-                Ok(planar_most(self.w, self.h))
-            }
-        }
+        format!("a {}x{} {kind} lossless tile: {e}", self.w, self.h)
     }
 
     /// What its zstd held, `bitmap`, decoded into `out` as `R, G, B, A` rows: a
-    /// planar bitmap with this thread's working space, or a median
-    /// predictor's planes of residuals, taken in place side by side.
+    /// still tile's planar bitmap with this thread's working space, or a moving
+    /// one's planes of a median predictor's residuals, taken in place side by side.
     fn draw(&self, bitmap: &mut [u8], out: &mut [u8]) -> Result<(), String> {
         if self.kind == Kind::Median {
             let (w, plane) = (
@@ -758,9 +739,8 @@ fn lossless_tiles<'a>(
                 .ok_or("bodies cut short")?;
             bodies = rest;
             let kind = match kind {
-                0 => Kind::Planar,
-                1 => Kind::Still,
-                2 => Kind::Median,
+                0 => Kind::Still,
+                1 => Kind::Median,
                 other => return Err(format!("a tile of kind {other}")),
             };
             Ok(Tile { kind, w, h, body })
@@ -773,9 +753,9 @@ fn lossless_tiles<'a>(
 }
 
 /// The moving tiles' frames, each `(index, tile, bitmap)`, decoded side by side
-/// by `decoder`'s settings into their bitmaps, each held to what a planar bitmap
-/// of its rectangle can be, or to the three planes a median tile's frames say
-/// they hold: one result for each, with its index.
+/// by `decoder`'s settings into their bitmaps, each body held to three frames that
+/// say they hold exactly its rectangle's three planes ([`median::check`]): one
+/// result for each, with its index.
 fn read_moving(
     decoder: &ruzstd_decompress::decoding::FrameDecoder,
     tiles: Vec<(usize, (&Tile<'_>, &mut Vec<u8>))>,
@@ -784,23 +764,13 @@ fn read_moving(
     let (mut inputs, mut outputs, mut taken) = (Vec::new(), Vec::new(), Vec::new());
     for (i, (tile, bitmap)) in tiles {
         bitmap.clear();
-        let bound = tile.framed().and_then(|most| {
-            let bound = ruzstd_decompress::decoding::decompressed_bound(tile.body)
-                .map_err(|e| e.to_string())?;
-            Ok((bound, most))
-        });
-        match bound {
+        match median::check(tile.body, tile.w, tile.h) {
             Err(e) => results.push((i, Err(e))),
-            Ok((bound, most)) if bound > most as u64 => results.push((
-                i,
-                Err(format!(
-                    "a zstd frame of more than the {most} bytes a planar bitmap of it can be"
-                )),
-            )),
-            // A frame decodes to no more than its bound, which is its room.
-            Ok((bound, _)) => {
+            // Each frame says it holds a plane, and decodes to exactly that or
+            // fails: the three planes are its room.
+            Ok(()) => {
                 let mut output = std::mem::take(bitmap);
-                output.reserve(bound as usize);
+                output.reserve(median::planes_len(tile.w, tile.h));
                 inputs.push(tile.body);
                 outputs.push(output);
                 taken.push((i, bitmap));
@@ -813,20 +783,6 @@ fn read_moving(
         results.push((i, decoded.map_err(|e| e.to_string())));
     }
     results
-}
-
-/// Whether `body` is one zstd frame and nothing after it, as a moving tile's body
-/// is: the decoders read every frame of an input, and skip skippable ones.
-fn one_frame(body: &[u8]) -> Result<(), String> {
-    if !body.starts_with(&ZSTD_MAGIC) {
-        return Err("a body that begins no zstd frame".into());
-    }
-    let len =
-        ruzstd_decompress::decoding::frame_compressed_size(body).map_err(|e| e.to_string())?;
-    if len != body.len() {
-        return Err(format!("{} bytes past its zstd frame", body.len() - len));
-    }
-    Ok(())
 }
 
 /// `tile`'s body read on in the still stream `frame` into `bitmap`: a block at a
@@ -930,12 +886,17 @@ mod tests {
         block
     }
 
-    /// A lossless tile's body: a frame of `content` alone, its size given in a byte.
-    fn tile(content: &[u8]) -> Vec<u8> {
+    /// A zstd frame of `content` alone, its size given in a byte.
+    fn frame(content: &[u8]) -> Vec<u8> {
         let mut body = ZSTD_MAGIC.to_vec();
         body.extend([0x20, u8::try_from(content.len()).unwrap()]);
         body.extend(raw_block(content, true));
         body
+    }
+
+    /// A moving tile's body: a frame of each of `planes`, one after another.
+    fn planes(planes: [&[u8]; 3]) -> Vec<u8> {
+        planes.into_iter().flat_map(frame).collect()
     }
 
     /// The body that begins a still stream, of a window of `1 << window_log`
@@ -953,9 +914,16 @@ mod tests {
             .collect()
     }
 
-    fn moving<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
+    /// Three planes of `len` bytes each, from `seed`, and their body.
+    fn residuals(seed: u8, len: usize) -> (Vec<u8>, Vec<u8>) {
+        let content: Vec<Vec<u8>> = (0..3).map(|i| bytes(seed + i, len)).collect();
+        let body = planes([&content[0], &content[1], &content[2]]);
+        (content.concat(), body)
+    }
+
+    fn median<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
         Tile {
-            kind: Kind::Planar,
+            kind: Kind::Median,
             w,
             h,
             body,
@@ -965,62 +933,58 @@ mod tests {
     fn still<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
         Tile {
             kind: Kind::Still,
-            ..moving(w, h, body)
-        }
-    }
-
-    fn median<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
-        Tile {
-            kind: Kind::Median,
-            ..moving(w, h, body)
+            ..median(w, h, body)
         }
     }
 
     /// A batch's moving tiles are each read as a decoder of its own would, one
-    /// that does not decode, or holds more than a planar bitmap of its
-    /// rectangle can be, failing alone; and again in the next batch.
+    /// that does not decode, or is not three frames of its rectangle's planes,
+    /// failing alone; and again in the next batch.
     #[test]
     fn a_batch_reads_every_moving_tile() {
         let mut tiles = WlshareTiles::new();
-        let contents: Vec<Vec<u8>> = [(1, 200), (2, 17), (3, 255)]
+        let (contents, bodies): (Vec<Vec<u8>>, Vec<Vec<u8>>) = [1, 4, 7]
             .into_iter()
-            .map(|(seed, len)| bytes(seed, len))
-            .collect();
-        let bodies: Vec<Vec<u8>> = contents.iter().map(|c| tile(c)).collect();
-        let cut = tile(&bytes(4, 100));
-        let mut past = tile(&bytes(5, 100));
+            .map(|seed| residuals(seed, 64))
+            .unzip();
+        let mut past = bodies[1].clone();
         past.push(0);
-        // 8x2's planar bitmap is 130 bytes at most.
-        let large = tile(&bytes(6, 131));
-        // A body is one frame: neither a skippable frame nor another after
-        // it, nor a skippable frame before it, which the decoders would read.
+        // 8x8's plane is 64 bytes, and a frame of more is not one.
+        let plane = bytes(10, 64);
+        let large = planes([&plane, &bytes(11, 65), &plane]);
+        let four = [&bodies[1][..], &frame(&plane)].concat();
+        let two = [frame(&plane), frame(&plane)].concat();
+        // A body is frames alone: neither a skippable frame after them, nor one
+        // before them, which the decoders would read.
         let skippable = [&0x184D_2A50u32.to_le_bytes()[..], &1u32.to_le_bytes(), &[0]].concat();
         let skipped = [&bodies[1][..], &skippable].concat();
-        let two = [&bodies[1][..], &bodies[1]].concat();
         let after_skip = [&skippable[..], &bodies[1]].concat();
         let batch = [
-            moving(8, 8, &bodies[0]),
-            moving(8, 8, &cut[..cut.len() - 10]),
-            moving(8, 8, &bodies[1]),
-            moving(8, 8, &past),
-            moving(8, 2, &large),
-            moving(8, 8, &skipped),
-            moving(8, 8, &two),
-            moving(8, 8, &after_skip),
-            moving(8, 8, &bodies[2]),
+            median(8, 8, &bodies[0]),
+            median(8, 8, &bodies[1][..bodies[1].len() - 10]),
+            median(8, 8, &bodies[1]),
+            median(8, 8, &past),
+            median(8, 8, &large),
+            median(8, 8, &skipped),
+            median(8, 8, &four),
+            median(8, 8, &two),
+            median(8, 8, &after_skip),
+            median(8, 4, &bodies[1]),
+            median(8, 8, &bodies[2]),
         ];
         let read = tiles.read_lossless(&batch);
         let failed: Vec<bool> = read.iter().map(Result::is_err).collect();
         assert_eq!(
             failed,
-            [false, true, false, true, true, true, true, true, false]
+            [
+                false, true, false, true, true, true, true, true, true, true, false
+            ]
         );
-        for (at, content) in [(0, &contents[0]), (2, &contents[1]), (8, &contents[2])] {
+        for (at, content) in [(0, &contents[0]), (2, &contents[1]), (10, &contents[2])] {
             assert_eq!(&tiles.bitmaps[at], content);
         }
-        let content = bytes(7, 90);
-        let body = tile(&content);
-        assert!(tiles.read_lossless(&[moving(8, 8, &body)])[0].is_ok());
+        let (content, body) = residuals(20, 64);
+        assert!(tiles.read_lossless(&[median(8, 8, &body)])[0].is_ok());
         assert_eq!(tiles.bitmaps[0], content);
     }
 
@@ -1030,18 +994,18 @@ mod tests {
     #[test]
     fn a_still_stream_starts_over_in_its_decoder() {
         let mut tiles = WlshareTiles::new();
-        let between = tile(&bytes(99, 40));
+        let (planes, between) = residuals(99, 64);
         for seed in [10, 20] {
             let (first, next) = (bytes(seed, 120), bytes(seed + 1, 60));
             let (start, more) = (still_start(20, &first), raw_block(&next, false));
             let read = tiles.read_lossless(&[
                 still(8, 8, &start),
-                moving(8, 8, &between),
+                median(8, 8, &between),
                 still(8, 8, &more),
             ]);
             assert!(read.iter().all(Result::is_ok));
             assert_eq!(tiles.bitmaps[0], first);
-            assert_eq!(tiles.bitmaps[1], bytes(99, 40));
+            assert_eq!(tiles.bitmaps[1], planes);
             assert_eq!(tiles.bitmaps[2], next);
             // A last block, which would end the stream's frame, loses it.
             let last = raw_block(&next, true);
@@ -1055,6 +1019,10 @@ mod tests {
         let start = still_start(23, &content);
         assert!(tiles.read_lossless(&[still(8, 8, &start)])[0].is_ok());
         assert_eq!(tiles.bitmaps[0], content);
+        // And a still body to what a planar bitmap of its rectangle can be:
+        // 8x2's is 130 bytes at most.
+        let large = still_start(20, &bytes(50, 131));
+        assert!(tiles.read_lossless(&[still(8, 2, &large)])[0].is_err());
     }
 
     /// A planar bitmap in its plain form, no alpha plane: its red, green and
@@ -1077,13 +1045,13 @@ mod tests {
         let mut tiles = WlshareTiles::new();
         // 2x2: green 10, 12 over 11, 30; red three more and blue one less,
         // so their planes are that and no residual after it.
-        let planes = [
-            tile(&[10, 2, 1, 18]),
-            tile(&[3, 0, 0, 0]),
-            tile(&[255, 0, 0, 0]),
+        let frames = [
+            frame(&[10, 2, 1, 18]),
+            frame(&[3, 0, 0, 0]),
+            frame(&[255, 0, 0, 0]),
         ];
-        let body = planes.concat();
-        let planar = tile(&plain_bitmap([&[1, 2], &[3, 4], &[5, 6]]));
+        let body = frames.concat();
+        let start = still_start(20, &plain_bitmap([&[1, 2], &[3, 4], &[5, 6]]));
         let pixels = [
             [13, 10, 9, 255, 15, 12, 11, 255],
             [14, 11, 10, 255, 33, 30, 29, 255],
@@ -1091,25 +1059,25 @@ mod tests {
         .concat();
         assert_eq!(
             tiles
-                .decode_lossless(&[median(2, 2, &body), moving(2, 1, &planar)])
+                .decode_lossless(&[median(2, 2, &body), still(2, 1, &start)])
                 .unwrap(),
             [&pixels[..], &[1, 3, 5, 255, 2, 4, 6, 255]].concat()
         );
-        let batch = lossless_tiles(&[2], &[2, 2], &[body.len() as u32], &body).unwrap();
+        let batch = lossless_tiles(&[1], &[2, 2], &[body.len() as u32], &body).unwrap();
         assert_eq!(tiles.decode_lossless(&batch).unwrap(), pixels);
-        assert!(lossless_tiles(&[3], &[2, 2], &[body.len() as u32], &body).is_err());
+        assert!(lossless_tiles(&[2], &[2, 2], &[body.len() as u32], &body).is_err());
 
-        let two = planes[..2].concat();
+        let two = frames[..2].concat();
         let read = tiles.read_lossless(&[
             median(2, 2, &two),
             median(2, 2, &body),
             median(4, 2, &body),
-            median(2, 2, &planar),
+            median(2, 2, &frames[0]),
         ]);
         let refused: Vec<bool> = read.iter().map(Result::is_err).collect();
         assert_eq!(refused, [true, false, true, true]);
         let failed = tiles
-            .decode_lossless(&[moving(2, 1, &planar), median(2, 2, &two)])
+            .decode_lossless(&[still(2, 1, &start), median(2, 2, &two)])
             .unwrap_err();
         assert!(failed.contains("2x2 median lossless tile"), "{failed}");
     }
@@ -1119,11 +1087,12 @@ mod tests {
     #[test]
     fn a_batch_comes_back_as_its_pixels() {
         let mut tiles = WlshareTiles::new();
-        let first = tile(&plain_bitmap([&[1, 2], &[3, 4], &[5, 6]]));
+        // 2x1: green 3, 4, red two less and blue two more.
+        let first = planes([&[3, 1], &[254, 0], &[2, 0]]);
         let second = still_start(20, &plain_bitmap([&[7], &[8], &[9]]));
         let bodies = [first.as_slice(), second.as_slice()].concat();
         let batch = lossless_tiles(
-            &[0, 1],
+            &[1, 0],
             &[2, 1, 1, 1],
             &[first.len() as u32, second.len() as u32],
             &bodies,
@@ -1133,12 +1102,12 @@ mod tests {
             tiles.decode_lossless(&batch).unwrap(),
             [1, 3, 5, 255, 2, 4, 6, 255, 7, 8, 9, 255]
         );
-        assert!(lossless_tiles(&[0], &[2, 1], &[first.len() as u32 + 1], &first).is_err());
-        assert!(lossless_tiles(&[0], &[2, 1], &[1], &first).is_err());
-        assert!(lossless_tiles(&[0, 0], &[2, 1], &[1], &first).is_err());
+        assert!(lossless_tiles(&[1], &[2, 1], &[first.len() as u32 + 1], &first).is_err());
+        assert!(lossless_tiles(&[1], &[2, 1], &[1], &first).is_err());
+        assert!(lossless_tiles(&[1, 1], &[2, 1], &[1], &first).is_err());
         // A bitmap that is not one of its rectangle.
-        let short = tile(&plain_bitmap([&[1], &[2], &[3]]));
-        let err = tiles.decode_lossless(&[moving(2, 1, &short)]).unwrap_err();
-        assert!(err.starts_with("a 2x1 lossless tile:"), "{err}");
+        let short = still_start(20, &plain_bitmap([&[1], &[2], &[3]]));
+        let err = tiles.decode_lossless(&[still(2, 1, &short)]).unwrap_err();
+        assert!(err.starts_with("a 2x1 still lossless tile:"), "{err}");
     }
 }

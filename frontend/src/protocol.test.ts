@@ -145,17 +145,15 @@ test("a tile record is its format, where its rectangle is, then its image, whole
     progressive?.kind === "tile" && progressive.format,
     "progressive",
   );
-  const planar = decodeBatchFrame(frame(4, 64, [0x30, 0x10]))?.[0];
-  assert.equal(planar?.kind === "tile" && planar.format, "planar");
-  const still = decodeBatchFrame(frame(5, 64, [0x28, 0xb5]))?.[0];
+  const still = decodeBatchFrame(frame(4, 64, [0x28, 0xb5]))?.[0];
   assert.equal(still?.kind === "tile" && still.format, "still");
-  const median = decodeBatchFrame(frame(6, 64, [0x28, 0xb5]))?.[0];
+  const median = decodeBatchFrame(frame(5, 64, [0x28, 0xb5]))?.[0];
   assert.equal(median?.kind === "tile" && median.format, "median");
 
   const whole = frame(2, 64, [0x89, 0x50]);
   assert.equal(decodeBatchFrame(whole.slice(0, whole.byteLength - 1)), null);
   assert.equal(
-    decodeBatchFrame(frame(7, 64, [1])),
+    decodeBatchFrame(frame(6, 64, [1])),
     null,
     "a format this client does not know",
   );

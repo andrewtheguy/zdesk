@@ -92,16 +92,13 @@ pub enum Format {
     /// send: one tile, a first pass or an upgrade, against what the page holds of
     /// it. Nothing here codes one.
     Progressive,
-    /// A planar bitmap, which only wlshare's lossless tiles send: the rectangle's
-    /// pixels, lossless, depending on nothing before it. Nothing here codes one.
-    Planar,
     /// A planar bitmap in wlshare's still stream, which only its lossless tiles
     /// send where the desktop is still: the rectangle's pixels, lossless, read
     /// after the stream's bodies before it. Nothing here codes one.
     Still,
-    /// A median predictor's residuals, which only wlshare's lossless tiles by
-    /// that predictor send where the desktop moves: the rectangle's pixels,
-    /// lossless, depending on nothing before it. Nothing here codes one.
+    /// A median predictor's residuals, which only wlshare's lossless tiles send
+    /// where the desktop moves: the rectangle's pixels, lossless, depending on
+    /// nothing before it. Nothing here codes one.
     Median,
 }
 
@@ -112,7 +109,6 @@ impl Format {
             Self::Jpeg => crate::protocol::batch::TILE_JPEG,
             Self::Png => crate::protocol::batch::TILE_PNG,
             Self::Progressive => crate::protocol::batch::TILE_PROGRESSIVE,
-            Self::Planar => crate::protocol::batch::TILE_PLANAR,
             Self::Still => crate::protocol::batch::TILE_STILL,
             Self::Median => crate::protocol::batch::TILE_MEDIAN,
         }
@@ -553,7 +549,7 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
         let data = match format {
             Format::Png => png(w, h, &rgb),
             Format::Jpeg => jpeg(w, h, &rgb, quality),
-            Format::Progressive | Format::Planar | Format::Still | Format::Median => Err(anyhow::anyhow!(
+            Format::Progressive | Format::Still | Format::Median => Err(anyhow::anyhow!(
                 "this gateway codes no {format:?} tile of its own: it is wlshare's, passed through"
             )),
         }
