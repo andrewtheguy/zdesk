@@ -6,6 +6,11 @@ belong in the linked documentation.
 
 ## Priorities
 
+- zDesk is for one person reaching their own machines remotely, not remote
+  assistance software for sharing a desktop with others. This is settled, while
+  the rest of the [direction](docs/architecture.md#direction) is not: do not
+  design or propose anything for a second person, such as invitations, guest or
+  view-only access, several viewers of one session, or handing over control.
 - The project prioritizes integration with the native remote desktop servers
   of Windows and macOS: Windows' own Remote Desktop over RDP, and macOS's
   built-in Screen Sharing in both of its modes (`ard`, `ard-high-performance`).
