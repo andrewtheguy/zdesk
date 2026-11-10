@@ -31,7 +31,11 @@
 //!   back.
 //! - [`H264_ENV`] lets the host draw with H.264: `1` where it chooses, by region
 //!   beside the other codecs, and `whole` preferring it for the whole desktop
-//!   (`AVC_THINCLIENT`, [MS-RDPEGFX] 2.2.3.6).
+//!   (`AVC_THINCLIENT`, [MS-RDPEGFX] 2.2.3.6). With `whole` the session hands on
+//!   each frame's luma views as video rather than the pipeline, so what is
+//!   printed of it is the frames, the bytes of those units, and of views the luma
+//!   units handed on and the units lost, which is what a chroma view becomes; the
+//!   quantization parameters and how far behind the desktop it ran are not seen.
 //! - [`AUTODETECT_ENV`] takes part in the host's network detection ([MS-RDPBCGR]
 //!   2.2.14), answering with what this connection measures, so behind
 //!   [`THROTTLE_ENV`] the host is told of the slow link as well as finding it. Run
@@ -219,6 +223,8 @@ struct Tally {
     progressive: Progressive,
     /// What the H.264 regions said of themselves.
     avc: Avc,
+    /// The bytes of the luma views handed on as video, for the whole desktop.
+    video: u64,
     /// The host's clock at the last StartFrame, in milliseconds of its day.
     began: Option<i64>,
     /// For each frame, the page's clock when it was composed less the host's when
@@ -432,9 +438,26 @@ impl Tally {
         }
     }
 
+    /// A frame of the whole desktop, handed on as each surface's luma view
+    /// ([`Event::Video`]). Returns the bytes of its units.
+    fn add_video(&mut self, units: &[(u16, Vec<u8>)]) -> usize {
+        let bytes: usize = units.iter().map(|(_, unit)| unit.len()).sum();
+        self.frames += 1;
+        self.bytes += bytes as u64;
+        self.video += bytes as u64;
+        *self.avc.views.entry("luma").or_default() += units.len() as u64;
+        bytes
+    }
+
+    /// A unit the session could not hand on ([`Event::UnitLost`]): a chroma view,
+    /// or a command whose H.264 does not read.
+    fn lose(&mut self) {
+        *self.avc.views.entry("lost").or_default() += 1;
+    }
+
     fn line(&self, over: Duration) -> String {
         let secs = over.as_secs_f64();
-        let codecs: Vec<String> = self
+        let mut codecs: Vec<String> = self
             .codecs
             .iter()
             .map(|(codec, bytes)| {
@@ -445,6 +468,12 @@ impl Tally {
                 )
             })
             .collect();
+        if self.video > 0 {
+            codecs.push(format!(
+                "H.264 luma video {:.0}",
+                self.video as f64 * 8.0 / 1000.0 / secs
+            ));
+        }
         format!(
             "{:5.1} frames/s, {:6.0} kbit/s, {:6.0} bytes/frame  [{} kbit/s]",
             self.frames as f64 / secs,
@@ -457,6 +486,7 @@ impl Tally {
     fn merge(&mut self, other: &Tally) {
         self.frames += other.frames;
         self.bytes += other.bytes;
+        self.video += other.video;
         for (codec, bytes) in &other.codecs {
             *self.codecs.entry(*codec).or_default() += bytes;
         }
@@ -613,6 +643,11 @@ async fn a_real_host_draws_for_a_slow_client() {
                     nearest = nearest.min(composed - began);
                 }
             }
+            Event::Video { units, frame } => {
+                let bytes = opening.add_video(&units);
+                acknowledge(Some(frame), bytes);
+            }
+            Event::UnitLost { .. } => opening.lose(),
             Event::Ended(result) => panic!("the session ended: {result:?}"),
             _ => {}
         }
@@ -646,6 +681,11 @@ async fn a_real_host_draws_for_a_slow_client() {
                         window.behind.push(composed - began);
                     }
                 }
+                Event::Video { units, frame } => {
+                    let bytes = window.add_video(&units);
+                    acknowledge(Some(frame), bytes);
+                }
+                Event::UnitLost { .. } => window.lose(),
                 Event::Ended(result) => panic!("the session ended: {result:?}"),
                 _ => {}
             },
