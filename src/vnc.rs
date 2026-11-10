@@ -3145,8 +3145,8 @@ impl Listing {
 
 /// `encodings` with wlshare's tiles encoding ahead of them, and beside it which
 /// tiles they are to be: `WLSD` for its tiles with motion, which hold wlshare's
-/// dial rather than walking it, `WLSL` for its lossless tiles, `WLMD` for those
-/// by its median predictor; its progressive tiles walk, and name none.
+/// dial rather than walking it, `WLSL` for its lossless tiles; its progressive
+/// tiles walk, and name none.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> Vec<i32> {
     use crate::config::WlshareTiles;
@@ -3155,7 +3155,6 @@ fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> 
         WlshareTiles::Progressive => TilesPicture::Progressive,
         WlshareTiles::Motion => TilesPicture::Held,
         WlshareTiles::Lossless => TilesPicture::Lossless,
-        WlshareTiles::Median => TilesPicture::Median,
     };
     let mut listed = picture.encodings();
     listed.extend_from_slice(encodings);
@@ -6646,8 +6645,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
         }
         // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
         // stream over it, that stream's end, a copy of what the browser holds
-        // elsewhere, a progressive tile or a planar bitmap, each passed to the
-        // browser untouched.
+        // elsewhere, a progressive tile, a planar bitmap in the still stream or a
+        // median predictor's residuals, each passed to the browser untouched.
         // Past the ceiling, those wlshare sent of the resized desktop before the list
         // without them reached it are dropped while the picture is held, as the video's
         // are, and refused in a session that sized the remote; the list it answers
@@ -6682,7 +6681,6 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 | TileHeader::Start { len, .. }
                 | TileHeader::Frame { len, .. }
                 | TileHeader::Progressive { len }
-                | TileHeader::Planar { len }
                 | TileHeader::Still { len }
                 | TileHeader::Median { len } => len,
                 TileHeader::End { .. }
@@ -6706,19 +6704,14 @@ async fn read_rect<R: AsyncRead + Unpin>(
                     sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body)
                         .await?
                 }
-                // The rectangle's pixels, whatever its size inside the desktop: the
-                // page decodes it there alone.
-                TileHeader::Planar { .. } => {
-                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Planar, body)
-                        .await?
-                }
-                // The same, in the still stream, which the page reads in order.
+                // The rectangle's pixels as a planar bitmap in the still stream,
+                // which the page reads in order.
                 TileHeader::Still { .. } => {
                     sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body)
                         .await?
                 }
-                // The rectangle's pixels as a median predictor's residuals, alone
-                // as a planar one is.
+                // The rectangle's pixels as a median predictor's residuals, whatever
+                // its size inside the desktop: the page decodes it there alone.
                 TileHeader::Median { .. } => {
                     sink.pass_tile(x, y, w, h, crate::tiles::Format::Median, body)
                         .await?
@@ -10303,24 +10296,6 @@ mod tests {
             "lossless: WLSL beside it"
         );
         assert!(lossless.picture(ENCODING_TILES));
-        let median = Listing::new(
-            rest.clone(),
-            RenderPlan {
-                wlshare_tiles: Some(WlshareTiles::Median),
-                ..tiles
-            },
-        );
-        assert_eq!(
-            median.listed((1280, 800)),
-            [
-                ENCODING_TILES,
-                i32::from_be_bytes(*b"WLMD"),
-                ENCODING_ZRLE,
-                ENCODING_DENSITY
-            ],
-            "lossless by the median predictor: WLMD beside it"
-        );
-        assert!(median.picture(ENCODING_TILES));
 
         let video = Listing::new(
             rest.clone(),

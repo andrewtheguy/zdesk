@@ -206,13 +206,10 @@ pub enum WlshareTiles {
     /// and libx264 otherwise, every still lossless.
     Motion,
     /// Its lossless tiles ([`Passthrough::WlshareTilesLossless`]): every tile
-    /// that changed, still or moving, a planar bitmap of its pixels, and no
-    /// stream, the browser's lag slowing the updates and nothing else.
+    /// that changed exact, still or moving, and no stream, a planar bitmap of
+    /// its pixels where it is still and a median predictor's residuals of them
+    /// where it moves, the browser's lag slowing the updates and nothing else.
     Lossless,
-    /// Its lossless tiles by its median predictor
-    /// ([`Passthrough::WlshareTilesMedian`]): the lossless tiles, but every
-    /// moving one a median predictor's residuals in place of a planar bitmap.
-    Median,
 }
 
 impl WlshareTiles {
@@ -222,7 +219,6 @@ impl WlshareTiles {
             Self::Progressive => Passthrough::WlshareTilesProgressive,
             Self::Motion => Passthrough::WlshareTilesMotion,
             Self::Lossless => Passthrough::WlshareTilesLossless,
-            Self::Median => Passthrough::WlshareTilesMedian,
         }
     }
 
@@ -232,7 +228,6 @@ impl WlshareTiles {
             Passthrough::WlshareTilesProgressive => Some(Self::Progressive),
             Passthrough::WlshareTilesMotion => Some(Self::Motion),
             Passthrough::WlshareTilesLossless => Some(Self::Lossless),
-            Passthrough::WlshareTilesMedian => Some(Self::Median),
             _ => None,
         }
     }
@@ -248,7 +243,7 @@ pub struct RenderPlan {
     /// says the picture is the remote's, it is the tiles coded here. A wlshare server
     /// that ignores the listing is coded here too.
     pub wlshare: bool,
-    /// wlshare's picture is its tiles rather than its video, which of the four
+    /// wlshare's picture is its tiles rather than its video, which of the three
     /// chosen at the picker, asked of the server and passed as it comes. Set only
     /// with [`Self::wlshare`].
     pub wlshare_tiles: Option<WlshareTiles>,
@@ -384,20 +379,15 @@ pub enum Passthrough {
     /// that is not always wide, where a picture that ends lossless matters less
     /// than one that keeps up.
     WlshareTilesProgressive,
-    /// wlshare's lossless tiles (experimental): every tile that changed, still or
-    /// moving, RDP's planar codec of its pixels, as a Windows host draws its
-    /// pipeline under its Lossless policy, and no stream, the browser's lag
-    /// slowing the updates and never what a tile shows. Decoded by the same module
-    /// as its progressive tiles. Offered and chosen as its other tiles are: for a
-    /// LAN, many times the video's bytes where the desktop moves.
+    /// wlshare's lossless tiles (experimental): every tile that changed exact,
+    /// still or moving, and no stream, the browser's lag slowing the updates and
+    /// never what a tile shows. What is still is RDP's planar codec of its pixels,
+    /// as a Windows host draws its pipeline under its Lossless policy, in one zstd
+    /// stream across the session; what moves is the residuals of JPEG-LS's median
+    /// predictor over green, red less green and blue less green. Decoded by the
+    /// same module as its progressive tiles. Offered and chosen as its other tiles
+    /// are: for a LAN, many times the video's bytes where the desktop moves.
     WlshareTilesLossless,
-    /// wlshare's lossless tiles by its median predictor (experimental): its
-    /// lossless tiles, every tile exact, but what moves as the residuals of
-    /// JPEG-LS's median predictor over green, red less green and blue less green
-    /// in place of RDP's planar codec, about two thirds of its bytes there; what
-    /// is still is planar as it is there. Decoded by the same module, and
-    /// offered and chosen as the lossless tiles are.
-    WlshareTilesMedian,
 }
 
 /// A Standard Mac's picture, in the quality Apple's viewer's menu names, which is
@@ -431,14 +421,13 @@ impl Passthrough {
             Self::WlshareTilesMotion => "wlshare-tiles-motion",
             Self::WlshareTilesProgressive => "wlshare-tiles-progressive",
             Self::WlshareTilesLossless => "wlshare-tiles-lossless",
-            Self::WlshareTilesMedian => "wlshare-tiles-median",
         }
     }
 
     /// Whether a session passes it only where it was chosen at the picker. A High
     /// Performance Mac's HEVC and its H.264 are a choice of one from two, either
     /// passed in every session, a Standard Mac's Adaptive picture is a choice
-    /// against the tiles coded here, and wlshare's four tiles against its video; an RDP
+    /// against the tiles coded here, and wlshare's three tiles against its video; an RDP
     /// host's pipeline is the only one, as the gateway composes none, and wlshare's
     /// video is the picture of every session that chose no other.
     pub fn chosen(self) -> bool {
@@ -449,8 +438,7 @@ impl Passthrough {
             | Self::AppleAdaptive
             | Self::WlshareTilesMotion
             | Self::WlshareTilesProgressive
-            | Self::WlshareTilesLossless
-            | Self::WlshareTilesMedian => true,
+            | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -467,8 +455,7 @@ impl Passthrough {
             | Self::WlshareVideo
             | Self::WlshareTilesMotion
             | Self::WlshareTilesProgressive
-            | Self::WlshareTilesLossless
-            | Self::WlshareTilesMedian => true,
+            | Self::WlshareTilesLossless => true,
         }
     }
 
@@ -483,7 +470,6 @@ impl Passthrough {
             Self::WlshareTilesMotion => "wlshare's tiles with motion",
             Self::WlshareTilesProgressive => "wlshare's progressive tiles",
             Self::WlshareTilesLossless => "wlshare's lossless tiles",
-            Self::WlshareTilesMedian => "wlshare's lossless tiles by its median predictor",
         }
     }
 }
@@ -877,8 +863,7 @@ impl Decoders {
             // Decoded by the module that composes the pipeline, on its threads.
             Passthrough::RdpGraphics
             | Passthrough::WlshareTilesProgressive
-            | Passthrough::WlshareTilesLossless
-            | Passthrough::WlshareTilesMedian => self.rdp_graphics,
+            | Passthrough::WlshareTilesLossless => self.rdp_graphics,
         }
     }
 }
@@ -935,7 +920,6 @@ impl RenderPlan {
                 WlshareTiles::Progressive => "progressive tiles",
                 WlshareTiles::Motion => "tiles with motion",
                 WlshareTiles::Lossless => "lossless tiles",
-                WlshareTiles::Median => "lossless tiles by a median predictor",
             }
             .to_owned();
         }
@@ -1318,9 +1302,8 @@ impl TargetConfig {
             },
             // Its picture is wlshare's own, passed: its H.264 video, the picture of a
             // session that names none, or its progressive tiles, its tiles with
-            // motion, its lossless tiles or those by its median predictor, chosen
-            // at the picker, in that order. Its camera and microphone extensions
-            // take the browser's.
+            // motion or its lossless tiles, chosen at the picker, in that order. Its
+            // camera and microphone extensions take the browser's.
             (Protocol::Vnc, Some(Subtype::Wlshare)) => Offers {
                 resize: true,
                 audio: true,
@@ -1329,7 +1312,6 @@ impl TargetConfig {
                     Passthrough::WlshareTilesProgressive,
                     Passthrough::WlshareTilesMotion,
                     Passthrough::WlshareTilesLossless,
-                    Passthrough::WlshareTilesMedian,
                 ],
                 placement: false,
                 pipeline: false,
@@ -1498,11 +1480,10 @@ impl TargetConfig {
                 .describe()
             };
             return format!(
-                "{plan}, or {}, or {}, or {}, or {}",
+                "{plan}, or {}, or {}, or {}",
                 tiles(Passthrough::WlshareTilesProgressive),
                 tiles(Passthrough::WlshareTilesMotion),
-                tiles(Passthrough::WlshareTilesLossless),
-                tiles(Passthrough::WlshareTilesMedian)
+                tiles(Passthrough::WlshareTilesLossless)
             );
         }
         if offered.is_empty() || self.passthrough(Choices::default()).is_some() {
@@ -4089,7 +4070,7 @@ mod tests {
             .remove(0);
         assert_eq!(
             wlshare.render_summary(),
-            "H.264 video, or progressive tiles, or tiles with motion, or lossless tiles, or lossless tiles by a median predictor"
+            "H.264 video, or progressive tiles, or tiles with motion, or lossless tiles"
         );
         assert_eq!(
             wlshare
@@ -5838,8 +5819,7 @@ vnc_password_ref = \"x\"",
                 Passthrough::WlshareVideo,
                 Passthrough::WlshareTilesProgressive,
                 Passthrough::WlshareTilesMotion,
-                Passthrough::WlshareTilesLossless,
-                Passthrough::WlshareTilesMedian
+                Passthrough::WlshareTilesLossless
             ]
         );
         for (passthrough, kind, describe) in [
@@ -5857,11 +5837,6 @@ vnc_password_ref = \"x\"",
                 Passthrough::WlshareTilesLossless,
                 WlshareTiles::Lossless,
                 "lossless tiles",
-            ),
-            (
-                Passthrough::WlshareTilesMedian,
-                WlshareTiles::Median,
-                "lossless tiles by a median predictor",
             ),
         ] {
             let tiles = Choices {
@@ -5903,7 +5878,6 @@ vnc_password_ref = \"x\"",
         for passthrough in [
             Passthrough::WlshareTilesProgressive,
             Passthrough::WlshareTilesLossless,
-            Passthrough::WlshareTilesMedian,
         ] {
             let tiles = Choices {
                 passthrough: Some(passthrough),
@@ -5949,7 +5923,6 @@ vnc_password_ref = \"x\"",
                 Passthrough::WlshareTilesProgressive,
                 Passthrough::WlshareTilesMotion,
                 Passthrough::WlshareTilesLossless,
-                Passthrough::WlshareTilesMedian,
             ] {
                 let err = target
                     .accepts(Choices {

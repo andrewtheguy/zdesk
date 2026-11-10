@@ -160,14 +160,12 @@ function withGpu(run: ComposedRun): Uint32Array {
 type LosslessOf = (decoder: TilesDecoder, record: TileMsg) => Uint8Array;
 
 // A tile the module decodes rather than the browser: one of wlshare's progressive
-// tiles, or one of its lossless ones, framed alone, planar or a median
-// predictor's residuals, or in its still stream.
+// tiles, or one of its lossless ones, a planar bitmap in its still stream or a
+// median predictor's residuals framed alone.
 const isLosslessTile = (
   record: TileMsg,
-): record is TileMsg & { format: "planar" | "still" | "median" } =>
-  record.format === "planar" ||
-  record.format === "still" ||
-  record.format === "median";
+): record is TileMsg & { format: "still" | "median" } =>
+  record.format === "still" || record.format === "median";
 const isModuleTile = (record: TileMsg) =>
   record.format === "progressive" || isLosslessTile(record);
 
@@ -796,7 +794,7 @@ export function createFramePainter(options: {
   // the tile whose turn it was, which breaks the decoder, so none after it asks.
   const losslessOf = (records: readonly BatchRecord[]): LosslessOf => {
     const batch = records.filter(
-      (record): record is TileMsg & { format: "planar" | "still" | "median" } =>
+      (record): record is TileMsg & { format: "still" | "median" } =>
         record.kind === "tile" && isLosslessTile(record),
     );
     let decoded: {
@@ -837,7 +835,6 @@ export function createFramePainter(options: {
   ): Uint8Array => {
     const { format, x, y, w, h, data } = record;
     switch (format) {
-      case "planar":
       case "still":
       case "median":
         return lossless(decoder, record);
@@ -888,8 +885,9 @@ export function createFramePainter(options: {
   };
 
   // One of wlshare's progressive tiles, decoded in its turn against what the
-  // decoder holds of the tile, or one of its lossless tiles, a planar bitmap
-  // decoded with the rest of its batch's, and put where it says. One that does
+  // decoder holds of the tile, or one of its lossless tiles, a planar bitmap or a
+  // median predictor's residuals decoded with the rest of its batch's, and put
+  // where it says. One that does
   // not decode, or a decoder that does not load, leaves the canvas without it,
   // so the whole picture is asked for, as for a tile that does not decode, and
   // the decoder is broken until that picture starts.

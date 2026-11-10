@@ -1364,7 +1364,7 @@ mod tests {
         assert!(entry("two").ends_with(r#""placement":true,"pipeline":true,"standardView":false,"camera":true,"microphone":true}"#));
         // wlshare's picture is its video, or its progressive tiles or its tiles with
         // motion, all passed, in that order.
-        assert!(entry("sway").ends_with(r#""passthroughs":["wlshare-video","wlshare-tiles-progressive","wlshare-tiles-motion","wlshare-tiles-lossless","wlshare-tiles-median"],"placement":false,"pipeline":false,"standardView":false,"camera":true,"microphone":true}"#), "{}", entry("sway"));
+        assert!(entry("sway").ends_with(r#""passthroughs":["wlshare-video","wlshare-tiles-progressive","wlshare-tiles-motion","wlshare-tiles-lossless"],"placement":false,"pipeline":false,"standardView":false,"camera":true,"microphone":true}"#), "{}", entry("sway"));
         // The page's HEVC decoder is a choice where the gateway has it and the
         // target has a Mac's picture to pass.
         assert!(entry("fast").contains(r#""software":false,"#));

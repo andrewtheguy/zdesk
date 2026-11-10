@@ -941,7 +941,7 @@ mod tests {
                 y: 0,
                 w: 64,
                 h: 64,
-                format: crate::tiles::Format::Planar,
+                format: crate::tiles::Format::Median,
                 data: vec![0x28; len],
                 held: Held::default(),
                 painted: crate::protocol::Painted::default(),

@@ -23,14 +23,15 @@ crate-type = ["cdylib"]
 zdesk-rdp-graphics = { path = "../../../crates/zdesk-rdp-graphics" }
 # The tables and the stream of wlshare's progressive tiles, which the page decodes
 # here, at the gateway's pin.
-wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v11" }
+wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", rev = "521a387ee78573f109c1d662d91f7bd805b04b08" }
 rayon = "1"
-# wlshare's lossless tiles: each body one zstd frame of a planar bitmap, or the
-# next blocks of its still stream, read by a zstd decoder in Rust, which needs no
-# C toolchain for the page's target: ruzstd-decompress, the fork of ruzstd that
-# hands out every byte as soon as its block is decoded, the still stream's
-# newest among them, which ruzstd keeps back until a frame ends. Its `rayon`
-# feature decodes a batch's moving frames side by side, on the module's pool.
+# wlshare's lossless tiles: each body three zstd frames of a median predictor's
+# planes, or the next blocks of its still stream, read by a zstd decoder in
+# Rust, which needs no C toolchain for the page's target: ruzstd-decompress, the
+# fork of ruzstd that hands out every byte as soon as its block is decoded, the
+# still stream's newest among them, which ruzstd keeps back until a frame ends.
+# Its `rayon` feature decodes a batch's moving frames side by side, on the
+# module's pool.
 ruzstd-decompress = { git = "https://github.com/andrewtheguy/ruzstd-decompress", tag = "v0.9.2-alpha.16", features = ["rayon"] }
 wasm-bindgen = "0.2"
 
