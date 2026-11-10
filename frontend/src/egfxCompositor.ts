@@ -155,12 +155,15 @@ export type DecodedFrame = Pick<
  * module's RemoteFX Progressive decoder over the desktop, which keeps every
  * tile's coefficients from one block to the next, so blocks go in in wire order;
  * and its lossless tiles, a batch's at once, each planar bitmap alone or in its
- * still stream.
+ * still stream, or a median predictor's residuals alone.
  */
 /** One of wlshare's lossless tiles, for `TilesDecoder.lossless`. */
 export interface LosslessTile {
-  /** Whether its body is the still stream's, not a frame of its own. */
-  still: boolean;
+  /**
+   * How its body carries it: a planar bitmap in a frame of its own, one in the
+   * still stream, or a median predictor's residuals in three frames of their own.
+   */
+  kind: "planar" | "still" | "median";
   w: number;
   h: number;
   body: Uint8Array;
@@ -188,7 +191,8 @@ export interface TilesDecoder {
    * a zstd frame of a planar bitmap of exactly its `w`×`h` rectangle, depending on
    * nothing before it; a still one's is the still stream's bytes of one, read
    * after the bodies before it, and one that begins a zstd frame starts the
-   * stream over. The moving frames, and then every bitmap, are decoded side by
+   * stream over; a median one's is three zstd frames of its planes' residuals,
+   * depending on nothing either. The moving frames, and then every bitmap, are decoded side by
    * side on the module's threads. Throws for the first tile that does not decode,
    * after which the still stream is lost until a body starts it over.
    */
@@ -196,6 +200,9 @@ export interface TilesDecoder {
   /** Give the module back what it holds of every tile. */
   close(): void;
 }
+
+// A lossless tile's kind as the module reads it (`WlshareTiles::lossless`).
+const LOSSLESS_KINDS = { planar: 0, still: 1, median: 2 } as const;
 
 /**
  * A decoder of wlshare's tiles out of the module, loaded and its threads started
@@ -211,12 +218,12 @@ export async function loadTilesDecoder(
     progressive: (width, height, x, y, w, h, block) =>
       tiles.progressive(width, height, x, y, w, h, block),
     lossless: (batch) => {
-      const stills = new Uint8Array(batch.length);
+      const kinds = new Uint8Array(batch.length);
       const sizes = new Uint16Array(batch.length * 2);
       const lens = new Uint32Array(batch.length);
       let total = 0;
-      batch.forEach(({ still, w, h, body }, i) => {
-        stills[i] = still ? 1 : 0;
+      batch.forEach(({ kind, w, h, body }, i) => {
+        kinds[i] = LOSSLESS_KINDS[kind];
         sizes[i * 2] = w;
         sizes[i * 2 + 1] = h;
         lens[i] = body.length;
@@ -228,7 +235,7 @@ export async function loadTilesDecoder(
         bodies.set(body, at);
         at += body.length;
       }
-      const rgba = tiles.lossless(stills, sizes, lens, bodies);
+      const rgba = tiles.lossless(kinds, sizes, lens, bodies);
       let from = 0;
       return batch.map(({ w, h }) => {
         const part = rgba.subarray(from, from + w * h * 4);

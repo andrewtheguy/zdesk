@@ -17,6 +17,10 @@
 //! the desktop takes from wlshare's nodes comes out.
 
 mod common;
+// The page's reader of wlshare's lossless tiles by its median predictor, the
+// module's own file.
+#[path = "../frontend/wasm/egfx/src/median.rs"]
+mod page_median;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -851,8 +855,38 @@ async fn picture_of(
                                 3,
                             );
                         }
+                        batch::TILE_MEDIAN => {
+                            // As the page reads a batch's: three frames of a plane
+                            // each and nothing else, read into the room of the three,
+                            // each plane's samples taken from its residuals.
+                            page_median::check(&tile.image, tile.w, tile.h)
+                                .expect("a body of three zstd frames, a plane each");
+                            let mut planes =
+                                Vec::with_capacity(page_median::planes_len(tile.w, tile.h));
+                            let [decoded] = ruzstd_decompress::decoding::FrameDecoder::new()
+                                .decode_each_parallel(
+                                    &[&tile.image[..]],
+                                    std::slice::from_mut(&mut planes),
+                                )
+                                .try_into()
+                                .expect("one result for the one input");
+                            decoded.expect("the page's decoder reads wlshare's zstd frames");
+                            let (w, plane) = (
+                                usize::from(tile.w),
+                                usize::from(tile.w) * usize::from(tile.h),
+                            );
+                            assert_eq!(planes.len(), 3 * plane, "three planes of residuals");
+                            let (green, rest) = planes.split_at_mut(plane);
+                            let (red, blue) = rest.split_at_mut(plane);
+                            for plane in [&mut *green, &mut *red, &mut *blue] {
+                                page_median::samples(plane, w);
+                            }
+                            let mut rgba = vec![0u8; plane * 4];
+                            page_median::rgba(green, red, blue, &mut rgba);
+                            put(tile.x, tile.y, w, &rgba, w * 4, 4);
+                        }
                         other => panic!(
-                            "a tile of format {other:#x} in a test that draws PNG, progressive and planar tiles"
+                            "a tile of format {other:#x} in a test that draws PNG, progressive, planar and median tiles"
                         ),
                     }
                 }
@@ -965,6 +999,49 @@ async fn a_moving_desktops_lossless_tiles_are_framed_where_it_moves_and_streamed
         ]
         .into(),
         "what moves framed, what is still streamed"
+    );
+}
+
+/// A session started with wlshare's lossless tiles by its median predictor is
+/// sent what one started with its lossless tiles is where the desktop is still,
+/// the still stream's planar bitmaps, which the page's decoders read into exactly
+/// the desktop its tiles with motion show; and where it moves — a ball — the
+/// predictor's residuals, read as the page reads them, and no planar bitmap
+/// framed alone. wlshare was asked for the predictor.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn a_session_started_with_median_tiles_is_sent_residuals_where_the_desktop_moves() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+    let addr = spawn_app(vnc_port).await;
+    let (w, h, png, _) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    let (mw, mh, median, formats) = picture_of(addr, "wlshare-tiles-median", 4).await;
+    assert_eq!((mw, mh), (w, h), "the same desktop");
+    assert_eq!(
+        formats,
+        [zdesk::protocol::batch::TILE_STILL].into(),
+        "a still desktop's tiles are planar, in the still stream alone"
+    );
+    assert!(
+        median == png,
+        "the tiles show the desktop exactly as the PNG tiles do"
+    );
+    let logs = container.logs();
+    assert!(
+        logs.contains("what moves by the median predictor"),
+        "wlshare was not asked for its median predictor:\n{logs}"
+    );
+
+    play_video(&container, "ball").await;
+    let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-median", 6).await;
+    assert_eq!(
+        formats,
+        [
+            zdesk::protocol::batch::TILE_STILL,
+            zdesk::protocol::batch::TILE_MEDIAN
+        ]
+        .into(),
+        "what moves the predictor's residuals, what is still streamed"
     );
 }
 

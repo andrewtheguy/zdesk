@@ -36,7 +36,12 @@
 //! its lossless tiles, by the planar codec that draws a Windows host's lossless
 //! pipeline, a batch's at once ([`WlshareTiles::lossless`]): the moving tiles'
 //! zstd frames side by side on the same pool, beside the still stream's bodies in
-//! order, then every tile's bitmap side by side, their pixels handed back.
+//! order, then every tile's bitmap side by side, their pixels handed back. Its
+//! lossless tiles by its median predictor are a batch's the same way, a moving
+//! tile's three planes of residuals read in place of its planar bitmap
+//! ([`median`]).
+
+mod median;
 
 use std::cell::RefCell;
 use std::io;
@@ -443,14 +448,15 @@ impl Default for Egfx {
 /// wlshare's progressive tiles as the page draws them: one RemoteFX Progressive
 /// decoder over the desktop, which keeps every tile's coefficients from one block
 /// to the next. A desktop of another size starts it over. Its lossless tiles too,
-/// a batch's at once ([`Self::lossless`]), each alone or in its still stream.
+/// a batch's at once ([`Self::lossless`]), each alone, a planar bitmap or a
+/// median predictor's residuals, or in its still stream.
 #[wasm_bindgen]
 pub struct WlshareTiles {
     decoder: zdesk_rdp_graphics::proto::progressive::Progressive,
     size: (u32, u32),
     frame: u32,
-    /// A batch's lossless tiles' bitmaps out of their zstd, one for each tile,
-    /// kept from one batch to the next.
+    /// A batch's lossless tiles' bitmaps out of their zstd, or their planes of
+    /// residuals, one for each tile, kept from one batch to the next.
     bitmaps: Vec<Vec<u8>>,
     /// The zstd decoders: the moving tiles', whose frames are decoded side by
     /// side, each job's buffers made once for its run of them, by its settings;
@@ -539,26 +545,29 @@ impl WlshareTiles {
     /// The pixels of a batch's lossless tiles, in their order: each tile's `R, G,
     /// B, A` rows of its rectangle, for the page to put there, one tile after
     /// another. Tile `i` is `sizes[2i]`×`sizes[2i + 1]` and its body the next
-    /// `lens[i]` bytes of `bodies`. Where `stills[i]` is 0 the body is one zstd
+    /// `lens[i]` bytes of `bodies`. Where `kinds[i]` is 0 the body is one zstd
     /// frame of a planar bitmap of exactly that rectangle, which depends on
-    /// nothing before it; otherwise it is the still stream's bytes of one, read
-    /// after the bodies before it, and a body that begins a zstd frame starts the
-    /// stream over.
+    /// nothing before it; where it is 1 it is the still stream's bytes of one,
+    /// read after the bodies before it, and a body that begins a zstd frame
+    /// starts the stream over; and where it is 2 it is three zstd frames of the
+    /// rectangle's planes as a median predictor's residuals ([`median`]), which
+    /// depend on nothing before them either.
     ///
     /// The still bodies are read in order, beside the moving ones' frames, which
     /// are decoded side by side on the module's pool, each held to what a planar
-    /// bitmap of its rectangle can be ([`planar_most`]); then every tile's
-    /// bitmap is decoded, side by side too. Throws for the first tile that does
-    /// not decode, or whose zstd holds more than that, which is not read past; a
-    /// still one loses the stream until a body starts it over.
+    /// bitmap of its rectangle can be ([`planar_most`]), or to its three planes;
+    /// then every tile's bitmap or planes are decoded, side by side too. Throws
+    /// for the first tile that does not decode, or whose zstd holds more than
+    /// that, which is not read past; a still one loses the stream until a body
+    /// starts it over.
     pub fn lossless(
         &mut self,
-        stills: &[u8],
+        kinds: &[u8],
         sizes: &[u16],
         lens: &[u32],
         bodies: &[u8],
     ) -> Result<Vec<u8>, JsError> {
-        let tiles = lossless_tiles(stills, sizes, lens, bodies)
+        let tiles = lossless_tiles(kinds, sizes, lens, bodies)
             .map_err(|e| JsError::new(&format!("a batch of lossless tiles: {e}")))?;
         self.decode_lossless(&tiles).map_err(|e| JsError::new(&e))
     }
@@ -577,14 +586,14 @@ impl WlshareTiles {
             }
             let drawn: Vec<Result<(), String>> = tiles
                 .par_iter()
-                .zip(&self.bitmaps[..tiles.len()])
+                .zip(&mut self.bitmaps[..tiles.len()])
                 .zip(outs)
                 .zip(read)
                 .map(|(((tile, bitmap), out), read)| read.and_then(|()| tile.draw(bitmap, out)))
                 .collect();
             for (tile, drawn) in tiles.iter().zip(drawn) {
                 if let Err(e) = drawn {
-                    if tile.still {
+                    if tile.kind == Kind::Still {
                         self.in_still = false;
                     }
                     return Err(tile.failed(&e));
@@ -612,7 +621,7 @@ impl WlshareTiles {
             .iter()
             .zip(bitmaps.iter_mut())
             .enumerate()
-            .partition(|(_, (tile, _))| tile.still);
+            .partition(|(_, (tile, _))| tile.kind == Kind::Still);
         let (stills, movings) = rayon::join(
             || {
                 stills
@@ -630,10 +639,21 @@ impl WlshareTiles {
     }
 }
 
+/// How a lossless tile's body carries its rectangle.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// A planar bitmap in a zstd frame of its own.
+    Planar,
+    /// A planar bitmap in the still stream.
+    Still,
+    /// A median predictor's residuals, a zstd frame a plane.
+    Median,
+}
+
 /// One of a batch's lossless tiles: a `w`×`h` rectangle's `body`, one of the
-/// still stream's or a moving one's frame.
+/// still stream's or a moving one's frame or frames.
 struct Tile<'a> {
-    still: bool,
+    kind: Kind,
     w: u16,
     h: u16,
     body: &'a [u8],
@@ -646,13 +666,54 @@ impl Tile<'_> {
     }
 
     fn failed(&self, e: &str) -> String {
-        let kind = if self.still { "still " } else { "" };
+        let kind = match self.kind {
+            Kind::Planar => "",
+            Kind::Still => "still ",
+            Kind::Median => "median ",
+        };
         format!("a {}x{} {kind}lossless tile: {e}", self.w, self.h)
     }
 
-    /// Its planar `bitmap` decoded into `out` as `R, G, B, A` rows, with this
-    /// thread's working space.
-    fn draw(&self, bitmap: &[u8], out: &mut [u8]) -> Result<(), String> {
+    /// The most bytes its body's zstd may hold, and whether the body is framed
+    /// as its kind is: a moving tile's, which is read whole.
+    fn framed(&self) -> Result<usize, String> {
+        match self.kind {
+            Kind::Median => {
+                median::check(self.body, self.w, self.h)?;
+                Ok(median::planes_len(self.w, self.h))
+            }
+            _ => {
+                one_frame(self.body)?;
+                Ok(planar_most(self.w, self.h))
+            }
+        }
+    }
+
+    /// What its zstd held, `bitmap`, decoded into `out` as `R, G, B, A` rows: a
+    /// planar bitmap with this thread's working space, or a median
+    /// predictor's planes of residuals, taken in place side by side.
+    fn draw(&self, bitmap: &mut [u8], out: &mut [u8]) -> Result<(), String> {
+        if self.kind == Kind::Median {
+            let (w, plane) = (
+                usize::from(self.w),
+                usize::from(self.w) * usize::from(self.h),
+            );
+            if bitmap.len() != 3 * plane {
+                return Err(format!(
+                    "{} bytes of residuals, where its three planes are {}",
+                    bitmap.len(),
+                    3 * plane
+                ));
+            }
+            let (green, rest) = bitmap.split_at_mut(plane);
+            let (red, blue) = rest.split_at_mut(plane);
+            rayon::join(
+                || median::samples(green, w),
+                || rayon::join(|| median::samples(red, w), || median::samples(blue, w)),
+            );
+            median::rgba(green, red, blue, out);
+            return Ok(());
+        }
         thread_local! {
             static PLANAR: RefCell<(Vec<u8>, Vec<u8>)> = const { RefCell::new((Vec::new(), Vec::new())) };
         }
@@ -674,34 +735,35 @@ impl Tile<'_> {
 
 /// The tiles [`WlshareTiles::lossless`] is given, each with its body.
 fn lossless_tiles<'a>(
-    stills: &[u8],
+    kinds: &[u8],
     sizes: &[u16],
     lens: &[u32],
     mut bodies: &'a [u8],
 ) -> Result<Vec<Tile<'a>>, String> {
-    if sizes.len() != 2 * stills.len() || lens.len() != stills.len() {
+    if sizes.len() != 2 * kinds.len() || lens.len() != kinds.len() {
         return Err(format!(
             "{} kinds, {} sizes and {} lengths",
-            stills.len(),
+            kinds.len(),
             sizes.len(),
             lens.len()
         ));
     }
-    let tiles = stills
+    let tiles = kinds
         .iter()
         .zip(sizes.as_chunks::<2>().0)
         .zip(lens)
-        .map(|((&still, &[w, h]), &len)| {
+        .map(|((&kind, &[w, h]), &len)| {
             let (body, rest) = bodies
                 .split_at_checked(len as usize)
                 .ok_or("bodies cut short")?;
             bodies = rest;
-            Ok(Tile {
-                still: still != 0,
-                w,
-                h,
-                body,
-            })
+            let kind = match kind {
+                0 => Kind::Planar,
+                1 => Kind::Still,
+                2 => Kind::Median,
+                other => return Err(format!("a tile of kind {other}")),
+            };
+            Ok(Tile { kind, w, h, body })
         })
         .collect::<Result<Vec<_>, String>>()?;
     if !bodies.is_empty() {
@@ -712,7 +774,8 @@ fn lossless_tiles<'a>(
 
 /// The moving tiles' frames, each `(index, tile, bitmap)`, decoded side by side
 /// by `decoder`'s settings into their bitmaps, each held to what a planar bitmap
-/// of its rectangle can be: one result for each, with its index.
+/// of its rectangle can be, or to the three planes a median tile's frames say
+/// they hold: one result for each, with its index.
 fn read_moving(
     decoder: &ruzstd_decompress::decoding::FrameDecoder,
     tiles: Vec<(usize, (&Tile<'_>, &mut Vec<u8>))>,
@@ -721,20 +784,21 @@ fn read_moving(
     let (mut inputs, mut outputs, mut taken) = (Vec::new(), Vec::new(), Vec::new());
     for (i, (tile, bitmap)) in tiles {
         bitmap.clear();
-        let most = planar_most(tile.w, tile.h);
-        let bound = one_frame(tile.body).and_then(|()| {
-            ruzstd_decompress::decoding::decompressed_bound(tile.body).map_err(|e| e.to_string())
+        let bound = tile.framed().and_then(|most| {
+            let bound = ruzstd_decompress::decoding::decompressed_bound(tile.body)
+                .map_err(|e| e.to_string())?;
+            Ok((bound, most))
         });
         match bound {
             Err(e) => results.push((i, Err(e))),
-            Ok(bound) if bound > most as u64 => results.push((
+            Ok((bound, most)) if bound > most as u64 => results.push((
                 i,
                 Err(format!(
                     "a zstd frame of more than the {most} bytes a planar bitmap of it can be"
                 )),
             )),
             // A frame decodes to no more than its bound, which is its room.
-            Ok(bound) => {
+            Ok((bound, _)) => {
                 let mut output = std::mem::take(bitmap);
                 output.reserve(bound as usize);
                 inputs.push(tile.body);
@@ -891,7 +955,7 @@ mod tests {
 
     fn moving<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
         Tile {
-            still: false,
+            kind: Kind::Planar,
             w,
             h,
             body,
@@ -900,7 +964,14 @@ mod tests {
 
     fn still<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
         Tile {
-            still: true,
+            kind: Kind::Still,
+            ..moving(w, h, body)
+        }
+    }
+
+    fn median<'a>(w: u16, h: u16, body: &'a [u8]) -> Tile<'a> {
+        Tile {
+            kind: Kind::Median,
             ..moving(w, h, body)
         }
     }
@@ -995,6 +1066,52 @@ mod tests {
         }
         bitmap.push(0);
         bitmap
+    }
+
+    /// A median tile's three frames are its planes' residuals, green, red less
+    /// green and blue less green, read beside a batch's other tiles and come
+    /// back as its pixels; one that is not three frames of a plane each fails
+    /// alone, and the batch with it.
+    #[test]
+    fn a_median_tile_comes_back_as_its_pixels() {
+        let mut tiles = WlshareTiles::new();
+        // 2x2: green 10, 12 over 11, 30; red three more and blue one less,
+        // so their planes are that and no residual after it.
+        let planes = [
+            tile(&[10, 2, 1, 18]),
+            tile(&[3, 0, 0, 0]),
+            tile(&[255, 0, 0, 0]),
+        ];
+        let body = planes.concat();
+        let planar = tile(&plain_bitmap([&[1, 2], &[3, 4], &[5, 6]]));
+        let pixels = [
+            [13, 10, 9, 255, 15, 12, 11, 255],
+            [14, 11, 10, 255, 33, 30, 29, 255],
+        ]
+        .concat();
+        assert_eq!(
+            tiles
+                .decode_lossless(&[median(2, 2, &body), moving(2, 1, &planar)])
+                .unwrap(),
+            [&pixels[..], &[1, 3, 5, 255, 2, 4, 6, 255]].concat()
+        );
+        let batch = lossless_tiles(&[2], &[2, 2], &[body.len() as u32], &body).unwrap();
+        assert_eq!(tiles.decode_lossless(&batch).unwrap(), pixels);
+        assert!(lossless_tiles(&[3], &[2, 2], &[body.len() as u32], &body).is_err());
+
+        let two = planes[..2].concat();
+        let read = tiles.read_lossless(&[
+            median(2, 2, &two),
+            median(2, 2, &body),
+            median(4, 2, &body),
+            median(2, 2, &planar),
+        ]);
+        let refused: Vec<bool> = read.iter().map(Result::is_err).collect();
+        assert_eq!(refused, [true, false, true, true]);
+        let failed = tiles
+            .decode_lossless(&[moving(2, 1, &planar), median(2, 2, &two)])
+            .unwrap_err();
+        assert!(failed.contains("2x2 median lossless tile"), "{failed}");
     }
 
     /// A batch's tiles come back as their pixels in their order, laid out as

@@ -1852,7 +1852,7 @@ test("a malformed batch ends a Mac's own picture", async () => {
 // image, little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4 | 5;
+    format: 1 | 2 | 3 | 4 | 5 | 6;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1984,10 +1984,7 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
         lossless(batch) {
           calls.push(
             `lossless ${batch
-              .map(
-                ({ still, w, h, body }) =>
-                  `${still ? "still" : "planar"} ${w}x${h} [${body[0]}]`,
-              )
+              .map(({ kind, w, h, body }) => `${kind} ${w}x${h} [${body[0]}]`)
               .join(", ")}`,
           );
           if (batch.some(({ body }) => body[0] === 0xee)) {
@@ -2104,6 +2101,18 @@ test("wlshare's progressive tiles are decoded in wire order by one decoder and p
       "11 64x16 at 0,64",
       "12 36x16 at 64,64",
     ]);
+    assert.equal(made, 3, "the one decoder");
+    // A median predictor's residuals are a lossless tile of the batch's too.
+    await p.draw(
+      tileFrame([
+        { format: 6, at: [0, 0, 100, 64], image: [14] },
+        { format: 5, at: [0, 64, 100, 16], image: [15] },
+      ]),
+    );
+    assert.deepEqual(calls.slice(-1), [
+      "lossless median 100x64 [14], still 100x16 [15]",
+    ]);
+    assert.deepEqual(put.slice(-2), ["14 100x64 at 0,0", "15 100x16 at 0,64"]);
     assert.equal(made, 3, "the one decoder");
     // And a batch that does not decode asks for the whole picture once, as a
     // progressive tile does, its tiles after the first not asked again.
