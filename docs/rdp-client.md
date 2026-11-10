@@ -537,54 +537,68 @@ compositor decodes losslessly, and the pipeline keeps its resize, which bitmap
 updates do not have. So a target that needs a lossless picture keeps `egfx` on
 and has its host set to Lossless; `egfx = false` is not the way to it.
 
-### 4:4:4, by the host's policy, not supported
+### 4:4:4 and the host's policy
 
-A Windows host draws its H.264 at full chroma only when its policy says so. The
+A Windows host is to draw its H.264 at full chroma when its policy says so. The
 policy is *Prioritize H.264/AVC 444 graphics mode for Remote Desktop
 Connections*, in the same place as the image quality policy above; enabled, "the
 server will use H.264/AVC 444 as the codec in an RDP 10 connection where both
 the client and server can use H.264/AVC 444" (its explanation in
 `TerminalServer.adml`). Its registry value is `AVC444ModePreferred` under the
 same key, 1 enabled and 0 disabled (`TS_SERVER_AVC444_MODE_PREFERRED` in
-`TerminalServer.admx`). It is not configured by default, and Microsoft gives
-the default chroma as 4:2:0, with this policy as the way to 4:4:4
+`TerminalServer.admx`), read when the Remote Desktop service starts. It is not
+configured by default, and Microsoft gives the default chroma as 4:2:0, with
+this policy and the image quality policy at High as the way to 4:4:4
 ([Azure Virtual Desktop](https://learn.microsoft.com/en-us/azure/virtual-desktop/graphics-chroma-value-increase-4-4-4)).
 
-zDesk does not support a host set this way, and has not been run against one.
 The client is not what holds 4:4:4 back. From version 10 the capability sets it
 advertises leave a host both YUV444 layouts, and *H.264 full screen* adds
-`AVC_THINCLIENT`, which says the client prefers YUV444 (MS-RDPEGFX 2.2.3.6).
-Without the policy, a host answers that with AVC444v2 in name only: every unit
-carries a luma view alone (LC 1, 2.2.4.6), which is a 4:2:0 picture. The desktop's
-text goes through it, sharpened only by the lower quantizer of what has gone
-still ([The pipeline, passed on](#the-pipeline-passed-on)). *High quality* and
-*H.264 region* keep text sharp because the host draws it there with ClearCodec
-and RemoteFX Progressive.
+`AVC_THINCLIENT`, which says the client prefers YUV444 (MS-RDPEGFX 2.2.3.6). A
+host answers that with AVC444v2 in name only: every unit carries a luma view
+alone (LC 1, 2.2.4.6), which is a 4:2:0 picture. The desktop's text goes through
+it, sharpened only by the lower quantizer of what has gone still ([The pipeline,
+passed on](#the-pipeline-passed-on)). *High quality*, and *H.264 region* under a
+host's default policy, keep text sharp because the host draws it there with
+ClearCodec and RemoteFX Progressive.
 
-Checked against `windows-ent-sandbox` (Windows 11 Enterprise 26200, no GPU,
-policy not configured) on 2026-11-10: a full screen session was drawn in
-AVC444v2, Main profile, with no chroma view, the 600 units of 20 s of a
-full-screen animation all luma views (`examples/rdp_link_probe.rs` with
-`ZDESK_UAT_H264=whole`). The host's
-`Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational` log cannot tell
-the two apart. Its event 162 logged "Initial profile: 2048" for these sessions
-and 2 for sessions by region. Guides read 2048 as AVC444 in use, but here it
-came with no chroma view, so it shows the AVC444v2 framing, not full chroma.
+The policy does not change that. Tested against `windows-ent-sandbox` (Windows 11
+Enterprise 26200, no GPU) on 2026-11-10 with `examples/rdp_link_probe.rs`, each
+setting after a restart of the Remote Desktop service, over 20 s of a desktop
+left still and 20 s of a full-screen animation, the policies removed again
+afterwards:
 
-A host with the policy on would send chroma views, and neither H.264 session
-takes them as a picture:
+| Policy | H.264 full screen | H.264 region |
+|---|---|---|
+| Not configured | AVC444v2, luma views alone | ClearCodec and Progressive |
+| AVC 444 enabled | the same | AVC444v2 for everything, luma views alone, QP 38, 30 and 22 |
+| AVC 444 enabled, image quality High | the same | the same, QP 35, 27 and 18 |
+
+No setting brought a chroma view. By region the policy takes the desktop's text
+away from ClearCodec and Progressive and puts it through the same 4:2:0 luma
+views as full screen, so a host with it on draws text no sharper in either H.264
+session, and softer by region. Whether a host with a GPU sends chroma views
+under it has not been tried.
+
+The host's `Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational` log
+does not tell 4:4:4 apart either. Its event 162 logged "Initial profile: 2048"
+for every full screen session, policy or not, and 2 for sessions by region
+without it. Guides read 2048 as AVC444 in use, but no chroma view came with it,
+so it shows the AVC444v2 framing, not full chroma.
+
+zDesk does not take chroma views as a picture in either H.264 session, should a
+host send them:
 
 - **H.264 full screen** drops each one as a lost unit
   ([The whole desktop, handed on as video](#the-whole-desktop-handed-on-as-video)).
   The display showing that surface starts again at a keyframe, and the
-  keyframe asked for resets the host's graphics. A host that sends chroma views
+  keyframe asked for resets the host's graphics. A host that sent chroma views
   steadily would keep restarting the picture.
 - **H.264 region** composes them by the specification (`avc.rs`), which has been
   tested only against pictures built from its tables. After a stream's first
   chroma view, none of its luma views is shown from the GPU, so every picture is
   copied out of the decoder ([The pipeline, passed on](#the-pipeline-passed-on)).
 
-*High quality* takes no H.264, so the policy does not touch it.
+*High quality* takes no H.264, so the AVC 444 policy does not touch it.
 
 ### H.264 asked for and not drawn
 
@@ -788,9 +802,8 @@ having lost its place, and not the end of the session; so is a command that
 carries a chroma view, also said once. A chroma view is a picture of the same
 stream as the luma views, each coded against the others (MS-RDPEGFX 2.2.4.5),
 so the luma views without it are a stream with pictures missing. No host
-measured here has sent one under `AVC_THINCLIENT`: a Windows host sends them
-only under a policy zDesk does not support
-([4:4:4, by the host's policy, not supported](#444-by-the-hosts-policy-not-supported)). Each
+measured here has sent one under `AVC_THINCLIENT`, even under the host's AVC 444
+policy ([4:4:4 and the host's policy](#444-and-the-hosts-policy)). Each
 frame is acknowledged as one handed on is, when the caller says it has shown it
 (`Input::frame_composed`), with `PASSED_AHEAD` as above.
 
