@@ -76,10 +76,18 @@ VNC servers as the lower-priority targets described under
 [Prioritized servers](#prioritized-servers). Windows and macOS hosts are
 agentless: nothing is installed on them, only their own sharing switched on.
 
-That is why there is no backward compatibility. While the direction is still
-moving, a path kept for an earlier form would hold an abandoned iteration in
-place and make the next change harder, so a release replaces a configuration
-key, the WebSocket protocol or a feature outright.
+One part is settled: who it is for. zDesk is for one person reaching their own
+machines from somewhere else, not remote assistance software for sharing a
+desktop with other people. That is why a gateway has one login and one active
+session, which a second browser takes over rather than joins, and why nothing
+in it invites, admits or hands control to someone else. Work that would only
+serve showing a desktop to another person, or helping them at theirs, is out of
+scope.
+
+The rest is still moving, which is why there is no backward compatibility.
+Until it settles, a path kept for an earlier form would hold an abandoned
+iteration in place and make the next change harder, so a release replaces a
+configuration key, the WebSocket protocol or a feature outright.
 
 ## Constraints
 
