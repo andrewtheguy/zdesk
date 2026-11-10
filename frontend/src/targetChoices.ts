@@ -31,11 +31,12 @@
 //   no passthrough: see `pictureOptions`. The Adaptive one until the other is
 //   chosen, and neither greyed. Combined Display is the tiles of every screen, so
 //   the Adaptive picture is greyed under it.
-// - A `wlshare` target's picture is one of four, all wlshare's own and passed
+// - A `wlshare` target's picture is one of five, all wlshare's own and passed
 //   through, which their labels leave unsaid, chosen in two kinds: adaptive, its
 //   H.264 of the whole desktop or its progressive tiles, both paced to the link;
 //   or lossless, its tiles with motion, which settle to lossless, or its lossless
-//   tiles, exact throughout, both for a LAN and not for a phone or tablet: see
+//   tiles, exact throughout, by RDP's planar codec or with what moves by its
+//   median predictor, all for a LAN and not for a phone or tablet: see
 //   `pictureOptions` and `PICTURE_KINDS`. The video until another is chosen, each
 //   greyed in a browser that cannot decode it: the video and the tiles' H.264
 //   where there is no `VideoDecoder`, the progressive and lossless tiles where the
@@ -74,7 +75,8 @@ export type Passthrough =
   | "wlshare-video"
   | "wlshare-tiles-motion"
   | "wlshare-tiles-progressive"
-  | "wlshare-tiles-lossless";
+  | "wlshare-tiles-lossless"
+  | "wlshare-tiles-median";
 
 /** One entry of GET /api/targets. */
 export interface TargetInfo {
@@ -376,7 +378,8 @@ const NO_COMPOSING =
 const NO_PROGRESSIVE =
   "This page cannot decode wlshare's progressive tiles: that needs WebGL 2 and a cross-origin isolated page.";
 
-// Why wlshare's lossless tiles are greyed: the same module decodes them.
+// Why wlshare's lossless tiles are greyed, by either coder: the same module
+// decodes them.
 const NO_LOSSLESS =
   "This page cannot decode wlshare's lossless tiles: that needs WebGL 2 and a cross-origin isolated page.";
 
@@ -404,8 +407,8 @@ function noHevc(target: TargetInfo): string {
  * order the picker shows them: a High Performance Mac's HEVC passed through, and
  * its H.264; a Standard Mac's Adaptive picture passed through, and the gateway's
  * tiles of its Full quality; wlshare's video, its progressive tiles, its tiles
- * with motion and its lossless tiles, all passed through and labelled without
- * saying so.
+ * with motion, its lossless tiles and those by its median predictor, all passed
+ * through and labelled without saying so.
  *
  * - The HEVC is greyed in a browser whose own decoder does not take it, unless
  *   the page decodes it itself, which it then does (softwareDecoder.ts). The
@@ -480,6 +483,14 @@ function pictureOptions(
         : NO_LOSSLESS,
       disabled: !abilities.rdpGraphics,
     },
+    "wlshare-tiles-median": {
+      value: "wlshare-tiles-median",
+      label: "Fully lossless, median predictor (experimental)",
+      note: abilities.rdpGraphics
+        ? "wlshare's fully lossless tiles with what moves coded by a median predictor in place of RDP's planar codec: every tile exact, still or moving, for about two thirds of the bytes where the desktop moves. Still many times the video's bytes: for a LAN, and not recommended on a phone or tablet. Decoded by this page, with no video decoder."
+        : NO_LOSSLESS,
+      disabled: !abilities.rdpGraphics,
+    },
   };
   const offered = target.passthroughs.flatMap((passthrough) =>
     passthrough === "rdp-graphics" ? [] : [options[passthrough]],
@@ -505,7 +516,11 @@ const PICTURE_KINDS: {
   {
     label: "Lossless (requires high bandwidth)",
     note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. A wired connection is recommended; not recommended on a phone or tablet.",
-    pictures: ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
+    pictures: [
+      "wlshare-tiles-motion",
+      "wlshare-tiles-lossless",
+      "wlshare-tiles-median",
+    ],
   },
 ];
 

@@ -238,8 +238,8 @@ export type ControlMsg =
       // The remote's own stream this session passes untouched — "rdp-graphics",
       // "apple-media", "apple-h264", "apple-adaptive", "wlshare-video" or
       // "wlshare-tiles-motion", "wlshare-tiles-progressive",
-      // "wlshare-tiles-lossless" — or null for a desktop
-      // the gateway encodes.
+      // "wlshare-tiles-lossless", "wlshare-tiles-median" — or null for a
+      // desktop the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
       // started with at the picker (experimental). The offer alone — enabling is
@@ -496,11 +496,13 @@ export interface StandardMsg {
 // lossless tiles: a planar bitmap of a row's run of 64x64 tiles, lossless,
 // depending on no other where the desktop moves ("planar") and read after the
 // still stream's bodies before it where it is still ("still"), decoded by the
-// same module in wire order with the progressive ones. See `TileUnit` in
+// same module in wire order with the progressive ones; or, of its lossless
+// tiles by its median predictor, a moving run's pixels as that predictor's
+// residuals ("median"), depending on no other as a planar one. See `TileUnit` in
 // src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive" | "planar" | "still";
+  format: "jpeg" | "png" | "progressive" | "planar" | "still" | "median";
   x: number;
   y: number;
   w: number;
@@ -592,6 +594,7 @@ const TILE_FORMATS = {
   3: "progressive",
   4: "planar",
   5: "still",
+  6: "median",
 } as const;
 
 const OP_REGION = 0x07;

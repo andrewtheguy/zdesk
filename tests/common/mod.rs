@@ -452,6 +452,8 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                     batch::TILE_PLANAR => image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]),
                     // The still stream's next bytes, a zstd frame's start or not.
                     batch::TILE_STILL => true,
+                    // Three zstd frames, of a median predictor's residuals.
+                    batch::TILE_MEDIAN => image.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]),
                     _ => panic!("unknown tile format {format:#x}"),
                 };
                 assert!(is_format, "a tile that is not the image its format says");

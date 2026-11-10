@@ -3145,8 +3145,8 @@ impl Listing {
 
 /// `encodings` with wlshare's tiles encoding ahead of them, and beside it which
 /// tiles they are to be: `WLSD` for its tiles with motion, which hold wlshare's
-/// dial rather than walking it, `WLSL` for its lossless tiles; its progressive
-/// tiles walk, and name neither.
+/// dial rather than walking it, `WLSL` for its lossless tiles, `WLMD` for those
+/// by its median predictor; its progressive tiles walk, and name none.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> Vec<i32> {
     use crate::config::WlshareTiles;
@@ -3155,6 +3155,7 @@ fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> 
         WlshareTiles::Progressive => TilesPicture::Progressive,
         WlshareTiles::Motion => TilesPicture::Held,
         WlshareTiles::Lossless => TilesPicture::Lossless,
+        WlshareTiles::Median => TilesPicture::Median,
     };
     let mut listed = picture.encodings();
     listed.extend_from_slice(encodings);
@@ -6682,7 +6683,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 | TileHeader::Frame { len, .. }
                 | TileHeader::Progressive { len }
                 | TileHeader::Planar { len }
-                | TileHeader::Still { len } => len,
+                | TileHeader::Still { len }
+                | TileHeader::Median { len } => len,
                 TileHeader::End { .. }
                 | TileHeader::Copy { .. }
                 | TileHeader::Cached { .. }
@@ -6713,6 +6715,12 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 // The same, in the still stream, which the page reads in order.
                 TileHeader::Still { .. } => {
                     sink.pass_tile(x, y, w, h, crate::tiles::Format::Still, body)
+                        .await?
+                }
+                // The rectangle's pixels as a median predictor's residuals, alone
+                // as a planar one is.
+                TileHeader::Median { .. } => {
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Median, body)
                         .await?
                 }
                 // One tile on the grid, cut by the desktop's edge, and the block's own
@@ -10295,6 +10303,24 @@ mod tests {
             "lossless: WLSL beside it"
         );
         assert!(lossless.picture(ENCODING_TILES));
+        let median = Listing::new(
+            rest.clone(),
+            RenderPlan {
+                wlshare_tiles: Some(WlshareTiles::Median),
+                ..tiles
+            },
+        );
+        assert_eq!(
+            median.listed((1280, 800)),
+            [
+                ENCODING_TILES,
+                i32::from_be_bytes(*b"WLMD"),
+                ENCODING_ZRLE,
+                ENCODING_DENSITY
+            ],
+            "lossless by the median predictor: WLMD beside it"
+        );
+        assert!(median.picture(ENCODING_TILES));
 
         let video = Listing::new(
             rest.clone(),

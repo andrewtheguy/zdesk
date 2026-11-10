@@ -559,7 +559,8 @@ struct Shared {
     refreshes: AtomicU64,
     coarse: AtomicU64,
     /// Rectangles of tiles sent as JPEG, as PNG, as progressive tile blocks and as
-    /// planar bitmaps, and their bytes.
+    /// wlshare's lossless tiles, planar bitmaps or a median predictor's residuals,
+    /// and their bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
@@ -607,7 +608,7 @@ impl Shared {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
             Format::Progressive => (&self.progressive, &self.progressive_bytes),
-            Format::Planar | Format::Still => (&self.planar, &self.planar_bytes),
+            Format::Planar | Format::Still | Format::Median => (&self.planar, &self.planar_bytes),
         }
     }
 
@@ -1065,8 +1066,8 @@ impl VideoSink {
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
     /// record, untouched: a lossless PNG of the desktop's pixels there, one
     /// progressive tile's block, a first pass or an upgrade against what the page
-    /// holds of the tile, or a lossless planar bitmap of the pixels there; `format`
-    /// says which.
+    /// holds of the tile, or a lossless planar bitmap of the pixels there or a
+    /// median predictor's residuals of them; `format` says which.
     ///
     /// wlshare's tiles are a passed picture, as its video is ([`Self::pass`]): wlshare
     /// decides what is sent, codes it and paces it by the fences the engine echoes once

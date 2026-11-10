@@ -160,11 +160,16 @@ function withGpu(run: ComposedRun): Uint32Array {
 type LosslessOf = (decoder: TilesDecoder, record: TileMsg) => Uint8Array;
 
 // A tile the module decodes rather than the browser: one of wlshare's progressive
-// tiles, or one of its lossless ones, framed alone or in its still stream.
-const isModuleTile = (record: TileMsg) =>
-  record.format === "progressive" ||
+// tiles, or one of its lossless ones, framed alone, planar or a median
+// predictor's residuals, or in its still stream.
+const isLosslessTile = (
+  record: TileMsg,
+): record is TileMsg & { format: "planar" | "still" | "median" } =>
   record.format === "planar" ||
-  record.format === "still";
+  record.format === "still" ||
+  record.format === "median";
+const isModuleTile = (record: TileMsg) =>
+  record.format === "progressive" || isLosslessTile(record);
 
 export function createFramePainter(options: {
   /**
@@ -791,9 +796,8 @@ export function createFramePainter(options: {
   // the tile whose turn it was, which breaks the decoder, so none after it asks.
   const losslessOf = (records: readonly BatchRecord[]): LosslessOf => {
     const batch = records.filter(
-      (record): record is TileMsg =>
-        record.kind === "tile" &&
-        (record.format === "planar" || record.format === "still"),
+      (record): record is TileMsg & { format: "planar" | "still" | "median" } =>
+        record.kind === "tile" && isLosslessTile(record),
     );
     let decoded: {
       decoder: TilesDecoder;
@@ -803,7 +807,7 @@ export function createFramePainter(options: {
       if (decoded?.decoder !== decoder) {
         const rgba = decoder.lossless(
           batch.map(({ format, w, h, data }) => ({
-            still: format === "still",
+            kind: format,
             w,
             h,
             body: data,
@@ -835,6 +839,7 @@ export function createFramePainter(options: {
     switch (format) {
       case "planar":
       case "still":
+      case "median":
         return lossless(decoder, record);
       default:
         return decoder.progressive(

@@ -416,7 +416,7 @@ pub enum ClientMsg {
 ///
 /// A `TILE` record is a rectangle of the desktop in the tiles this gateway codes, an
 /// image the browser decodes on its own — see [`TileUnit`]. Its format is
-/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`], [`batch::TILE_PROGRESSIVE`], [`batch::TILE_PLANAR`] or [`batch::TILE_STILL`], and a receiver rejects any other, an empty rectangle
+/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`], [`batch::TILE_PROGRESSIVE`], [`batch::TILE_PLANAR`], [`batch::TILE_STILL`] or [`batch::TILE_MEDIAN`], and a receiver rejects any other, an empty rectangle
 /// and one with no image.
 ///
 /// A `REGION` record is an access unit of one moving region's stream in wlshare's
@@ -483,6 +483,12 @@ pub mod batch {
     /// the page reads in order, a body that begins a zstd frame starting it over
     /// (`wlshare_proto::tiles`).
     pub const TILE_STILL: u8 = 0x05;
+    /// A `TILE` record's image is one of wlshare's lossless tiles by its median
+    /// predictor, where the desktop moves: three zstd frames, each a plane of
+    /// exactly the rectangle's pixels as the predictor's residuals, green, red
+    /// less green and blue less green, which the page decodes alone, as it does a
+    /// planar one (`wlshare_proto::tiles`).
+    pub const TILE_MEDIAN: u8 = 0x06;
 
     /// Bytes a `REGION` record costs besides its payload.
     pub const REGION_HEADER_LEN: usize = 15;
