@@ -573,11 +573,10 @@ afterwards:
 | AVC 444 enabled | the same | AVC444v2 for everything, luma views alone, QP 38, 30 and 22 |
 | AVC 444 enabled, image quality High | the same | the same, QP 35, 27 and 18 |
 
-No setting brought a chroma view. By region the policy takes the desktop's text
-away from ClearCodec and Progressive and puts it through the same 4:2:0 luma
-views as full screen, so a host with it on draws text no sharper in either H.264
-session, and softer by region. Whether a host with a GPU sends chroma views
-under it has not been tried.
+No setting brought a chroma view. By region the policy moved the whole desktop,
+the still opening desktop included, from ClearCodec and Progressive to the same
+luma views as full screen. Whether a host with a GPU sends chroma views under it
+has not been tried.
 
 The host's `Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational` log
 does not tell 4:4:4 apart either. Its event 162 logged "Initial profile: 2048"
@@ -591,8 +590,7 @@ host send them:
 - **H.264 full screen** drops each one as a lost unit
   ([The whole desktop, handed on as video](#the-whole-desktop-handed-on-as-video)).
   The display showing that surface starts again at a keyframe, and the
-  keyframe asked for resets the host's graphics. A host that sent chroma views
-  steadily would keep restarting the picture.
+  keyframe asked for resets the host's graphics.
 - **H.264 region** composes them by the specification (`avc.rs`), which has been
   tested only against pictures built from its tables. After a stream's first
   chroma view, none of its luma views is shown from the GPU, so every picture is
