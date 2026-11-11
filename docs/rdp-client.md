@@ -578,6 +578,30 @@ the still opening desktop included, from ClearCodec and Progressive to the same
 luma views as full screen. Whether a host with a GPU sends chroma views under it
 has not been tried.
 
+Three further tries against the same host on 2026-11-11, with both policies
+enabled, brought none either:
+
+- **The host restarted.** Microsoft's page asks for a restart of the host, not
+  of the service alone. After one, both sessions drew as in the table's last
+  row.
+- **A still picture of fine colour.** One-pixel red and blue columns and
+  coloured text on coloured grounds, full screen and left still for 40 s
+  (20 s of an animation is a picture that never settles). Both sessions drew
+  luma views for a few seconds, by region until every one stated QP 18, and
+  then nothing.
+- **Another client.** FreeRDP 3.33 with `/gfx:AVC444:on` over the same still
+  picture, which the host logged as a version 10.7 session at initial profile
+  2048.
+
+What the host encoded is in its own log, whatever the client. Its encoder reads
+an undocumented key when the Remote Desktop service starts, `H264Encoding` under
+the Terminal Services policy key, and with `Enable264Log` at 1 and `RecordPath`
+naming a directory NetworkService can write, it writes a line for each encode
+with `IsLuma`, the average QP and the bits. Every line said `IsLuma:1`, 141 for
+an H.264 region session and 64 for FreeRDP's, both with the same key's
+`EnableAlwaysChroma` at 1. So the luma views alone are the host's choice, not an
+answer to what zDesk advertises.
+
 The host's `Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational` log
 does not tell 4:4:4 apart either. Its event 162 logged "Initial profile: 2048"
 for every full screen session, policy or not, and 2 for sessions by region
