@@ -200,7 +200,7 @@ pub enum WlshareTiles {
     /// tile RemoteFX Progressive, still or moving, and no stream, walked on the
     /// browser's lag.
     Progressive,
-    /// Its tiles with motion ([`Passthrough::WlshareTilesMotion`]): lossless PNG
+    /// Its tiles with motion ([`Passthrough::WlshareTilesMotion`]): lossless WebP
     /// where the desktop is still and a video stream of its own, 4:2:0, for each
     /// region that moves, H.264 by the host's hardware encoder where it has one
     /// and libx264 otherwise, every still lossless.
@@ -361,7 +361,7 @@ pub enum Passthrough {
     /// H.264 is: none is asked whether it decodes it, and the picker greys it where
     /// the page's own decoder refuses it.
     WlshareVideo,
-    /// wlshare's tiles with motion: the desktop as lossless PNG where it is still and an
+    /// wlshare's tiles with motion: the desktop as lossless WebP where it is still and an
     /// H.264 stream of its own, 4:2:0, for each region that moves, passed as they come
     /// for the page to decode and sent lossless again once it stops. Offered by a
     /// `wlshare` target beside its video and its progressive tiles, and chosen at the

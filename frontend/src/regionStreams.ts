@@ -2,7 +2,7 @@
 // session started with them), drawn on the desktop's own canvas.
 //
 // wlshare sends its desktop in two forms, and the gateway passes both untouched:
-// TILE records, a PNG each of a rectangle that is still, the desktop's pixels
+// TILE records, a lossless WebP each of a rectangle that is still, the desktop's pixels
 // lossless, which framePainter.ts draws as it draws the gateway's own tiles; and a
 // video stream of its own for each region that moves, up to four at once, as REGION
 // records — H.264, by the host's hardware encoder where it has one and libx264

@@ -149,11 +149,13 @@ test("a tile record is its format, where its rectangle is, then its image, whole
   assert.equal(still?.kind === "tile" && still.format, "still");
   const median = decodeBatchFrame(frame(5, 64, [0x28, 0xb5]))?.[0];
   assert.equal(median?.kind === "tile" && median.format, "median");
+  const webp = decodeBatchFrame(frame(6, 64, [0x52, 0x49]))?.[0];
+  assert.equal(webp?.kind === "tile" && webp.format, "webp");
 
   const whole = frame(2, 64, [0x89, 0x50]);
   assert.equal(decodeBatchFrame(whole.slice(0, whole.byteLength - 1)), null);
   assert.equal(
-    decodeBatchFrame(frame(6, 64, [1])),
+    decodeBatchFrame(frame(7, 64, [1])),
     null,
     "a format this client does not know",
   );

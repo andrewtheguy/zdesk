@@ -322,7 +322,7 @@ pub struct BatchUnit {
 }
 
 /// One `TILE` record parsed out of a batch frame: a rectangle of the desktop in the
-/// tiles the gateway codes, its image a JPEG or a PNG; or in wlshare's tiles a PNG
+/// tiles the gateway codes, its image a JPEG or a PNG; or in wlshare's tiles a WebP
 /// or a progressive tile's block.
 #[allow(dead_code)]
 pub struct BatchTile {
@@ -449,6 +449,10 @@ pub fn batch_records(frame: &[u8]) -> Vec<BatchRecord> {
                 let is_format = match format {
                     batch::TILE_JPEG => image.starts_with(&[0xff, 0xd8]),
                     batch::TILE_PNG => image.starts_with(b"\x89PNG"),
+                    // A WebP file: RIFF, its length, WEBP.
+                    batch::TILE_WEBP => {
+                        image.starts_with(b"RIFF") && image.get(8..12) == Some(b"WEBP")
+                    }
                     // A first pass's block or an upgrade's: 0xCCC6 or 0xCCC7, little-endian.
                     batch::TILE_PROGRESSIVE => matches!(image.get(..2), Some([0xC6 | 0xC7, 0xCC])),
                     // The still stream's next bytes, a zstd frame's start or not.

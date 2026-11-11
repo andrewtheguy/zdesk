@@ -621,7 +621,7 @@ async fn a_plain_target_reads_wlshare_as_any_vnc_server() {
 
 /// A session started with wlshare's tiles with motion is sent wlshare's own tiles,
 /// passed: the picture starts behind a `tilesStart`, its first update is the whole
-/// desktop as lossless PNG, and wlshare was asked for its tiles rather than its video.
+/// desktop as lossless WebP, and wlshare was asked for its tiles rather than its video.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
 async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
@@ -661,7 +661,7 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 /// its size, its pixels as `R, G, B`, the formats its tiles came in, and whether
 /// its tiles covered the whole desktop, without which pixels no tile drew are
 /// still the zeros the picture started as. Every tile
-/// is drawn as the page draws it — a PNG by its decoder, a progressive tile by the
+/// is drawn as the page draws it — a WebP by its decoder, a progressive tile by the
 /// page's RemoteFX Progressive decoder in its turn, a copy from the picture — and
 /// every batch acknowledged, so wlshare keeps sending what it owes.
 async fn picture_of(
@@ -725,20 +725,26 @@ async fn picture_of(
                             }
                         };
                     match tile.format {
-                        batch::TILE_PNG => {
-                            let mut png = png::Decoder::new(std::io::Cursor::new(&tile.image));
-                            png.set_transformations(png::Transformations::EXPAND);
-                            let mut reader = png.read_info().expect("a PNG");
+                        batch::TILE_WEBP => {
+                            let mut webp =
+                                image_webp::WebPDecoder::new(std::io::Cursor::new(&tile.image))
+                                    .expect("a WebP");
+                            assert!(!webp.is_lossy(), "a lossless WebP");
+                            assert_eq!(
+                                webp.dimensions(),
+                                (u32::from(tile.w), u32::from(tile.h)),
+                                "a WebP of the rectangle"
+                            );
+                            let step = if webp.has_alpha() { 4 } else { 3 };
                             let mut rgb =
-                                vec![0; reader.output_buffer_size().expect("a PNG's size")];
-                            let info = reader.next_frame(&mut rgb).expect("a PNG's pixels");
-                            let step = info.color_type.samples();
+                                vec![0; webp.output_buffer_size().expect("a WebP's size")];
+                            webp.read_image(&mut rgb).expect("a WebP's pixels");
                             put(
                                 tile.x,
                                 tile.y,
                                 usize::from(tile.w),
-                                &rgb[..info.buffer_size()],
-                                info.line_size,
+                                &rgb,
+                                usize::from(tile.w) * step,
                                 step,
                             );
                         }
@@ -846,7 +852,7 @@ async fn picture_of(
                             put(tile.x, tile.y, w, &rgba, w * 4, 4);
                         }
                         other => panic!(
-                            "a tile of format {other:#x} in a test that draws PNG, progressive, still and median tiles"
+                            "a tile of format {other:#x} in a test that draws WebP, progressive, still and median tiles"
                         ),
                     }
                 }
@@ -874,8 +880,8 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     let (w, h, lossless, formats, whole) = picture_of(addr, "wlshare-tiles-motion", 4).await;
     assert_eq!(
         formats,
-        [zdesk::protocol::batch::TILE_PNG].into(),
-        "tiles with motion are lossless PNG while nothing moves"
+        [zdesk::protocol::batch::TILE_WEBP].into(),
+        "tiles with motion are lossless WebP while nothing moves"
     );
     assert!(whole, "the tiles with motion covered the whole desktop");
     let (pw, ph, progressive, formats, whole) =
@@ -921,11 +927,11 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_still_and_median
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
-    let (w, h, png, formats, whole) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    let (w, h, webp, formats, whole) = picture_of(addr, "wlshare-tiles-motion", 4).await;
     assert_eq!(
         formats,
-        [zdesk::protocol::batch::TILE_PNG].into(),
-        "tiles with motion are lossless PNG while nothing moves"
+        [zdesk::protocol::batch::TILE_WEBP].into(),
+        "tiles with motion are lossless WebP while nothing moves"
     );
     assert!(whole, "the tiles with motion covered the whole desktop");
     let (lw, lh, lossless, formats, whole) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
@@ -937,8 +943,8 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_still_and_median
         "a still desktop's tiles are planar, in the still stream alone"
     );
     assert!(
-        lossless == png,
-        "the lossless tiles show the desktop exactly as the PNG tiles do"
+        lossless == webp,
+        "the lossless tiles show the desktop exactly as the WebP tiles do"
     );
     let logs = container.logs();
     assert!(

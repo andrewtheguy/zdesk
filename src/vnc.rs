@@ -6643,7 +6643,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
             sink.pass(w, h, frame).await?;
             return Ok(Rect::from_size(x, y, w, h).map_or(RectEffect::NOTHING, RectEffect::pixels));
         }
-        // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
+        // A rectangle of wlshare's tiles: a WebP of it, a frame of a moving region's
         // stream over it, that stream's end, a copy of what the browser holds
         // elsewhere, a progressive tile, a planar bitmap in the still stream or a
         // median predictor's residuals, each passed to the browser untouched.
@@ -6677,7 +6677,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 .context("the server's tiles rectangle")?
                 .expect("read whole");
             let len = match header {
-                TileHeader::Png { len }
+                TileHeader::Webp { len }
                 | TileHeader::Start { len, .. }
                 | TileHeader::Frame { len, .. }
                 | TileHeader::Progressive { len }
@@ -6700,8 +6700,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                     sink.pass_region_end(stream).await?;
                     return Ok(RectEffect::NOTHING);
                 }
-                TileHeader::Png { .. } => {
-                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Png, body)
+                TileHeader::Webp { .. } => {
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Webp, body)
                         .await?
                 }
                 // The rectangle's pixels as a planar bitmap in the still stream,
@@ -15348,9 +15348,9 @@ mod tests {
             msg.extend_from_slice(&ENCODING_TILES.to_be_bytes());
             msg.push(kind);
         };
-        rect(&mut msg, (0, 0, w, 16), wlshare_proto::tiles::KIND_PNG);
+        rect(&mut msg, (0, 0, w, 16), wlshare_proto::tiles::KIND_WEBP);
         msg.extend_from_slice(&3u32.to_be_bytes());
-        msg.extend_from_slice(&[0x89, 0x50, 0x4e]);
+        msg.extend_from_slice(&[0x52, 0x49, 0x46]);
         for (kind, frame) in [
             (wlshare_proto::tiles::KIND_START, KEYFRAME),
             (wlshare_proto::tiles::KIND_FRAME, FRAME),
@@ -15401,7 +15401,7 @@ mod tests {
             panic!("the tile's run")
         };
         assert!(
-            matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x89, 0x50, 0x4e])
+            matches!(&tile[..], [ServerMsg::Tile(unit)] if unit.format == crate::tiles::Format::Webp && (unit.w, unit.h) == (320, 16) && unit.data == [0x52, 0x49, 0x46])
         );
         assert!(
             matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D")

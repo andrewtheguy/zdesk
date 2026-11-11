@@ -28,7 +28,7 @@ every session of a target with the pipeline on, the default — see
 [RDP's graphics pipeline, passed through](#rdps-graphics-pipeline-passed-through).
 wlshare, reached as `subtype = "wlshare"`, codes its own H.264 stream of the
 whole desktop, at a quality and walk of its own — or, in a session
-started with its tiles with motion, chosen at the picker, its own tiles, lossless PNG
+started with its tiles with motion, chosen at the picker, its own tiles, lossless WebP
 where the desktop is still and a video stream of its own for each region that moves,
 H.264 by the host's hardware encoder where it has one and libx264 otherwise, passed the same way. A `wlshare` desktop
 too large for that stream, in a session that does not resize it, has no picture:
@@ -610,7 +610,7 @@ Chrome a full-screen video's update at 1920×1080 takes the page 7 to 10 ms
 ([measured](https://github.com/andrewtheguy/wlshare/blob/main/docs/tiles-performance.md#the-median-predictor)).
 A batch that does not decode asks for the whole picture as a progressive tile
 does, and so starts the still stream over.
-Its tiles with motion are the same encoding listed with `WLSD`: lossless PNG tiles
+Its tiles with motion are the same encoding listed with `WLSD`: lossless WebP tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
 every still lossless — wlshare's picture for a link with room to spare, one that
@@ -1210,8 +1210,8 @@ session started with its tiles, chosen at the picker against its video (*Tiles*,
 *Settles to lossless* or *Fully lossless*), lists in place of `WLSV`. Its tiles with
 motion are a video stream of its own, 4:2:0, for each region that moves, at
 most four at once — H.264, by the wlshare host's hardware encoder where it has
-one and libx264 otherwise — and lossless PNG stills where the desktop is still,
-every tile a stream carried sent again as PNG once it is still, so the picture
+one and libx264 otherwise — and lossless WebP stills where the desktop is still,
+every tile a stream carried sent again as WebP once it is still, so the picture
 ends lossless. Its progressive tiles are every tile a RemoteFX Progressive tile
 block instead, and its lossless tiles every tile exact, a planar bitmap where
 it is still and a median predictor's residuals where it moves, and no stream
@@ -1272,7 +1272,7 @@ Nothing is coded here.
 - **A restart forgets the regions.** A reattach and a resize reset the render as
   always, and the first record after it goes behind a `tilesStart`, which tells the
   page every region it held is over. The full update a reattach asks for makes
-  wlshare end its streams and send the whole picture as PNG; a resize starts
+  wlshare end its streams and send the whole picture as WebP; a resize starts
   wlshare's tiles with motion over at the new size with no ends, and its whole picture after
   the size. A frame of a region the page was not told of since the `tilesStart`, one
   coded before it, is dropped, and so is its end.
@@ -2638,7 +2638,7 @@ any other bit is rejected the same way, as is a number or a frame bit without
 other rejected, as are an empty rectangle and one with no image. Each replaces what
 the canvas held there and depends on no other
 ([The tiles](#the-tiles)). A session of wlshare's tiles with motion sends `TILE` records too, all
-PNG, and among them `REGION` records: an access unit of one moving region's
+lossless WebP, `format` `0x06`, and among them `REGION` records: an access unit of one moving region's
 stream, H.264 as its `regionFormat` says, its flags `0x01` for a keyframe and any other bit rejected, as are an empty
 rectangle and one with no payload. A `regionFormat` (`stream`, `decode`, `engine`)
 comes ahead of a stream's first unit and builds its decoder, the unit's decoded
