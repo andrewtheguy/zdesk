@@ -38,31 +38,34 @@ pub fn test_auth() -> zdesk::auth::GatewayAuth {
 /// The caller overrides whatever settings its assertions need.
 #[allow(dead_code)]
 pub fn uat_target(name: &str) -> zdesk::config::TargetConfig {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tmp/test_uat.toml");
+    // `ZDESK_UAT_CONFIG` names another config in its place, for a host kept in
+    // a file of its own.
+    let path = std::env::var("ZDESK_UAT_CONFIG")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/tmp/test_uat.toml").to_owned());
+    let path = std::path::Path::new(&path);
+    let shown = path.display();
     let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("these tests need the local UAT config at {path}: {e}"));
-    let mut config =
-        zdesk::config::ConfigFile::parse(&text).expect("tmp/test_uat.toml should parse");
+        .unwrap_or_else(|e| panic!("these tests need the local UAT config at {shown}: {e}"));
+    let mut config = zdesk::config::ConfigFile::parse(&text)
+        .unwrap_or_else(|e| panic!("{shown} should parse: {e:#}"));
     // Its passwords open as a served gateway's would: [server].master_password_file.
     let key = config.needs_master().then(|| {
+        let dir = path.parent().unwrap_or(std::path::Path::new("."));
         let master = config
-            .served_master(std::path::Path::new(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tmp"
-            )))
-            .unwrap_or_else(|e| panic!("tmp/test_uat.toml's master password: {e:#}"));
+            .served_master(dir)
+            .unwrap_or_else(|e| panic!("{shown}'s master password: {e:#}"));
         config
             .key(&master)
-            .unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"))
+            .unwrap_or_else(|e| panic!("{shown}: {e:#}"))
     });
     config
         .unlock(key.as_ref())
-        .unwrap_or_else(|e| panic!("tmp/test_uat.toml: {e:#}"));
+        .unwrap_or_else(|e| panic!("{shown}: {e:#}"));
     config
         .targets
         .into_iter()
         .find(|t| t.name == name)
-        .unwrap_or_else(|| panic!("tmp/test_uat.toml names no target {name:?}"))
+        .unwrap_or_else(|| panic!("{shown} names no target {name:?}"))
 }
 
 /// A directory that removes itself, for a test that needs somewhere to put a
