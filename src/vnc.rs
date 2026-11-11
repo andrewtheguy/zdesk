@@ -15401,7 +15401,7 @@ mod tests {
             panic!("the tile's run")
         };
         assert!(
-            matches!(&tile[..], [ServerMsg::Tile(unit)] if (unit.w, unit.h) == (320, 16) && unit.data == [0x52, 0x49, 0x46])
+            matches!(&tile[..], [ServerMsg::Tile(unit)] if unit.format == crate::tiles::Format::Webp && (unit.w, unit.h) == (320, 16) && unit.data == [0x52, 0x49, 0x46])
         );
         assert!(
             matches!(rx.recv().await, Some(ServerMsg::RegionFormat { stream: 2, decode, .. }) if decode == "avc1.64000D")
