@@ -140,23 +140,19 @@ test("a tile record is its format, where its rectangle is, then its image, whole
   }
   const jpeg = decodeBatchFrame(frame(1, 64, [0xff]))?.[0];
   assert.equal(jpeg?.kind === "tile" && jpeg.format, "jpeg");
-  const progressive = decodeBatchFrame(frame(3, 64, [0xc6, 0xcc]))?.[0];
-  assert.equal(
-    progressive?.kind === "tile" && progressive.format,
-    "progressive",
-  );
-  const still = decodeBatchFrame(frame(4, 64, [0x28, 0xb5]))?.[0];
+  const still = decodeBatchFrame(frame(3, 64, [0x28, 0xb5]))?.[0];
   assert.equal(still?.kind === "tile" && still.format, "still");
-  const median = decodeBatchFrame(frame(5, 64, [0x28, 0xb5]))?.[0];
+  const median = decodeBatchFrame(frame(4, 64, [0x28, 0xb5]))?.[0];
   assert.equal(median?.kind === "tile" && median.format, "median");
 
   const whole = frame(2, 64, [0x89, 0x50]);
   assert.equal(decodeBatchFrame(whole.slice(0, whole.byteLength - 1)), null);
   assert.equal(
-    decodeBatchFrame(frame(6, 64, [1])),
+    decodeBatchFrame(frame(5, 64, [1])),
     null,
     "a format this client does not know",
   );
+  assert.equal(decodeBatchFrame(frame(0, 64, [1])), null, "nor format 0");
   assert.equal(decodeBatchFrame(frame(2, 0, [1])), null, "an empty rectangle");
   assert.equal(
     decodeBatchFrame(frame(2, 64, [])),

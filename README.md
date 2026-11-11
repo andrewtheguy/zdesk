@@ -113,7 +113,8 @@ seamlessly of the three, since what RFB lacks is added to it.
   ours, what RFB lacks is added to it: it switches outputs, follows the window
   at its density, carries Opus or FLAC sound and the browser's camera and
   microphone, and codes its own H.264 of the whole desktop for the gateway to
-  pass through, paced to the browser's link — or, for a link with room to spare, its own lossless
+  pass through, paced to the browser's link, at 4:2:0 or, to keep coloured text
+  crisp, at 4:4:4 (beta) in a browser that decodes it — or, for a link with room to spare, its own lossless
   tiles with a video stream for each region that moves, H.264 from hardware or
   libx264. Two outputs can be shown at once, the second
   in a browser tab of its own (beta).
@@ -142,6 +143,7 @@ What each server and browser does and does not do, in one place.
 | | Chrome, Edge | Safari | Firefox |
 |---|---|---|---|
 | A High Performance Mac's HEVC | ✅ native; on Windows only where the GPU decodes HEVC 4:4:4, else hevc-wasm | ✅ native | ⚠️ hevc-wasm only |
+| wlshare's *Crisp video* (H.264 at 4:4:4, beta) | ✅ in Chrome, decoded in software | ❌ greyed at the picker | ❌ greyed at the picker |
 | A High Performance Mac's sound (AAC-ELD) | ✅ | ✅ except 16.4 to 18, which play no sound at all | ❌ |
 | Lossless FLAC sound | ✅ | ❌ Opus only | ✅ |
 | Key chords the browser keeps for itself (⌘W, ⌘T, ⌘N) | ✅ in an app window or Immersive full screen | ❌ | ❌ |

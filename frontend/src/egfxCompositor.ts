@@ -150,13 +150,6 @@ export type DecodedFrame = Pick<
   "format" | "visibleRect" | "allocationSize" | "copyTo"
 >;
 
-/**
- * wlshare's tiles the page decodes in the module: its progressive tiles, by the
- * module's RemoteFX Progressive decoder over the desktop, which keeps every
- * tile's coefficients from one block to the next, so blocks go in in wire order;
- * and its lossless tiles, a batch's at once, each a planar bitmap in its still
- * stream or a median predictor's residuals alone.
- */
 /** One of wlshare's lossless tiles, for `TilesDecoder.lossless`. */
 export interface LosslessTile {
   /**
@@ -169,22 +162,12 @@ export interface LosslessTile {
   body: Uint8Array;
 }
 
+/**
+ * wlshare's tiles the page decodes in the module: its lossless tiles, a batch's
+ * at once, each a planar bitmap in its still stream or a median predictor's
+ * residuals alone.
+ */
 export interface TilesDecoder {
-  /**
-   * The tile `block` is of, decoded against what this holds of it: `R, G, B, A`
-   * rows of the rectangle `x, y, w, h`, the block's tile cut by the edge of a
-   * `width`×`height` desktop, for the canvas to put there. Throws for a block that
-   * does not decode.
-   */
-  progressive(
-    width: number,
-    height: number,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    block: Uint8Array,
-  ): Uint8Array;
   /**
    * The pixels of a batch's lossless tiles, in their order: each tile's `R, G, B,
    * A` rows of its rectangle, for the canvas to put there. A still tile's body is
@@ -215,8 +198,6 @@ export async function loadTilesDecoder(
   await loadEgfx(source, threads);
   const tiles = new WlshareTiles();
   return {
-    progressive: (width, height, x, y, w, h, block) =>
-      tiles.progressive(width, height, x, y, w, h, block),
     lossless: (batch) => {
       const kinds = new Uint8Array(batch.length);
       const sizes = new Uint16Array(batch.length * 2);

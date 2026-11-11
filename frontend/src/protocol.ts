@@ -236,8 +236,8 @@ export type ControlMsg =
       resize: boolean;
       audio: boolean;
       // The remote's own stream this session passes untouched — "rdp-graphics",
-      // "apple-media", "apple-h264", "apple-adaptive", "wlshare-video" or
-      // "wlshare-tiles-motion", "wlshare-tiles-progressive",
+      // "apple-media", "apple-h264", "apple-adaptive", "wlshare-video",
+      // "wlshare-video-444", "wlshare-tiles-motion" or
       // "wlshare-tiles-lossless" — or null for a desktop the gateway encodes.
       passthrough: string | null;
       // Whether this session offers the remote the browser's camera, as it was
@@ -489,17 +489,15 @@ export interface StandardMsg {
 // as PNG once they are still, or a lossless PNG of the pixels, as wlshare's tiles with
 // motion send their stills too. Each replaces what the canvas held there and depends
 // on no other, so they are drawn in wire order and may be decoded in any. Or one of
-// wlshare's progressive tiles: a RemoteFX Progressive
-// tile block of one 64x64 tile, which depends on every block of that tile before
-// it, so it is decoded in wire order too (framePainter.ts). Or one of wlshare's
-// lossless tiles, a row's run of 64x64 tiles exact: where the desktop is still a
-// planar bitmap read after the still stream's bodies before it ("still"), and
-// where it moves the pixels as a median predictor's residuals, depending on no
-// other ("median"), decoded by the same module in wire order with the
-// progressive ones. See `TileUnit` in src/protocol.rs for the contract.
+// wlshare's lossless tiles, a row's run of 64x64 tiles exact: where the desktop
+// is still a planar bitmap read after the still stream's bodies before it
+// ("still"), so it is decoded in wire order (framePainter.ts), and where it moves
+// the pixels as a median predictor's residuals, depending on no other
+// ("median"), decoded by the same module. See `TileUnit` in src/protocol.rs for
+// the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive" | "still" | "median";
+  format: "jpeg" | "png" | "still" | "median";
   x: number;
   y: number;
   w: number;
@@ -588,9 +586,8 @@ const TILE_HEADER_LEN = 14;
 const TILE_FORMATS = {
   1: "jpeg",
   2: "png",
-  3: "progressive",
-  4: "still",
-  5: "median",
+  3: "still",
+  4: "median",
 } as const;
 
 const OP_REGION = 0x07;
