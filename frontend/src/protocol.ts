@@ -312,7 +312,7 @@ export type ControlMsg =
   // again whenever the whole picture is sent again. `engine` as a format's.
   //
   // The tiles are the gateway's own, or a wlshare session's started with its
-  // tiles with motion, wlshare's own passed through: lossless PNG tiles where the desktop is still,
+  // tiles with motion, wlshare's own passed through: lossless WebP tiles where the desktop is still,
   // and a video stream of its own for each region that moves, as REGION records.
   // Every region stream of the tiles picture before it ends here, and its
   // decoder goes: it comes ahead of the first record, and again wherever the
@@ -486,8 +486,8 @@ export interface StandardMsg {
 
 // A rectangle of the desktop in the tiles the gateway codes, a row's run of 64x64
 // tiles as one image: a JPEG of tiles still changing, which the gateway sends again
-// as PNG once they are still, or a lossless PNG of the pixels, as wlshare's tiles with
-// motion send their stills too. Each replaces what the canvas held there and depends
+// as PNG once they are still, or a lossless PNG of the pixels; or a lossless WebP of
+// them ("webp"), as wlshare's tiles with motion send their stills. Each replaces what the canvas held there and depends
 // on no other, so they are drawn in wire order and may be decoded in any. Or one of
 // wlshare's progressive tiles: a RemoteFX Progressive
 // tile block of one 64x64 tile, which depends on every block of that tile before
@@ -499,7 +499,7 @@ export interface StandardMsg {
 // progressive ones. See `TileUnit` in src/protocol.rs for the contract.
 export interface TileMsg {
   kind: "tile";
-  format: "jpeg" | "png" | "progressive" | "still" | "median";
+  format: "jpeg" | "png" | "progressive" | "still" | "median" | "webp";
   x: number;
   y: number;
   w: number;
@@ -591,6 +591,7 @@ const TILE_FORMATS = {
   3: "progressive",
   4: "still",
   5: "median",
+  6: "webp",
 } as const;
 
 const OP_REGION = 0x07;

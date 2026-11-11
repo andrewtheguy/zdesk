@@ -1849,11 +1849,11 @@ test("a malformed batch ends a Mac's own picture", async () => {
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
 // src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile, 4
 // a still lossless tile's planar bitmap in the still stream, 5 a moving one's
-// median predictor's residuals), x, y, w and h as u16, a u32 length, the image,
+// median predictor's residuals, 6 a lossless WebP), x, y, w and h as u16, a u32 length, the image,
 // little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4 | 5;
+    format: 1 | 2 | 3 | 4 | 5 | 6;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1885,6 +1885,8 @@ test("the gateway's tiles are drawn in wire order where they say, behind their s
     tileFrame([
       { format: 1, at: [0, 0, 64, 64], image: [1, 0xff] },
       { format: 2, at: [64, 0, 128, 64], image: [2, 0x89] },
+      // One of wlshare's stills, which the browser decodes as it does the rest.
+      { format: 6, at: [192, 0, 64, 64], image: [3, 0x52] },
     ]),
   );
   assert.deepEqual(
@@ -1892,11 +1894,13 @@ test("the gateway's tiles are drawn in wire order where they say, behind their s
     [
       [0, 0],
       [64, 0],
+      [192, 0],
     ],
   );
   assert.deepEqual(bitmaps.map(({ type }) => type).sort(), [
     "image/jpeg",
     "image/png",
+    "image/webp",
   ]);
 
   assert.ok(

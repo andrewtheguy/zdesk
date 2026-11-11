@@ -137,7 +137,7 @@ sound-flac = { git = "https://github.com/andrewtheguy/sound-flac", tag = "v0.0.9
 # under it, behind the `wlshare` feature. Pinned at its protocol version's tag,
 # which a wlshare release that changes nothing of it leaves where it is: the
 # version is checked on the wire, and a wlshare of another is refused.
-wlshare-proto = { git = "https://github.com/andrewtheguy/wlshare", tag = "proto-v12", optional = true }
+wlshare-proto = { path = "../wlshare/crates/wlshare-proto", optional = true }
 # 44100 -> 48000, because libopus accepts only 8/12/16/24/48 kHz and RDP offers
 # no 48 kHz format. Pure Rust, and it resamples deinterleaved channels — which is
 # the point: the naive interleaved interpolation blends left into right.
@@ -324,6 +324,10 @@ test = true
 
 [dev-dependencies]
 tokio-tungstenite = "0.29"
+# tests/wlshare_e2e.rs draws wlshare's WebP stills as the page does, with a
+# decoder in plain Rust that shares nothing with the libwebp wlshare codes
+# them by.
+image-webp = "0.2"
 # Scratch directories for the tests that need a real path on disk: an instance
 # directory to serve from, and the ones behind `Instance::origin_label`, which
 # canonicalizes what it is given and so cannot be tested against a name that does

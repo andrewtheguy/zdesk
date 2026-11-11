@@ -558,7 +558,7 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG, as PNG, as progressive tile blocks and as
+    /// Rectangles of tiles sent as JPEG, as PNG, as wlshare's WebP stills, as progressive tile blocks and as
     /// wlshare's lossless tiles, planar bitmaps in its still stream where the
     /// desktop is still or a median predictor's residuals where it moves, and their
     /// bytes.
@@ -566,6 +566,8 @@ struct Shared {
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
+    webp: AtomicU64,
+    webp_bytes: AtomicU64,
     progressive: AtomicU64,
     progressive_bytes: AtomicU64,
     lossless: AtomicU64,
@@ -608,6 +610,7 @@ impl Shared {
         match format {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
+            Format::Webp => (&self.webp, &self.webp_bytes),
             Format::Progressive => (&self.progressive, &self.progressive_bytes),
             Format::Still | Format::Median => (&self.lossless, &self.lossless_bytes),
         }
@@ -645,6 +648,8 @@ impl Shared {
             jpeg_bytes: AtomicU64::new(0),
             png: AtomicU64::new(0),
             png_bytes: AtomicU64::new(0),
+            webp: AtomicU64::new(0),
+            webp_bytes: AtomicU64::new(0),
             progressive: AtomicU64::new(0),
             progressive_bytes: AtomicU64::new(0),
             lossless: AtomicU64::new(0),
@@ -1065,7 +1070,7 @@ impl VideoSink {
     }
 
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
-    /// record, untouched: a lossless PNG of the desktop's pixels there, one
+    /// record, untouched: a lossless WebP of the desktop's pixels there, one
     /// progressive tile's block, a first pass or an upgrade against what the page
     /// holds of the tile, or a lossless planar bitmap of the pixels there in the
     /// still stream or a median predictor's residuals of them; `format` says which.
@@ -1848,6 +1853,8 @@ struct Totals {
     jpeg_bytes: u64,
     png: u64,
     png_bytes: u64,
+    webp: u64,
+    webp_bytes: u64,
     progressive: u64,
     progressive_bytes: u64,
     lossless: u64,
@@ -1878,6 +1885,8 @@ impl Totals {
             jpeg_bytes: load(&shared.jpeg_bytes),
             png: load(&shared.png),
             png_bytes: load(&shared.png_bytes),
+            webp: load(&shared.webp),
+            webp_bytes: load(&shared.webp_bytes),
             progressive: load(&shared.progressive),
             progressive_bytes: load(&shared.progressive_bytes),
             lossless: load(&shared.lossless),
@@ -1897,7 +1906,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} progressive / {} bytes and {} lossless / {} bytes, {} copied, {} cached, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} WebP / {} bytes, {} progressive / {} bytes and {} lossless / {} bytes, {} copied, {} cached, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1912,6 +1921,8 @@ impl fmt::Display for Totals {
             self.jpeg_bytes,
             self.png,
             self.png_bytes,
+            self.webp,
+            self.webp_bytes,
             self.progressive,
             self.progressive_bytes,
             self.lossless,
@@ -2451,7 +2462,7 @@ mod tests {
     async fn wlshares_tiles_and_regions_go_out_as_they_came() {
         use crate::h264::sample::{FRAME, KEYFRAME};
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
-        sink.pass_tile(0, 0, 1280, 64, Format::Png, vec![0x89, 0x50])
+        sink.pass_tile(0, 0, 1280, 64, Format::Webp, vec![0x52, 0x49])
             .await
             .unwrap();
         sink.pass_region(0, 64, 64, 320, 192, true, KEYFRAME.to_vec())
@@ -2483,7 +2494,7 @@ mod tests {
             out[0]
         );
         assert!(
-            matches!(run(&out[1]), [ServerMsg::Tile(unit)] if unit.format == Format::Png && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x89, 0x50])
+            matches!(run(&out[1]), [ServerMsg::Tile(unit)] if unit.format == Format::Webp && (unit.x, unit.w, unit.h) == (0, 1280, 64) && unit.data == [0x52, 0x49])
         );
         assert!(
             matches!(&out[2], ServerMsg::RegionFormat { stream: 0, decode, .. } if decode == "avc1.64000D"),
@@ -2586,7 +2597,7 @@ mod tests {
             .await
             .unwrap();
         sink.pass_region_end(1).await.unwrap();
-        sink.pass_tile(0, 0, 1280, 800, Format::Png, vec![0x89])
+        sink.pass_tile(0, 0, 1280, 800, Format::Webp, vec![0x52])
             .await
             .unwrap();
 

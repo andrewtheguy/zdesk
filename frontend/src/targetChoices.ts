@@ -468,7 +468,7 @@ function pictureOptions(
       value: "wlshare-tiles-motion",
       label: "Settles to lossless",
       note: abilities.wlshareH264
-        ? "wlshare's own tiles: lossless PNG where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes: for a LAN, and not recommended on a phone or tablet."
+        ? "wlshare's own tiles: lossless WebP where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes: for a LAN, and not recommended on a phone or tablet."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
     },
