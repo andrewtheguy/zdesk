@@ -659,9 +659,9 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 
 /// What a session started with `passthrough` shows of the desktop after `secs`:
 /// its size, its pixels as `R, G, B`, and the formats its tiles came in. Every tile
-/// is drawn as the page draws it — a PNG by its decoder, a progressive tile by the
-/// page's RemoteFX Progressive decoder in its turn, a copy from the picture — and
-/// every batch acknowledged, so wlshare keeps sending what it owes.
+/// is drawn as the page draws it — a PNG by its decoder, a lossless tile by the
+/// page's zstd, planar and median decoders in its turn — and every batch
+/// acknowledged, so wlshare keeps sending what it owes.
 async fn picture_of(
     addr: SocketAddr,
     passthrough: &str,
@@ -678,9 +678,7 @@ async fn picture_of(
     .unwrap();
     let (mut size, mut picture, mut formats) =
         ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
-    let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
     let mut still: Option<ruzstd_decompress::decoding::FrameDecoder> = None;
-    let mut frame_no = 0;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
         match msg.expect("websocket receive") {
@@ -733,35 +731,6 @@ async fn picture_of(
                                 info.line_size,
                                 step,
                             );
-                        }
-                        batch::TILE_PROGRESSIVE => {
-                            frame_no += 1;
-                            let stream = wlshare_proto::progressive::stream(
-                                frame_no,
-                                &[(tile.x, tile.y, tile.w, tile.h)],
-                                &[&tile.image],
-                            );
-                            decoder.start_frame();
-                            decoder
-                                .decompress(
-                                    1,
-                                    u32::from(size.0),
-                                    u32::from(size.1),
-                                    &stream,
-                                    usize::MAX,
-                                    |rect, rows, stride| {
-                                        let w = usize::from(rect.right - rect.left);
-                                        put(
-                                            rect.left,
-                                            rect.top,
-                                            w,
-                                            &rows[..stride * usize::from(rect.bottom - rect.top)],
-                                            stride,
-                                            4,
-                                        );
-                                    },
-                                )
-                                .expect("the page's decoder reads wlshare's progressive tile");
                         }
                         batch::TILE_STILL => {
                             let mut source = &tile.image[..];
@@ -838,7 +807,7 @@ async fn picture_of(
                             put(tile.x, tile.y, w, &rgba, w * 4, 4);
                         }
                         other => panic!(
-                            "a tile of format {other:#x} in a test that draws PNG, progressive, still and median tiles"
+                            "a tile of format {other:#x} in a test that draws PNG, still and median tiles"
                         ),
                     }
                 }
@@ -852,47 +821,122 @@ async fn picture_of(
     (size.0, size.1, picture, formats)
 }
 
-/// A session started with wlshare's progressive tiles is sent them alone, passed:
-/// `TILE` records of their own format, every one a tile block, which the page's
-/// RemoteFX Progressive decoder reads into the desktop wlshare's lossless tiles show,
-/// once wlshare has refined them; and wlshare was asked for progressive tiles.
+/// The profile an `avc1` configuration string names: `avc1.PPCCLL`, as RFC 6381
+/// writes a sequence parameter set's profile, constraints and level.
+fn avc1_profile(decode: &str) -> u8 {
+    let hex = decode
+        .strip_prefix("avc1.")
+        .and_then(|rest| rest.get(..2))
+        .unwrap_or_else(|| panic!("the stream was announced as {decode}"));
+    u8::from_str_radix(hex, 16).unwrap_or_else(|_| panic!("the stream was announced as {decode}"))
+}
+
+/// H.264's High 4:4:4 Predictive profile (`profile_idc` 244), and High (100).
+const HIGH_444_PREDICTIVE: u8 = 244;
+const HIGH: u8 = 100;
+
+/// A session started with wlshare's video at 4:4:4 is sent that stream, passed as
+/// its video is: wlshare was asked for it at 4:4:4, the decoder the gateway reads
+/// out of its sequence parameter set is High 4:4:4 Predictive's, where the video's
+/// is High, and no tiles come. And a desktop that has stopped is still sent
+/// frames: wlshare refines the picture it was left with by frames of no damage,
+/// which reach the browser as the frames of the stream they are.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
-async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_tiles() {
+async fn a_session_started_with_video_at_444_is_sent_wlshares_stream_at_444() {
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
-    let (w, h, lossless, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+
+    /// The decoder announced to a session started with `passthrough`, and the
+    /// frames that followed its last keyframe on a desktop left alone for five
+    /// seconds. A keyframe comes again only behind a resize, the session's own
+    /// to the size it keeps: nothing else asks for one.
+    async fn stream_of(addr: SocketAddr, passthrough: &str) -> (String, usize) {
+        let cookie = common::login(addr).await;
+        let token = common::claim_session(addr, &cookie).await;
+        let mut ws = common::connect_ws(addr, &token, &cookie).await;
+        let mut view = View::new();
+        ws.send(Message::text(format!(
+            r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"{passthrough}"}}}}"#
+        )))
+        .await
+        .unwrap();
+        view.until(&mut ws, "the stream's first keyframe", |v| {
+            v.decode.is_some()
+        })
+        .await;
+        assert!(!view.tiles, "a session on the video was sent tiles");
+        let (mut after, mut resized) = (0, false);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, ws.next()).await {
+            match msg.expect("websocket receive") {
+                Message::Text(text) => {
+                    resized |= text.contains(r#""type":"resize""#);
+                    view.control(&text)
+                }
+                Message::Binary(frame) => {
+                    view.units(&frame);
+                    for record in common::batch_records(&frame) {
+                        let common::BatchRecord::Video(unit) = record else {
+                            continue;
+                        };
+                        if unit.keyframe {
+                            assert!(
+                                resized,
+                                "a keyframe on a desktop left alone, which nothing asked for"
+                            );
+                            (after, resized) = (0, false);
+                        } else {
+                            after += 1;
+                        }
+                    }
+                    ws.send(Message::text(common::paint_ack(&frame)))
+                        .await
+                        .expect("acknowledge a batch");
+                }
+                _ => {}
+            }
+        }
+        assert!(!view.tiles, "a session on the video was sent tiles");
+        (view.decode.expect("a video format was announced"), after)
+    }
+
+    let (decode, settled) = stream_of(addr, "wlshare-video-444").await;
     assert_eq!(
-        formats,
-        [zdesk::protocol::batch::TILE_PNG].into(),
-        "tiles with motion are lossless PNG while nothing moves"
+        avc1_profile(&decode),
+        HIGH_444_PREDICTIVE,
+        "the stream at 4:4:4 was announced as {decode}"
     );
-    let (pw, ph, progressive, formats) = picture_of(addr, "wlshare-tiles-progressive", 6).await;
-    assert_eq!((pw, ph), (w, h), "the same desktop");
-    assert_eq!(
-        formats,
-        [zdesk::protocol::batch::TILE_PROGRESSIVE].into(),
-        "progressive tiles alone"
-    );
-    let se: f64 = lossless
-        .iter()
-        .zip(&progressive)
-        .map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2))
-        .sum();
-    let psnr = if se == 0.0 {
-        f64::INFINITY
-    } else {
-        10.0 * (255.0f64.powi(2) * lossless.len() as f64 / se).log10()
-    };
     assert!(
-        psnr > 40.0,
-        "the progressive picture is {psnr:.1} dB from the lossless one"
+        settled >= 2,
+        "{settled} frame(s) followed the keyframe of a desktop that stopped, where wlshare settles it with two"
     );
     let logs = container.logs();
     assert!(
-        logs.contains("asked for progressive tiles up to quality"),
-        "wlshare was not asked for its progressive tiles:\n{logs}"
+        logs.contains("asked for video at 4:4:4"),
+        "wlshare was not asked for its video at 4:4:4:\n{logs}"
+    );
+    assert!(
+        !logs.contains("asked for video at 4:2:0") && !logs.contains("asked for tiles"),
+        "wlshare was asked for another picture as well:\n{logs}"
+    );
+
+    // The video, named or not, is the stream at 4:2:0, settled the same way.
+    let (decode, settled) = stream_of(addr, "wlshare-video").await;
+    assert_eq!(
+        avc1_profile(&decode),
+        HIGH,
+        "the stream at 4:2:0 was announced as {decode}"
+    );
+    assert!(
+        settled >= 2,
+        "{settled} frame(s) followed the keyframe of a desktop that stopped, where wlshare settles it with two"
+    );
+    assert!(
+        container.logs().contains("asked for video at 4:2:0"),
+        "wlshare was not asked for its video at 4:2:0:\n{}",
+        container.logs()
     );
 }
 
@@ -986,15 +1030,15 @@ async fn play_video(container: &Arc<common::Container>, pattern: &str) {
     .await;
 }
 
-/// A desktop playing a video is sent wlshare's progressive tiles a batch to an
+/// A desktop playing a video is sent wlshare's lossless tiles a batch to an
 /// update, each batch acknowledged as soon as it lands, as the fastest page would:
-/// a batch to a tile or two, as the tiles were passed once, was thousands of
+/// a batch to a record or two, as the tiles were passed once, was thousands of
 /// acknowledgments a second from the browser. Held by the records a batch carries,
-/// which a batch to an update makes the many tiles of an update over most of the
+/// which a batch to an update makes the many records of an update over most of the
 /// desktop, whatever rate the machine plays and codes it at.
 #[tokio::test]
 #[ignore = "requires Docker or Podman"]
-async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
+async fn a_moving_desktops_lossless_tiles_go_a_batch_to_an_update() {
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     play_video(&container, "snow").await;
@@ -1003,7 +1047,7 @@ async fn a_moving_desktops_progressive_tiles_go_a_batch_to_an_update() {
     let token = common::claim_session(addr, &cookie).await;
     let mut ws = common::connect_ws(addr, &token, &cookie).await;
     ws.send(Message::text(format!(
-        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"wlshare-tiles-progressive"}}}}"#
+        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"wlshare-tiles-lossless"}}}}"#
     )))
     .await
     .unwrap();

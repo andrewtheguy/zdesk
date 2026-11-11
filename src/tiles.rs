@@ -88,10 +88,6 @@ pub enum Format {
     Jpeg,
     /// A PNG, lossless.
     Png,
-    /// A RemoteFX Progressive tile block, which only wlshare's progressive tiles
-    /// send: one tile, a first pass or an upgrade, against what the page holds of
-    /// it. Nothing here codes one.
-    Progressive,
     /// A planar bitmap in wlshare's still stream, which only its lossless tiles
     /// send where the desktop is still: the rectangle's pixels, lossless, read
     /// after the stream's bodies before it. Nothing here codes one.
@@ -108,7 +104,6 @@ impl Format {
         match self {
             Self::Jpeg => crate::protocol::batch::TILE_JPEG,
             Self::Png => crate::protocol::batch::TILE_PNG,
-            Self::Progressive => crate::protocol::batch::TILE_PROGRESSIVE,
             Self::Still => crate::protocol::batch::TILE_STILL,
             Self::Median => crate::protocol::batch::TILE_MEDIAN,
         }
@@ -549,7 +544,7 @@ fn code_run(run: &Run, lossless: bool, coarse: bool, quality: u8) -> anyhow::Res
         let data = match format {
             Format::Png => png(w, h, &rgb),
             Format::Jpeg => jpeg(w, h, &rgb, quality),
-            Format::Progressive | Format::Still | Format::Median => Err(anyhow::anyhow!(
+            Format::Still | Format::Median => Err(anyhow::anyhow!(
                 "this gateway codes no {format:?} tile of its own: it is wlshare's, passed through"
             )),
         }

@@ -29,6 +29,7 @@ import { sizeFollows } from "./useRemoteDesktop.ts";
 import {
   decodesAppleH264,
   decodesRdpVideo,
+  decodesWlshare444,
   decodesWlshareH264,
 } from "./videoCodecs.ts";
 
@@ -156,6 +157,7 @@ export default function TargetPicker({
     rdpVideo: decodesRdpVideo(),
     appleH264: decodesAppleH264(),
     wlshareH264: decodesWlshareH264(),
+    wlshare444: decodesWlshare444(),
     audio: decodesAudio(),
     lossless: decodesFlac(),
     runsHevc: runnableDecoders().hevc,

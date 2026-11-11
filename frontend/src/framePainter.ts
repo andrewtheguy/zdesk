@@ -159,15 +159,13 @@ function withGpu(run: ComposedRun): Uint32Array {
 // A lossless tile's `R, G, B, A` rows, out of its batch's, by the decoder given.
 type LosslessOf = (decoder: TilesDecoder, record: TileMsg) => Uint8Array;
 
-// A tile the module decodes rather than the browser: one of wlshare's progressive
-// tiles, or one of its lossless ones, a planar bitmap in its still stream or a
-// median predictor's residuals framed alone.
+// A tile the module decodes rather than the browser: one of wlshare's lossless
+// tiles, a planar bitmap in its still stream or a median predictor's residuals
+// framed alone.
 const isLosslessTile = (
   record: TileMsg,
 ): record is TileMsg & { format: "still" | "median" } =>
   record.format === "still" || record.format === "median";
-const isModuleTile = (record: TileMsg) =>
-  record.format === "progressive" || isLosslessTile(record);
 
 export function createFramePainter(options: {
   /**
@@ -200,8 +198,8 @@ export function createFramePainter(options: {
    */
   loadStandard?: () => Promise<StandardFactory>;
   /**
-   * Where wlshare's progressive and lossless tiles are decoded: the compositor's
-   * module, loaded on the first one. Injectable for a test, as the compositor's
+   * Where wlshare's lossless tiles are decoded: the compositor's module, loaded
+   * on the first one. Injectable for a test, as the compositor's
    * is.
    */
   loadTiles?: () => Promise<TilesDecoder>;
@@ -301,15 +299,15 @@ export function createFramePainter(options: {
     regions = null;
   };
 
-  // The decoder of wlshare's progressive and lossless tiles, from the first one:
-  // what it holds of each progressive tile is what wlshare's next block of that
-  // tile is coded against, so it lives as long as the tiles do, and a
-  // `tilesStart`, whose picture wlshare sends whole again, starts it over. A tile
-  // that did not decode, or a batch dropped with tiles in it, leaves it holding
-  // what wlshare's next blocks are not coded against: it is given back, and no
-  // tile is decoded until the next `tilesStart`, which the whole picture asked
-  // for brings. A lossless tile depends on nothing, but one that did not decode
-  // is a picture short of it all the same.
+  // The decoder of wlshare's lossless tiles, from the first one: what it holds
+  // of the still stream is what wlshare's next still body continues, so it lives
+  // as long as the tiles do, and a `tilesStart`, whose picture wlshare sends
+  // whole again, starts it over. A tile that did not decode, or a batch dropped
+  // with tiles in it, leaves it holding a stream wlshare's next bodies do not
+  // continue: it is given back, and no tile is decoded until the next
+  // `tilesStart`, which the whole picture asked for brings. A moving tile
+  // depends on nothing, but one that did not decode is a picture short of it all
+  // the same.
   const loadTiles = options.loadTiles ?? (() => loadTilesDecoder());
   let tileDecoder: Promise<TilesDecoder> | null = null;
   let tileDecoderBroken = false;
@@ -738,7 +736,7 @@ export function createFramePainter(options: {
   // One tile's image, decoded by the browser off this thread as soon as its batch
   // lands: null for a record that is no tile, or a tile of no picture of tiles.
   const tileImage = (record: BatchRecord): Promise<ImageBitmap> | null => {
-    if (record.kind !== "tile" || isModuleTile(record) || !tiles) {
+    if (record.kind !== "tile" || isLosslessTile(record) || !tiles) {
       return null;
     }
     const type = `image/${record.format}`;
@@ -824,33 +822,6 @@ export function createFramePainter(options: {
     };
   };
 
-  // A tile of the module's, as `R, G, B, A` rows of its rectangle: a progressive
-  // one against what the decoder holds of it, on a desktop the canvas's size, or
-  // a lossless one, alone or in the still stream, with its batch's.
-  const decodeModuleTile = (
-    decoder: TilesDecoder,
-    record: TileMsg,
-    canvas: { width: number; height: number },
-    lossless: LosslessOf,
-  ): Uint8Array => {
-    const { format, x, y, w, h, data } = record;
-    switch (format) {
-      case "still":
-      case "median":
-        return lossless(decoder, record);
-      default:
-        return decoder.progressive(
-          canvas.width,
-          canvas.height,
-          x,
-          y,
-          w,
-          h,
-          data,
-        );
-    }
-  };
-
   // `R, G, B, A` rows put on the canvas at a rectangle.
   const putRgba = (
     ctx: PaintContext,
@@ -871,27 +842,25 @@ export function createFramePainter(options: {
       y,
     );
 
-  // A tile of the module's that did not decode, or whose decoder did not load:
-  // the decoder is broken and the whole picture asked for, once.
-  const moduleTileFailed = (record: TileMsg, born: number, error: unknown) => {
+  // A lossless tile that did not decode, or whose decoder did not load: the
+  // decoder is broken and the whole picture asked for, once.
+  const losslessTileFailed = (born: number, error: unknown) => {
     if (generation !== born || !tiles || tileDecoderBroken) {
       return;
     }
     breakTileDecoder();
-    const kind = record.format === "progressive" ? "progressive" : "lossless";
     options.onVideoNeedsKeyframe(
-      `a ${kind} tile did not decode: ${describe(error)}`,
+      `a lossless tile did not decode: ${describe(error)}`,
     );
   };
 
-  // One of wlshare's progressive tiles, decoded in its turn against what the
-  // decoder holds of the tile, or one of its lossless tiles, a planar bitmap or a
-  // median predictor's residuals decoded with the rest of its batch's, and put
-  // where it says. One that does
-  // not decode, or a decoder that does not load, leaves the canvas without it,
-  // so the whole picture is asked for, as for a tile that does not decode, and
-  // the decoder is broken until that picture starts.
-  const paintModuleTile = async (
+  // One of wlshare's lossless tiles, a planar bitmap in the still stream or a
+  // median predictor's residuals, decoded with the rest of its batch's and put
+  // where it says. One that does not decode, or a decoder that does not load,
+  // leaves the canvas without it, so the whole picture is asked for, as for a
+  // tile that does not decode, and the decoder is broken until that picture
+  // starts.
+  const paintLosslessTile = async (
     record: TileMsg,
     born: number,
     lossless: LosslessOf,
@@ -908,13 +877,9 @@ export function createFramePainter(options: {
       if (generation !== born || !tiles || !ctx || tileDecoder !== loading) {
         return;
       }
-      putRgba(
-        ctx,
-        decodeModuleTile(decoder, record, ctx.canvas, lossless),
-        record,
-      );
+      putRgba(ctx, lossless(decoder, record), record);
     } catch (error) {
-      moduleTileFailed(record, born, error);
+      losslessTileFailed(born, error);
       return;
     }
     // The desktop's own canvas is the picture again.
@@ -1233,8 +1198,8 @@ export function createFramePainter(options: {
         await paintStandard(record, born);
         return;
       case "tile":
-        if (isModuleTile(record)) {
-          await paintModuleTile(record, born, lossless);
+        if (isLosslessTile(record)) {
+          await paintLosslessTile(record, born, lossless);
         } else {
           await paintTile(record, image, born);
         }

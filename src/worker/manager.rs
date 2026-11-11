@@ -3596,8 +3596,8 @@ mod tests {
             "what a session's starter chooses is the type's to offer, and the pipeline is passed unasked: {page}"
         );
         assert!(
-            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's H.264 video passed through, wlshare's progressive tiles passed through, wlshare's tiles with motion passed through")),
-            "a wlshare target's picture is one of its three, the video where none is named: {page}"
+            page.contains(&spec("picker", "offers resize, sound, camera, microphone, wlshare's H.264 video passed through, wlshare's H.264 video at 4:4:4 passed through, wlshare's tiles with motion passed through, wlshare's lossless tiles passed through")),
+            "a wlshare target's picture is one of its four, the video where none is named: {page}"
         );
 
         // A config the gateway would refuse says so, instead of a page of
