@@ -658,7 +658,9 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
 }
 
 /// What a session started with `passthrough` shows of the desktop after `secs`:
-/// its size, its pixels as `R, G, B`, and the formats its tiles came in. Every tile
+/// its size, its pixels as `R, G, B`, the formats its tiles came in, and whether
+/// its tiles covered the whole desktop, without which pixels no tile drew are
+/// still the zeros the picture started as. Every tile
 /// is drawn as the page draws it — a PNG by its decoder, a progressive tile by the
 /// page's RemoteFX Progressive decoder in its turn, a copy from the picture — and
 /// every batch acknowledged, so wlshare keeps sending what it owes.
@@ -666,7 +668,7 @@ async fn picture_of(
     addr: SocketAddr,
     passthrough: &str,
     secs: u64,
-) -> (u16, u16, Vec<u8>, std::collections::BTreeSet<u8>) {
+) -> (u16, u16, Vec<u8>, std::collections::BTreeSet<u8>, bool) {
     use zdesk::protocol::batch;
     let cookie = common::login(addr).await;
     let token = common::claim_session(addr, &cookie).await;
@@ -678,6 +680,7 @@ async fn picture_of(
     .unwrap();
     let (mut size, mut picture, mut formats) =
         ((0u16, 0u16), Vec::new(), std::collections::BTreeSet::new());
+    let mut coverage: Option<common::Coverage> = None;
     let mut decoder = zdesk_rdp_graphics::proto::progressive::Progressive::new();
     let mut still: Option<ruzstd_decompress::decoding::FrameDecoder> = None;
     let mut frame_no = 0;
@@ -695,6 +698,7 @@ async fn picture_of(
                             msg["h"].as_u64().unwrap() as u16,
                         );
                         picture = vec![0u8; usize::from(size.0) * usize::from(size.1) * 3];
+                        coverage = Some(common::Coverage::new(size.0, size.1));
                     }
                     _ => {}
                 }
@@ -706,6 +710,10 @@ async fn picture_of(
                         continue;
                     };
                     formats.insert(tile.format);
+                    coverage
+                        .as_mut()
+                        .expect("a resize made the coverage")
+                        .add(&tile);
                     let mut put =
                         |x: u16, y: u16, w: usize, rows: &[u8], stride: usize, step: usize| {
                             for (row, src) in rows.chunks(stride).enumerate() {
@@ -849,7 +857,8 @@ async fn picture_of(
             _ => {}
         }
     }
-    (size.0, size.1, picture, formats)
+    let whole = coverage.as_ref().is_some_and(common::Coverage::whole);
+    (size.0, size.1, picture, formats, whole)
 }
 
 /// A session started with wlshare's progressive tiles is sent them alone, passed:
@@ -862,14 +871,17 @@ async fn a_session_started_with_progressive_tiles_is_sent_wlshares_progressive_t
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
-    let (w, h, lossless, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    let (w, h, lossless, formats, whole) = picture_of(addr, "wlshare-tiles-motion", 4).await;
     assert_eq!(
         formats,
         [zdesk::protocol::batch::TILE_PNG].into(),
         "tiles with motion are lossless PNG while nothing moves"
     );
-    let (pw, ph, progressive, formats) = picture_of(addr, "wlshare-tiles-progressive", 6).await;
+    assert!(whole, "the tiles with motion covered the whole desktop");
+    let (pw, ph, progressive, formats, whole) =
+        picture_of(addr, "wlshare-tiles-progressive", 6).await;
     assert_eq!((pw, ph), (w, h), "the same desktop");
+    assert!(whole, "the progressive tiles covered the whole desktop");
     assert_eq!(
         formats,
         [zdesk::protocol::batch::TILE_PROGRESSIVE].into(),
@@ -909,14 +921,16 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_still_and_median
     common::init_logging();
     let (container, vnc_port) = start_wlshare().await;
     let addr = spawn_app(vnc_port).await;
-    let (w, h, png, formats) = picture_of(addr, "wlshare-tiles-motion", 4).await;
+    let (w, h, png, formats, whole) = picture_of(addr, "wlshare-tiles-motion", 4).await;
     assert_eq!(
         formats,
         [zdesk::protocol::batch::TILE_PNG].into(),
         "tiles with motion are lossless PNG while nothing moves"
     );
-    let (lw, lh, lossless, formats) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
+    assert!(whole, "the tiles with motion covered the whole desktop");
+    let (lw, lh, lossless, formats, whole) = picture_of(addr, "wlshare-tiles-lossless", 4).await;
     assert_eq!((lw, lh), (w, h), "the same desktop");
+    assert!(whole, "the lossless tiles covered the whole desktop");
     assert_eq!(
         formats,
         [zdesk::protocol::batch::TILE_STILL].into(),
@@ -933,7 +947,7 @@ async fn a_session_started_with_lossless_tiles_is_sent_wlshares_still_and_median
     );
 
     play_video(&container, "ball").await;
-    let (_, _, _, formats) = picture_of(addr, "wlshare-tiles-lossless", 6).await;
+    let (_, _, _, formats, _) = picture_of(addr, "wlshare-tiles-lossless", 6).await;
     // What moves is the predictor's residuals; the capture may or may not catch
     // a still tile beside it.
     assert!(
