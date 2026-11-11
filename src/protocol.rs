@@ -416,7 +416,7 @@ pub enum ClientMsg {
 ///
 /// A `TILE` record is a rectangle of the desktop in the tiles this gateway codes, an
 /// image the browser decodes on its own — see [`TileUnit`]. Its format is
-/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`], [`batch::TILE_STILL`] or [`batch::TILE_MEDIAN`], and a receiver rejects any other, an empty rectangle
+/// [`batch::TILE_JPEG`], [`batch::TILE_PNG`], [`batch::TILE_PROGRESSIVE`], [`batch::TILE_STILL`] or [`batch::TILE_MEDIAN`], and a receiver rejects any other, an empty rectangle
 /// and one with no image.
 ///
 /// A `REGION` record is an access unit of one moving region's stream in wlshare's
@@ -467,18 +467,24 @@ pub mod batch {
     pub const TILE_JPEG: u8 = 0x01;
     /// A `TILE` record's image is a PNG.
     pub const TILE_PNG: u8 = 0x02;
+    /// A `TILE` record's image is one RemoteFX Progressive tile block of wlshare's
+    /// progressive tiles, of the rectangle's tile: the page decodes it in order,
+    /// keeping every tile's coefficients from one to the next
+    /// (`wlshare_proto::progressive`).
+    pub const TILE_PROGRESSIVE: u8 = 0x03;
     /// A `TILE` record's image is one of wlshare's lossless tiles where the desktop
     /// is still: the still stream's bytes of a planar bitmap of exactly the
     /// rectangle's pixels, RDP 6.0 bitmap compression with no alpha plane, colour
     /// loss or subsampling, one zstd stream across the session's still tiles that
     /// the page reads in order, a body that begins a zstd frame starting it over
     /// (`wlshare_proto::tiles`).
-    pub const TILE_STILL: u8 = 0x03;
+    pub const TILE_STILL: u8 = 0x04;
     /// A `TILE` record's image is one of wlshare's lossless tiles where the desktop
     /// moves: three zstd frames, each a plane of exactly the rectangle's pixels as
     /// a median predictor's residuals, green, red less green and blue less green,
-    /// which the page decodes alone (`wlshare_proto::tiles`).
-    pub const TILE_MEDIAN: u8 = 0x04;
+    /// which the page decodes alone, in order with the progressive ones
+    /// (`wlshare_proto::tiles`).
+    pub const TILE_MEDIAN: u8 = 0x05;
 
     /// Bytes a `REGION` record costs besides its payload.
     pub const REGION_HEADER_LEN: usize = 15;

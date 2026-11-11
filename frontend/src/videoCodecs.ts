@@ -9,14 +9,8 @@
 // H.264 is too unlikely to grey for, so having one is the answer, and a decoder
 // that refuses the stream says so in the session. wlshare's is asked, since its
 // video is the target's default picture and a browser whose decoder refuses it
-// would show nothing where another of its pictures would draw: the profile
+// would show nothing where the progressive tiles would draw: the profile
 // wlshare codes, as a doubt reads as no, a missing `VideoDecoder` among them.
-// Its video at 4:4:4 is asked apart, High 4:4:4 Predictive, which a decoder that
-// takes High may well refuse: Chrome 156 and 157 decode it, in software, having
-// no hardware decoder for it, and Safari 27.2, on a Mac and an iPhone, and
-// Firefox 160 refuse it through WebCodecs (wlshare's docs/video-performance.md,
-// "The stream at 4:4:4"). The picture is offered whatever the answer, and greyed
-// with the reason where it is no.
 //
 // An RDP host's is asked too, and the gateway is told (`rdp_video`): it is what
 // H.264 full screen needs, and all it needs, since nothing composes it, so a
@@ -25,12 +19,11 @@
 //
 // A browser without a `VideoDecoder` at all starts like any other: everything it
 // cannot decode is greyed at the picker with the reason, and what it can — the
-// gateway's tiles, a Standard Mac's Adaptive picture, wlshare's lossless tiles
+// gateway's tiles, a Standard Mac's Adaptive picture, wlshare's progressive tiles
 // and an RDP host's pipeline without H.264, each decoded by the page — still
 // starts. So the answers say no for it, and the picker greys by them
-// (targetChoices.ts): the Mac's H.264, and wlshare's video, at either chroma,
-// and its tiles with motion. The gateway is not told: it is sent no choice the
-// picker greys.
+// (targetChoices.ts): the Mac's H.264, and wlshare's video and its tiles with
+// motion. The gateway is not told: it is sent no choice the picker greys.
 
 /**
  * wlshare's H.264 of a 1080p desktop at the 60 fps its level is figured at
@@ -38,14 +31,6 @@
  * a VA-API encoder both code.
  */
 const WLSHARE_PROBE = "avc1.64002A";
-
-/**
- * wlshare's H.264 at 4:4:4, of the same desktop at the same level: High 4:4:4
- * Predictive, which libx264 codes on every host. A larger desktop's names a
- * higher level, as its 4:2:0 stream's does, which a decoder that takes this one
- * and refuses that says of in the session.
- */
-const WLSHARE_444_PROBE = "avc1.F4002A";
 
 /**
  * An RDP host's H.264, as a Windows 11 host's sequence parameter set names it:
@@ -57,7 +42,6 @@ const RDP_PROBE = "avc1.4d4020";
 interface Answers {
   appleH264: boolean;
   wlshareH264: boolean;
-  wlshare444: boolean;
   rdpVideo: boolean;
 }
 
@@ -77,15 +61,13 @@ export async function askVideoCodecs(): Promise<void> {
   if (answers !== null) {
     return;
   }
-  const [wlshare, wlshare444, rdp] = await Promise.all([
+  const [wlshare, rdp] = await Promise.all([
     decodes(WLSHARE_PROBE),
-    decodes(WLSHARE_444_PROBE),
     decodes(RDP_PROBE),
   ]);
   answers = {
     appleH264: typeof VideoDecoder !== "undefined",
     wlshareH264: wlshare,
-    wlshare444,
     rdpVideo: rdp,
   };
 }
@@ -109,11 +91,6 @@ export function decodesAppleH264(): boolean {
 /** Whether its decoder said it takes wlshare's H.264. */
 export function decodesWlshareH264(): boolean {
   return answered().wlshareH264;
-}
-
-/** Whether its decoder said it takes wlshare's H.264 at 4:4:4. */
-export function decodesWlshare444(): boolean {
-  return answered().wlshare444;
 }
 
 /** Whether its decoder said it takes an RDP host's H.264, as video. */

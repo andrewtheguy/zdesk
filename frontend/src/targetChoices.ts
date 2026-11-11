@@ -33,13 +33,12 @@
 //   the Adaptive picture is greyed under it.
 // - A `wlshare` target's picture is one of four, all wlshare's own and passed
 //   through, which their labels leave unsaid, chosen in two kinds: adaptive, its
-//   H.264 of the whole desktop at 4:2:0 or, crisper, at 4:4:4 (beta), both fitted
-//   to the link; or lossless, its tiles with motion, which settle to lossless, or
-//   its lossless tiles, exact throughout, both for a LAN and not for a phone or
-//   tablet: see `pictureOptions` and `PICTURE_KINDS`. The video until another is
-//   chosen, each greyed in a browser that cannot decode it: the video and the
-//   tiles' H.264 where there is no `VideoDecoder`, the video at 4:4:4 where the
-//   decoder does not take High 4:4:4 Predictive, the lossless tiles where the
+//   H.264 of the whole desktop or its progressive tiles, both paced to the link;
+//   or lossless, its tiles with motion, which settle to lossless, or its lossless
+//   tiles, exact throughout, both for a LAN and not for a phone or tablet: see
+//   `pictureOptions` and `PICTURE_KINDS`. The video until another is chosen, each
+//   greyed in a browser that cannot decode it: the video and the tiles' H.264
+//   where there is no `VideoDecoder`, the progressive and lossless tiles where the
 //   page cannot compose an RDP host's pipeline.
 // - Sound is ticked or not where the target offers it, and a ticked one is Opus
 //   or lossless: see `soundRow`. Ticking takes Opus. A browser with no audio
@@ -60,7 +59,7 @@
 // - A target that can only be passed, in a browser that cannot take it, cannot
 //   start, and Start says so before the remote is dialled: an RDP host's
 //   pipeline in a page that cannot compose it, and a `wlshare` target's pictures,
-//   all four, in a browser with no `VideoDecoder` and no compositor.
+//   all three, in a browser with no `VideoDecoder` and no compositor.
 // - Which decoder takes the picture is no choice: the browser's own decodes the
 //   H.264, and the page a Mac's passed HEVC where the gateway serves the decoder
 //   for it, in WebAssembly wherever the browser's own decoder does not take it
@@ -73,8 +72,8 @@ export type Passthrough =
   | "apple-h264"
   | "apple-adaptive"
   | "wlshare-video"
-  | "wlshare-video-444"
   | "wlshare-tiles-motion"
+  | "wlshare-tiles-progressive"
   | "wlshare-tiles-lossless";
 
 /** One entry of GET /api/targets. */
@@ -108,8 +107,7 @@ export interface TargetInfo {
   /**
    * The streams this target can pass, in the picker's order: none, an RDP host's
    * graphics pipeline, a High Performance Mac's HEVC and its H.264, a Standard
-   * Mac's Adaptive picture, or wlshare's video at either chroma and its two
-   * tiles.
+   * Mac's Adaptive picture, or wlshare's video and its three tiles.
    */
   passthroughs: Passthrough[];
   /** Whether where the second virtual display sits is a choice. */
@@ -171,8 +169,7 @@ export interface Choices {
   audio: Sound;
   /**
    * The stream of the target's to pass, where which is a choice: a Mac's HEVC,
-   * its H.264 or its Adaptive picture, or wlshare's video, at 4:2:0 or 4:4:4,
-   * or one of its tiles.
+   * its H.264 or its Adaptive picture, or wlshare's video or one of its tiles.
    * Null where none is passed: a target whose picture the gateway codes, a
    * Standard Mac's whose tiles were chosen over its Adaptive picture, or one that
    * passes a stream in every session, which is not named.
@@ -215,11 +212,6 @@ export interface Abilities {
    * moving regions, at High profile, which wlshare codes (videoCodecs.ts).
    */
   wlshareH264: boolean;
-  /**
-   * Whether its `VideoDecoder` takes wlshare's video at 4:4:4, High 4:4:4
-   * Predictive, which libx264 codes on every host (videoCodecs.ts).
-   */
-  wlshare444: boolean;
   /** Whether this browser has an audio decoder, which every sound needs. */
   audio: boolean;
   /**
@@ -379,14 +371,18 @@ const RDP_GRAPHICS: PassedNote & { blocked: string } = {
 const NO_COMPOSING =
   "This browser cannot compose the host's graphics pipeline: that needs WebGL 2 and a cross-origin isolated page.";
 
-// Why wlshare's lossless tiles are greyed: the module that composes an RDP
+// Why wlshare's progressive tiles are greyed: the module that composes an RDP
 // host's pipeline decodes them, and this page cannot run it.
+const NO_PROGRESSIVE =
+  "This page cannot decode wlshare's progressive tiles: that needs WebGL 2 and a cross-origin isolated page.";
+
+// Why wlshare's lossless tiles are greyed: the same module decodes them.
 const NO_LOSSLESS =
   "This page cannot decode wlshare's lossless tiles: that needs WebGL 2 and a cross-origin isolated page.";
 
 // Why a `wlshare` target cannot start in a browser that takes neither picture.
 const NO_WLSHARE_PICTURE =
-  "This browser decodes none of wlshare's pictures: its H.264 video, at 4:2:0 or 4:4:4, the H.264 of its tiles with motion, or its lossless tiles, which need WebGL 2 and a cross-origin isolated page. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
+  "This browser decodes none of wlshare's pictures: its H.264 video, its progressive or lossless tiles, which need WebGL 2 and a cross-origin isolated page, or the H.264 of its tiles with motion. Use a browser that does, or a plain vnc target for the same server, which is sent tiles.";
 
 // Why a High Performance Mac cannot start in a browser that takes neither picture.
 const NO_APPLE_PICTURE =
@@ -407,7 +403,7 @@ function noHevc(target: TargetInfo): string {
  * The ways a Mac's or a wlshare desktop's picture can reach this browser, in the
  * order the picker shows them: a High Performance Mac's HEVC passed through, and
  * its H.264; a Standard Mac's Adaptive picture passed through, and the gateway's
- * tiles of its Full quality; wlshare's video, its video at 4:4:4, its tiles
+ * tiles of its Full quality; wlshare's video, its progressive tiles, its tiles
  * with motion and its lossless tiles, all passed through and labelled without
  * saying so.
  *
@@ -420,11 +416,9 @@ function noHevc(target: TargetInfo): string {
  * - The Mac's Adaptive picture is never greyed, which every page decodes in WebAssembly
  *   (standardPicture.ts), nor the gateway's tiles, images every page decodes.
  * - wlshare's video and its tiles with motion, whose regions are H.264, are
- *   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its video
- *   at 4:4:4 in one whose decoder does not take High 4:4:4 Predictive, which is
- *   asked apart and is a reason to grey it, never to leave it out; its lossless
- *   tiles in one that cannot compose an RDP host's pipeline, whose module
- *   decodes them.
+ *   greyed in a browser with no `VideoDecoder`, as the Mac's H.264 is; its
+ *   progressive and lossless tiles in one that cannot compose an RDP host's
+ *   pipeline, whose module decodes them.
  */
 function pictureOptions(
   target: TargetInfo,
@@ -458,19 +452,17 @@ function pictureOptions(
       value: "wlshare-video",
       label: "Video",
       note: abilities.wlshareH264
-        ? "wlshare's H.264 of the whole desktop at 4:2:0, fitted to this browser's link: a slower link gets a coarser picture, then fewer frames, and the picture is refined once the desktop stops. Light on the host's processor, and coded by its hardware encoder where it has one, but coloured text can be less crisp. For any link; never lossless."
+        ? "wlshare's H.264 of the whole desktop, fitted to this browser's link: a slower link gets a coarser picture, then fewer frames, and the picture is refined once the desktop stops. Light on the host's processor, and coded by its hardware encoder where it has one, but text can be less crisp. For any link; never lossless."
         : "This browser has no video decoder for the H.264 of wlshare's video.",
       disabled: !abilities.wlshareH264,
     },
-    "wlshare-video-444": {
-      value: "wlshare-video-444",
-      label: "Crisp video (beta)",
-      note: abilities.wlshare444
-        ? "wlshare's H.264 of the whole desktop at 4:4:4, a colour sample for every pixel, so coloured text stays crisp where the video's 4:2:0 blurs it. Its quality and frame rate follow this browser's link as the video's do, and it is refined once the desktop stops. Coded by libx264 on every host, one with a hardware encoder too, and decoded in software by the browsers that take it. For any link; never lossless."
-        : abilities.wlshareH264
-          ? "This browser's video decoder does not take H.264 at 4:4:4 (High 4:4:4 Predictive), which wlshare's crisp video is. Chrome's does, in software; Safari's and Firefox's do not."
-          : "This browser has no video decoder for the H.264 of wlshare's crisp video.",
-      disabled: !abilities.wlshare444,
+    "wlshare-tiles-progressive": {
+      value: "wlshare-tiles-progressive",
+      label: "Tiles (alpha)",
+      note: abilities.rdpGraphics
+        ? "wlshare's tiles as a Windows host draws without H.264: every tile coarse first and refined once still, what moves sent as the change from what this page holds, a slower link getting coarser first passes, then fewer frames. Crisper text than the video, for more of the host's processor, coded in software. For a link that is not always wide. Decoded by this page, with no video decoder; never lossless."
+        : NO_PROGRESSIVE,
+      disabled: !abilities.rdpGraphics,
     },
     "wlshare-tiles-motion": {
       value: "wlshare-tiles-motion",
@@ -507,8 +499,8 @@ const PICTURE_KINDS: {
 }[] = [
   {
     label: "Adaptive",
-    note: "Fitted to this browser's link, a slower link getting a coarser picture and then fewer frames: wlshare's video, or its crisp video, which keeps coloured text sharp. Never lossless.",
-    pictures: ["wlshare-video", "wlshare-video-444"],
+    note: "Fitted to this browser's link, a slower link getting a coarser picture and then fewer frames: wlshare's video, or its tiles. Never lossless.",
+    pictures: ["wlshare-video", "wlshare-tiles-progressive"],
   },
   {
     label: "Lossless (requires high bandwidth)",

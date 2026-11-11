@@ -1,9 +1,8 @@
 // What the page reads of the browser's video decoding: any `VideoDecoder` is
-// offered the Mac's H.264 unasked, wlshare's only where its decoder takes the
-// profile wlshare codes, its video at 4:4:4 only where it takes that profile, asked
-// apart, an RDP host's as video only where its decoder takes it, and a browser
-// with none is offered none; and the answers are read once, and not before they
-// are asked.
+// offered the Mac's H.264 unasked, wlshare's only where its decoder takes both
+// profiles wlshare codes, an RDP host's as video only where its decoder takes it,
+// and a browser with none is offered none; and the answers are read once, and not
+// before they are asked.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -21,7 +20,6 @@ const {
   askVideoCodecs,
   decodesAppleH264,
   decodesRdpVideo,
-  decodesWlshare444,
   decodesWlshareH264,
   resetVideoCodecsForTests,
 } = await import("./videoCodecs.ts");
@@ -43,12 +41,11 @@ function decoder(takes: (codec: string) => boolean | "throws"): string[] {
   return asked;
 }
 
-test("wlshare's H.264 is asked in its profile at each chroma, and an RDP host's", async () => {
+test("wlshare's H.264 is asked in its profile, and an RDP host's", async () => {
   const asked = decoder(() => true);
   await askVideoCodecs();
-  assert.deepEqual(asked.sort(), ["avc1.4d4020", "avc1.64002A", "avc1.F4002A"]);
+  assert.deepEqual(asked.sort(), ["avc1.4d4020", "avc1.64002A"]);
   assert.equal(decodesWlshareH264(), true);
-  assert.equal(decodesWlshare444(), true);
   assert.equal(decodesAppleH264(), true);
   assert.equal(decodesRdpVideo(), true);
 });
@@ -68,26 +65,6 @@ test("a decoder that refuses wlshare's profile, or doubts it, is offered no wlsh
   decoder(() => "throws");
   await askVideoCodecs();
   assert.equal(decodesWlshareH264(), false);
-  assert.equal(decodesWlshare444(), false);
-});
-
-test("a decoder that takes High and refuses High 4:4:4 Predictive is offered wlshare's video at 4:2:0 alone", async () => {
-  // Safari's and Firefox's answer through WebCodecs.
-  decoder((codec) => codec !== "avc1.F4002A");
-  await askVideoCodecs();
-  assert.equal(decodesWlshareH264(), true);
-  assert.equal(decodesWlshare444(), false);
-  assert.equal(decodesRdpVideo(), true);
-  // Each answer is its own profile's: one says nothing of the other.
-  decoder((codec) => codec === "avc1.F4002A");
-  await askVideoCodecs();
-  assert.equal(decodesWlshare444(), true);
-  assert.equal(decodesWlshareH264(), false);
-  // A reply that does not say yes is a no.
-  resetVideoCodecsForTests();
-  globals.VideoDecoder = { isConfigSupported: async () => ({}) };
-  await askVideoCodecs();
-  assert.equal(decodesWlshare444(), false);
 });
 
 test("a browser with no VideoDecoder is offered no H.264", async () => {
@@ -96,7 +73,6 @@ test("a browser with no VideoDecoder is offered no H.264", async () => {
   await askVideoCodecs();
   assert.equal(decodesAppleH264(), false);
   assert.equal(decodesWlshareH264(), false);
-  assert.equal(decodesWlshare444(), false);
   assert.equal(decodesRdpVideo(), false);
 });
 
@@ -105,7 +81,6 @@ test("the answers are read once, and not before they are asked", async () => {
   globals.VideoDecoder = undefined;
   assert.throws(() => decodesAppleH264(), /before askVideoCodecs/);
   assert.throws(() => decodesWlshareH264(), /before askVideoCodecs/);
-  assert.throws(() => decodesWlshare444(), /before askVideoCodecs/);
   await askVideoCodecs();
   globals.VideoDecoder = {
     isConfigSupported: async () => ({ supported: true }),
