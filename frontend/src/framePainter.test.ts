@@ -1847,12 +1847,13 @@ test("a malformed batch ends a Mac's own picture", async () => {
 });
 
 // A batch of TILE records, transcribed from `TileUnit::write_record` in
-// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a still lossless
-// tile's planar bitmap in the still stream, 4 a moving one's median predictor's
-// residuals), x, y, w and h as u16, a u32 length, the image, little-endian.
+// src/protocol.rs: op 0x06, the format (1 JPEG, 2 PNG, 3 a progressive tile, 4
+// a still lossless tile's planar bitmap in the still stream, 5 a moving one's
+// median predictor's residuals), x, y, w and h as u16, a u32 length, the image,
+// little-endian.
 function tileFrame(
   tiles: {
-    format: 1 | 2 | 3 | 4;
+    format: 1 | 2 | 3 | 4 | 5;
     at: [number, number, number, number];
     image: number[];
   }[],
@@ -1942,7 +1943,7 @@ test("a tile that does not decode asks for the whole picture, and the rest are d
   assert.match(videoKeyframeAsks[0], /a tile did not decode/);
 });
 
-test("wlshare's lossless tiles are decoded a batch at once by one decoder and put where they say in wire order, and a new picture starts it over", async () => {
+test("wlshare's progressive tiles are decoded in wire order by one decoder and put where they say, and a new picture starts it over", async () => {
   const put: string[] = [];
   const ctx = {
     canvas: { width: 100, height: 80 },
@@ -1972,11 +1973,20 @@ test("wlshare's lossless tiles are decoded a batch at once by one decoder and pu
       made += 1;
       await new Promise((resolve) => setTimeout(resolve, 10));
       return {
+        progressive(width, height, x, y, w, h, block) {
+          calls.push(`${width}x${height} ${x},${y} ${w}x${h} [${block[0]}]`);
+          if (block[0] === 0xee) {
+            throw new Error("not a tile block");
+          }
+          const rgba = new Uint8Array(w * h * 4);
+          rgba[0] = block[0];
+          return rgba;
+        },
         lossless(batch) {
           calls.push(
-            batch
+            `lossless ${batch
               .map(({ kind, w, h, body }) => `${kind} ${w}x${h} [${body[0]}]`)
-              .join(", "),
+              .join(", ")}`,
           );
           if (batch.some(({ body }) => body[0] === 0xee)) {
             throw new Error("not a lossless tile");
@@ -2006,64 +2016,59 @@ test("wlshare's lossless tiles are decoded a batch at once by one decoder and pu
 
   try {
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [1] }]));
-    assert.deepEqual(put, [], "a lossless tile before the tiles' start");
+    assert.deepEqual(put, [], "a progressive tile before the tiles' start");
     assert.equal(made, 0);
     p.startTiles();
-    // The decoder loads on the first. A batch's lossless tiles are decoded by
-    // the module together, a median predictor's residuals (format 4) or in the
-    // still stream (format 3), in their wire order, and each put where it says
-    // in its turn among the rest, a PNG the browser decodes between them.
+    // The decoder loads on the first, and each waits its turn behind it.
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 100, 64], image: [1] },
+        { format: 3, at: [0, 0, 64, 64], image: [1] },
         { format: 3, at: [64, 64, 36, 16], image: [2] },
         { format: 2, at: [0, 64, 64, 16], image: [3] },
         { format: 3, at: [0, 0, 64, 64], image: [4] },
       ]),
     );
     assert.deepEqual(calls, [
-      "median 100x64 [1], still 36x16 [2], still 64x64 [4]",
+      "100x80 0,0 64x64 [1]",
+      "100x80 64,64 36x16 [2]",
+      "100x80 0,0 64x64 [4]",
     ]);
     assert.deepEqual(put, [
-      "1 100x64 at 0,0",
+      "1 64x64 at 0,0",
       "2 36x16 at 64,64",
       "an image",
       "4 64x64 at 0,0",
     ]);
-    // The next batch's go to the same decoder, which holds the still stream.
-    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [5] }]));
-    assert.equal(calls.at(-1), "still 64x64 [5]");
-    assert.equal(put.at(-1), "5 64x64 at 0,0");
     assert.equal(made, 1, "one decoder for the picture");
-    // A batch that does not decode asks for the whole picture once and gives
-    // the decoder back: what it holds of the still stream is not what wlshare's
-    // next bodies continue, so none is decoded, in this batch or the next,
-    // until the picture starts over.
+    // One that does not decode asks for the whole picture once and gives the
+    // decoder back: what it holds is not what wlshare's next blocks are coded
+    // against, so none is decoded, in this batch or the next, until the picture
+    // starts over.
     const decoded = calls.length;
     await p.draw(
       tileFrame([
-        { format: 4, at: [0, 0, 64, 64], image: [0xee] },
-        { format: 3, at: [64, 0, 36, 64], image: [6] },
+        { format: 3, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 3, at: [64, 0, 36, 64], image: [5] },
       ]),
     );
     await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [7] }]));
     await waited(0);
     assert.deepEqual(
       calls.slice(decoded),
-      ["median 64x64 [238], still 36x64 [6]"],
+      ["100x80 0,0 64x64 [238]"],
       "nothing decoded after the failure",
     );
-    assert.equal(put.at(-1), "5 64x64 at 0,0");
+    assert.equal(put.at(-1), "4 64x64 at 0,0");
     assert.equal(videoKeyframeAsks.length, 1);
-    assert.match(videoKeyframeAsks[0], /a lossless tile did not decode/);
+    assert.match(videoKeyframeAsks[0], /a progressive tile did not decode/);
     assert.equal(closed, 1, "the decoder given back at the failure");
     assert.equal(made, 1);
     // The picture that starts over makes a decoder again at the next tile.
     p.startTiles();
-    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [8] }]));
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [6] }]));
     assert.equal(made, 2);
-    assert.equal(put.at(-1), "8 64x64 at 0,0");
-    // A batch dropped malformed may have held bodies the decoder never saw: it
+    assert.equal(put.at(-1), "6 64x64 at 0,0");
+    // A batch dropped malformed may have held blocks the decoder never saw: it
     // is given back the same way, until the next start.
     await p.draw(
       new Uint8Array([0x02, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0x06, 0x03])
@@ -2071,25 +2076,45 @@ test("wlshare's lossless tiles are decoded a batch at once by one decoder and pu
     );
     await waited(0);
     assert.equal(closed, 2, "the decoder given back at the dropped batch");
-    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [8] }]));
     assert.equal(made, 2, "no decoder made before the start");
-    assert.equal(put.at(-1), "8 64x64 at 0,0");
+    assert.equal(put.at(-1), "6 64x64 at 0,0");
     p.startTiles();
-    await p.draw(tileFrame([{ format: 4, at: [0, 0, 64, 64], image: [10] }]));
-    assert.equal(put.at(-1), "10 64x64 at 0,0");
+    await p.draw(tileFrame([{ format: 3, at: [0, 0, 64, 64], image: [9] }]));
+    assert.equal(put.at(-1), "9 64x64 at 0,0");
     assert.equal(made, 3);
-    // A failure is asked about once a batch, its tiles after the first not
-    // asked again.
+    // A batch's lossless tiles are decoded by the same module, together, a
+    // median predictor's residuals or in the still stream, and each put where it
+    // says, in its turn among the rest.
+    await p.draw(
+      tileFrame([
+        { format: 5, at: [0, 0, 100, 64], image: [10] },
+        { format: 3, at: [0, 64, 64, 16], image: [11] },
+        { format: 4, at: [64, 64, 36, 16], image: [12] },
+      ]),
+    );
+    assert.deepEqual(calls.slice(-2), [
+      "lossless median 100x64 [10], still 36x16 [12]",
+      "100x80 0,64 64x16 [11]",
+    ]);
+    assert.deepEqual(put.slice(-3), [
+      "10 100x64 at 0,0",
+      "11 64x16 at 0,64",
+      "12 36x16 at 64,64",
+    ]);
+    assert.equal(made, 3, "the one decoder");
+    // And a batch that does not decode asks for the whole picture once, as a
+    // progressive tile does, its tiles after the first not asked again.
     const asked = videoKeyframeAsks.length;
     const tried = calls.length;
     await p.draw(
       tileFrame([
-        { format: 3, at: [0, 0, 64, 64], image: [0xee] },
-        { format: 4, at: [64, 0, 36, 64], image: [11] },
+        { format: 5, at: [0, 0, 64, 64], image: [0xee] },
+        { format: 4, at: [64, 0, 36, 64], image: [13] },
       ]),
     );
     assert.deepEqual(calls.slice(tried), [
-      "still 64x64 [238], median 36x64 [11]",
+      "lossless median 64x64 [238], still 36x64 [13]",
     ]);
     assert.equal(videoKeyframeAsks.length, asked + 1);
     assert.match(

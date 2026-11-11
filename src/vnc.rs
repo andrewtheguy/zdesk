@@ -3100,26 +3100,23 @@ struct Listing {
     /// The encodings alone, for a desktop past the ceiling.
     plain: Vec<i32>,
     /// The same with wlshare's picture and the plan it is asked for at their head:
-    /// its video ([`with_wlshare_video`]), at 4:4:4 for a plan that asks for that,
-    /// or its tiles for a plan that asks for them ([`with_wlshare_tiles`]).
+    /// its video ([`with_wlshare_video`]), or its tiles for a plan that asks for them
+    /// ([`with_wlshare_tiles`]).
     wlshare: Vec<i32>,
 }
 
 impl Listing {
     #[cfg(feature = "wlshare")]
     fn new(plain: Vec<i32>, plan: RenderPlan) -> Self {
-        use wlshare_proto::video::Chroma;
         let wlshare = match plan.wlshare_tiles {
             Some(tiles) => with_wlshare_tiles(&plain, tiles),
-            None if plan.wlshare_444 => with_wlshare_video(&plain, Chroma::Yuv444),
-            None => with_wlshare_video(&plain, Chroma::Yuv420),
+            None => with_wlshare_video(&plain),
         };
         Self { plain, wlshare }
     }
 
     /// Whether wlshare's picture is listed for a desktop of this size: only within
-    /// the video ceiling. The video is a stream of the whole desktop, at either
-    /// chroma, and one past the
+    /// the video ceiling. The video is a stream of the whole desktop, and one past the
     /// ceiling is not video; the tiles' moving regions are streams up to the whole
     /// desktop, so a desktop within it is what holds every region to it. Past it the
     /// desktop comes as ZRLE, held or refused, and the read loop lists the encoding
@@ -3147,13 +3144,15 @@ impl Listing {
 }
 
 /// `encodings` with wlshare's tiles encoding ahead of them, and beside it which
-/// tiles they are to be: nothing for its tiles with motion, the encoding alone,
-/// and `WLSL` for its lossless tiles.
+/// tiles they are to be: `WLSD` for its tiles with motion, which hold wlshare's
+/// dial rather than walking it, `WLSL` for its lossless tiles; its progressive
+/// tiles walk, and name none.
 #[cfg(feature = "wlshare")]
 fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> Vec<i32> {
     use crate::config::WlshareTiles;
     use wlshare_proto::tiles::TilesPicture;
     let picture = match tiles {
+        WlshareTiles::Progressive => TilesPicture::Progressive,
         WlshareTiles::Motion => TilesPicture::Held,
         WlshareTiles::Lossless => TilesPicture::Lossless,
     };
@@ -3164,11 +3163,10 @@ fn with_wlshare_tiles(encodings: &[i32], tiles: crate::config::WlshareTiles) -> 
 
 /// `encodings` with wlshare's video encoding ahead of them, where a list read as a
 /// preference puts what it would rather have — wlshare takes it wherever it is —
-/// and beside it the stream's chroma, `WLS4` for 4:4:4 and nothing for 4:2:0,
-/// which is all a list says of it: there is one way to code the stream, wlshare's.
+/// and nothing beside it: there is one way to code the stream, wlshare's.
 #[cfg(feature = "wlshare")]
-fn with_wlshare_video(encodings: &[i32], chroma: wlshare_proto::video::Chroma) -> Vec<i32> {
-    let mut listed = chroma.encodings();
+fn with_wlshare_video(encodings: &[i32]) -> Vec<i32> {
+    let mut listed = vec![ENCODING_VIDEO];
     listed.extend_from_slice(encodings);
     listed
 }
@@ -6615,12 +6613,9 @@ async fn read_rect<R: AsyncRead + Unpin>(
         {
             payload = Payload::Zlib
         }
-        // A frame of wlshare's video, which is the whole desktop, at the chroma the
-        // list asked for: passed to the browser untouched, or dropped while the
-        // desktop is past the ceiling, until the list the read loop sends without the
-        // encoding brings the desktop again as ZRLE. A frame may follow no change of
-        // the desktop: wlshare refines a picture that has stopped with frames of no
-        // damage, which are frames of the stream like any other.
+        // A frame of wlshare's video, which is the whole desktop: passed to the browser
+        // untouched, or dropped while the desktop is past the ceiling, until the list
+        // the read loop sends without the encoding brings the desktop again as ZRLE.
         #[cfg(feature = "wlshare")]
         ENCODING_VIDEO
             if shared
@@ -6650,8 +6645,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
         }
         // A rectangle of wlshare's tiles: a PNG of it, a frame of a moving region's
         // stream over it, that stream's end, a copy of what the browser holds
-        // elsewhere, a planar bitmap in the still stream or a median predictor's
-        // residuals, each passed to the browser untouched.
+        // elsewhere, a progressive tile, a planar bitmap in the still stream or a
+        // median predictor's residuals, each passed to the browser untouched.
         // Past the ceiling, those wlshare sent of the resized desktop before the list
         // without them reached it are dropped while the picture is held, as the video's
         // are, and refused in a session that sized the remote; the list it answers
@@ -6685,6 +6680,7 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 TileHeader::Png { len }
                 | TileHeader::Start { len, .. }
                 | TileHeader::Frame { len, .. }
+                | TileHeader::Progressive { len }
                 | TileHeader::Still { len }
                 | TileHeader::Median { len } => len,
                 TileHeader::End { .. }
@@ -6718,6 +6714,25 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 // its size inside the desktop: the page decodes it there alone.
                 TileHeader::Median { .. } => {
                     sink.pass_tile(x, y, w, h, crate::tiles::Format::Median, body)
+                        .await?
+                }
+                // One tile on the grid, cut by the desktop's edge, and the block's own
+                // tile the rectangle's: the page decodes it there against what it holds.
+                TileHeader::Progressive { .. } => {
+                    let tile = wlshare_proto::tiles::TILE;
+                    let whole = |at: u16, side: u16| tile.min(side - at);
+                    anyhow::ensure!(
+                        x % tile == 0
+                            && y % tile == 0
+                            && (w, h) == (whole(x, size.0), whole(y, size.1)),
+                        "server sent a progressive tile of {w}x{h}+{x}+{y}, not one {tile}x{tile} tile on the grid"
+                    );
+                    let cell = wlshare_proto::progressive::tile_of(&body);
+                    anyhow::ensure!(
+                        cell == Some((x / tile, y / tile)),
+                        "server sent a progressive tile at {x},{y} whose block is {cell:?}, not that tile"
+                    );
+                    sink.pass_tile(x, y, w, h, crate::tiles::Format::Progressive, body)
                         .await?
                 }
                 TileHeader::Start { stream, .. } => {
@@ -10208,31 +10223,21 @@ mod tests {
         assert!(plain.contains(&ENCODING_ZRLE));
     }
 
-    /// wlshare's video is asked for by its encoding alone, at the head of the list,
-    /// and at 4:4:4 with `WLS4` beside it: the chroma is all a list says of the
-    /// stream, which wlshare has one way to code.
+    /// wlshare's video is asked for by its encoding alone, at the head of the list:
+    /// there is one way to code it, wlshare's.
     #[cfg(feature = "wlshare")]
     #[test]
-    fn the_video_asked_of_wlshare_is_its_encoding_and_its_chroma() {
-        use wlshare_proto::video::Chroma;
+    fn the_video_asked_of_wlshare_is_its_encoding_alone() {
         assert_eq!(ENCODING_VIDEO, i32::from_be_bytes(*b"WLSV"));
         assert_eq!(
-            wlshare_proto::ENCODING_VIDEO_444,
-            i32::from_be_bytes(*b"WLS4")
-        );
-        assert_eq!(
-            with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY], Chroma::Yuv420),
+            with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY]),
             [ENCODING_VIDEO, ENCODING_ZRLE, ENCODING_DENSITY]
-        );
-        assert_eq!(
-            with_wlshare_video(&[ENCODING_ZRLE, ENCODING_DENSITY], Chroma::Yuv444),
-            [ENCODING_VIDEO, 0x574c_5334, ENCODING_ZRLE, ENCODING_DENSITY]
         );
     }
 
-    /// A plan that asks for wlshare's tiles lists them in place of its video, alone
-    /// for its tiles with motion and with `WLSL` beside them for its lossless ones,
-    /// and off the list past the ceiling as the video is, at either chroma: a moving
+    /// A plan that asks for wlshare's tiles lists them in place of its video, with
+    /// `WLSD` beside its tiles with motion, and off the list past the ceiling as the
+    /// video is: a moving
     /// region may be the whole desktop.
     #[cfg(feature = "wlshare")]
     #[test]
@@ -10240,10 +10245,7 @@ mod tests {
         use crate::config::RenderPlan;
         assert_eq!(ENCODING_TILES, i32::from_be_bytes(*b"WLST"));
         let rest = vec![ENCODING_ZRLE, ENCODING_DENSITY];
-        assert_eq!(
-            wlshare_proto::ENCODING_LOSSLESS,
-            i32::from_be_bytes(*b"WLSL")
-        );
+        assert_eq!(wlshare_proto::ENCODING_HELD, i32::from_be_bytes(*b"WLSD"));
         use crate::config::WlshareTiles;
         let tiles = RenderPlan {
             apple_media: false,
@@ -10256,20 +10258,30 @@ mod tests {
             rdp_video: false,
             rdp_small_cache: false,
             wlshare: true,
-            wlshare_444: false,
             wlshare_tiles: Some(WlshareTiles::Motion),
         };
         let lists = Listing::new(rest.clone(), tiles);
         assert_eq!(
             lists.listed((1280, 800)),
-            [ENCODING_TILES, ENCODING_ZRLE, ENCODING_DENSITY],
-            "with motion: the encoding alone"
+            [ENCODING_TILES, 0x574c_5344, ENCODING_ZRLE, ENCODING_DENSITY],
+            "with motion: WLSD beside it"
         );
-        assert!(lists.picture(ENCODING_TILES));
         assert_eq!(
             lists.listed((7680, 4320)),
             rest,
             "the tiles past the ceiling"
+        );
+        let progressive = Listing::new(
+            rest.clone(),
+            RenderPlan {
+                wlshare_tiles: Some(WlshareTiles::Progressive),
+                ..tiles
+            },
+        );
+        assert_eq!(
+            progressive.listed((1280, 800)),
+            [ENCODING_TILES, ENCODING_ZRLE, ENCODING_DENSITY],
+            "progressive: no WLSD"
         );
         let lossless = Listing::new(
             rest.clone(),
@@ -10292,43 +10304,12 @@ mod tests {
                 ..tiles
             },
         );
-        assert_eq!(
-            video.listed((1280, 800)),
-            [ENCODING_VIDEO, ENCODING_ZRLE, ENCODING_DENSITY],
-            "the video: the encoding alone"
-        );
+        assert_eq!(video.listed((1280, 800))[0], ENCODING_VIDEO);
         assert_eq!(
             video.listed((7680, 4320)),
             rest,
             "the video past the ceiling"
         );
-
-        let crisp = Listing::new(
-            rest.clone(),
-            RenderPlan {
-                wlshare_444: true,
-                wlshare_tiles: None,
-                ..tiles
-            },
-        );
-        assert_eq!(
-            crisp.listed((1280, 800)),
-            [ENCODING_VIDEO, 0x574c_5334, ENCODING_ZRLE, ENCODING_DENSITY],
-            "the video at 4:4:4: WLS4 beside it"
-        );
-        assert!(crisp.picture(ENCODING_VIDEO) && !crisp.picture(ENCODING_TILES));
-        assert_eq!(
-            crisp.listed((3840, 2400)),
-            crisp.listed((1280, 800)),
-            "the video at 4:4:4 at the ceiling"
-        );
-        for past in [(3841, 2160), (3840, 2401), (7680, 4320)] {
-            assert_eq!(
-                crisp.listed(past),
-                rest,
-                "the video at 4:4:4 past the ceiling, as at 4:2:0"
-            );
-        }
     }
 
     // ── The outputs extension ───────────────────────────────────────────────
@@ -11990,7 +11971,6 @@ mod tests {
             rdp_video: false,
             rdp_small_cache: false,
             wlshare: true,
-            wlshare_444: false,
             wlshare_tiles: None,
         };
         Arc::new(Listing::new(
@@ -12031,7 +12011,6 @@ mod tests {
             rdp_video: false,
             rdp_small_cache: false,
             wlshare: true,
-            wlshare_444: false,
             wlshare_tiles: Some(crate::config::WlshareTiles::Motion),
         };
         Arc::new(Listing::new(
@@ -15509,82 +15488,57 @@ mod tests {
         }
     }
 
-    /// A lossless tile as these tests send one: its rectangle, `(x, y, w, h)`,
-    /// its kind and its body.
+    /// A progressive tile as these tests send one: its rectangle, `(x, y, w, h)`,
+    /// and the tile its block names.
     #[cfg(feature = "wlshare")]
-    type LosslessTile<'a> = ((u16, u16, u16, u16), u8, &'a [u8]);
+    type ProgressiveTile = ((u16, u16, u16, u16), (u16, u16));
 
-    /// An update of wlshare's lossless tiles and a fence asking an echo of
-    /// `marker`.
+    /// An update of wlshare's progressive tiles, each a first pass's block, and a
+    /// fence asking an echo of `marker`.
     #[cfg(feature = "wlshare")]
-    fn wlshare_lossless_update(tiles: &[LosslessTile<'_>], marker: &[u8]) -> Vec<u8> {
+    fn wlshare_progressive_update(tiles: &[ProgressiveTile], marker: &[u8]) -> Vec<u8> {
         let mut msg = vec![0u8, 0];
         msg.extend_from_slice(&(tiles.len() as u16).to_be_bytes());
-        for &((x, y, w, h), kind, body) in tiles {
+        for &((x, y, w, h), cell) in tiles {
             for field in [x, y, w, h] {
                 msg.extend_from_slice(&field.to_be_bytes());
             }
             msg.extend_from_slice(&ENCODING_TILES.to_be_bytes());
-            msg.push(kind);
-            msg.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            msg.extend_from_slice(body);
+            msg.push(wlshare_proto::tiles::KIND_PROGRESSIVE);
+            let mut first = vec![0u8, 1, 2];
+            first.extend_from_slice(&cell.0.to_le_bytes());
+            first.extend_from_slice(&cell.1.to_le_bytes());
+            first.extend_from_slice(&[0; 11]);
+            let block = wlshare_proto::progressive::block(
+                wlshare_proto::progressive::WBT_TILE_FIRST,
+                &first,
+            );
+            msg.extend_from_slice(&(block.len() as u32).to_be_bytes());
+            msg.extend_from_slice(&block);
         }
         msg.extend_from_slice(&server_fence(FENCE_REQUEST, marker));
         msg
     }
 
-    /// wlshare's lossless tiles are passed as tiles of their own formats, a planar
-    /// bitmap in the still stream (kind 7) and a median predictor's residuals
-    /// (kind 8), each a rectangle of any size inside the desktop with its body as
-    /// it came, an update's as one run; a kind past them, one outside the desktop
-    /// and one with no body are fatal.
+    /// wlshare's progressive tiles are passed as tiles of their own format, each one
+    /// tile on the grid cut by the desktop's edge whose block is that tile's, an
+    /// update's as one run; one off the grid, of another size, or whose block is
+    /// another tile's, is fatal.
     #[cfg(feature = "wlshare")]
     #[tokio::test]
-    async fn wlshares_lossless_tiles_are_passed_as_they_came() {
-        use crate::tiles::Format;
-        assert_eq!(
-            (
-                wlshare_proto::tiles::KIND_STILL,
-                wlshare_proto::tiles::KIND_MEDIAN
-            ),
-            (7, 8)
-        );
+    async fn wlshares_progressive_tiles_are_passed_one_tile_each() {
         let size = (100, 80);
-        let lossless_listing = || {
-            let plan = crate::config::RenderPlan {
-                apple_media: false,
-                apple_h264: false,
-                hevc_instead: false,
-                apple_standard: None,
-                apple_combined: false,
-                rdp_graphics: false,
-                rdp_h264: false,
-                rdp_video: false,
-                rdp_small_cache: false,
-                wlshare: true,
-                wlshare_444: false,
-                wlshare_tiles: Some(crate::config::WlshareTiles::Lossless),
-            };
-            Arc::new(Listing::new(
-                wlshare_encoding_list(None, false, false),
-                plan,
-            ))
-        };
-        let still: &[u8] = &[0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x58, 0x09, 0x00, 0x00, 0x20];
-        let more: &[u8] = &[0x09, 0x00, 0x00, 0x21];
-        let median: &[u8] = &[0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x01, 0x09, 0x00, 0x00, 0x07];
-        let sent = [
-            ((0, 0, 100, 64), 7, Format::Still, still),
-            ((0, 64, 64, 16), 7, Format::Still, more),
-            ((64, 64, 36, 16), 8, Format::Median, median),
-        ];
         let (uplink, _sent) = test_uplink();
         let (sink, mut rx) = sized_sink(size).await;
         let mut shared = test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
-        shared.passthrough = Some(lossless_listing());
-        let wire = wlshare_lossless_update(
-            &sent.map(|(place, kind, _, body)| (place, kind, body)),
-            b"l1",
+        shared.passthrough = Some(test_tiles_listing());
+        let wire = wlshare_progressive_update(
+            &[
+                ((0, 0, 64, 64), (0, 0)),
+                ((64, 0, 36, 64), (1, 0)),
+                ((64, 64, 36, 16), (1, 1)),
+            ],
+            b"p1",
         );
         let task = open_read_loop(wire, shared, sink);
         assert!(matches!(
@@ -15595,35 +15549,39 @@ mod tests {
             panic!("the update's run")
         };
         assert_eq!(tiles.len(), 3, "the update's tiles together");
-        for ((place, _, format, body), tile) in sent.into_iter().zip(tiles) {
+        for (place, tile) in [(0, 0, 64, 64), (64, 0, 36, 64), (64, 64, 36, 16)]
+            .into_iter()
+            .zip(tiles)
+        {
             let ServerMsg::Tile(unit) = tile else {
                 panic!("a tile")
             };
             assert_eq!(
                 (unit.format, (unit.x, unit.y, unit.w, unit.h)),
-                (format, place)
+                (crate::tiles::Format::Progressive, place)
             );
-            assert_eq!(unit.data, body, "the body as it came");
+            assert_eq!(
+                wlshare_proto::progressive::tile_of(&unit.data),
+                Some((place.0 / 64, place.1 / 64)),
+                "the block as it came"
+            );
         }
         task.abort();
         for (tile, says) in [
+            (((16, 0, 64, 64), (0, 0)), "not one 64x64 tile on the grid"),
+            (((0, 0, 64, 32), (0, 0)), "not one 64x64 tile on the grid"),
             (
-                ((0, 0, 64, 64), 9, median),
-                "a tiles rectangle of kind 9, which is none of",
+                ((64, 0, 36, 64), (0, 0)),
+                "whose block is Some((0, 0)), not that tile",
             ),
-            (
-                ((64, 64, 64, 16), 8, median),
-                "not inside the 100x80 desktop",
-            ),
-            (((0, 0, 64, 64), 7, &[][..]), "a tiles rectangle of 0 bytes"),
         ] {
             let (uplink, _sent) = test_uplink();
             let (sink, _rx) = sized_sink(size).await;
             let mut shared =
                 test_shared(uplink, shared_desktop(size, None, None), test_shadow(size));
-            shared.passthrough = Some(lossless_listing());
+            shared.passthrough = Some(test_tiles_listing());
             let err = read_loop(
-                std::io::Cursor::new(wlshare_lossless_update(&[tile], b"l1")),
+                std::io::Cursor::new(wlshare_progressive_update(&[tile], b"p1")),
                 shared,
                 false,
                 None,
@@ -15773,7 +15731,7 @@ mod tests {
 
     /// wlshare's video goes to the browser as it came, and the fence behind a frame is
     /// held for what the browser's link makes of a frame beyond its distance:
-    /// wlshare walks its frame rate by that round trip, and must see the browser's
+    /// wlshare walks its quality and frame rate by that round trip, and must see the browser's
     /// delivery in it.
     #[cfg(feature = "wlshare")]
     #[tokio::test(start_paused = true)]
@@ -15992,7 +15950,6 @@ mod tests {
             rdp_video: false,
             rdp_small_cache: false,
             wlshare: false,
-            wlshare_444: false,
             wlshare_tiles: None,
         };
         let feedback = Arc::new(crate::feedback::LinkFeedback::new());

@@ -70,9 +70,8 @@ cargo test --test vnc_e2e --test wlshare_e2e -- --ignored
 ```
 
 `wlshare_e2e` builds wlshare from the `../wlshare` checkout, or the one
-`ZDESK_TEST_WLSHARE_DIR` names, and asks it for each of its pictures: its
-H.264 video, at 4:2:0 and at 4:4:4, its tiles with motion and its lossless
-tiles.
+`ZDESK_TEST_WLSHARE_DIR` names, and asks it for its H.264 video and its
+tiles with motion.
 `ZDESK_TEST_CONTAINER_RUNTIME` forces Docker
 or Podman when both work.
 

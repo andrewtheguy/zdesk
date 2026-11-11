@@ -889,8 +889,8 @@ mod tests {
                 y: 0,
                 w: 64,
                 h: 64,
-                format: crate::tiles::Format::Median,
-                data: vec![0x28; 10],
+                format: crate::tiles::Format::Progressive,
+                data: vec![0xC6; 10],
                 held: Held::default(),
                 painted: Painted::default(),
             })

@@ -275,9 +275,8 @@ site_passwd_hash = ""
 # "ard-high-performance" Mac's HEVC, for a LAN, where it is a choice greyed for a
 # browser that cannot take it, or its H.264 (beta), greyed for a browser without
 # `VideoDecoder`; a "wlshare" target's H.264 video, its tiles
-# with motion, both greyed for a browser without `VideoDecoder`, that video at
-# 4:4:4 (beta), which keeps coloured text crisp and is greyed for a browser whose
-# decoder does not take it, or its lossless tiles; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
+# with motion, both greyed for a browser without `VideoDecoder`, or its
+# progressive tiles; an "ard" Mac's Adaptive picture; or an "rdp" host's graphics
 # pipeline for the page to compose, which is no choice: with `egfx` on every
 # session passes it, and a browser that cannot compose it cannot start the
 # target. Each is described with its target below. An owning browser that comes
@@ -620,7 +619,7 @@ password_ref = "example"
 # browser paints them, and a change the link would take too long to carry comes
 # first as a coarse JPEG that sharpens to the lossless picture once it is still. A
 # `wlshare` target's picture is wlshare's own, passed through: its H.264 video,
-# at 4:2:0 or 4:4:4, its tiles with motion, or its lossless tiles, chosen at the
-# picker, each coded and paced by wlshare. A passed Mac media stream or RDP graphics pipeline
+# its progressive tiles, or its tiles with motion, chosen at the picker, each
+# coded and paced by wlshare. A passed Mac media stream or RDP graphics pipeline
 # keeps the remote's own quality.
 

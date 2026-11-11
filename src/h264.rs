@@ -2,9 +2,7 @@
 //! whole desktop as one stream ([`Whole`]), and the moving regions of its tiles
 //! with motion ([`pass`]), every one by the host's hardware encoder where it has
 //! one and libx264 otherwise, passed to the browser as wlshare coded them. The
-//! video at 4:4:4, High 4:4:4 Predictive, which a session started with it is
-//! sent, is libx264's on every host, and is the same stream here: nothing below
-//! asks a frame its chroma. The gateway encodes no H.264 and decodes none.
+//! gateway encodes no H.264 and decodes none.
 //!
 //! What a passed frame needs here is what the browser cannot read out of it in
 //! time: whether a decoder can start at it, and the WebCodecs string its decoder
@@ -63,9 +61,8 @@ pub fn idr(unit: &[u8]) -> bool {
 /// Check a `w`×`h` region's frame of wlshare's H.264: Annex B with at least
 /// one NAL unit, within the ceiling every passed picture is held to, and
 /// where it carries a sequence parameter set, one of a picture the region's
-/// size — a pixel wider or taller at most, since wlshare codes even sides,
-/// which a 4:2:0 picture cannot be cropped below, and the page clips the
-/// picture to the region anyway. An IDR
+/// size — a pixel wider or taller at most, since a 4:2:0 picture is cropped
+/// in pairs and the page clips the picture to the region anyway. An IDR
 /// picture is a keyframe only with both parameter sets ahead of it in the
 /// unit, which is what a decoder starting there needs; one without is
 /// refused, since the browser could neither start at it nor be told not to.
@@ -77,8 +74,7 @@ pub fn pass(w: u16, h: u16, unit: &[u8]) -> anyhow::Result<Region> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Fit {
     /// Cropped to it, as wlshare crops its own: a pixel wider or taller at most,
-    /// since it codes even sides at either chroma, which a 4:2:0 picture cannot
-    /// be cropped below.
+    /// since a 4:2:0 picture is cropped in pairs.
     #[default]
     Cropped,
     /// Whole macroblocks, uncropped, as a Windows host codes a surface: up to
@@ -233,40 +229,6 @@ pub mod sample {
         0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x80, 0xa3, 0x00, 0x00, 0x01, 0x41, 0x02, 0x89,
         0xa2, 0x28, 0x0a, 0x30, 0x00, 0x00, 0x01, 0x41, 0x01, 0x42, 0x68, 0x8a, 0x02, 0x8c,
     ];
-
-    /// The same picture as libx264 codes it at 4:4:4, `superfast` with
-    /// `zerolatency` on one thread: High 4:4:4 Predictive, level 1.3, its IDR and
-    /// the P frame after it; x264's version SEI taken out.
-    pub const KEYFRAME_444: &[u8] = &[
-        0x00, 0x00, 0x00, 0x01, 0x67, 0xf4, 0x00, 0x0d, 0x91, 0x96, 0x81, 0x41, 0x9b, 0x01, 0x6a,
-        0x04, 0x04, 0x0a, 0x80, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x47, 0x8a, 0x15,
-        0x50, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0x0f, 0x19, 0x21, 0x90, 0x00, 0x00, 0x01, 0x65,
-        0x88, 0x84, 0x04, 0xbf, 0xe4, 0xff, 0x05, 0xc3, 0xc5, 0x29, 0x7f, 0xff, 0xff, 0xff, 0xfd,
-        0xf7, 0x73, 0xff, 0xfc, 0xc8, 0xbf, 0xe8, 0xd7, 0xf9, 0xb1, 0xf7, 0x2b, 0xd7, 0xfd, 0x7d,
-        0x5c, 0x7a, 0x10, 0xd5, 0xfc, 0x78, 0x32, 0x70, 0x00, 0x00, 0x1d, 0x71, 0x5f, 0x51, 0x3f,
-        0xe6, 0x55, 0xb5, 0x03, 0x8a, 0x4e, 0x21, 0x13, 0x39, 0x49, 0x81, 0x6d, 0x98, 0x8e, 0x00,
-        0x00, 0xfa, 0x55, 0x00, 0x00, 0x03, 0x00, 0x00, 0x6e, 0x72, 0x00, 0xfe, 0x5a, 0xdc, 0x2c,
-        0x67, 0x66, 0xfe, 0xdc, 0x1b, 0xf2, 0x01, 0xaf,
-    ];
-    pub const FRAME_444: &[u8] = &[
-        0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x26, 0x20, 0x9f, 0xff, 0xfe, 0xb5, 0x2a, 0x80, 0x00,
-        0x42, 0xc0,
-    ];
-
-    /// A 322×190 grey picture's IDR as libx264 codes it at 4:4:4 the same way:
-    /// 336×192 in macroblocks, cropped by fourteen columns and two rows, which at
-    /// 4:4:4 are counted a pixel at a time where 4:2:0 counts pairs.
-    pub const UNEVEN_KEYFRAME_444: &[u8] = &[
-        0x00, 0x00, 0x00, 0x01, 0x67, 0xf4, 0x00, 0x0d, 0x91, 0x96, 0x81, 0x51, 0x9e, 0x3e, 0xf0,
-        0x16, 0xa0, 0x40, 0x40, 0xa8, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x01, 0xe4,
-        0x78, 0xa1, 0x55, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0x0f, 0x19, 0x21, 0x90, 0x00, 0x00,
-        0x01, 0x65, 0x88, 0x84, 0x04, 0xbf, 0xe4, 0xff, 0x05, 0xc3, 0xc5, 0x29, 0x7f, 0xff, 0xff,
-        0xff, 0xfd, 0xf7, 0x73, 0xff, 0xfc, 0xc8, 0xbf, 0xe8, 0xd7, 0xf9, 0xb1, 0xf7, 0x2b, 0xd7,
-        0xfd, 0x7d, 0x5c, 0x7a, 0x10, 0xd5, 0xfc, 0x78, 0x32, 0x70, 0x00, 0x00, 0x03, 0x01, 0x48,
-        0x87, 0xf7, 0x9e, 0xfe, 0xb3, 0xbc, 0xdb, 0xd2, 0x8e, 0xec, 0x92, 0x56, 0x32, 0x25, 0x69,
-        0x0b, 0x15, 0x20, 0x00, 0x03, 0x19, 0x6c, 0x00, 0x00, 0x03, 0x00, 0x03, 0xb5, 0x90, 0x0e,
-        0x6d, 0xb6, 0xc2, 0x68, 0x84, 0x9f, 0xda, 0xbb, 0x55, 0x7f, 0xdb, 0x39,
-    ];
 }
 
 #[cfg(test)]
@@ -348,67 +310,6 @@ mod tests {
         assert!(
             pass(640, 192, BASELINE_KEYFRAME).is_err(),
             "a picture of another size"
-        );
-    }
-
-    /// wlshare's video at 4:4:4 is passed as its video at 4:2:0 is, and names
-    /// High 4:4:4 Predictive's decoder from its own sequence parameter set,
-    /// whose picture is read at that chroma: cropped a pixel at a time, to the
-    /// even sides wlshare codes, a pixel wider or taller than the desktop at
-    /// most. A change of chroma is a new stream, which starts at an IDR.
-    #[test]
-    fn the_whole_desktop_at_444_names_high_444_predictive() {
-        use super::sample::{FRAME_444, KEYFRAME_444, UNEVEN_KEYFRAME_444};
-        assert_eq!(
-            nal_units(KEYFRAME_444)
-                .iter()
-                .map(|nal| nal[0] & 0x1f)
-                .collect::<Vec<_>>(),
-            [7, 8, 5]
-        );
-        let passed = |decode: &str, keyframe| Passed {
-            decode: decode.to_owned(),
-            keyframe,
-            strip: None,
-        };
-        let mut whole = Whole::default();
-        assert_eq!(
-            whole.pass(320, 192, KEYFRAME_444).unwrap(),
-            passed("avc1.F4000D", true)
-        );
-        assert_eq!(
-            whole.pass(320, 192, FRAME_444).unwrap(),
-            passed("avc1.F4000D", false)
-        );
-        // A list that names the other chroma brings the other stream, at an IDR.
-        assert_eq!(
-            whole.pass(320, 192, KEYFRAME).unwrap(),
-            passed("avc1.64000D", true)
-        );
-        assert_eq!(
-            whole.pass(320, 192, KEYFRAME_444).unwrap(),
-            passed("avc1.F4000D", true)
-        );
-        for desktop in [(322, 190), (321, 189), (322, 189), (321, 190)] {
-            assert_eq!(
-                Whole::default()
-                    .pass(desktop.0, desktop.1, UNEVEN_KEYFRAME_444)
-                    .unwrap(),
-                passed("avc1.F4000D", true),
-                "a {desktop:?} desktop, coded as 322x190"
-            );
-        }
-        for other in [(320, 190), (322, 188), (336, 192), (308, 188)] {
-            assert!(
-                Whole::default()
-                    .pass(other.0, other.1, UNEVEN_KEYFRAME_444)
-                    .is_err(),
-                "a 322x190 picture is not a {other:?} desktop's"
-            );
-        }
-        assert!(
-            Whole::default().pass(320, 192, FRAME_444).is_err(),
-            "a stream at 4:4:4 starts at an IDR as any does"
         );
     }
 

@@ -558,13 +558,16 @@ struct Shared {
     rounds: AtomicU64,
     refreshes: AtomicU64,
     coarse: AtomicU64,
-    /// Rectangles of tiles sent as JPEG, as PNG and as wlshare's lossless tiles,
-    /// planar bitmaps in its still stream where the desktop is still or a median
-    /// predictor's residuals where it moves, and their bytes.
+    /// Rectangles of tiles sent as JPEG, as PNG, as progressive tile blocks and as
+    /// wlshare's lossless tiles, planar bitmaps in its still stream where the
+    /// desktop is still or a median predictor's residuals where it moves, and their
+    /// bytes.
     jpeg: AtomicU64,
     jpeg_bytes: AtomicU64,
     png: AtomicU64,
     png_bytes: AtomicU64,
+    progressive: AtomicU64,
+    progressive_bytes: AtomicU64,
     lossless: AtomicU64,
     lossless_bytes: AtomicU64,
     /// Rectangles of wlshare's tiles drawn from what the browser holds.
@@ -605,6 +608,7 @@ impl Shared {
         match format {
             Format::Jpeg => (&self.jpeg, &self.jpeg_bytes),
             Format::Png => (&self.png, &self.png_bytes),
+            Format::Progressive => (&self.progressive, &self.progressive_bytes),
             Format::Still | Format::Median => (&self.lossless, &self.lossless_bytes),
         }
     }
@@ -641,6 +645,8 @@ impl Shared {
             jpeg_bytes: AtomicU64::new(0),
             png: AtomicU64::new(0),
             png_bytes: AtomicU64::new(0),
+            progressive: AtomicU64::new(0),
+            progressive_bytes: AtomicU64::new(0),
             lossless: AtomicU64::new(0),
             lossless_bytes: AtomicU64::new(0),
             copies: AtomicU64::new(0),
@@ -883,9 +889,8 @@ impl VideoSink {
         self.shared.pass_restart.load(Ordering::Relaxed)
     }
 
-    /// Queue a `w`×`h` frame of wlshare's video stream, H.264 at the chroma the
-    /// session listed, as the next access unit, untouched
-    /// ([`crate::h264::Whole`]).
+    /// Queue a `w`×`h` frame of wlshare's video stream, H.264, as the next access
+    /// unit, untouched ([`crate::h264::Whole`]).
     ///
     /// None of the tiles' machinery applies. There is no mirror, round, interval or
     /// refresh: the remote paces, codes and sharpens its stream itself, and learns how
@@ -898,10 +903,8 @@ impl VideoSink {
     /// keyframe, which the full update the engine asks for at the same moment brings,
     /// and the keyframe goes out behind a fresh announcement.
     ///
-    /// wlshare walks the quality and paces the frames by the fences: what a link
-    /// that falls behind gives up is quality, and then frames. A frame may follow
-    /// no change of the desktop: one that has stopped is sent frames of no damage
-    /// that refine it, which are queued and passed as every other.
+    /// wlshare decides the quality and paces the frames by the fences: what a link
+    /// that falls behind gives up is frames.
     pub async fn pass(&self, w: u16, h: u16, frame: Vec<u8>) -> anyhow::Result<()> {
         let passed = self.shared.whole.lock().unwrap().pass(w, h, &frame)?;
         self.forward(w, h, frame, passed, None, Painted::default())
@@ -1062,9 +1065,10 @@ impl VideoSink {
     }
 
     /// Queue a still of a rectangle of the desktop in wlshare's tiles as the next
-    /// record, untouched: a lossless PNG of the desktop's pixels there, or a
-    /// lossless planar bitmap of the pixels there in the still stream or a median
-    /// predictor's residuals of them; `format` says which.
+    /// record, untouched: a lossless PNG of the desktop's pixels there, one
+    /// progressive tile's block, a first pass or an upgrade against what the page
+    /// holds of the tile, or a lossless planar bitmap of the pixels there in the
+    /// still stream or a median predictor's residuals of them; `format` says which.
     ///
     /// wlshare's tiles are a passed picture, as its video is ([`Self::pass`]): wlshare
     /// decides what is sent, codes it and paces it by the fences the engine echoes once
@@ -1844,6 +1848,8 @@ struct Totals {
     jpeg_bytes: u64,
     png: u64,
     png_bytes: u64,
+    progressive: u64,
+    progressive_bytes: u64,
     lossless: u64,
     lossless_bytes: u64,
     copies: u64,
@@ -1872,6 +1878,8 @@ impl Totals {
             jpeg_bytes: load(&shared.jpeg_bytes),
             png: load(&shared.png),
             png_bytes: load(&shared.png_bytes),
+            progressive: load(&shared.progressive),
+            progressive_bytes: load(&shared.progressive_bytes),
             lossless: load(&shared.lossless),
             lossless_bytes: load(&shared.lossless_bytes),
             copies: load(&shared.copies),
@@ -1889,7 +1897,7 @@ impl fmt::Display for Totals {
             f,
             "{} passed unit(s) / {} bytes, {} keyframe(s) / {} bytes, \
              {} graphics run(s) / {} bytes passed, \
-             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes and {} lossless / {} bytes, {} copied, {} cached, \
+             {} round(s) of tiles, {} of them refreshes and {} coarse: {} JPEG / {} bytes, {} PNG / {} bytes, {} progressive / {} bytes and {} lossless / {} bytes, {} copied, {} cached, \
              {}µs coding in {}µs of waiting, engine stalled {}µs",
             self.units,
             self.passed_bytes,
@@ -1904,6 +1912,8 @@ impl fmt::Display for Totals {
             self.jpeg_bytes,
             self.png,
             self.png_bytes,
+            self.progressive,
+            self.progressive_bytes,
             self.lossless,
             self.lossless_bytes,
             self.copies,
@@ -2457,7 +2467,7 @@ mod tests {
             .unwrap();
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
-        sink.pass_tile(64, 64, 64, 64, Format::Median, vec![0x28, 0xB5])
+        sink.pass_tile(64, 64, 64, 64, Format::Progressive, vec![0xC6, 0xCC])
             .await
             .unwrap();
         sink.pass_copy(0, 40, 0, 0, 1280, 600).await.unwrap();
@@ -2503,7 +2513,7 @@ mod tests {
         let records = run(&out[5]);
         assert_eq!(records.len(), 4, "the end was said twice: {records:?}");
         assert!(
-            matches!(&records[0], ServerMsg::Tile(unit) if unit.format == Format::Median && unit.data == [0x28, 0xB5]),
+            matches!(&records[0], ServerMsg::Tile(unit) if unit.format == Format::Progressive && unit.data == [0xC6, 0xCC]),
             "{:?}",
             records[0]
         );
@@ -2611,7 +2621,7 @@ mod tests {
     async fn wlshares_tiles_go_as_one_run_an_update() {
         let (sink, mut frame_rx) = video_sink(1280, 800).await;
         for x in (0..1280).step_by(64) {
-            sink.pass_tile(x, 0, 64, 64, Format::Median, vec![0x28; 100])
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; 100])
                 .await
                 .unwrap();
         }
@@ -2638,7 +2648,7 @@ mod tests {
 
         let half = MAX_BATCH_BYTES / 2;
         for x in [0, 64, 128] {
-            sink.pass_tile(x, 0, 64, 64, Format::Median, vec![0x28; half])
+            sink.pass_tile(x, 0, 64, 64, Format::Progressive, vec![0xC6; half])
                 .await
                 .unwrap();
         }
