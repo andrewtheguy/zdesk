@@ -578,7 +578,8 @@ either. Each block is coded against what the decoder holds of its tile, so one
 that does not decode, or a batch dropped with blocks in it, leaves the decoder
 holding what wlshare's next blocks are not coded against: it is given back, the
 whole picture is asked for, and no block is decoded until that picture starts.
-Its lossless tiles (experimental) are `WLST` with `WLSL` beside it, for a LAN:
+Its lossless tiles (experimental) are `WLST` with `WLSL` beside it, for a wired
+connection:
 every tile that changed exact, still or moving, and no H.264 stream, the
 browser's lag slowing wlshare's updates and never what a tile shows. Where the
 desktop is still each run is a planar bitmap of its pixels, RDP 6.0 bitmap
@@ -613,8 +614,9 @@ does, and so starts the still stream over.
 Its tiles with motion are the same encoding listed with `WLSD`: lossless WebP tiles
 where the desktop is still and a 4:2:0 H.264 stream of its own for each region
 that moves, by the video's encoder, every region held at wlshare's dial and
-every still lossless — wlshare's picture for a link with room to spare, one that
-ends lossless, for several times the video's bytes. A server that ignores the
+every still lossless — wlshare's picture for a link with room to spare, Wi-Fi
+or better, one that ends lossless, for several times the video's bytes. A server
+that ignores the
 listing is sent as tiles from its ZRLE. Do not transcode a passed frame, ask
 wlshare for anything with a client message, or add a key that selects or tunes
 the picture. See [wlshare's stream, passed
@@ -2453,11 +2455,12 @@ and `GET /api/targets` carries it:
   first, its pictures shown under the chosen kind. Adaptive, paced to the link,
   is Video, wlshare's H.264 of the whole desktop, which `connect` names as
   `wlshare-video` and which a session that names none is sent, taken first, and
-  Tiles (alpha), `wlshare-tiles-progressive`. Lossless, for a LAN and not
-  meant for a phone, a tablet or a page of tight memory
+  Tiles (alpha), `wlshare-tiles-progressive`. Lossless, for a link with room
+  and not meant for a phone, a tablet or a page of tight memory
   ([The client and its bundle](#the-client-and-its-bundle)), is Settles to lossless,
-  `wlshare-tiles-motion`, and Fully lossless (experimental),
-  `wlshare-tiles-lossless`. All four are passed, so no label says so.
+  `wlshare-tiles-motion`, for which the picker recommends Wi-Fi or better, and
+  Fully lossless (experimental), `wlshare-tiles-lossless`, for which it
+  recommends a wired connection. All four are passed, so no label says so.
 - **Offered but unavailable is greyed, with the reason.** The Mac's HEVC
   is greyed wherever the browser cannot take it: one that does not decode the
   Mac's HEVC, or a gateway with no HEVC decoder archive to serve a browser that

@@ -597,14 +597,25 @@ test("a wlshare target's pictures are chosen kind first: adaptive, then lossless
     lossless?.pictures.map((picture) => picture.label),
     ["Settles to lossless", "Fully lossless (experimental)"],
   );
-  // Lossless wants a wired link, and is not suggested for a phone, nor either of its
-  // pictures; the adaptive ones say nothing of it.
+  // Lossless is not suggested for a phone, nor either of its pictures; the
+  // adaptive ones say nothing of it.
   for (const note of [
     lossless?.note,
     ...(lossless?.pictures.map((picture) => picture.note) ?? []),
   ]) {
     assert.match(note ?? "", /not recommended on a phone or tablet/);
   }
+  // And each says the link it wants: Wi-Fi or better where the picture settles
+  // to lossless, wired where it is lossless throughout, the kind both.
+  const [settles, exact] = lossless?.pictures ?? [];
+  assert.match(settles?.note ?? "", /Wi-Fi or better is recommended/);
+  assert.doesNotMatch(settles?.note ?? "", /wired/);
+  assert.match(exact?.note ?? "", /a wired connection is recommended/);
+  assert.doesNotMatch(exact?.note ?? "", /Wi-Fi/);
+  assert.match(
+    lossless?.note ?? "",
+    /Wi-Fi or better is recommended for the picture that settles to lossless, and a wired connection for the fully lossless one/,
+  );
   for (const note of [
     adaptive?.note,
     ...(adaptive?.pictures.map((picture) => picture.note) ?? []),
