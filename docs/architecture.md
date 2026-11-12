@@ -1249,7 +1249,7 @@ Nothing is coded here.
   resize, refused in one started with it. A desktop within it is what holds every
   region to it, so wlshare splits or drops none for its size.
 - **Passed as they came** (`VideoSink::pass_tile`, `pass_region`,
-  `pass_region_end`, `pass_copy`, `pass_cache`). A PNG becomes a `TILE` record, painted as
+  `pass_region_end`, `pass_region_mark`, `pass_copy`, `pass_cache`). A PNG becomes a `TILE` record, painted as
   `image/png`, a copy a `COPY` record, its source held to the
   desktop as its rectangle is, a tile stored in the page's cache a `STORE`
   record and one drawn from it a `CACHED` record, each held to one 64×64 tile
@@ -1271,6 +1271,18 @@ Nothing is coded here.
   `QUEUE_BUDGET` and goes out in order with the messages around it, so a `TILE`
   over a region's rectangle reaches the page after the region's `regionEnd`, as
   wlshare sent it.
+- **A mark is drawn over the picture, never in it.** A wlshare with
+  `motion_debug` set marks each region for a person looking into what it makes a
+  video of: where the region moves, the box around the pixels that changed in
+  it, and why it began. The gateway holds a mark to its stream's rectangle,
+  drops one of a stream the browser does not hold, and passes the rest as a
+  `regionMark`, which takes no share of the queue's budget and is counted by
+  nothing. The page outlines the rectangle in a layer over the canvas
+  (`regionMarks.ts`), magenta where the region's tiles kept changing and orange
+  where one change was more than its stills, until the stream's next mark, its
+  `regionEnd` or a `tilesStart`. Do not draw a mark on the canvas: a `COPY`
+  and the cache of tiles read the canvas, and would take the outline for the
+  desktop. There is no key or picker choice for it; it is wlshare's to send.
 - **A restart forgets the regions.** A reattach and a resize reset the render as
   always, and the first record after it goes behind a `tilesStart`, which tells the
   page every region it held is over. The full update a reattach asks for makes
@@ -2647,7 +2659,11 @@ rectangle and one with no payload. A `regionFormat` (`stream`, `decode`, `engine
 comes ahead of a stream's first unit and builds its decoder, the unit's decoded
 picture is drawn at its rectangle, cut to it, in its turn among the tiles, and a
 `regionEnd` (`stream`, `engine`) says the stream is over, its last picture staying
-until the tiles after it draw over it. A `COPY` record draws at its rectangle,
+until the tiles after it draw over it. A `regionMark` (`stream`, `x`, `y`, `w`,
+`h`, `why`, `engine`), which only a wlshare set to send marks brings, is none of
+the picture: the page outlines the rectangle, in framebuffer pixels and inside
+the stream's, over its canvas, by its `why`, `moving` or `burst`, until the
+stream's next one, its `regionEnd` or a `tilesStart`. A `COPY` record draws at its rectangle,
 in its turn, what the canvas holds at `(sx, sy)`, the same size, the canvas drawn
 onto itself, so the two may overlap; an empty rectangle is rejected. wlshare
 copies from no region while it streams and onto none. A `STORE` record keeps

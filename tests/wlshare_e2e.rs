@@ -143,6 +143,8 @@ struct View {
     tiles: bool,
     /// Every region stream a `regionFormat` announced, by id, with its decoder string.
     regions: Vec<(u64, String)>,
+    /// Every `regionMark`, by its stream, with why wlshare made a region of it.
+    marks: Vec<(u64, String)>,
     /// The tiles of the last announced size sent so far.
     coverage: Option<common::Coverage>,
     /// Whether a keyframe of the last announced size, or every tile of it, has
@@ -159,6 +161,7 @@ impl View {
             decode: None,
             tiles: false,
             regions: Vec::new(),
+            marks: Vec::new(),
             coverage: None,
             painted: false,
         }
@@ -233,6 +236,34 @@ impl View {
                     msg["stream"].as_u64().unwrap(),
                     msg["decode"].as_str().unwrap().to_owned(),
                 ));
+            }
+            // A mark is of a stream its format announced, a rectangle inside the
+            // desktop, and says one of the two reasons.
+            Some("regionMark") => {
+                let field = |name: &str| msg[name].as_u64().unwrap();
+                let (stream, size) = (
+                    field("stream"),
+                    self.size.expect("a mark before any resize"),
+                );
+                assert!(
+                    self.regions.iter().any(|(id, _)| *id == stream),
+                    "a mark of region {stream}, which no regionFormat announced: {text}"
+                );
+                assert!(
+                    field("w") > 0
+                        && field("h") > 0
+                        && field("x") + field("w") <= size.w
+                        && field("y") + field("h") <= size.h,
+                    "a mark not inside the {}x{} desktop: {text}",
+                    size.w,
+                    size.h
+                );
+                let why = msg["why"].as_str().unwrap();
+                assert!(
+                    why == "moving" || why == "burst",
+                    "a mark whose why is neither: {text}"
+                );
+                self.marks.push((stream, why.to_owned()));
             }
             _ => {}
         }
@@ -654,6 +685,42 @@ async fn a_session_started_with_tiles_with_motion_is_sent_wlshares_own_tiles() {
     assert!(
         !logs.contains("asked for video"),
         "wlshare was asked for its video as well:\n{logs}"
+    );
+}
+
+/// A wlshare set to mark its regions, as the image's is, says where each moves and
+/// why, and the gateway passes each as a `regionMark` of a stream the page holds:
+/// a video started on the desktop of a session on the tiles with motion becomes a
+/// region, and its mark follows the region's format.
+#[tokio::test]
+#[ignore = "requires Docker or Podman"]
+async fn wlshares_marks_of_its_regions_reach_the_page() {
+    common::init_logging();
+    let (container, vnc_port) = start_wlshare().await;
+
+    let addr = spawn_app(vnc_port).await;
+    let cookie = common::login(addr).await;
+    let token = common::claim_session(addr, &cookie).await;
+    let mut ws = common::connect_ws(addr, &token, &cookie).await;
+    let mut view = View::new();
+    ws.send(Message::text(format!(
+        r#"{{"type":"connect","target":"{TARGET}","display":{{"w":1280,"h":800,"scale":100}},"choices":{{"size":"target","passthrough":"wlshare-tiles-motion"}}}}"#
+    )))
+    .await
+    .unwrap();
+    view.until(&mut ws, "wlshare's tiles of the whole desktop", |v| v.tiles)
+        .await;
+    assert!(view.marks.is_empty(), "a mark with nothing moving");
+
+    play_video(&container, "snow").await;
+    view.until(&mut ws, "the mark of the video's region", |v| {
+        !v.marks.is_empty()
+    })
+    .await;
+    assert!(
+        !view.regions.is_empty(),
+        "a mark, and no region announced: {:?}",
+        view.marks
     );
 }
 

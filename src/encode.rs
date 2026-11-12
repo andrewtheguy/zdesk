@@ -1266,6 +1266,44 @@ impl VideoSink {
         Ok(())
     }
 
+    /// Where moving region `stream` of wlshare's tiles moves, and why wlshare made
+    /// a region of it: the browser is told, where it holds the stream, to outline
+    /// the rectangle over its picture. None of the picture, so nothing is gathered,
+    /// held or counted for it.
+    pub async fn pass_region_mark(
+        &self,
+        stream: u8,
+        (x, y, w, h): (u16, u16, u16, u16),
+        why: crate::protocol::RegionWhy,
+    ) -> anyhow::Result<()> {
+        self.tiles_begin().await?;
+        let Some((rx, ry, rw, rh)) = self.shared.regions.lock().unwrap().get(&stream).copied()
+        else {
+            debug!(
+                "{}: dropping a mark of region {stream}, which the browser does not hold",
+                self.engine
+            );
+            return Ok(());
+        };
+        anyhow::ensure!(
+            rx <= x
+                && ry <= y
+                && u32::from(x) + u32::from(w) <= u32::from(rx) + u32::from(rw)
+                && u32::from(y) + u32::from(h) <= u32::from(ry) + u32::from(rh),
+            "the server marked region {stream} at {w}x{h}+{x}+{y}, not inside its stream's {rw}x{rh}+{rx}+{ry}"
+        );
+        self.push(Pending::Msg(ServerMsg::RegionMark {
+            stream,
+            x,
+            y,
+            w,
+            h,
+            why,
+            engine: 0,
+        }))
+        .await
+    }
+
     /// wlshare's tiles are the picture: behind a `TilesStart` where it starts over,
     /// every region the browser held forgotten with it.
     async fn tiles_begin(&self) -> anyhow::Result<()> {
@@ -2476,8 +2514,22 @@ mod tests {
         sink.pass_region(0, 64, 64, 320, 192, false, KEYFRAME.to_vec())
             .await
             .unwrap();
+        // A mark of a stream the browser holds is passed, inside its rectangle.
+        sink.pass_region_mark(0, (70, 70, 300, 180), crate::protocol::RegionWhy::Burst)
+            .await
+            .unwrap();
+        assert!(
+            sink.pass_region_mark(0, (70, 70, 320, 180), crate::protocol::RegionWhy::Burst)
+                .await
+                .is_err(),
+            "a mark past its stream's rectangle is no mark"
+        );
         sink.pass_region_end(0).await.unwrap();
         sink.pass_region_end(0).await.unwrap();
+        // And one of a stream that is over is dropped.
+        sink.pass_region_mark(0, (70, 70, 300, 180), crate::protocol::RegionWhy::Moving)
+            .await
+            .unwrap();
         sink.pass_tile(64, 64, 64, 64, Format::Progressive, vec![0xC6, 0xCC])
             .await
             .unwrap();
@@ -2487,7 +2539,22 @@ mod tests {
         sink.flush().await;
         assert!(sink.passing(), "wlshare's tiles are a passed picture");
 
-        let out = drain(&mut frame_rx, 6).await;
+        let mut out = drain(&mut frame_rx, 7).await;
+        assert!(
+            matches!(
+                out.remove(4),
+                ServerMsg::RegionMark {
+                    stream: 0,
+                    x: 70,
+                    y: 70,
+                    w: 300,
+                    h: 180,
+                    why: crate::protocol::RegionWhy::Burst,
+                    ..
+                }
+            ),
+            "the one mark, after the region's frames and ahead of its end"
+        );
         assert!(
             matches!(out[0], ServerMsg::TilesStart { .. }),
             "{:?}",

@@ -63,7 +63,9 @@ RUN apt-get update \
 # HEADLESS-1 is shared first at 1024x768 and scale 1; HEADLESS-2 is the second
 # output a switch lands on, a different size at scale 2. sway makes it when the
 # gateway's target asks wlshare for two virtual displays, and the mode and scale
-# here apply to it as it appears.
+# here apply to it as it appears. wlshare marks the regions of its tiles
+# (`motion_debug`), which changes nothing of the picture it sends and is what
+# the test of the marks reads.
 RUN printf '%s\n' \
     'xwayland disable' \
     'output HEADLESS-1 mode --custom 1024x768 scale 1' \
@@ -72,6 +74,7 @@ RUN printf '%s\n' \
     && printf '%s\n' \
     'listen = "0.0.0.0:5900"' \
     'output = "HEADLESS-1"' \
+    'motion_debug = true' \
     > /etc/wlshare-e2e.toml
 # Start PipeWire, WirePlumber and its PulseAudio server for the sound and the
 # microphone node, then sway, and once its IPC answers run wlshare in the

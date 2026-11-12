@@ -331,6 +331,24 @@ export type ControlMsg =
   // and no REGION record follows on its id until a `regionFormat` starts
   // another. `engine` as a format's.
   | { type: "regionEnd"; stream: number; engine: number }
+  // Where moving region `stream` of wlshare's tiles moves, the box around the
+  // pixels that changed in it, in framebuffer pixels and inside the stream's
+  // rectangle, and why wlshare made a region of it: its tiles kept changing, or
+  // one change was more than its stills. Only a wlshare with `motion_debug` set
+  // sends it, for a person looking into what it makes a video of. None of the
+  // picture: the page outlines the rectangle over its canvas (regionMarks.ts)
+  // until the stream's next mark, its `regionEnd`, or a picture that starts
+  // over. `engine` as a format's.
+  | {
+      type: "regionMark";
+      stream: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      why: "moving" | "burst";
+      engine: number;
+    }
   // The part of a passed pipeline's picture this display is, in the picture's
   // pixels: the host draws its virtual displays as one span, and this names one
   // display's column of it, `w` by `h` from `x`, `y`. Only a session started with
