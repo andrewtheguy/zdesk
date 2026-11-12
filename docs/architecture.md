@@ -1274,7 +1274,9 @@ Nothing is coded here.
 - **A mark is drawn over the picture, never in it.** A wlshare with
   `motion_debug` set marks each region for a person looking into what it makes a
   video of: where the region moves, the box around the pixels that changed in
-  it, and why it began. The gateway holds a mark to its stream's rectangle,
+  it, and why it is one, which a later mark of the same stream may say
+  differently, a region one large change began being kept for what moves in
+  it. The gateway holds a mark to its stream's rectangle,
   drops one of a stream the browser does not hold, and passes the rest as a
   `regionMark`, which takes no share of the queue's budget and is counted by
   nothing. It goes behind the run that ends the update that carried it, or

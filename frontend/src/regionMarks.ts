@@ -1,5 +1,5 @@
 // The outlines of wlshare's marks: where each moving region of its tiles moves,
-// and why wlshare made a region of it, for a person looking into what it makes a
+// and why wlshare has a region of it, for a person looking into what it makes a
 // video of.
 //
 // wlshare sends a mark only with `motion_debug` set in its configuration, and the
@@ -12,7 +12,7 @@
 // stream. A stream's next mark takes the place of its last; its `regionEnd` ends
 // it, and so does a picture that starts over or a session's end.
 
-/** Why wlshare made a region: its tiles kept changing, or one change was more than its stills. */
+/** Why wlshare has a region, as its last mark said: its tiles kept changing, or one change was more than its stills. */
 export type RegionWhy = "moving" | "burst";
 
 /** A mark's rectangle, in framebuffer pixels. */

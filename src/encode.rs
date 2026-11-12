@@ -1270,7 +1270,7 @@ impl VideoSink {
         Ok(())
     }
 
-    /// Where moving region `stream` of wlshare's tiles moves, and why wlshare made
+    /// Where moving region `stream` of wlshare's tiles moves, and why wlshare has
     /// a region of it: the browser is told, where it holds the stream, to outline
     /// the rectangle over its picture. None of the picture, so nothing is held or
     /// counted for it, and it waits for the end of the update that carried it, or
