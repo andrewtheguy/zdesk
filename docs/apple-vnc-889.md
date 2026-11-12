@@ -1931,7 +1931,7 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
 
   ```text
   +0  u8   0x85
-  +1  u8   a millisecond figure / 20, meaning unknown; 0 is accepted
+  +1  u8   a delay in 20 ms units, which the Mac ignores; 0 is accepted
   +2  u16  4, the payload's length in words after this field
   +4  u16  echo: the last received picture packet's RTP timestamp >> 8
   +6  u32  zero
@@ -1941,6 +1941,12 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   +16 u16  bursty loss (top 4 bits) | picture packets received mod 4096
   +18 u16  bandwidth estimate, kbit/s
   ```
+
+  Apple's receiver puts a delay from its own statistics, in milliseconds, into
+  the second byte, divided by 20. Read from the code, the Mac decodes it back
+  to milliseconds and leaves it out of what it hands its rate controller. The
+  echo, the hold time, the clock, the one-way delay, the loss and count, and the
+  bandwidth estimate all reach the controller.
 
 - **The echo.** The Mac keeps a history of what it sent keyed by the picture
   leg's 24 kHz RTP timestamp shifted right by 8, about 94 entries a second, and
@@ -2206,10 +2212,9 @@ is 10 s overdue.
   density ([Apple's own framebuffer encodings](#apples-own-framebuffer-encodings)).
 - **Other login types:** type 35's Kerberos tokens
   ([Other login types](#other-login-types)).
-- **Rate control's loose ends**: the second byte of `RCTL`, and what loss
-  lowers the target: the code has ways down for a bursty loss and for loss
-  events, but reported loss of up to 44% for 30 s moved nothing
-  ([Rate control](#rate-control)).
+- **What loss lowers the rate target**: the code has ways down for a bursty
+  loss and for loss events, but reported loss of up to 44% for 30 s moved
+  nothing ([Rate control](#rate-control)).
 - **Four-tile frames**: whether anything short of a keyframe mends a loss,
   and whether a still screen's repeats stop as early on a physical Mac; a stream of them
   under loss, on a physical Mac and at 4K
