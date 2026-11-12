@@ -1277,7 +1277,9 @@ Nothing is coded here.
   it, and why it began. The gateway holds a mark to its stream's rectangle,
   drops one of a stream the browser does not hold, and passes the rest as a
   `regionMark`, which takes no share of the queue's budget and is counted by
-  nothing. The page outlines the rectangle in a layer over the canvas
+  nothing. It goes behind the run that ends the update that carried it, or
+  ahead of whatever is queued before that, so wherever in the update it came
+  the update's records are one run as they are without it. The page outlines the rectangle in a layer over the canvas
   (`regionMarks.ts`), magenta where the region's tiles kept changing and orange
   where one change was more than its stills, until the stream's next mark, its
   `regionEnd` or a `tilesStart`. Do not draw a mark on the canvas: a `COPY`

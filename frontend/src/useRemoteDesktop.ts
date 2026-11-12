@@ -2696,6 +2696,8 @@ export function useRemoteDesktop(
       // *through* the session; this is the one that leaves.
       bound?.clear();
       bound?.unbind();
+      // The outlines are this effect's, in a layer that outlives it.
+      regionMarks.clear();
       // A logout or the login screen leaves the page holding nothing, and a rerun
       // on the same canvas, StrictMode's, finds new canvases if the worker went.
       endPicture();
