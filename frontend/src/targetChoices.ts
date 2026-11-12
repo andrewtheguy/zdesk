@@ -34,8 +34,9 @@
 // - A `wlshare` target's picture is one of four, all wlshare's own and passed
 //   through, which their labels leave unsaid, chosen in two kinds: adaptive, its
 //   H.264 of the whole desktop or its progressive tiles, both paced to the link;
-//   or lossless, its tiles with motion, which settle to lossless, or its lossless
-//   tiles, exact throughout, both for a LAN and not for a phone or tablet: see
+//   or lossless, its tiles with motion, which settle to lossless, for Wi-Fi or
+//   better, or its lossless tiles, exact throughout, for a wired connection,
+//   neither for a phone or tablet: see
 //   `pictureOptions` and `PICTURE_KINDS`. The video until another is chosen, each
 //   greyed in a browser that cannot decode it: the video and the tiles' H.264
 //   where there is no `VideoDecoder`, the progressive and lossless tiles where the
@@ -468,7 +469,7 @@ function pictureOptions(
       value: "wlshare-tiles-motion",
       label: "Settles to lossless",
       note: abilities.wlshareH264
-        ? "wlshare's own tiles: lossless WebP where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes: for a LAN, and not recommended on a phone or tablet."
+        ? "wlshare's own tiles: lossless WebP where the desktop is still, H.264 only where it moves (by the host's hardware encoder where it has one and libx264 otherwise), lossless again once it stops. A picture that ends lossless, for several times the video's bytes: Wi-Fi or better is recommended, and it is not recommended on a phone or tablet."
         : "This browser has no video decoder for the H.264 of wlshare's moving regions.",
       disabled: !abilities.wlshareH264,
     },
@@ -476,7 +477,7 @@ function pictureOptions(
       value: "wlshare-tiles-lossless",
       label: "Fully lossless (experimental)",
       note: abilities.rdpGraphics
-        ? "wlshare's tiles, every tile exact, still or moving, with no video: what is still in RDP's planar codec, as a Windows host draws under its Lossless policy, and what moves coded by a median predictor, a slower link getting fewer frames. Many times the video's bytes: for a LAN, and not recommended on a phone or tablet. Decoded by this page, with no video decoder."
+        ? "wlshare's tiles, every tile exact, still or moving, with no video: what is still in RDP's planar codec, as a Windows host draws under its Lossless policy, and what moves coded by a median predictor, a slower link getting fewer frames. Many times the video's bytes: a wired connection is recommended, and it is not recommended on a phone or tablet. Decoded by this page, with no video decoder."
         : NO_LOSSLESS,
       disabled: !abilities.rdpGraphics,
     },
@@ -491,7 +492,8 @@ function pictureOptions(
 }
 
 // wlshare's pictures in their two kinds, the picker's order: adaptive, paced to
-// the link and never lossless, and lossless, for high speed LAN connection.
+// the link and never lossless, and lossless, for a link with room: Wi-Fi or
+// better where it settles to lossless, wired where it is lossless throughout.
 const PICTURE_KINDS: {
   label: string;
   note: string;
@@ -504,7 +506,7 @@ const PICTURE_KINDS: {
   },
   {
     label: "Lossless (requires high bandwidth)",
-    note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. A wired connection is recommended; not recommended on a phone or tablet.",
+    note: "Exact once the desktop is still, or throughout, for many times the adaptive pictures' bytes. Wi-Fi or better is recommended for the picture that settles to lossless, and a wired connection for the fully lossless one; not recommended on a phone or tablet.",
     pictures: ["wlshare-tiles-motion", "wlshare-tiles-lossless"],
   },
 ];

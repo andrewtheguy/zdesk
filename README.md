@@ -113,9 +113,10 @@ seamlessly of the three, since what RFB lacks is added to it.
   ours, what RFB lacks is added to it: it switches outputs, follows the window
   at its density, carries Opus or FLAC sound and the browser's camera and
   microphone, and codes its own H.264 of the whole desktop for the gateway to
-  pass through, paced to the browser's link — or, for a link with room to spare, its own lossless
-  tiles with a video stream for each region that moves, H.264 from hardware or
-  libx264. Two outputs can be shown at once, the second
+  pass through, paced to the browser's link — or, on Wi-Fi or better, its own
+  lossless tiles with a video stream for each region that moves, H.264 from
+  hardware or libx264, which settle to lossless; or, on a wired connection, its
+  tiles lossless throughout (experimental). Two outputs can be shown at once, the second
   in a browser tab of its own (beta).
 
 Every other VNC server is a plain `vnc` target reached through the RFB

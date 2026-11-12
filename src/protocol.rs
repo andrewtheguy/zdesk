@@ -1073,6 +1073,17 @@ impl TileUnit {
     }
 }
 
+/// Why wlshare made a region of what moves, which its mark says
+/// ([`ServerMsg::RegionMark`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RegionWhy {
+    /// Its tiles kept changing.
+    Moving,
+    /// One update's change was more than wlshare sends as stills.
+    Burst,
+}
+
 /// An access unit of one moving region's stream in wlshare's tiles
 /// ([`ServerMsg::TilesStart`] on a `wlshare` target that asks for them), H.264 by
 /// the host's hardware encoder where it has one and libx264 otherwise, carried as a
@@ -1431,6 +1442,23 @@ pub enum ServerMsg {
     /// until the tiles sent after this draw over it. `engine` is the engine that sent
     /// it ([`ServerMsg::stamped`]).
     RegionEnd { stream: u8, engine: u64 },
+    /// Where moving region `stream` of wlshare's tiles moves, the box around the
+    /// pixels that changed in it, in framebuffer pixels and inside the stream's
+    /// rectangle, and why wlshare made a region of it: wlshare's mark, which it
+    /// sends only with `motion_debug` set, for a person looking into what it makes
+    /// a video of. None of the picture: the page outlines the rectangle over its
+    /// canvas until the next mark of the stream, its [`ServerMsg::RegionEnd`] or a
+    /// picture that starts over. `engine` is the engine that sent it
+    /// ([`ServerMsg::stamped`]).
+    RegionMark {
+        stream: u8,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        why: RegionWhy,
+        engine: u64,
+    },
     /// The remote desktop resolution changed. `w`/`h` are framebuffer pixels;
     /// `scale` is how many of them the remote draws per point of its *own*
     /// desktop — 1.0 for a framebuffer whose pixels are its points (VNC, a 1x
@@ -1803,6 +1831,15 @@ enum ControlMsg<'a> {
         stream: u8,
         engine: u64,
     },
+    RegionMark {
+        stream: u8,
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+        why: RegionWhy,
+        engine: u64,
+    },
     Connected {
         name: &'a str,
         protocol: &'a str,
@@ -1910,6 +1947,7 @@ impl ServerMsg {
         | ServerMsg::TilesStart { engine: slot }
         | ServerMsg::RegionFormat { engine: slot, .. }
         | ServerMsg::RegionEnd { engine: slot, .. }
+        | ServerMsg::RegionMark { engine: slot, .. }
         | ServerMsg::VideoFormat { engine: slot, .. } = &mut self
         {
             *slot = engine;
@@ -1938,6 +1976,7 @@ impl ServerMsg {
                 | ServerMsg::Run { .. }
                 | ServerMsg::RegionFormat { .. }
                 | ServerMsg::RegionEnd { .. }
+                | ServerMsg::RegionMark { .. }
                 | ServerMsg::VideoFormat { .. }
                 | ServerMsg::Resize { .. }
                 | ServerMsg::Cursor(_)
@@ -1991,6 +2030,23 @@ impl ServerMsg {
             }),
             ServerMsg::RegionEnd { stream, engine } => control(&ControlMsg::RegionEnd {
                 stream: *stream,
+                engine: *engine,
+            }),
+            ServerMsg::RegionMark {
+                stream,
+                x,
+                y,
+                w,
+                h,
+                why,
+                engine,
+            } => control(&ControlMsg::RegionMark {
+                stream: *stream,
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+                why: *why,
                 engine: *engine,
             }),
             ServerMsg::GraphicsView { x, y, w, h } => control(&ControlMsg::GraphicsView {
@@ -3234,6 +3290,31 @@ mod tests {
             end.text_frame().as_deref(),
             Some(r#"{"type":"regionEnd","stream":2,"engine":7}"#)
         );
+    }
+
+    /// A region's mark names its stream, its rectangle and why, and is stamped with
+    /// its engine as the region's format is.
+    #[test]
+    fn a_regions_mark_is_a_stamped_display_message() {
+        for (why, word) in [(RegionWhy::Moving, "moving"), (RegionWhy::Burst, "burst")] {
+            let mark = ServerMsg::RegionMark {
+                stream: 2,
+                x: 70,
+                y: 72,
+                w: 308,
+                h: 244,
+                why,
+                engine: 0,
+            }
+            .stamped(7);
+            assert!(mark.is_display());
+            assert_eq!(
+                mark.text_frame(),
+                Some(format!(
+                    r#"{{"type":"regionMark","stream":2,"x":70,"y":72,"w":308,"h":244,"why":"{word}","engine":7}}"#
+                ))
+            );
+        }
     }
 
     /// What a payload is owed is said once, wherever the payload ends, and a copy of

@@ -59,6 +59,32 @@ body {
   height: 100%;
 }
 
+/* The layer of wlshare's marks (regionMarks.ts), in the framebuffer's box as the
+   canvas above is, and moved with it by applyCanvasCss: each child outlines where
+   one moving region of wlshare's tiles moves, magenta where its tiles kept
+   changing and orange where one change was more than its stills, two points
+   thick inside the rectangle. Never the pointer's, which is the input overlay's. */
+.region-marks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+.region-mark {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #ff00ff;
+}
+
+.region-mark.burst {
+  border-color: #ffa500;
+}
+
 .input-overlay {
   position: absolute;
   inset: 0;

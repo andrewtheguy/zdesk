@@ -78,6 +78,7 @@ import {
 } from "./protocol.ts";
 import { composesRdpGraphics } from "./rdpGraphics.ts";
 import { decodesRdpH264 } from "./rdpH264.ts";
+import { createRegionMarks, domMarkLayer } from "./regionMarks.ts";
 import { remotePoint } from "./remotePoint.ts";
 import { pageModuleFor } from "./softwareDecoder.ts";
 import { runnableDecoders } from "./softwareSupport.ts";
@@ -390,6 +391,7 @@ const pointerRectCache = createRectCache((clear) =>
 function applyCanvasCss(
   canvas: HTMLCanvasElement | null,
   graphics: HTMLCanvasElement | null,
+  marks: HTMLElement | null,
   size: RemoteSize | null,
   view: TouchViewState,
   bottomInset = 0,
@@ -403,9 +405,13 @@ function applyCanvasCss(
     if (transform !== undefined) {
       canvas.style.transform = transform;
       // The pipeline's canvas fills the surface, which is this canvas's box
-      // before its transform: so it is moved the same way.
+      // before its transform: so it is moved the same way, and so is the layer
+      // of wlshare's marks (regionMarks.ts).
       if (graphics) {
         graphics.style.transform = transform;
+      }
+      if (marks) {
+        marks.style.transform = transform;
       }
     }
   };
@@ -613,6 +619,7 @@ function viewportMsg(size: {
 export function useRemoteDesktop(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   graphicsRef: React.RefObject<HTMLCanvasElement | null>,
+  marksRef: React.RefObject<HTMLElement | null>,
   overlayRef: React.RefObject<HTMLElement | null>,
   pointerRef: React.RefObject<HTMLImageElement | null>,
   onUnauthorized: () => void,
@@ -1338,6 +1345,11 @@ export function useRemoteDesktop(
     // `picker`; numbered by its engine, it is told from the next session's, and
     // must load nothing again.
     let endedEngines = 0;
+    // The outlines of wlshare's marks, over the canvas and none of its picture.
+    const regionMarks = createRegionMarks(
+      domMarkLayer(() => marksRef.current),
+      () => sizeRef.current,
+    );
     const endPicture = () => {
       if (bound?.endSession()) {
         bound = null;
@@ -1354,6 +1366,7 @@ export function useRemoteDesktop(
     // worth keeping behind the overlay, and holding stale pixels would only
     // flash on the way back.
     const clearDesktop = () => {
+      regionMarks.clear();
       sizeRef.current = null;
       mosaicViewRef.current = null;
       mosaicRegions = null;
@@ -1586,7 +1599,8 @@ export function useRemoteDesktop(
           msg.type === "standardStart" ||
           msg.type === "tilesStart" ||
           msg.type === "regionFormat" ||
-          msg.type === "regionEnd") &&
+          msg.type === "regionEnd" ||
+          msg.type === "regionMark") &&
         msg.engine <= endedEngines
       ) {
         return;
@@ -2043,12 +2057,15 @@ export function useRemoteDesktop(
       applyCanvasCss(
         canvasRef.current,
         graphicsRef.current,
+        marksRef.current,
         s,
         viewRef.current,
         bottomInsetRef.current,
       );
       sizeRef.current = s;
       setSize(s);
+      // wlshare's marks lie by the framebuffer's size, this one from here.
+      regionMarks.resized();
       syncCursor();
     };
 
@@ -2450,6 +2467,7 @@ export function useRemoteDesktop(
           // that cannot decode what it names finds out from the decoder's own
           // error, which arrives at `onVideoError` naming the configuration.
           painter()?.setVideoFormat({ decode: msg.decode, colour: msg.colour });
+          regionMarks.clear();
           // And the same string for the card, which is the only place the exact
           // configuration is written down while the picture is working, with whose
           // stream it is: only the gateway knows whether it encoded it.
@@ -2466,6 +2484,7 @@ export function useRemoteDesktop(
           // Queued in the worker like a format, behind the frames already posted:
           // the pipeline's first run must find a compositor with nothing in it.
           painter()?.startGraphics();
+          regionMarks.clear();
           setVideoStream({ decode: "", composed: true });
           setHostPicture({ lossless: true, codecs: [] });
           break;
@@ -2473,12 +2492,15 @@ export function useRemoteDesktop(
           // Queued the same way: the picture's first rectangle must find a
           // decoder with nothing in it.
           painter()?.startStandard();
+          regionMarks.clear();
           setVideoStream({ decode: "", standard: true });
           break;
         case "tilesStart":
           // Queued the same way: the picture's first tile must find no decoder or
           // compositor standing, a moving region's of the tiles before included.
           painter()?.startTiles();
+          // Every region of the tiles before is gone, and its mark with it.
+          regionMarks.clear();
           // wlshare's tiles started over on a resize or a reattach move their
           // regions as the last ones did, so what the card says of them stands.
           setVideoStream((prev) =>
@@ -2501,6 +2523,12 @@ export function useRemoteDesktop(
         case "regionEnd":
           // And retired in its place, after its last unit is drawn.
           painter()?.endRegion(msg.stream);
+          regionMarks.end(msg.stream);
+          break;
+        case "regionMark":
+          // wlshare's mark of the region, outlined over the canvas at once: it
+          // is none of the picture, so it waits on nothing the painter draws.
+          regionMarks.set(msg.stream, msg);
           break;
         case "hostPicture":
           setHostPicture({ lossless: msg.lossless, codecs: msg.codecs });
@@ -2603,6 +2631,7 @@ export function useRemoteDesktop(
         applyCanvasCss(
           canvasRef.current,
           graphicsRef.current,
+          marksRef.current,
           sizeRef.current,
           viewRef.current,
           bottomInsetRef.current,
@@ -2667,6 +2696,8 @@ export function useRemoteDesktop(
       // *through* the session; this is the one that leaves.
       bound?.clear();
       bound?.unbind();
+      // The outlines are this effect's, in a layer that outlives it.
+      regionMarks.clear();
       // A logout or the login screen leaves the page holding nothing, and a rerun
       // on the same canvas, StrictMode's, finds new canvases if the worker went.
       endPicture();
@@ -2675,6 +2706,7 @@ export function useRemoteDesktop(
   }, [
     canvasRef,
     graphicsRef,
+    marksRef,
     onUnauthorized,
     syncCursor,
     settleClipboardWaiters,
@@ -2923,13 +2955,14 @@ export function useRemoteDesktop(
       applyCanvasCss(
         canvasRef.current,
         graphicsRef.current,
+        marksRef.current,
         sizeRef.current,
         viewRef.current,
         bottomInsetRef.current,
       );
       syncCursor();
     },
-    [canvasRef, graphicsRef, syncCursor],
+    [canvasRef, graphicsRef, marksRef, syncCursor],
   );
 
   // The toolbar took a chord that had Command in it. Stable, so the handler that
@@ -3001,6 +3034,7 @@ export function useRemoteDesktop(
             applyCanvasCss(
               canvasRef.current,
               graphicsRef.current,
+              marksRef.current,
               sizeRef.current,
               viewRef.current,
               bottomInsetRef.current,
@@ -3275,7 +3309,16 @@ export function useRemoteDesktop(
       el.removeEventListener("keyup", onKeyUp);
       el.removeEventListener("blur", onBlur);
     };
-  }, [overlayRef, canvasRef, graphicsRef, syncCursor, viewOnly, held, covered]);
+  }, [
+    overlayRef,
+    canvasRef,
+    graphicsRef,
+    marksRef,
+    syncCursor,
+    viewOnly,
+    held,
+    covered,
+  ]);
 
   // The desktop takes the keyboard as soon as it is on screen, so the first
   // thing typed reaches the remote — the surface is the only thing on it worth

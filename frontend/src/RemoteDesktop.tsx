@@ -271,6 +271,7 @@ export default function RemoteDesktop({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const graphicsRef = useRef<HTMLCanvasElement>(null);
+  const marksRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<HTMLImageElement>(null);
   // The keyboard belongs to the overlay, whose key listeners are scoped to it
@@ -336,6 +337,7 @@ export default function RemoteDesktop({
   } = useRemoteDesktop(
     canvasRef,
     graphicsRef,
+    marksRef,
     overlayRef,
     pointerRef,
     onUnauthorized,
@@ -393,6 +395,11 @@ export default function RemoteDesktop({
           width={0}
           height={0}
         />
+        {/* The outlines of wlshare's marks of its moving regions, which only a
+            wlshare set to look into them sends (regionMarks.ts): over the
+            picture and none of it, in the canvas's box and under the input
+            overlay. Its children are the hook's. */}
+        <div ref={marksRef} className="region-marks" aria-hidden="true" />
         {/* Transparent overlay captures mouse + keyboard input. tabIndex
             makes the div focusable — without it, focus() in the mousedown
             handler is a no-op and the keydown/keyup listeners (scoped to

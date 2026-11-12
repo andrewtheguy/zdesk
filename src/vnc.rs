@@ -6686,7 +6686,8 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 TileHeader::End { .. }
                 | TileHeader::Copy { .. }
                 | TileHeader::Cached { .. }
-                | TileHeader::Store { .. } => 0,
+                | TileHeader::Store { .. }
+                | TileHeader::Mark { .. } => 0,
             };
             let mut body = vec![0u8; len];
             reader.read_exact(&mut body).await?;
@@ -6698,6 +6699,17 @@ async fn read_rect<R: AsyncRead + Unpin>(
             match header {
                 TileHeader::End { stream } => {
                     sink.pass_region_end(stream).await?;
+                    return Ok(RectEffect::NOTHING);
+                }
+                // Where a region moves and why wlshare made it one, sent only by a
+                // daemon set to (`motion_debug`): none of the picture, which the
+                // page outlines it over.
+                TileHeader::Mark { stream, why } => {
+                    let why = match why {
+                        wlshare_proto::tiles::MarkWhy::Moving => crate::protocol::RegionWhy::Moving,
+                        wlshare_proto::tiles::MarkWhy::Burst => crate::protocol::RegionWhy::Burst,
+                    };
+                    sink.pass_region_mark(stream, (x, y, w, h), why).await?;
                     return Ok(RectEffect::NOTHING);
                 }
                 TileHeader::Webp { .. } => {
@@ -15340,7 +15352,7 @@ mod tests {
         marker: &[u8],
     ) -> Vec<u8> {
         let mut msg = vec![0u8, 0];
-        msg.extend_from_slice(&7u16.to_be_bytes());
+        msg.extend_from_slice(&8u16.to_be_bytes());
         let rect = |msg: &mut Vec<u8>, (x, y, w, h): (u16, u16, u16, u16), kind: u8| {
             for field in [x, y, w, h] {
                 msg.extend_from_slice(&field.to_be_bytes());
@@ -15360,6 +15372,8 @@ mod tests {
             msg.extend_from_slice(&(frame.len() as u32).to_be_bytes());
             msg.extend_from_slice(frame);
         }
+        rect(&mut msg, (6, 22, 308, 180), wlshare_proto::tiles::KIND_MARK);
+        msg.extend_from_slice(&[2, wlshare_proto::tiles::MARK_BURST]);
         rect(&mut msg, (0, 16, 320, 192), wlshare_proto::tiles::KIND_END);
         msg.push(2);
         rect(
@@ -15416,6 +15430,18 @@ mod tests {
             matches!(&region[..], [ServerMsg::Region(first), ServerMsg::Region(next)]
             if first.keyframe && (first.x, first.y, first.w, first.h) == (0, 16, 320, 192) && !next.keyframe)
         );
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMsg::RegionMark {
+                stream: 2,
+                x: 6,
+                y: 22,
+                w: 308,
+                h: 180,
+                why: crate::protocol::RegionWhy::Burst,
+                ..
+            })
+        ));
         assert!(matches!(
             rx.recv().await,
             Some(ServerMsg::RegionEnd { stream: 2, .. })
