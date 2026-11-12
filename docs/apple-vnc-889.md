@@ -1906,10 +1906,14 @@ configuration does not. The viewer offers no setting for it.
 The Mac's encoder follows a rate controller on the Mac that works from the
 viewer's reports alone. Its target moves between a floor of 20 Mbit/s and a
 ceiling of the offer's bitrate entries, capped at 60 Mbit/s. The floor and the
-60 Mbit/s ceiling are fixed by the Mac's screen-sharing video profile, and no
-offer field is known to lower the floor. An entry can only lower the ceiling,
-and nothing the viewer sends raises it. Within it, the controller's highest
-target is 58,448 kbit/s, the top of its table for this mode. The daemon logs the controller's state every 5 s:
+60 Mbit/s ceiling are fixed by the Mac's screen-sharing video profile. The Mac
+sets the stream's least bitrate from that profile alone, with nothing of the
+offer, so no offer field lowers the floor; it sets the most as the lesser of
+the profile's 60 Mbit/s and the offer's entry. An entry can only lower the
+ceiling, and nothing the viewer sends raises it. The controller's targets are
+steps of a fixed table: the floor is its step at or above 20 Mbit/s, 20,771
+kbit/s, and the highest target is 58,448 kbit/s, the top of the table for this
+mode. The daemon logs the controller's state every 5 s:
 target, cap, measured bitrate, round-trip time, one-way delay and loss.
 
 - **The target is a bound.** It is the most the encoder may spend, not what
@@ -1927,7 +1931,7 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
 
   ```text
   +0  u8   0x85
-  +1  u8   a millisecond figure / 20, meaning unknown; 0 is accepted
+  +1  u8   a delay in 20 ms units, which the Mac ignores; 0 is accepted
   +2  u16  4, the payload's length in words after this field
   +4  u16  echo: the last received picture packet's RTP timestamp >> 8
   +6  u32  zero
@@ -1938,20 +1942,42 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   +18 u16  bandwidth estimate, kbit/s
   ```
 
+  Apple's receiver puts a delay from its own statistics, in milliseconds, into
+  the second byte, divided by 20. Read from the code, the Mac decodes it back
+  to milliseconds and leaves it out of what it hands its rate controller. The
+  echo, the hold time, the clock, the one-way delay, the loss and count, and the
+  bandwidth estimate all reach the controller.
+
 - **The echo.** The Mac keeps a history of what it sent keyed by the picture
   leg's 24 kHz RTP timestamp shifted right by 8, about 94 entries a second, and
   takes the round-trip time from the echo and the hold time after it. An echo
   that matches nothing logs a missing send-history element and leaves the
   controller without a round-trip time or a measured bitrate. The received count
   is a running one: a count per report reads as total loss.
-- **What moves it.** The one-way delay alone. With the delay low, the target
-  rose from the floor to near the cap within about 3 s. A delay of 300 ms held
-  it at the floor from the start, and after a clean start walked it from 58.4 to
-  20.8 Mbit/s in steps over about 10 s, with the encoder following each step.
-  Reported loss of up to 44% for 30 s, and the bandwidth estimate, moved nothing,
-  though the controller showed both. A TMMBR asking for 2 Mbit/s changed nothing
-  and was not answered. Read from the code, the Mac takes a temporary maximum
-  only between the floor and the ceiling.
+- **What moves it.** The one-way delay and the bursty-loss field, nothing else.
+  With the delay low, the target rose from the floor to near the cap within
+  about 3 s. A delay of 300 ms held it at the floor from the start, and after a
+  clean start walked it from 58.4 to 20.8 Mbit/s in steps over about 10 s, with
+  the encoder following each step. A bursty loss of 5 or more sends it to the
+  floor at once: under a terminal flood the target went from 58.4 to 20.8 Mbit/s
+  within 5 s, and the stream from about 55 to 20 Mbit/s. A bursty loss of 1, 3 or
+  4 for a minute moved nothing. Once the bursty loss stopped, the target climbed
+  back to 58.4 Mbit/s in steps over about 20 s.
+- **What does not move it.** Loss in the received count does not, nor does the
+  loss the Mac measures itself. A count reporting 44% lost for 30 s, or 30% for
+  two minutes, left the target at 58.4 Mbit/s, though the controller showed it.
+  Over a link that carried about 33 Mbit/s, a stream of 50–55 Mbit/s lost
+  35–53% of its packets on the way, with a round-trip time of 1–1.6 s. The
+  target stayed at 58.4 Mbit/s while the reports gave a delay of 0 and no
+  bursty loss. The bandwidth estimate moved nothing either. A TMMBR asking for 2
+  Mbit/s changed nothing and was not answered. Read from the code, the Mac takes
+  a temporary maximum only between the floor and the ceiling.
+- **Nothing takes it below the floor.** Read from the code, the controller
+  stops at the floor on every way down: a growing delay, a bursty loss or a
+  loss event. A delay reported from the browser rather than the gateway would
+  therefore move the target only while the browser's link carries more than
+  about 21 Mbit/s. Only the offer's entry takes the stream lower, and it holds
+  for the whole stream it offers, as below.
 - **Without reports it stands still.** The controller computes a new target
   only when a report arrives; receiver reports do not count. Reports stopped
   mid-session left the target where it was, 58.4 Mbit/s for 30 s, and 27.9
@@ -2004,8 +2030,9 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   it takes the viewer's. This happens whenever High Performance runs; it is not
   selected by a quality control.
 
-These are the virtual Mac's measurements, with synthetic reports. A congested
-link to a physical Mac has not been observed.
+These are the virtual Mac's measurements, with synthetic reports. The only
+congested link observed was the one to the virtual Mac through a VPN. A
+congested link to a physical Mac has not been observed.
 
 ### The sound
 
@@ -2196,9 +2223,6 @@ is 10 s overdue.
   density ([Apple's own framebuffer encodings](#apples-own-framebuffer-encodings)).
 - **Other login types:** type 35's Kerberos tokens
   ([Other login types](#other-login-types)).
-- **Rate control's loose ends**: the second byte of `RCTL`, whether loss lowers
-  the target over longer than 30 s, and whether any offer field lowers the
-  20 Mbit/s floor ([Rate control](#rate-control)).
 - **Four-tile frames**: whether anything short of a keyframe mends a loss,
   and whether a still screen's repeats stop as early on a physical Mac; a stream of them
   under loss, on a physical Mac and at 4K
