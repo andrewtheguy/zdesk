@@ -1906,10 +1906,14 @@ configuration does not. The viewer offers no setting for it.
 The Mac's encoder follows a rate controller on the Mac that works from the
 viewer's reports alone. Its target moves between a floor of 20 Mbit/s and a
 ceiling of the offer's bitrate entries, capped at 60 Mbit/s. The floor and the
-60 Mbit/s ceiling are fixed by the Mac's screen-sharing video profile, and no
-offer field is known to lower the floor. An entry can only lower the ceiling,
-and nothing the viewer sends raises it. Within it, the controller's highest
-target is 58,448 kbit/s, the top of its table for this mode. The daemon logs the controller's state every 5 s:
+60 Mbit/s ceiling are fixed by the Mac's screen-sharing video profile. The Mac
+sets the stream's least bitrate from that profile alone, with nothing of the
+offer, so no offer field lowers the floor; it sets the most as the lesser of
+the profile's 60 Mbit/s and the offer's entry. An entry can only lower the
+ceiling, and nothing the viewer sends raises it. The controller's targets are
+steps of a fixed table: the floor is its step at or above 20 Mbit/s, 20,771
+kbit/s, and the highest target is 58,448 kbit/s, the top of the table for this
+mode. The daemon logs the controller's state every 5 s:
 target, cap, measured bitrate, round-trip time, one-way delay and loss.
 
 - **The target is a bound.** It is the most the encoder may spend, not what
@@ -1952,6 +1956,12 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   though the controller showed both. A TMMBR asking for 2 Mbit/s changed nothing
   and was not answered. Read from the code, the Mac takes a temporary maximum
   only between the floor and the ceiling.
+- **Nothing takes it below the floor.** Read from the code, the controller
+  stops at the floor on every way down: a growing delay, a bursty loss or a
+  loss event. A delay reported from the browser rather than the gateway would
+  therefore move the target only while the browser's link carries more than
+  about 21 Mbit/s. Only the offer's entry takes the stream lower, and it holds
+  for the whole stream it offers, as below.
 - **Without reports it stands still.** The controller computes a new target
   only when a report arrives; receiver reports do not count. Reports stopped
   mid-session left the target where it was, 58.4 Mbit/s for 30 s, and 27.9
@@ -2196,9 +2206,10 @@ is 10 s overdue.
   density ([Apple's own framebuffer encodings](#apples-own-framebuffer-encodings)).
 - **Other login types:** type 35's Kerberos tokens
   ([Other login types](#other-login-types)).
-- **Rate control's loose ends**: the second byte of `RCTL`, whether loss lowers
-  the target over longer than 30 s, and whether any offer field lowers the
-  20 Mbit/s floor ([Rate control](#rate-control)).
+- **Rate control's loose ends**: the second byte of `RCTL`, and what loss
+  lowers the target: the code has ways down for a bursty loss and for loss
+  events, but reported loss of up to 44% for 30 s moved nothing
+  ([Rate control](#rate-control)).
 - **Four-tile frames**: whether anything short of a keyframe mends a loss,
   and whether a still screen's repeats stop as early on a physical Mac; a stream of them
   under loss, on a physical Mac and at 4K
