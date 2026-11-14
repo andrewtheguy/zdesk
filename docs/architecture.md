@@ -2580,7 +2580,11 @@ and `GET /api/targets` carries it:
   that says which stream: no engine is rebuilt with other choices.
 
 Login tokens are held in memory with sliding expiry and delivered through an
-`HttpOnly`, `SameSite=Strict` cookie. The cookie is marked `Secure` when
+`HttpOnly`, `SameSite=Strict` cookie. A page's open session socket keeps its
+login alive on every heartbeat (`HeldLogin` in `src/auth.rs`), so the expiry
+counts from when the last page went away: a WebSocket is checked only at its
+handshake, and a session started from a page that outlived its login would
+otherwise have its sound, microphone and camera sockets refused. The cookie is marked `Secure` when
 `x-forwarded-proto` reports HTTPS. Restarting the gateway invalidates all
 logins.
 
