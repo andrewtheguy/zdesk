@@ -353,9 +353,11 @@ impl LoginThrottle {
 
 /// In-memory auth sessions: token → expiry, with a sliding TTL. The map only
 /// ever holds this single user's handful of logins, so expired entries are
-/// swept opportunistically on create/validate instead of by a timer.
+/// swept opportunistically on create/validate instead of by a timer. Expiry is
+/// read off Tokio's clock, which is the system's outside a paused test runtime,
+/// so a test can step a lifetime instead of sleeping through it.
 pub struct AuthSessions {
-    sessions: Mutex<HashMap<String, Instant>>,
+    sessions: Mutex<HashMap<String, tokio::time::Instant>>,
     ttl: Duration,
 }
 
@@ -377,7 +379,7 @@ impl AuthSessions {
     pub fn create(&self) -> String {
         let token = uuid::Uuid::new_v4().to_string();
         let mut sessions = self.sessions.lock().unwrap();
-        let now = Instant::now();
+        let now = tokio::time::Instant::now();
         sessions.retain(|_, expiry| *expiry > now);
         sessions.insert(token.clone(), now + self.ttl);
         token
@@ -386,7 +388,7 @@ impl AuthSessions {
     /// True when the token names a live session; refreshes the sliding expiry.
     pub fn validate(&self, token: &str) -> bool {
         let mut sessions = self.sessions.lock().unwrap();
-        let now = Instant::now();
+        let now = tokio::time::Instant::now();
         match sessions.get_mut(token) {
             Some(expiry) if *expiry > now => {
                 *expiry = now + self.ttl;
@@ -611,18 +613,18 @@ mod tests {
 
     /// A held login is kept past its lifetime by being refreshed, and an expired or
     /// logged-out one is not brought back by it.
-    #[test]
-    fn a_held_login_lives_while_refreshed() {
-        let sessions = Arc::new(AuthSessions::with_ttl(Duration::from_millis(100)));
+    #[tokio::test(start_paused = true)]
+    async fn a_held_login_lives_while_refreshed() {
+        let sessions = Arc::new(AuthSessions::with_ttl(Duration::from_secs(10)));
         let token = sessions.create();
         let held = HeldLogin::new(Arc::clone(&sessions), token.clone());
         for _ in 0..4 {
-            std::thread::sleep(Duration::from_millis(40));
+            tokio::time::advance(Duration::from_secs(4)).await;
             held.refresh();
         }
         assert!(sessions.validate(&token), "refreshed past its lifetime");
 
-        std::thread::sleep(Duration::from_millis(150));
+        tokio::time::advance(Duration::from_secs(11)).await;
         held.refresh();
         assert!(!sessions.validate(&token), "an expired login came back");
 

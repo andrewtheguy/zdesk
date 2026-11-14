@@ -2562,29 +2562,34 @@ mod tests {
     /// the lifetime runs again once the page is gone.
     #[tokio::test]
     async fn an_open_session_socket_keeps_its_login() {
+        let (engine_tx, mut engine_rx) = mpsc::unbounded_channel();
         let sessions = Arc::new(SessionManager::with_test_spawner(
             vec![fake_target()],
-            |_target, _choices, _input_rx, _frame_tx, _audio, _camera| {},
+            move |_target, _choices, input_rx, frame_tx, _audio, _camera| {
+                engine_tx.send((input_rx, frame_tx)).unwrap();
+            },
         ));
         let token = sessions.claim(false, None, "login").unwrap();
-        let logins = Arc::new(crate::auth::AuthSessions::with_ttl(Duration::from_millis(
-            100,
-        )));
+        let lifetime = Duration::from_secs(10);
+        let logins = Arc::new(crate::auth::AuthSessions::with_ttl(lifetime));
         let login = logins.create();
         let held = login.clone();
         let held_logins = Arc::clone(&logins);
         let timings = HeartbeatTimings {
-            interval: Duration::from_millis(20),
+            interval: Duration::from_secs(1),
             timeout: Duration::from_secs(60),
         };
+        let ended = Arc::new(tokio::sync::Notify::new());
+        let served_ended = Arc::clone(&ended);
         let app = Router::new().route(
             "/ws",
             any(move |ws: WebSocketUpgrade| {
                 let sessions = Arc::clone(&sessions);
                 let token = token.clone();
                 let login = HeldLogin::new(Arc::clone(&held_logins), held.clone());
+                let ended = Arc::clone(&served_ended);
                 async move {
-                    ws.on_upgrade(move |socket| {
+                    ws.on_upgrade(move |socket| async move {
                         session(
                             socket,
                             sessions,
@@ -2595,6 +2600,8 @@ mod tests {
                             timings,
                             Arc::default(),
                         )
+                        .await;
+                        ended.notify_one();
                     })
                 }
             }),
@@ -2605,17 +2612,38 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        // Under real time, well inside the lifetime: the handshake, then a
+        // connect, whose engine proves the socket's loop and its heartbeat run.
+        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        client
+            .send(ClientFrame::text(
+                r#"{"type":"connect","target":"fake","choices":{"size":"target"}}"#,
+            ))
+            .await
+            .unwrap();
+        let _engine = engine_rx.recv().await.unwrap();
+
+        // Twice the lifetime, a heartbeat at a time.
+        tokio::time::pause();
+        for _ in 0..2 * lifetime.as_secs() {
+            tokio::time::advance(timings.interval).await;
+            tokio::task::yield_now().await;
+        }
         assert!(
             logins.validate(&login),
             "the login lapsed under an open page"
         );
 
+        // The page goes away; once its socket has ended, nothing refreshes it.
+        tokio::time::resume();
         drop(client);
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::timeout(Duration::from_secs(10), ended.notified())
+            .await
+            .expect("the session socket outlived its page");
+        tokio::time::pause();
+        tokio::time::advance(lifetime + Duration::from_secs(1)).await;
         assert!(
             !logins.validate(&login),
             "the login outlived the page by more than its lifetime"
