@@ -84,6 +84,12 @@ in it invites, admits or hands control to someone else. Work that would only
 serve showing a desktop to another person, or helping them at theirs, is out of
 scope.
 
+It also stays one thing, a remote desktop, and leaves what other tools already
+do to them. It will not offer a terminal in the browser over SSH:
+[mywebterm](https://github.com/andrewtheguy/mywebterm) covers that. It is
+unlikely to transfer files either, since projects made for moving files between
+machines already exist, such as [ptransfer](https://ptransfer.app/).
+
 The rest is still moving, which is why there is no backward compatibility.
 Until it settles, a path kept for an earlier form would hold an abandoned
 iteration in place and make the next change harder, so a release replaces a
