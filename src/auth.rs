@@ -40,7 +40,8 @@ use sha2::Digest as _;
 /// Name of the auth session cookie.
 pub const COOKIE_NAME: &str = "zdesk_session";
 
-/// Sliding session lifetime: every validated request pushes the expiry out.
+/// Sliding session lifetime: every validated request pushes the expiry out, and so
+/// does each heartbeat of a page's open session socket ([`HeldLogin`]).
 const SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The fewest characters a web login's password may have: NIST SP 800-63B's
@@ -365,7 +366,7 @@ impl Default for AuthSessions {
 }
 
 impl AuthSessions {
-    fn with_ttl(ttl: Duration) -> Self {
+    pub(crate) fn with_ttl(ttl: Duration) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             ttl,
@@ -402,6 +403,31 @@ impl AuthSessions {
     /// Drop a session (logout).
     pub fn invalidate(&self, token: &str) {
         self.sessions.lock().unwrap().remove(token);
+    }
+}
+
+/// The login a page's session socket was opened under, held for as long as that
+/// socket is open and answering: a page that is still there is the login in use,
+/// so the lifetime counts from when the last page went away.
+///
+/// Only a request validates a login, and an open WebSocket makes none. Without
+/// this, a page left on the picker past [`SESSION_TTL`] keeps its session and
+/// display sockets, which were checked once at their handshake, and can still
+/// start a session over them, while every socket the session opens afresh (its
+/// sound, microphone and camera) fails the guard with a 401.
+pub struct HeldLogin {
+    sessions: Arc<AuthSessions>,
+    token: String,
+}
+
+impl HeldLogin {
+    pub fn new(sessions: Arc<AuthSessions>, token: String) -> Self {
+        Self { sessions, token }
+    }
+
+    /// Push the login's expiry out. One already expired or logged out stays so.
+    pub fn refresh(&self) {
+        self.sessions.validate(&self.token);
     }
 }
 
@@ -581,6 +607,30 @@ mod tests {
             !sessions.validate(&token),
             "a zero-TTL session is born expired"
         );
+    }
+
+    /// A held login is kept past its lifetime by being refreshed, and an expired or
+    /// logged-out one is not brought back by it.
+    #[test]
+    fn a_held_login_lives_while_refreshed() {
+        let sessions = Arc::new(AuthSessions::with_ttl(Duration::from_millis(100)));
+        let token = sessions.create();
+        let held = HeldLogin::new(Arc::clone(&sessions), token.clone());
+        for _ in 0..4 {
+            std::thread::sleep(Duration::from_millis(40));
+            held.refresh();
+        }
+        assert!(sessions.validate(&token), "refreshed past its lifetime");
+
+        std::thread::sleep(Duration::from_millis(150));
+        held.refresh();
+        assert!(!sessions.validate(&token), "an expired login came back");
+
+        let token = sessions.create();
+        let held = HeldLogin::new(Arc::clone(&sessions), token.clone());
+        sessions.invalidate(&token);
+        held.refresh();
+        assert!(!sessions.validate(&token), "a logged-out login came back");
     }
 
     /// A minted token matches itself and nothing else, including the near misses a

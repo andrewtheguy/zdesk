@@ -92,6 +92,7 @@ use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use crate::{
     audio::AudioLink,
+    auth::HeldLogin,
     camera::{CameraFormat, CameraSignal},
     config::Decoders,
     feedback::LinkFeedback,
@@ -889,8 +890,17 @@ pub struct SessionParams {
 pub async fn handler(
     ws: WebSocketUpgrade,
     Query(params): Query<SessionParams>,
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
+    // The route's guard has already checked the cookie; this is the login it held,
+    // kept alive while the page is. A worker's launch token has no lifetime.
+    let login = state
+        .config
+        .auth
+        .login()
+        .and(crate::auth::token_from_headers(&headers))
+        .map(|token| HeldLogin::new(Arc::clone(&state.auth), token));
     let display = match (params.w, params.h, params.scale) {
         (Some(w), Some(h), Some(scale)) => Some(protocol::HostDisplay {
             w,
@@ -904,6 +914,7 @@ pub async fn handler(
         session(
             socket,
             state.sessions,
+            login,
             params.session,
             display,
             Decoders::stated(
@@ -1765,9 +1776,11 @@ async fn display(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn session(
     socket: WebSocket,
     sessions: Arc<SessionManager>,
+    login: Option<HeldLogin>,
     token: Option<String>,
     display: Option<protocol::HostDisplay>,
     decoders: Decoders,
@@ -1844,6 +1857,9 @@ async fn session(
                     // reattach grace period, so end the engine immediately.
                     sessions.expire_attachment(attach_id);
                     break;
+                }
+                if let Some(login) = &login {
+                    login.refresh();
                 }
                 continue;
             }
@@ -2541,6 +2557,72 @@ mod tests {
         }
     }
 
+    /// A page's open session socket keeps its login alive past the login's
+    /// lifetime, so the sockets a later session opens still pass the guard, and
+    /// the lifetime runs again once the page is gone.
+    #[tokio::test]
+    async fn an_open_session_socket_keeps_its_login() {
+        let sessions = Arc::new(SessionManager::with_test_spawner(
+            vec![fake_target()],
+            |_target, _choices, _input_rx, _frame_tx, _audio, _camera| {},
+        ));
+        let token = sessions.claim(false, None, "login").unwrap();
+        let logins = Arc::new(crate::auth::AuthSessions::with_ttl(Duration::from_millis(
+            100,
+        )));
+        let login = logins.create();
+        let held = login.clone();
+        let held_logins = Arc::clone(&logins);
+        let timings = HeartbeatTimings {
+            interval: Duration::from_millis(20),
+            timeout: Duration::from_secs(60),
+        };
+        let app = Router::new().route(
+            "/ws",
+            any(move |ws: WebSocketUpgrade| {
+                let sessions = Arc::clone(&sessions);
+                let token = token.clone();
+                let login = HeldLogin::new(Arc::clone(&held_logins), held.clone());
+                async move {
+                    ws.on_upgrade(move |socket| {
+                        session(
+                            socket,
+                            sessions,
+                            Some(login),
+                            Some(token),
+                            None,
+                            Decoders::ALL,
+                            timings,
+                            Arc::default(),
+                        )
+                    })
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            logins.validate(&login),
+            "the login lapsed under an open page"
+        );
+
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !logins.validate(&login),
+            "the login outlived the page by more than its lifetime"
+        );
+        server.abort();
+    }
+
     #[tokio::test]
     async fn paint_feedback_stops_at_the_websocket_bridge() {
         let (engine_tx, mut engine_rx) = mpsc::unbounded_channel();
@@ -2564,6 +2646,7 @@ mod tests {
                         session(
                             socket,
                             sessions,
+                            None,
                             Some(token),
                             None,
                             Decoders::ALL,
@@ -2678,6 +2761,7 @@ mod tests {
                             session(
                                 socket,
                                 sessions,
+                                None,
                                 Some(token),
                                 None,
                                 Decoders::ALL,
@@ -2810,6 +2894,7 @@ mod tests {
                         session(
                             socket,
                             sessions,
+                            None,
                             Some(token),
                             None,
                             Decoders::ALL,
@@ -2979,6 +3064,7 @@ mod tests {
                         session(
                             socket,
                             sessions,
+                            None,
                             Some(token),
                             None,
                             Decoders::ALL,
