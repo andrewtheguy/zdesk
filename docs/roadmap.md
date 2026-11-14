@@ -120,20 +120,28 @@ unwrapped. The record and its
 acknowledgement would stay as they are: one stream per pipeline, started at
 `graphicsStart` and flushed at each record, in place of the host's.
 
-### A settings file for the TUI
+### The shared port in the TUI's settings
 
-Taken up when the TUI needs a setting that belongs to the control plane rather
-than to any one instance, such as a locale for its screens. Nothing needs one
-today: the only such setting is the shared port, and `--port` and
-`ZDESK_TUI_PORT` cover it.
+Taken up when passing the port on every start becomes a chore. The TUI's own
+settings are already `tui.toml` in the instances directory
+([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)),
+and they hold only `order`. The shared port would move into it as `port`, with
+`--port` and `ZDESK_TUI_PORT` still taking precedence. Unlike `order`, a change
+would apply at the next start, since the master is already listening on the old
+port.
 
-The file would be `tui.toml` in the instances directory, beside the instance
-folders it applies to, so a control plane started with `--instances-dir` has its
-own. The first start would write it with every key commented out, so the
-defaults hold and the file shows what can be set. It would be parsed strictly:
-an unknown key or a bad value refuses the start instead of being skipped. The
-port would move into it as `port`, with `--port` and `ZDESK_TUI_PORT` still
-taking precedence. A change would apply at the next start.
+### Interactive configuration in the TUI
+
+Taken up once the configuration's shape has settled. Today `e` hands an instance's
+`zdesk.toml` to `$VISUAL` or `$EDITOR` and checks the file when the editor
+exits, so setting up an instance means knowing its keys. The TUI could instead
+ask for them: add, change and remove a target on its own screens, choosing the
+protocol and subtype from a list and seeing only the keys that choice takes,
+with each value checked as it is entered. It would write the same `zdesk.toml`,
+which the same strict parse still reads. Whether it sits beside the editor or
+replaces it is decided then. While keys are still being renamed and replaced
+release to release, each change would have to be made twice, in the file and in
+the screens.
 
 ### A passkey as the login
 
@@ -194,9 +202,9 @@ The public keys would live in an owner-only file beside the instance folders,
 so a control plane started with `--instances-dir` has its own. Only a browser
 already logged in with the PIN could register a passkey. The TUI would list the
 registered passkeys, with a key that removes one. Which of these settings belong
-in the file described in
-[A settings file for the TUI](#a-settings-file-for-the-tui), if any, is decided
-when both exist.
+in the TUI's `tui.toml`
+([Local multi-instance control plane](architecture.md#local-multi-instance-control-plane)),
+if any, is decided when the passkeys exist.
 
 A served gateway would follow the TUI. Its ID would be the operator's host
 name. WebAuthn requires a secure context, and the HTTPS that the gateway

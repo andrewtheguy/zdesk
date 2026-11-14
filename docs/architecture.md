@@ -3949,9 +3949,13 @@ instance per immediate subdirectory, creates and edits its serverless
 `zdesk.toml`, and starts, stops or
 restarts each gateway from its own list. `zdesk.localhost:<port>` is a landing
 page; `<instance>.zdesk.localhost:<port>` is that instance's browser origin.
-The TUI's own settings are `tui.toml` in the instances directory, a file and so
-never an instance: its `order` lists the instances it names first, the rest by
-name after them, in the TUI and on the landing page alike. A file that does not
+`e` hands the selected instance's `zdesk.toml` to `$VISUAL` or `$EDITOR` and
+checks it when the editor exits; the change applies at the instance's next
+start. The TUI's own settings are `tui.toml` in the instances directory, a file
+and so never an instance. `E` opens it the same way, first writing it from a
+commented template when it is missing, and applies it when the editor exits.
+It is parsed strictly, an unknown key refused, and holds one setting: `order`
+lists the instances it names first, the rest by name after them, in the TUI and on the landing page alike. A file that does not
 parse keeps the order the TUI already had and says why. K and J move the selected
 instance and write the whole list's order back, changing only `order`'s value
 (a comment inside the list is not kept) and leaving the rest of the file,
