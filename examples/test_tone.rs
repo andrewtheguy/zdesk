@@ -167,7 +167,6 @@ async fn main() {
             text: "audio tone harness".to_owned(),
             logo: None,
         },
-        dev_hostname: None,
         meter: None,
         hevc_wasm: None,
     };
