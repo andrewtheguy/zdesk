@@ -1963,13 +1963,10 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   within 5 s, and the stream from about 55 to 20 Mbit/s. A bursty loss of 1, 3 or
   4 for a minute moved nothing. Once the bursty loss stopped, the target climbed
   back to 58.4 Mbit/s in steps over about 20 s.
-- **What does not move it.** Loss in the received count does not, nor does the
-  loss the Mac measures itself. A count reporting 44% lost for 30 s, or 30% for
-  two minutes, left the target at 58.4 Mbit/s, though the controller showed it.
-  Over a link that carried about 33 Mbit/s, a stream of 50–55 Mbit/s lost
-  35–53% of its packets on the way, with a round-trip time of 1–1.6 s. The
-  target stayed at 58.4 Mbit/s while the reports gave a delay of 0 and no
-  bursty loss. The bandwidth estimate moved nothing either. A TMMBR asking for 2
+- **What does not move it.** Loss in the received count does not. A count
+  reporting 44% lost for 30 s, or 30% for two minutes, left the target at 58.4
+  Mbit/s, though the controller showed it. The bandwidth estimate moved nothing
+  either. A TMMBR asking for 2
   Mbit/s changed nothing and was not answered. Read from the code, the Mac takes
   a temporary maximum only between the floor and the ceiling.
 - **Nothing takes it below the floor.** Read from the code, the controller
@@ -2030,9 +2027,12 @@ target, cap, measured bitrate, round-trip time, one-way delay and loss.
   it takes the viewer's. This happens whenever High Performance runs; it is not
   selected by a quality control.
 
-These are the virtual Mac's measurements, with synthetic reports. The only
-congested link observed was the one to the virtual Mac through a VPN. A
-congested link to a physical Mac has not been observed.
+These are the virtual Mac's measurements, with synthetic reports. With zDesk's
+own reports, over its host's network, the virtual Mac's link carried a terminal
+flood whole: none of 142,533 packets was lost, the round-trip time was 2–7 ms,
+and the target stayed at 58.4 Mbit/s while the stream ran at about 24 Mbit/s, as
+much as the flood needed, with bursts of 50–60 Mbit/s. A congested link, to the
+virtual Mac or a physical one, has not been observed.
 
 ### The sound
 
