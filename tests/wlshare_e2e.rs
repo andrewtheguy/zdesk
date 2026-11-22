@@ -84,7 +84,6 @@ async fn spawn_app(vnc_port: u16) -> SocketAddr {
             text: "zdesk".to_owned(),
             logo: None,
         },
-        dev_hostname: None,
         meter: None,
         hevc_wasm: None,
         targets: vec![wlshare, plain],

@@ -36,8 +36,8 @@
 //! machine keep separate logins rather than overwriting each other's.
 //!
 //! What remains, and is accepted, is anything else serving `zdesk.localhost` or
-//! one of its subdomains on another port, a served gateway sent to
-//! `<label>.zdesk.localhost` among them. `SameSite` does not stop it: the page
+//! one of its subdomains on another port, a served gateway opened under such a
+//! name among them. `SameSite` does not stop it: the page
 //! such a listener serves is same-site with the master, so its next request to
 //! itself carries the login. Any site can send the browser there, so another local user
 //! who runs such a listener and gets a link followed takes the login and can
@@ -50,7 +50,7 @@
 //! it forwards. So a browser presents one of two credentials anywhere — this PIN
 //! on the TUI's port, or a served gateway's username and password — and the TUI
 //! sets no `zdesk_session` cookie to collide with a served gateway's login on a
-//! shared `<label>.zdesk.localhost`.
+//! shared name.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;

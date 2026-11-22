@@ -4084,8 +4084,8 @@ because a login set on a bare loopback name would be sent to every server the
 browser reaches by that name, every local development server among them.
 
 What remains, and is accepted, is anything else serving `zdesk.localhost` or one
-of its subdomains on another port, a served gateway sent to
-`<label>.zdesk.localhost` among them. `SameSite` does not stop it: the page a
+of its subdomains on another port, a served gateway opened under such a name
+among them. `SameSite` does not stop it: the page a
 listener on `zdesk.localhost:<other port>` serves is same-site with the master,
 so its next request to itself carries the login. Any
 site can send the browser there. Another local user who runs such a listener and
@@ -4103,7 +4103,7 @@ who must not reach its desktops.
 A browser never holds a worker's token. The master adds it, as the
 `zdesk_session` cookie, to each request it forwards. It strips the browser's
 `zdesk_login_*` cookies, this master's and any other's, and any `zdesk_session`: on these hosts that can only be stale,
-or a served gateway's on the same `<label>.zdesk.localhost`, since a cookie
+or a served gateway's opened under the same name, since a cookie
 ignores the port. The TUI sets no `zdesk_session` of its own, so it does not
 log a served gateway's browser out. A browser therefore has two ways in: a
 served gateway's username and password, and this PIN.

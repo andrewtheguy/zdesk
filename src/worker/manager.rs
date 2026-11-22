@@ -3088,7 +3088,7 @@ async fn read_body(
 /// The token is the master's to present, never the browser's. The browser's
 /// cookies go through except the logins of this master and of any other on
 /// another port, which the worker has no use for, and any `zdesk_session`, which on this host can only be a served
-/// gateway's on the same `<label>.zdesk.localhost` — a cookie ignores the port —
+/// gateway's opened under the same name — a cookie ignores the port —
 /// or a stale one.
 ///
 /// One response per connection, because the master reads only the first request

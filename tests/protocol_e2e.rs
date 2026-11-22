@@ -1438,7 +1438,6 @@ async fn spawn_app(target: TargetConfig) -> SocketAddr {
             text: "zdesk".to_owned(),
             logo: None,
         },
-        dev_hostname: None,
         meter: None,
         hevc_wasm: None,
     };

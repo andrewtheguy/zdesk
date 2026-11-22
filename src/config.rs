@@ -1644,7 +1644,7 @@ impl std::fmt::Display for ListenAddr {
     }
 }
 
-/// The optional `[server]` block: web-server bind, login, and development host.
+/// The optional `[server]` block: web-server bind and login.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ServerSection {
@@ -1683,27 +1683,6 @@ pub struct ServerSection {
     // `ConfigFile::branding`), because a worker's config has no `[server]`
     // block to hold it and one value with two spellings is one of them going
     // stale. `deny_unknown_fields` refuses a file that still has it here.
-    /// **Development only.** A label to give this gateway its own hostname on
-    /// loopback: a browser arriving at `127.0.0.1`, `::1` or `localhost` is
-    /// redirected to `<label>.zdesk.localhost`, keeping the port and path.
-    ///
-    /// It exists for one problem, which has no other clean answer: a cookie is
-    /// scoped by *host* and ignores the port, so two gateways on one machine
-    /// share `zdesk_session` and each login silently evicts the other. The
-    /// gateway you were not touching then answers 401 to everything, and its
-    /// browser drops to the login screen the next time anything asks — which
-    /// reads as a session bug in whatever you were actually testing. Testing
-    /// session takeover needs two gateways, so this is not a rare corner.
-    ///
-    /// Under `.localhost` because every name below it resolves to loopback without
-    /// DNS (RFC 6761) and is a *distinct* cookie origin, so two gateways become two
-    /// independent logins in one browser. Under `.zdesk.localhost` in particular
-    /// so the names this project hands out are all one suffix, taken from nobody.
-    ///
-    /// Never reachable in a deployment: [`AppConfig::dev_hostname`] redirects only
-    /// a request whose own `Host` is a loopback name, so a gateway behind a real
-    /// hostname or address ignores this however it is set.
-    pub dev_subdomain: Option<String>,
 }
 
 /// Where the web login's password hash is, for its errors.
@@ -2051,13 +2030,6 @@ pub struct AppConfig {
     /// The deployment's name and, when configured, the icon file behind
     /// `GET /api/logo`.
     pub branding: Branding,
-    /// `<label>.zdesk.localhost` to send a loopback browser to, from
-    /// `[server].dev_subdomain`. `None` disables the redirect entirely.
-    ///
-    /// Stored as the whole hostname rather than the label so the one place that
-    /// validated it is the only place that builds it — a redirect target
-    /// assembled at the point of use is one that can be assembled wrongly.
-    pub dev_hostname: Option<String>,
     /// `[meter]`, resolved. `None` records nothing.
     pub meter: Option<MeterConfig>,
     /// The decoder's release archive, which the gateway reads at start-up: the one
@@ -2581,7 +2553,6 @@ impl ConfigFile {
             targets: self.targets,
             auth: GatewayAuth::Token(token),
             branding,
-            dev_hostname: None,
             meter: Self::resolve_meter(self.meter, state_dir),
             hevc_wasm: Self::resolve_hevc_wasm(self.hevc_wasm, data_dir),
         })
@@ -2700,14 +2671,6 @@ impl ConfigFile {
             targets: self.targets,
             auth: GatewayAuth::Login(login),
             branding,
-            dev_hostname: server
-                .dev_subdomain
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(dev_hostname)
-                .transpose()
-                .context("invalid [server].dev_subdomain")?,
             meter: Self::resolve_meter(self.meter, state_dir),
             hevc_wasm: Self::resolve_hevc_wasm(self.hevc_wasm, data_dir),
         })
@@ -2778,40 +2741,6 @@ fn parse_listen(value: &str) -> anyhow::Result<ListenAddr> {
             .with_context(|| format!("{literal:?} is not an IPv6 address"))?;
     }
     Ok(ListenAddr::Tcp(format!("{host}:{port}")))
-}
-
-/// `<label>.zdesk.localhost`, refusing anything that is not a single DNS label.
-///
-/// The check is what makes the redirect target unforgeable: a `Location` built
-/// from an unvalidated string could name any host at all, and this one is
-/// assembled from a label that has been proved to contain no dot, no slash, no
-/// colon and no credentials. So the target is always some name under
-/// `.localhost`, which by RFC 6761 can only be loopback.
-///
-/// The `zdesk` label in the middle is what keeps a development gateway from
-/// claiming a name somebody else's tooling may already answer to: `gw-a.localhost`
-/// is a name anything on this machine may have taken, while everything under
-/// `.zdesk.localhost` is this project's by construction. It is one name to
-/// recognise in a browser's history and one suffix to clear cookies for.
-///
-/// Length is bounded at 63, the DNS label limit, for the same reason the shape is
-/// checked rather than trusted: a name nothing can resolve is a redirect loop
-/// waiting to happen, and a config file is where it should be caught.
-fn dev_hostname(label: &str) -> anyhow::Result<String> {
-    anyhow::ensure!(
-        label.len() <= 63,
-        "{label:?} is longer than a DNS label may be (63 characters)"
-    );
-    anyhow::ensure!(
-        label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        "{label:?} must be one DNS label — ASCII letters, digits and hyphens only, \
-         and no dots (it is used as <label>.zdesk.localhost)"
-    );
-    anyhow::ensure!(
-        !label.starts_with('-') && !label.ends_with('-'),
-        "{label:?} may not start or end with a hyphen"
-    );
-    Ok(format!("{label}.zdesk.localhost"))
 }
 
 /// Load the config file: the explicit `--config` path, or the global path of the
@@ -3360,69 +3289,6 @@ mod tests {
         assert!(
             format!("{err:#}").contains("--listen"),
             "a bad override must name where it came from: {err:#}"
-        );
-    }
-
-    // The dev-only hostname. Its validation is the reason the redirect target is
-    // unforgeable: a `Location` is built from this and nothing else, so a value
-    // carrying a dot, a slash, a colon or credentials would point somewhere that is
-    // not loopback at all.
-    #[test]
-    fn a_dev_subdomain_becomes_one_label_under_zdesk_localhost() {
-        assert_eq!(
-            resolved(r#"dev_subdomain = "a""#).dev_hostname.as_deref(),
-            Some("a.zdesk.localhost")
-        );
-        // Unset, and whitespace-only, both disable it — as `branding` does.
-        assert_eq!(resolved("").dev_hostname, None);
-        assert_eq!(resolved(r#"dev_subdomain = "  ""#).dev_hostname, None);
-        // Trimmed, so a stray space cannot become part of a hostname.
-        assert_eq!(
-            resolved(r#"dev_subdomain = "  b  ""#)
-                .dev_hostname
-                .as_deref(),
-            Some("b.zdesk.localhost")
-        );
-        // Digits and inner hyphens are legal in a DNS label.
-        assert_eq!(
-            resolved(r#"dev_subdomain = "gw-2""#)
-                .dev_hostname
-                .as_deref(),
-            Some("gw-2.zdesk.localhost")
-        );
-    }
-
-    #[test]
-    fn a_dev_subdomain_that_is_not_one_label_is_refused() {
-        for bad in [
-            // A dot would move the name out from under `.zdesk.localhost`
-            // entirely, which is the whole of what keeps the target on loopback.
-            "a.b",
-            "evil.example.com",
-            "a/b",
-            "a:8080",
-            "user@host",
-            "-a",
-            "a-",
-            "a b",
-            "aä",
-            // 63 is the DNS label ceiling; longer is a name nothing resolves,
-            // which would be a redirect loop rather than a working gateway.
-            &"a".repeat(64),
-        ] {
-            let err = ConfigFile::parse_fixture(&with_server(&format!("dev_subdomain = {bad:?}")))
-                .and_then(ConfigFile::resolve)
-                .expect_err("should be refused: {bad:?}");
-            assert!(
-                format!("{err:#}").contains("dev_subdomain"),
-                "{bad:?} was refused without naming the key: {err:#}"
-            );
-        }
-        assert_eq!(
-            resolved(&format!("dev_subdomain = {:?}", "a".repeat(63)))
-                .dev_hostname
-                .as_deref(),
-            Some(&*format!("{}.zdesk.localhost", "a".repeat(63)))
         );
     }
 
