@@ -565,9 +565,16 @@ Each mode holds:
 Mode 0 is the requested dynamic mode. The remaining table matches Apple's
 viewer and stays fixed across setup and resize: 2880×1800 over 1440×900,
 3840×2160 over 1920×1080, 2880×1620 over 1440×810, and 2624×1696 over
-1312×848. A backing size twice the logical one makes a 2x display. Native asks
-for 60 Hz unless its preference or display capability says otherwise; zDesk's
-30 Hz in all five modes is the one deliberate virtual-display request difference.
+1312×848. A backing size twice the logical one makes a 2x display. zDesk's
+request differs from Apple's viewer's in three ways:
+- **Refresh rate.** Native asks for 60 Hz unless its preference or display
+  capability says otherwise; zDesk asks for 30 Hz in all five modes.
+- **Density.** Native's dynamic mode is always 2x, whatever the density of the
+  screen its window is on; zDesk's is 1x for a 1x screen.
+- **Second display.** Native gives both displays the window's size, and its
+  window offered no dynamic resolution with two displays on macOS 26. zDesk
+  sizes the second display from its own tab ([Two virtual
+  displays](#two-virtual-displays)).
 
 **Rules that follow from the measurements:**
 - **The maximum is a ceiling.** Putting the current mode there made the Mac refuse
@@ -694,8 +701,9 @@ Apple's viewer sends the new dimensions when a live window resize ends. It
 adds no debounce after that event and no quiet interval after a display layout
 before negotiating the new stream. It still has one change out at a time: a
 resize that ends while a change is outstanding is dropped, not queued. The next
-can go once the answering layout arrives or the new stream is ready, and the
-window is then refitted to the Mac's size. Nothing in that waits on a timer.
+can go once the answering layout changes the window's size or the new stream
+is ready, and the window is then refitted to the Mac's size. Nothing in that
+waits on a timer.
 On macvm, a second resize ended 1.3 s after the first sent nothing, and the
 window snapped back to the first one's size when it settled.
 
@@ -720,8 +728,9 @@ Three behaviours of the Mac shape how zDesk resizes:
   sized for the old display after the display shrank crashes `ScreensharingAgent`.
   The session then loses its virtual display, and often its connection. The update
   arming counts as such a read. So zDesk:
-  - sends a change only at the end of an update, with no full-size request
-    outstanding;
+  - sends a change only with no full-size request outstanding: at the end of
+    an update, or at once while the media stream holds polling to one pixel,
+    unless an update is being read;
   - first re-arms updates for the single pixel at the origin, which every mode
     has;
   - polls that pixel incrementally until the answering layout;
