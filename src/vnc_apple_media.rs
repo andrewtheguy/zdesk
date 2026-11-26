@@ -2524,6 +2524,10 @@ pub struct MediaStream {
     route: Route,
     /// An offer is out that the Mac has not answered.
     pending: bool,
+    /// The Mac has answered an offer since the session's agent took it, so it
+    /// holds a stream for this viewer, stopped or running: one it takes down and
+    /// names its ports again for at any display configuration.
+    set_up: bool,
     /// The Mac has named its ports, and no offer has gone out on that naming yet.
     invited: bool,
     /// The sizes the live (or starting) stream was offered for, one per display;
@@ -2699,6 +2703,7 @@ impl MediaStream {
             offers,
             route,
             pending: false,
+            set_up: false,
             invited: false,
             offered: None,
             owed: Owed::Ports(std::time::Instant::now()),
@@ -2844,6 +2849,15 @@ impl MediaStream {
         self.pending
     }
 
+    /// Whether the Mac holds a stream for this viewer ([`Self::set_up`]), which
+    /// it takes down for any display configuration, one that changes nothing
+    /// included, and names its ports again once it has. Not only while one is
+    /// offered: the Mac sometimes names its ports twice, and the second naming
+    /// leaves the answered stream down until offered.
+    pub fn streaming(&self) -> bool {
+        self.set_up
+    }
+
     /// The display changed. The Mac stops every stream for it and starts them
     /// again only on an offer, which its layout gets once the Mac has named
     /// its ports for it; until then the stream owes nothing but an answer to an
@@ -2863,6 +2877,7 @@ impl MediaStream {
     /// still unanswered is let go with the rest.
     pub fn handed_over(&mut self) {
         self.pending = false;
+        self.set_up = false;
         self.offered = None;
         self.owed = Owed::Nothing;
     }
@@ -3163,6 +3178,7 @@ impl MediaStream {
                 {
                     return Ok(Replied {
                         down,
+                        named: true,
                         answered: false,
                     });
                 }
@@ -3182,6 +3198,7 @@ impl MediaStream {
                 self.receiver = Some((ports, receiver));
                 return Ok(Replied {
                     down,
+                    named: true,
                     answered: false,
                 });
             }
@@ -3193,6 +3210,7 @@ impl MediaStream {
                 );
                 log::debug!("vnc: the Mac accepted the media-stream offer");
                 self.pending = false;
+                self.set_up = true;
                 // The display it was for has gone, and the new one's offer can
                 // go out now.
                 if matches!(self.owed, Owed::Answer(_)) {
@@ -3200,7 +3218,8 @@ impl MediaStream {
                 }
                 return Ok(Replied {
                     down: false,
-                    answered: true,
+                    named: false,
+                    answered: self.offered.is_some(),
                 });
             }
             // What the Mac answers a viewer that asks for the stream while
@@ -3250,7 +3269,11 @@ pub struct Replied {
     /// and the browser is told the screen is not available until the offer that
     /// naming allows delivers.
     pub down: bool,
-    /// The Mac accepted an offer.
+    /// The Mac named its ports, the message it ends each display configuration
+    /// with while a stream is set up, an unchanged configuration included.
+    pub named: bool,
+    /// The Mac accepted an offer, one still for the displays: not one its
+    /// ports, named again meanwhile, have since taken down.
     pub answered: bool,
 }
 
@@ -5764,9 +5787,26 @@ mod tests {
         assert!(m.offer(&[(1600, 1000)]).is_some());
         assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
 
+        assert!(m.offer(&[(1600, 1000)]).is_none(), "one offer per naming");
         m.on_reply(&unhex(PORTS)).unwrap_err();
         assert_eq!(m.offered, None, "the stream is down");
+        assert!(
+            m.streaming(),
+            "but still the Mac's, which it restarts for any configuration"
+        );
         assert!(m.offer(&[(1600, 1000)]).is_some(), "and offered again");
+
+        // Named again with that offer out, whose answer is then for a stream
+        // already down: only the next offer's answer is the stream's.
+        m.on_reply(&unhex(PORTS)).unwrap_err();
+        assert!(!m.on_reply(&unhex(ANSWER)).unwrap().answered);
+        assert!(!m.pending());
+        assert!(m.offer(&[(1600, 1000)]).is_some());
+        assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
+
+        // A new agent holds no stream until one is answered.
+        m.handed_over();
+        assert!(!m.streaming());
     }
 
     /// A refusal is an error, which ends the session as it ends Apple's viewer's.
@@ -6147,6 +6187,7 @@ mod tests {
                 .unwrap(),
             Replied {
                 down: false,
+                named: false,
                 answered: true
             }
         );
@@ -6314,8 +6355,11 @@ mod tests {
             "{unanswered}"
         );
 
-        assert!(m.on_reply(&unhex(ANSWER)).unwrap().answered);
-        assert_eq!(m.deadline(), None, "answered, for a display that has gone");
+        assert!(
+            !m.on_reply(&unhex(ANSWER)).unwrap().answered,
+            "for a display that has gone, which releases nothing"
+        );
+        assert_eq!(m.deadline(), None, "but answered");
         assert!(
             m.offer(&[(1280, 800)]).is_some(),
             "the new display's offer goes out"
