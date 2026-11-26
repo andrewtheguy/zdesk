@@ -885,6 +885,16 @@ enum HpPhase {
     /// A `SetDisplayConfiguration` for these points is out and its layout has
     /// not arrived.
     InFlight((u16, u16)),
+    /// The session-ready request for the mode showing is out, with a media
+    /// stream running. No changed layout answers it, but the Mac still takes the
+    /// display through a reconfiguration for it and stops the stream, and is done
+    /// when it names its ports again ([`HpResize::ports_named`]).
+    Restarting((u16, u16)),
+    /// The Mac named its ports for that request: the restarted stream is offered
+    /// for the display showing, and the next request waits for its answer
+    /// ([`HpResize::media_answered`]). Apple's viewer sends nothing more until
+    /// that stream is up, and the ports' one offer is the restarted stream's.
+    Reoffering((u16, u16)),
 }
 
 /// A virtual-display session's native opening transition and window-driven
@@ -988,8 +998,13 @@ impl HpResize {
     }
 
     /// The Mac answered a media-stream offer. `true` when that releases the
-    /// session-ready request.
+    /// session-ready request, or the request after it ([`HpPhase::Reoffering`]).
     fn media_answered(&mut self) -> bool {
+        if matches!(self.phase, HpPhase::Reoffering(_)) {
+            self.phase = HpPhase::Idle;
+            self.since = None;
+            return true;
+        }
         let waiting = self.opening == HpOpening::Media;
         if waiting {
             self.opening = HpOpening::Ready;
@@ -997,10 +1012,13 @@ impl HpResize {
         waiting
     }
 
-    /// Whether the session-ready request is held for the media stream, which may
-    /// be offered meanwhile for the canonical display.
+    /// Whether a request is held for the media stream, which may be offered
+    /// meanwhile for the display showing: the session-ready request for the
+    /// canonical display's, and the next one for the stream the Mac restarted for
+    /// it ([`HpPhase::Reoffering`]).
     fn holds_for_media(&self) -> bool {
-        self.opening == HpOpening::Media && self.phase == HpPhase::Idle
+        (self.opening == HpOpening::Media && self.phase == HpPhase::Idle)
+            || matches!(self.phase, HpPhase::Reoffering(_))
     }
 
     /// The window reported `want` points. `noop` is whether that is the desktop
@@ -1053,14 +1071,22 @@ impl HpResize {
     /// the one due or out. `None` with nothing asked.
     fn newest_points(&self) -> Option<(u16, u16)> {
         self.want.or(match self.phase {
-            HpPhase::Draining(points) | HpPhase::InFlight(points) => Some(points),
+            HpPhase::Draining(points)
+            | HpPhase::InFlight(points)
+            | HpPhase::Restarting(points)
+            | HpPhase::Reoffering(points) => Some(points),
             HpPhase::Idle => None,
         })
     }
 
-    /// Whether pixel polling is held to [`HP_HOLD_REQUEST`].
+    /// Whether pixel polling is held to [`HP_HOLD_REQUEST`]: not for a request
+    /// that changes no display ([`HpPhase::Restarting`]), whose re-sent layout
+    /// sets the pixel format again as any other, ahead of the restarted stream.
     fn holds_pixels(&self) -> bool {
-        self.phase != HpPhase::Idle
+        !matches!(
+            self.phase,
+            HpPhase::Idle | HpPhase::Restarting(_) | HpPhase::Reoffering(_)
+        )
     }
 
     /// Whether nothing is pending, out or covered — the Mac is not about to change
@@ -1103,11 +1129,45 @@ impl HpResize {
         self.since = None;
     }
 
+    /// The session-ready request that went out for the mode showing is answered
+    /// only when the Mac names its ports again: see [`HpPhase::Restarting`].
+    fn restarting(&mut self) {
+        if let HpPhase::InFlight(points) = self.phase {
+            self.phase = HpPhase::Restarting(points);
+        }
+    }
+
+    /// The Mac named its media-stream ports. `true` when that answers the
+    /// session-ready request for the mode showing, whose restarted stream is
+    /// offered next.
+    fn ports_named(&mut self) -> bool {
+        let HpPhase::Restarting(points) = self.phase else {
+            return false;
+        };
+        self.phase = HpPhase::Reoffering(points);
+        true
+    }
+
+    /// Whether the resize notice comes down while the stream restarts for a
+    /// request that changed no display ([`HpPhase::Restarting`],
+    /// [`HpPhase::Reoffering`]): there is no new display to wait for, only the
+    /// next request is held, and the screen-unavailable notice covers the
+    /// restart as it covers any other. Not while a newer size is waiting.
+    fn uncovers_restart(&self) -> bool {
+        self.shown
+            && self.want.is_none()
+            && matches!(self.phase, HpPhase::Restarting(_) | HpPhase::Reoffering(_))
+    }
+
     /// The next thing due at `now`, if anything is.
     fn step(&mut self, now: tokio::time::Instant) -> Option<HpStep> {
         if self.want.is_some() && !self.shown {
             self.shown = true;
             return Some(HpStep::Show);
+        }
+        if self.uncovers_restart() {
+            self.shown = false;
+            return Some(HpStep::Hide);
         }
         if self.phase != HpPhase::Idle {
             if self
@@ -1149,7 +1209,7 @@ impl HpResize {
 
     /// When [`Self::step`] next has something to do, or `None` until an event.
     fn deadline(&self, now: tokio::time::Instant) -> Option<tokio::time::Instant> {
-        if self.want.is_some() && !self.shown {
+        if (self.want.is_some() && !self.shown) || self.uncovers_restart() {
             return Some(now);
         }
         if self.phase != HpPhase::Idle {
@@ -1395,8 +1455,10 @@ impl DesktopState {
     /// The `SetDisplayConfiguration` for a High Performance resize that is due,
     /// taken by the read loop at an update boundary — see [`HpResize`]. `None`
     /// when nothing is due, or when what is due is the desktop already showing,
-    /// unless it is the session-ready request, which goes anyway.
-    fn hp_take_request(&mut self, now: tokio::time::Instant) -> Option<HpRequest> {
+    /// unless it is the session-ready request, which goes anyway. `streaming` is
+    /// whether a media stream is offered, which the Mac restarts for any
+    /// configuration.
+    fn hp_take_request(&mut self, now: tokio::time::Instant, streaming: bool) -> Option<HpRequest> {
         let (want, force) = self.hp.take_due(now)?;
         if self.hp_noop(want) {
             if !force {
@@ -1406,13 +1468,19 @@ impl DesktopState {
             }
             // The session-ready request for the canonical mode still goes, for
             // its dynamic resolution, but changes no display: no changed layout
-            // need answer it, so nothing is held for one. The Mac restarts the
-            // media stream for it all the same, announcing its ports again.
+            // answers it, and the region is not held for one. The Mac restarts
+            // the media stream for it all the same, announcing its ports again
+            // about a second and a half later, and the next request waits for
+            // that, as Apple's viewer's waits for the restarted stream.
             debug!(
                 "vnc: turning on dynamic resolution at the {}x{} points showing",
                 want.0, want.1
             );
-            self.hp.drop_due();
+            if streaming {
+                self.hp.restarting();
+            } else {
+                self.hp.drop_due();
+            }
             let msg = vnc_apple::set_display_configuration(&self.hp_modes(want), true);
             return Some(HpRequest {
                 msg,
@@ -4603,12 +4671,15 @@ async fn hp_send_due(
     let (request, drained, interval) = {
         let mut d = desktop.lock().unwrap();
         let draining = matches!(d.hp.phase, HpPhase::Draining(_));
-        let offer_out = media.is_some_and(|m| m.lock().unwrap().pending());
+        let (offer_out, streaming) = media.map_or((false, false), |m| {
+            let m = m.lock().unwrap();
+            (m.pending(), m.streaming())
+        });
         let held = offer_out || d.in_update;
         let request = if held {
             None
         } else {
-            d.hp_take_request(tokio::time::Instant::now())
+            d.hp_take_request(tokio::time::Instant::now(), streaming)
         };
         if request.as_ref().is_some_and(|request| request.changes) {
             stream_stopped(&mut d, tab);
@@ -6563,8 +6634,13 @@ async fn read_rect<R: AsyncRead + Unpin>(
                 .await?;
             }
             if replied.answered && desktop.lock().unwrap().hp.media_answered() {
-                debug!("vnc: the media stream is up; the session-ready resize may go out");
+                debug!("vnc: the media stream is up; the resize held for it may go out");
                 shared.hp_wake.notify_one();
+            }
+            // Offered at this update's end, and the next request waits for the
+            // answer.
+            if replied.named && desktop.lock().unwrap().hp.ports_named() {
+                debug!("vnc: the Mac restarted its media stream for the session-ready request");
             }
             if !replied.down {
                 return Ok(RectEffect::NOTHING);
@@ -12459,7 +12535,7 @@ mod tests {
         desktop
             .lock()
             .unwrap()
-            .hp_take_request(tokio::time::Instant::now())
+            .hp_take_request(tokio::time::Instant::now(), false)
             .map(|request| request.msg)
     }
 
@@ -12503,9 +12579,8 @@ mod tests {
     }
 
     /// Native's session-ready request goes even for the mode showing, for its
-    /// dynamic resolution, and holds nothing: no changed layout comes to answer
-    /// it, the region stays armed, and the media stream is left for the Mac's
-    /// announcement of its ports to stop.
+    /// dynamic resolution, and without a media stream holds nothing: no changed
+    /// layout comes to answer it, and the region stays armed.
     #[test]
     fn the_session_ready_request_for_the_mode_showing_holds_nothing() {
         let desktop = shared_desktop((1024, 768), None, None);
@@ -12515,7 +12590,7 @@ mod tests {
         d.hp.layout(true);
         assert_eq!(d.hp.step(now), Some(HpStep::Drain));
         let request = d
-            .hp_take_request(now)
+            .hp_take_request(now, false)
             .expect("the session-ready request goes");
         assert_eq!(
             request,
@@ -12528,6 +12603,62 @@ mod tests {
             !d.hp.holds_pixels(),
             "nothing waits for a layout to answer it"
         );
+    }
+
+    /// With a media stream running, the Mac takes the display through a
+    /// reconfiguration even for the session-ready request for the mode showing,
+    /// and stops the stream: the next request waits for it to name its ports
+    /// again and for the answer to the restarted stream's offer, as Apple's
+    /// viewer waits for that stream. The resize notice comes down at once,
+    /// since no display changes, and the unchanged layout it sends again
+    /// meanwhile answers nothing.
+    #[test]
+    fn the_session_ready_request_for_the_mode_showing_waits_for_the_restarted_stream() {
+        let desktop = shared_desktop((1024, 768), None, None);
+        let now = tokio::time::Instant::now();
+        let mut d = desktop.lock().unwrap();
+        d.hp = HpResize::opening((1024, 768), true);
+        d.hp.layout(true);
+        assert!(d.hp.media_answered());
+        assert_eq!(d.hp.step(now), Some(HpStep::Drain));
+        let request = d
+            .hp_take_request(now, true)
+            .expect("the session-ready request goes");
+        assert!(!request.changes);
+        assert_eq!(d.hp.phase, HpPhase::Restarting((1024, 768)));
+        assert!(
+            !d.hp.holds_pixels(),
+            "the re-sent layout sets the pixel format again"
+        );
+        assert_eq!(
+            d.hp.step(now),
+            Some(HpStep::Hide),
+            "no display changes, so the resize notice comes down at once"
+        );
+        assert_eq!(d.hp.step(now), None);
+
+        d.hp.report((800, 600), false);
+        assert_eq!(d.hp.step(now), Some(HpStep::Show));
+        assert_eq!(d.hp.step(now), None, "the window's size waits");
+        d.hp.layout(false);
+        assert_eq!(d.hp.step(now), None, "an unchanged layout answers nothing");
+        assert!(!d.hp.settled(), "no offer for the display meanwhile");
+
+        assert!(d.hp.ports_named());
+        assert!(!d.hp.ports_named(), "only the request out is answered");
+        assert_eq!(d.hp.phase, HpPhase::Reoffering((1024, 768)));
+        assert_eq!(
+            d.hp.step(now),
+            None,
+            "the restarted stream is offered first"
+        );
+        assert!(d.hp.holds_for_media(), "and may be offered meanwhile");
+        assert!(!d.hp.holds_pixels());
+
+        assert!(d.hp.media_answered());
+        assert!(!d.hp.holds_for_media());
+        assert_eq!(d.hp.step(now), Some(HpStep::Drain));
+        assert_eq!(d.hp.take_due(now), Some(((800, 600), false)));
     }
 
     /// A Mac whose preferred codec is the media stream sends no update to wait
@@ -12843,7 +12974,7 @@ mod tests {
             desktop
                 .lock()
                 .unwrap()
-                .hp_take_request(tokio::time::Instant::now())
+                .hp_take_request(tokio::time::Instant::now(), false)
                 .map(|request| request.msg),
             Some(hp_config((1600, 1200), 2.0))
         );

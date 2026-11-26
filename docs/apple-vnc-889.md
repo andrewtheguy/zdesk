@@ -598,10 +598,12 @@ request differs from Apple's viewer's in three ways:
   and the size goes out to the new agent at once.
 - **The session-ready size goes even when it is the canonical one,** since it
   is what turns dynamic resolution on. A configuration asking for the mode
-  showing changes no display, so nothing waits for a changed layout to answer
-  it. The Mac restarts the media stream for it all the same, as for any
-  configuration in High Performance: it stops the stream, sends the unchanged
-  layout again, and announces its ports again with message 1.
+  showing changes no display, so no changed layout answers it. The Mac
+  restarts the media stream for it all the same, as for any configuration in
+  High Performance: it stops the stream, sends the unchanged layout again, and
+  about 1.5 s later announces its ports again with message 1. The next size
+  waits for the restarted stream, as Apple's viewer's does: the announcement's
+  one offer is for the display showing, and the size goes at its answer.
 - **800×600 points is the least Apple's viewer asks for,** at 1x and at 2x
   alike: its window goes no smaller. Below it the virtual Mac sent no picture
   of some displays. At 1x it made whatever it was asked, and its encoder
